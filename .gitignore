@@ -1,0 +1,47 @@
+# ---- 原版内容与逆向产物:任何情况下都不进仓库 ----
+# 用户本机路径配置
+local.env
+# 生成物(清单、统计 JSON、截图、中间文件)
+out/
+# Ghidra 工程、反编译与反汇编输出、抓包、日志
+re/
+# 原版文件的常见扩展名(兜底;真要提交合成测试数据请先想清楚,并用 git add -f)
+*.pvf
+*.npk
+*.img
+*.ani
+*.exe
+*.pcap
+*.pcapng
+
+# ---- 通用 ----
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+.idea/
+.vscode/
+
+# ---- .NET ----
+bin/
+obj/
+*.user
+TestResults/
+
+# ---- Unity(工程建好后生效) ----
+unity/**/Library/
+unity/**/Temp/
+unity/**/Obj/
+unity/**/Logs/
+unity/**/UserSettings/
+unity/**/Build/
+unity/**/Builds/
+unity/**/.vs/
+unity/**/*.csproj
+unity/**/*.sln
+unity/**/*.slnx
+unity/**/*.pidb
+unity/**/*.unityproj
+unity/**/*.apk
+unity/**/*.aab
+unity/**/*.ipa
