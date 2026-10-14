@@ -64,11 +64,18 @@ namespace Dnf.Game
         public int[] PvpStaticData { get; }
         public SkillLevelTable PvpLevelInfo { get; }
 
-        /// <summary>[executable states]:技能可以从哪些状态编号发出(没有这个标签时为空)。</summary>
+        /// <summary>
+        /// [executable states]:技能可以从哪些状态编号发出(没有这个标签时为空,表示不限制)。
+        /// 同名标签可以出现多次(观察:2008 个 .skl 里 10 个出现两次、1 个三次;第二次总是 0 14,前一次含 8),
+        /// 这里取全部出现的并集(推断:各次取值叠加,而不是后一次覆盖前一次)。
+        /// </summary>
         public int[] ExecutableStates { get; }
 
         public int[] ConsumeMp { get; }
         public int[] CoolTime { get; }
+
+        /// <summary>[casting time]:两个数(推断:第 1 级与最高级的施法时间,毫秒);没有这个标签时为空。</summary>
+        public int[] CastingTime { get; }
         public int RequiredLevel { get; }
         public int MaximumLevel { get; }
 
@@ -80,9 +87,10 @@ namespace Dnf.Game
             Id = id;
             Path = path;
             var table = new TagTable(lines);
-            ExecutableStates = table.Ints("[executable states]");
+            ExecutableStates = table.IntsUnion("[executable states]");
             ConsumeMp = table.Ints("[consume MP]");
             CoolTime = table.Ints("[cool time]");
+            CastingTime = table.Ints("[casting time]");
             RequiredLevel = table.IntOr("[required level]", 0);
             MaximumLevel = table.IntOr("[maximum level]", 0);
             Type = table.FirstString("[type]");
@@ -147,6 +155,24 @@ namespace Dnf.Game
             PvpStaticData = pvpStatic;
             LevelInfo = pveLevels;
             PvpLevelInfo = pvpLevels;
+        }
+
+        /// <summary>
+        /// 按等级取成对数据([casting time]、[cool time]、[consume MP])的值:第 1 级取第一个数,最高级取第二个数,中间线性插值。
+        /// 这个对应关系是依据'耗蓝 150 1148、最高级 70'这类数据的形状推断的,没有核对;没有数据返回 0。
+        /// </summary>
+        public int Interpolate(int[] pair, int level)
+        {
+            if (pair == null || pair.Length == 0)
+            {
+                return 0;
+            }
+            if (pair.Length == 1 || MaximumLevel <= 1)
+            {
+                return pair[0];
+            }
+            int l = Math.Max(1, Math.Min(level, MaximumLevel));
+            return pair[0] + (int)Math.Round((pair[1] - pair[0]) * (double)(l - 1) / (MaximumLevel - 1));
         }
 
         public int GetStatic(int index, bool pvp)

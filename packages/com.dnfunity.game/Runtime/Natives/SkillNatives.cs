@@ -49,9 +49,16 @@ namespace Dnf.Game
             foreach (string n in new[] { "sq_GetIntData", "sq_getIntData" })
             {
                 Define(n, NativeStatus.Verified,
-                    "技能静态数据 [static data] 的第 idx 项:参数 (技能, idx[, 等级]),等级忽略(静态数据不分等级);决斗场模式取 [pvp] 里的(E-036)", B, c =>
+                    "技能静态数据 [static data] 的第 idx 项:参数 (技能, idx[, 等级]),等级忽略(静态数据不分等级);只有一个参数 (idx) 时按当前状态登记的技能取;决斗场模式取 [pvp] 里的(E-036)", B, c =>
                     {
                         GameObject o = c.SelfAs<GameObject>();
+                        if (c.ArgCount == 1)
+                        {
+                            GameObject owner = SkillOwner(o);
+                            int current = o.StateInfo != null ? o.StateInfo.Skill : (owner.StateInfo != null ? owner.StateInfo.Skill : -1);
+                            SkillDef own = SkillOf(o, current);
+                            return c.Return(own == null ? 0 : own.GetStatic(c.Int32(0), PvpMode));
+                        }
                         SkillDef def = SkillOf(o, c.Int32(0));
                         return c.Return(def == null ? 0 : def.GetStatic(c.Int32(1), PvpMode));
                     });
@@ -138,36 +145,38 @@ namespace Dnf.Game
                 c.SelfAs<GameObject>().DataVector.Values.Add(c.Int(0));
                 return c.ReturnNothing();
             });
-            Define("sq_GetVectorData", I, "取整数数组的第 i 项(越界为 0);全局写法 sq_GetVectorData(数组, i)", NativeForm.Both, c =>
-            {
-                return c.Return(c.SelfAs<IntVector>().Get(c.Int(0)));
-            });
-            Define("sq_getVectorData", I, "同 sq_GetVectorData", NativeForm.Both, c => c.Return(c.SelfAs<IntVector>().Get(c.Int(0))));
+            DefineAny("sq_GetVectorData", I, "取整数数组的第 i 项(越界或数组无效为 0):obj.sq_GetVectorData(数组, i) 与 sq_GetVectorData(数组, i) 等价", c =>
+                c.Return(c.Arg<IntVector>(0) is IntVector v ? v.Get(c.Int(1)) : 0));
+            DefineAny("sq_getVectorData", I, "同 sq_GetVectorData", c =>
+                c.Return(c.Arg<IntVector>(0) is IntVector v ? v.Get(c.Int(1)) : 0));
 
             // ---- 攻击信息
             Define("sq_SetCurrentAttackInfo", NativeStatus.Verified,
                 "按 CUSTOM_ATTACK_INFO_* 下标设置当前攻击信息:下标是角色 .chr 里 [etc attack info] 的下标(E-036);同时清空命中列表(推断)", B, c =>
                 {
                     GameObject o = c.SelfAs<GameObject>();
-                    SetCurrentAttackInfo(o, o.Character == null ? null : o.Character.CustomAttackInfoPath(c.Int32(0)), "custom:" + c.Int32(0));
+                    UseAttackInfo(o, c);
                     return c.ReturnNothing();
                 });
             Define("sq_setCurrentAttackInfo", NativeStatus.Verified, "同 sq_SetCurrentAttackInfo", B, c =>
             {
                 GameObject o = c.SelfAs<GameObject>();
-                SetCurrentAttackInfo(o, o.Character == null ? null : o.Character.CustomAttackInfoPath(c.Int32(0)), "custom:" + c.Int32(0));
+                UseAttackInfo(o, c);
                 return c.ReturnNothing();
             });
             Define("sq_GetCurrentAttackInfo", I, "对象当前的攻击信息对象", B, c => c.Return(c.SelfAs<GameObject>().CurrentAttackInfo));
-            Define("sq_SetCurrentAttackBonusRate", I, "设置攻击倍率(单位依脚本:列注释为 %):参数可以是攻击信息或对象", B, c =>
+            foreach (string n in new[] { "sq_SetCurrentAttackBonusRate", "sq_setCurrentAttackBonusRate" })
             {
-                AttackInfo ai = ResolveAttackInfo(c.Self);
-                if (ai != null)
+                Define(n, I, "设置攻击倍率(单位依脚本:列注释为 %):参数可以是攻击信息或对象", B, c =>
                 {
-                    ai.BonusRate = c.Float(0);
-                }
-                return c.ReturnNothing();
-            });
+                    AttackInfo ai = ResolveAttackInfo(c.Self);
+                    if (ai != null)
+                    {
+                        ai.BonusRate = c.Float(0);
+                    }
+                    return c.ReturnNothing();
+                });
+            }
             Define("sq_GetCurrentAttackBonusRate", I, "读取攻击倍率;没设置过为 0", B, c =>
             {
                 AttackInfo ai = ResolveAttackInfo(c.Self);
@@ -191,6 +200,28 @@ namespace Dnf.Game
                 }
                 return c.ReturnNothing();
             });
+        }
+
+        /// <summary>
+        /// sq_SetCurrentAttackInfo 的参数:整数是 [etc attack info] 的下标;攻击信息对象(例如 sq_GetCustomAttackInfo 取到的)则直接换上它。
+        /// </summary>
+        private void UseAttackInfo(GameObject o, NativeCall c)
+        {
+            if (c.TypeOf(0) == Dnf.Squirrel.SqType.Table)
+            {
+                AttackInfo ai = c.Arg<AttackInfo>(0);
+                if (ai != null)
+                {
+                    if (o.CurrentAttackInfo != null && !ReferenceEquals(o.CurrentAttackInfo, ai))
+                    {
+                        Release(o.CurrentAttackInfo);
+                    }
+                    o.CurrentAttackInfo = ai;
+                    o.HitObjects.Clear();
+                }
+                return;
+            }
+            SetCurrentAttackInfo(o, o.Def?.CustomAttackInfoPath(c.Int32(0)), "custom:" + c.Int32(0));
         }
 
         private void SetCurrentAttackInfo(GameObject o, string path, string source)

@@ -16,7 +16,7 @@ public sealed class NativeTests
     }
 
     /// <summary>onSetState_Foo 里跑 body,再触发技能,返回世界。body 里用 ::R_xxx 写结果。</summary>
-    private static (GameWorld World, GameObject Hero) Run(string body, Action<GameWorld, GameObject> prepare = null, Action<Fixture> extra = null)
+    internal static (GameWorld World, GameObject Hero) Run(string body, Action<GameWorld, GameObject> prepare = null, Action<Fixture> extra = null)
     {
         Fixture fx = World.Basic();
         StubAnis(fx);
@@ -45,7 +45,7 @@ function onSetState_Foo(obj, state, datas, isResetTimer)
         return (w, hero);
     }
 
-    private static long Result(GameWorld w, string name)
+    internal static long Result(GameWorld w, string name)
     {
         Assert.True(w.Vm.TryGetGlobalInteger(name, out long v), "没有结果变量 " + name + ";脚本错误:" + string.Join(" | ", w.Errors));
         return v;
@@ -145,16 +145,53 @@ function onSetState_Foo(obj, state, datas, isResetTimer)
     }
 
     [Fact]
-    public void ObjectVectorSkipsDestroyedObjects()
+    public void ObjectVectorDropsDestroyedObjectsFromTheNextStepOn()
     {
-        (GameWorld w, _) = Run(@"
+        Fixture fx = World.Basic();
+        StubAnis(fx);
+        fx.WithFooScript(@"
+function checkExecutableSkill_Foo(obj)
+{
+	if (obj.sq_IsUseSkill(SKILL_FOO)) {
+		obj.sq_AddSetStatePacket(STATE_FOO, STATE_PRIORITY_USER, true);
+		return true;
+	}
+	return false;
+}
+function onSetState_Foo(obj, state, datas, isResetTimer)
+{
 	local v = obj.getVar();
-	local d = v.get_obj_vector(0);
-	d.setValid(false);
-	::R_AFTER <- v.get_obj_vector(0) == null ? 1 : 0;
-", (world, h) => h.GetVar(null).ObjVector.Add(world.SpawnDummy("dummy", 150, 100, 0, new Aabb(-10, 10, -10, 10, 0, 60))));
+	v.get_obj_vector(0).setValid(false);
+	::R_SAME_SIZE <- v.get_obj_vector_size();
+	::R_SAME_GET <- v.get_obj_vector(0) == null ? 0 : 1;
+}
+function onProc_Foo(obj)
+{
+	local v = obj.getVar();
+	::R_LATER_SIZE <- v.get_obj_vector_size();
+	::R_LATER_GET <- v.get_obj_vector(0) == null ? 1 : 0;
+}
+");
+        GameWorld w = World.Create(fx.Build(), out ScriptLoadSummary summary);
+        Assert.True(summary.EntryOk);
+        GameObject hero = w.SpawnCharacter(World.Job, "hero", 100, 100, 0, Direction.Right);
+        hero.SkillLevels[World.SkillFoo] = 2;
+        GameObject dummy = w.SpawnDummy("dummy", 150, 100, 0, new Aabb(-10, 10, -10, 10, 0, 60));
+        hero.GetVar(null).ObjVector.Add(dummy);
+        w.RequestSkill(hero, World.SkillFoo);
+        w.Step(1);
         Assert.Empty(w.Errors);
-        Assert.Equal(1, Result(w, "R_AFTER"));
+
+        // 销毁发生的同一个时刻内,对象还在向量里(推断:一个回调里按下标遍历时不会少元素)
+        Assert.False(dummy.Valid);
+        Assert.Equal(1, Result(w, "R_SAME_SIZE"));
+        Assert.Equal(1, Result(w, "R_SAME_GET"));
+
+        // 之后的时刻:已销毁的对象被清出向量,大小为 0,取第 0 个是 null(ChainLightning 靠'向量变空'知道光束全部消失)
+        w.Step(20);
+        Assert.Empty(w.Errors);
+        Assert.Equal(0, Result(w, "R_LATER_SIZE"));
+        Assert.Equal(1, Result(w, "R_LATER_GET"));
     }
 
     [Fact]

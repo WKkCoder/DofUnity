@@ -44,5 +44,17 @@ namespace Dnf.Game
 
         /// <summary>剩余有效时间(毫秒);小于 0 表示没有时限(sq_SetValidTime 设置)。</summary>
         public int ValidTimeMs { get; internal set; } = -1;
+
+        /// <summary>依附体名下按名字挂的属性改变(appendage.sq_AddChangeStatus / sq_getChangeStatus)。</summary>
+        public System.Collections.Generic.Dictionary<string, ChangeStatus> NamedChangeStatuses { get; } =
+            new System.Collections.Generic.Dictionary<string, ChangeStatus>(System.StringComparer.Ordinal);
+
+        /// <summary>依附体名下按名字挂的"光环"(appendage.sq_AddAuraMaster / sq_getAuraMaster),这里只有占位对象。</summary>
+        public System.Collections.Generic.Dictionary<string, ServiceObject> Auras { get; } =
+            new System.Collections.Generic.Dictionary<string, ServiceObject>(System.StringComparer.Ordinal);
+
+        /// <summary>依附体名下按名字挂的"最大生命提升"(appendage.sq_AddHpMaxUp / sq_getHpMaxUp),这里只有占位对象,没有真的改最大生命。</summary>
+        public System.Collections.Generic.Dictionary<string, ServiceObject> HpMaxUps { get; } =
+            new System.Collections.Generic.Dictionary<string, ServiceObject>(System.StringComparer.Ordinal);
     }
 }

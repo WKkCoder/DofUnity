@@ -5,10 +5,21 @@ namespace Dnf.Game
     /// <summary>数学与插值类的原生接口(不需要对象)。</summary>
     public sealed partial class GameWorld
     {
-        private readonly Random _random = new Random(12345);
+        /// <summary>脚本随机数的默认种子:固定,所以同样的输入总得到同样的结果(不是原版的做法,原版的随机序列没有观察)。</summary>
+        public const int DefaultRandomSeed = 12345;
+
+        private Random _random = new Random(DefaultRandomSeed);
+        private readonly System.Collections.Generic.HashSet<int> _uniqueUsed = new System.Collections.Generic.HashSet<int>();
 
         /// <summary>脚本使用的随机数发生器(种子固定,测试里行为可重复)。</summary>
         public Random ScriptRandom => _random;
+
+        /// <summary>把脚本随机数序列重置到起点(并清空"不重复随机数"的已用记录)。逐技能扫描每个技能开始前调用,结果就不依赖前面跑过哪些技能。</summary>
+        public void ResetScriptRandom(int seed = DefaultRandomSeed)
+        {
+            _random = new Random(seed);
+            _uniqueUsed.Clear();
+        }
 
         private void RegisterMathNatives()
         {
@@ -29,7 +40,7 @@ namespace Dnf.Game
                 }
                 return c.Return(lo + (long)(_random.NextDouble() * (hi - lo + 1)));
             });
-            DefineFree("sq_GetDistancePos", I, "从 x 沿朝向前进 distance:向左减、向右加、其余不变 (x, 朝向, 距离)", c =>
+            DefineAny("sq_GetDistancePos", I, "从 x 沿朝向前进 distance:向左减、向右加、其余不变 (x, 朝向, 距离)", c =>
             {
                 int x = c.Int32(0);
                 int dir = c.Int32(1);
@@ -62,6 +73,41 @@ namespace Dnf.Game
                     double k = Ratio(c.Int(2), c.Int(3));
                     k = c.BoolOr(4, true) ? k * k : 1 - (1 - k) * (1 - k);
                     return c.Return((long)Math.Round(c.Int(0) + (c.Int(1) - c.Int(0)) * k));
+                });
+            DefineFree("sq_Sin", I, "正弦(参数是弧度)", c => c.Return((float)Math.Sin(c.Float(0))));
+            DefineFree("sq_Cos", I, "余弦(参数是弧度)", c => c.Return((float)Math.Cos(c.Float(0))));
+            DefineFree("sq_SinTable", I, "正弦(参数是整数度,查表;这里直接计算)", c => c.Return((float)Math.Sin(c.Int(0) * Math.PI / 180.0)));
+            DefineFree("sq_CosTable", I, "余弦(参数是整数度,查表;这里直接计算)", c => c.Return((float)Math.Cos(c.Int(0) * Math.PI / 180.0)));
+            DefineFree("sq_Atan2", I, "反正切 (y, x),结果是弧度", c => c.Return((float)Math.Atan2(c.Float(0), c.Float(1))));
+            DefineFree("sq_ToDegree", I, "弧度转角度", c => c.Return((float)(c.Float(0) * 180.0 / Math.PI)));
+            DefineFree("sq_GetDistance", I, "两点距离 (x1, y1, x2, y2[, 标志]):直线距离,取整;最后一个标志的含义未知,忽略", c =>
+            {
+                double dx = c.Float(0) - c.Float(2);
+                double dy = c.Float(1) - c.Float(3);
+                return c.Return((int)Math.Sqrt(dx * dx + dy * dy));
+            });
+            DefineFree("sq_getRandomUnique", I,
+                "不重复的随机整数 (是否重新开始, 下限, 上限):范围含两端;取尽后重新开始(依据 sq_getRandomUnique(false, 0, i % len) 的用法推断上限含在内)", c =>
+                {
+                    if (c.BoolOr(0, false))
+                    {
+                        _uniqueUsed.Clear();
+                    }
+                    int lo = c.Int32(1);
+                    int hi = Math.Max(lo, c.Int32(2));
+                    if (_uniqueUsed.Count >= hi - lo + 1)
+                    {
+                        _uniqueUsed.Clear();
+                    }
+                    for (int guard = 0; guard < 1000; guard++)
+                    {
+                        int v = lo + _random.Next(hi - lo + 1);
+                        if (_uniqueUsed.Add(v))
+                        {
+                            return c.Return(v);
+                        }
+                    }
+                    return c.Return(lo);
                 });
             DefineFree("sq_RGB", NativeStatus.Trace, "颜色:打包成 (r<<16|g<<8|b);格式未验证,只用来原样传给别的接口", c =>
                 c.Return(((c.Int(0) & 255) << 16) | ((c.Int(1) & 255) << 8) | (c.Int(2) & 255)));

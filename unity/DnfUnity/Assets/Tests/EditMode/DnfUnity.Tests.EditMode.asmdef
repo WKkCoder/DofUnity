@@ -8,7 +8,8 @@
         "Dnf.Render",
         "Dnf.Client",
         "Dnf.Squirrel",
-        "Dnf.Script"
+        "Dnf.Script",
+        "Dnf.Game"
     ],
     "includePlatforms": [
         "Editor"

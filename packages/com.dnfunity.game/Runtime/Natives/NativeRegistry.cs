@@ -58,6 +58,30 @@ namespace Dnf.Game
         /// <summary>每次原生调用前被调用(用于记录调用序列);为 null 则不记录。参数:接口名、对象、已解析好的调用现场。</summary>
         public Action<string, NativeObject> OnNativeCall { get; set; }
 
+        // 最近几次原生调用的名字:脚本出错时附在错误信息后面,方便定位是哪个接口之后出的问题
+        private readonly string[] _recentNatives = new string[8];
+        private int _recentPos;
+
+        private void Note(string name)
+        {
+            _recentNatives[_recentPos++ & 7] = name;
+        }
+
+        /// <summary>最近 count 次(最多 8 次)原生调用的名字,按时间先后用逗号连起来。</summary>
+        internal string RecentNatives(int count)
+        {
+            var names = new List<string>();
+            for (int i = Math.Min(count, 8); i >= 1; i--)
+            {
+                string n = _recentNatives[(_recentPos - i) & 7];
+                if (n != null)
+                {
+                    names.Add(n);
+                }
+            }
+            return string.Join(",", names);
+        }
+
         private void SetUpNativeTables()
         {
             _objProto = Vm.DefineTable("NativeObject", false);
@@ -74,6 +98,32 @@ namespace Dnf.Game
                     return c.ReturnNull();
                 };
             }, PropertyGetter);
+            // 攻击信息"包"(sq_getNewAttackInfoPacket)的字段直接用属性写法赋值:info.sizeRate = 100;只记录
+            Vm.SetMissingSetHandler(_objProto, call =>
+            {
+                if (!(ResolveOrNull(call, -1) is AttackInfo info))
+                {
+                    return false;
+                }
+                string key = call.String(0);
+                switch (call.TypeOf(1))
+                {
+                    case SqType.Integer:
+                        info.Properties[key] = call.Int(1);
+                        return true;
+                    case SqType.Float:
+                        info.Properties[key] = call.Float(1);
+                        return true;
+                    case SqType.Bool:
+                        info.Properties[key] = call.Bool(1);
+                        return true;
+                    case SqType.String:
+                        info.Properties[key] = call.String(1);
+                        return true;
+                    default:
+                        return false;
+                }
+            });
         }
 
         internal void Define(string name, NativeStatus status, string note, NativeForm forms, NativeBody body)
@@ -91,6 +141,7 @@ namespace Dnf.Game
                 {
                     info.Calls++;
                     NativeObject self = ResolveOrNull(call, -1);
+                    Note(name);
                     OnNativeCall?.Invoke(name, self);
                     return body(new NativeCall(this, call, 0, self));
                 });
@@ -101,10 +152,36 @@ namespace Dnf.Game
                 {
                     info.Calls++;
                     NativeObject self = ResolveOrNull(call, 0);
+                    Note(name);
                     OnNativeCall?.Invoke(name, self);
                     return body(new NativeCall(this, call, 1, self));
                 });
             }
+        }
+
+        /// <summary>
+        /// 成员写法与全局写法的实参完全相同、都不含"对象"的接口:obj.sq_X(a, b) 与 sq_X(a, b) 等价(例如 sq_GetVectorData(数组, 下标))。
+        /// 成员写法下 <see cref="NativeCall.Self"/> 是 this,全局写法下为 null。
+        /// </summary>
+        internal void DefineAny(string name, NativeStatus status, string note, NativeBody body)
+        {
+            var info = new NativeInfo { Name = name, Status = status, Forms = NativeForm.Both, Note = note };
+            _natives[name] = info;
+            _objProto.Method(name, call =>
+            {
+                info.Calls++;
+                NativeObject self = ResolveOrNull(call, -1);
+                Note(name);
+                OnNativeCall?.Invoke(name, self);
+                return body(new NativeCall(this, call, 0, self));
+            });
+            Vm.RegisterGlobal(name, call =>
+            {
+                info.Calls++;
+                Note(name);
+                OnNativeCall?.Invoke(name, null);
+                return body(new NativeCall(this, call, 0, null));
+            });
         }
 
         /// <summary>只有全局写法、不需要对象的接口(例如数学函数、随机数)。</summary>
@@ -115,6 +192,7 @@ namespace Dnf.Game
             Vm.RegisterGlobal(name, call =>
             {
                 info.Calls++;
+                Note(name);
                 OnNativeCall?.Invoke(name, null);
                 return body(new NativeCall(this, call, 0, null));
             });

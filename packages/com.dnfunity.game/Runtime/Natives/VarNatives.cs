@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Dnf.Data;
 using Dnf.Squirrel;
 
 namespace Dnf.Game
@@ -91,6 +92,17 @@ namespace Dnf.Game
             return false;
         }
 
+        /// <summary>对象向量里去掉已销毁的对象(每个世界时刻只清一次)后的列表。</summary>
+        private List<NativeObject> LiveObjects(VarStore v)
+        {
+            if (v.ObjVectorPrunedAt != TimeMs)
+            {
+                v.ObjVectorPrunedAt = TimeMs;
+                v.ObjVector.RemoveAll(o => (o is GameObject g && !g.Valid) || (o is Appendage a && !a.Valid));
+            }
+            return v.ObjVector;
+        }
+
         private void RegisterVarNatives()
         {
             const NativeForm M = NativeForm.Member;
@@ -165,17 +177,18 @@ namespace Dnf.Game
                 }
                 return c.ReturnNothing();
             });
-            Define("get_obj_vector", I, "变量表的对象向量:取第 i 个(越界为 null);已失效的对象也返回 null", M, c =>
-            {
-                List<NativeObject> list = c.SelfAs<VarStore>().ObjVector;
-                long i = c.Int(0);
-                NativeObject o = i >= 0 && i < list.Count ? list[(int)i] : null;
-                return c.Return(o is GameObject g && !g.Valid ? null : (o is Appendage a && !a.Valid ? null : o));
-            });
-            Define("get_obj_vector_size", I, "变量表的对象向量:长度(参数忽略)", M, c => c.Return(c.SelfAs<VarStore>().ObjVector.Count));
+            Define("get_obj_vector", I,
+                "变量表的对象向量:取第 i 个(越界为 null)。向量里已销毁的对象在下一个时刻起被清掉(推断:ChainLightning 靠'向量变空'判断光束全部消失),同一时刻内仍可取到", M, c =>
+                {
+                    List<NativeObject> list = LiveObjects(c.SelfAs<VarStore>());
+                    long i = c.Int(0);
+                    NativeObject o = i >= 0 && i < list.Count ? list[(int)i] : null;
+                    return c.Return(o != null && o.Id != 0 && _byId.ContainsKey(o.Id) ? o : null);
+                });
+            Define("get_obj_vector_size", I, "变量表的对象向量:长度(参数忽略;不含已销毁的对象)", M, c => c.Return(LiveObjects(c.SelfAs<VarStore>()).Count));
             Define("get_obj_vector_index", I, "变量表的对象向量:某个对象的下标,不在里面为 -1", M, c =>
             {
-                List<NativeObject> list = c.SelfAs<VarStore>().ObjVector;
+                List<NativeObject> list = LiveObjects(c.SelfAs<VarStore>());
                 NativeObject o = c.Arg<NativeObject>(0);
                 for (int i = 0; i < list.Count; i++)
                 {
@@ -189,7 +202,7 @@ namespace Dnf.Game
             Define("is_obj_vector", I, "变量表的对象向量:是否包含这个对象", M, c =>
             {
                 NativeObject o = c.Arg<NativeObject>(0);
-                return c.Return(o != null && ContainsIdentity(c.SelfAs<VarStore>().ObjVector, o));
+                return c.Return(o != null && ContainsIdentity(LiveObjects(c.SelfAs<VarStore>()), o));
             });
             Define("remove_obj_vector", I, "变量表的对象向量:移除这个对象", M, c =>
             {
@@ -237,7 +250,21 @@ namespace Dnf.Game
             });
 
             // ---- 动画与粒子发生器(渲染层的对象:这里只有占位,脚本拿到后调用的方法会被替身函数记数)
-            Define("GetAnimationMap", NativeStatus.Trace, "变量表:按名字取(没有则按路径载入)一个动画对象;占位对象,方法调用只记数", M, c => c.Return(GetOrCreateSlot(c, "ani:" + c.Str(0), "Animation")));
+            Define("GetAnimationMap", NativeStatus.Inferred, "变量表:按名字取(没有则按路径载入)一个独立的动画对象 (名字, 路径);路径从数据根目录算起(例如 Character/Priest/Animation/Awakening4.ani,全库里确有这个文件)", M, c =>
+            {
+                VarStore v = c.SelfAs<VarStore>();
+                string key = "ani:" + c.Str(0);
+                if (!(v.Slots.TryGetValue(key, out NativeObject existing) && existing is AnimationObject))
+                {
+                    string path = PvfPath.Normalize(c.Str(1));
+                    var animator = new Animator();
+                    animator.Set(Data.GetAnimation(path), path);
+                    existing = new AnimationObject(animator, false);
+                    Handle(existing);
+                    v.Slots[key] = existing;
+                }
+                return c.Return(existing);
+            });
             Define("GetparticleCreaterMap", NativeStatus.Trace, "变量表:按名字取(没有则创建)一个粒子发生器;占位对象,方法调用只记数", M, c => c.Return(GetOrCreateSlot(c, "ptl:" + c.Str(0), "ParticleCreater")));
             Define("push_ani_vector", NativeStatus.Trace, "变量表的动画向量:末尾加一个动画(占位)", M, c =>
             {

@@ -535,6 +535,23 @@ namespace Dnf.Squirrel
             proto.Method("_get", MissingLookup(factory, proto.Id, propertyFactory));
         }
 
+        /// <summary>
+        /// 对象写原型里没有的槽(obj.名字 = 值)时调用 setter(call):call 的参数 0 是名字、参数 1 是值;
+        /// setter 返回 false 表示不接受,脚本里会得到"索引不存在"的错误。
+        /// </summary>
+        public void SetMissingSetHandler(SqNativeTable proto, Func<SqCall, bool> setter)
+        {
+            EnsureOpen();
+            proto.Method("_set", call =>
+            {
+                if (call.TypeOf(0) != SqType.String || !setter(call))
+                {
+                    throw new SqNotFoundException();
+                }
+                return call.ReturnNothing();
+            });
+        }
+
         private SqNativeFn MissingLookup(Func<string, SqNativeFn> factory, long cacheTableId, Func<string, SqNativeFn> propertyFactory = null)
         {
             return call =>

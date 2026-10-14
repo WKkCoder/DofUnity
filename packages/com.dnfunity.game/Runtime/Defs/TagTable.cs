@@ -11,6 +11,7 @@ namespace Dnf.Game
     public sealed class TagTable
     {
         private readonly Dictionary<string, ScriptLine> _first = new Dictionary<string, ScriptLine>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, List<ScriptLine>> _all = new Dictionary<string, List<ScriptLine>>(StringComparer.OrdinalIgnoreCase);
 
         public ScriptLine[] Lines { get; }
 
@@ -22,6 +23,15 @@ namespace Dnf.Game
                 if (line.Tag != null && !_first.ContainsKey(line.Tag))
                 {
                     _first.Add(line.Tag, line);
+                }
+                if (line.Tag != null)
+                {
+                    if (!_all.TryGetValue(line.Tag, out List<ScriptLine> list))
+                    {
+                        list = new List<ScriptLine>();
+                        _all.Add(line.Tag, list);
+                    }
+                    list.Add(line);
                 }
             }
         }
@@ -58,6 +68,27 @@ namespace Dnf.Game
         public int[] Ints(string tag)
         {
             return _first.TryGetValue(tag, out ScriptLine line) ? line.Ints().ToArray() : Array.Empty<int>();
+        }
+
+        /// <summary>同名标签每次出现的整数合并(去重,保持首次出现的顺序);没有该标签则返回空数组。</summary>
+        public int[] IntsUnion(string tag)
+        {
+            if (!_all.TryGetValue(tag, out List<ScriptLine> lines))
+            {
+                return Array.Empty<int>();
+            }
+            var result = new List<int>();
+            foreach (ScriptLine line in lines)
+            {
+                foreach (int v in line.Ints())
+                {
+                    if (!result.Contains(v))
+                    {
+                        result.Add(v);
+                    }
+                }
+            }
+            return result.ToArray();
         }
 
         /// <summary>某个标签那一行里的第一个整数;没有则返回 fallback。</summary>

@@ -53,6 +53,20 @@ namespace Dnf.Data
         /// (例如 IceCrash 的起手动画两帧带 1、2,收尾动画一帧带 3,正是脚本处理的 1、2、3)。引擎在动画播到这一帧时调用 onKeyFrameFlag 回调。
         /// </summary>
         public const ushort KeyFrameFlag = 23;
+
+        /// <summary>
+        /// 循环起点标记(没有负载)(推断,证据 E-039):全库 153,097 个多帧二进制 .ani 里 560 个带它;其中 553 个同时带 <see cref="LoopEnd"/>,
+        /// 同一动画里它所在的帧在循环终点之前的占 539/553(97.5%)。对应文本 .ani 的 [LOOP START]。
+        /// </summary>
+        public const ushort LoopStart = 25;
+
+        /// <summary>
+        /// 循环终点标记,i32 重复次数(推断,证据 E-039):取值 99999(141 个)、9999(118)、999(65)、100(50)、3(45)、5、10、0……
+        /// 大数表示"一直重复,直到脚本结束这个对象或换动画"。对应文本 .ani 的 [LOOP END]。
+        /// 播放语义(播到该帧结束后跳回起点、次数是'再重复几次'还是'共几遍')**未验证**:只有一条脚本侧的旁证(冰封大地的柱子按帧号'超过第 6 帧又回到第 6 帧之前'数圈数,
+        /// 它的动画正是帧 3 起点、帧 6 终点)。
+        /// </summary>
+        public const ushort LoopEnd = 26;
     }
 
     /// <summary>判定框类型(推断,证据 E-036):14 是受击框,15 是攻击框(攻击框只出现在出招的帧上)。</summary>
@@ -253,6 +267,37 @@ namespace Dnf.Data
 
         /// <summary>帧延时(毫秒);没有该属性时按 0。</summary>
         public int DelayMs => TryGetDelayMs(out int ms) ? ms : 0;
+
+        /// <summary>这一帧是否带循环起点标记(<see cref="AniFrameProperty.LoopStart"/>,推断,证据 E-039)。</summary>
+        public bool IsLoopStart
+        {
+            get
+            {
+                foreach (AniProperty p in Properties)
+                {
+                    if (p.Id == AniFrameProperty.LoopStart)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+
+        /// <summary>循环终点标记的重复次数(<see cref="AniFrameProperty.LoopEnd"/>,推断,证据 E-039)。没有该属性时返回 false。</summary>
+        public bool TryGetLoopEnd(out int repeat)
+        {
+            foreach (AniProperty p in Properties)
+            {
+                if (p.Id == AniFrameProperty.LoopEnd && p.Payload.Length == 4)
+                {
+                    repeat = BinaryPrimitives.ReadInt32LittleEndian(p.Payload);
+                    return true;
+                }
+            }
+            repeat = 0;
+            return false;
+        }
 
         /// <summary>关键帧标志编号(<see cref="AniFrameProperty.KeyFrameFlag"/>,推断,证据 E-036)。没有该属性时返回 false。</summary>
         public bool TryGetKeyFrameFlag(out int flag)

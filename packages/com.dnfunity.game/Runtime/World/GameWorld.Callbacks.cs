@@ -65,7 +65,7 @@ namespace Dnf.Game
             }
             if (error != null)
             {
-                Errors.Add(function + ": " + FirstLine(error));
+                Errors.Add(function + ": " + FirstLine(error) + " [最近的原生调用:" + RecentNatives(4) + "]");
             }
             return false;
         }
@@ -113,23 +113,72 @@ namespace Dnf.Game
             {
                 return false;
             }
-            return CallScript(prefix + "_" + info.Suffix, out result, args);
+            return CallScript(CallbackName(prefix, info), out result, args);
+        }
+
+        private readonly Dictionary<string, string> _callbackNames = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// 状态回调的函数名:前缀_后缀。后缀与脚本里的写法大小写不同时(例如后缀 spincutter、函数 checkExecutableSkill_Spincutter),
+        /// 退而求其次按不分大小写找(推断,见 <see cref="ScriptHost.ResolveFunctionIgnoringCase"/>)。
+        /// </summary>
+        internal string CallbackName(string prefix, StateInfo info)
+        {
+            string name = prefix + "_" + info.Suffix;
+            if (_callbackNames.TryGetValue(name, out string resolved))
+            {
+                return resolved;
+            }
+            if (Vm.HasFunction(name))
+            {
+                return name;
+            }
+            string alt = Host.ResolveFunctionIgnoringCase(name);
+            if (alt != null && Vm.HasFunction(alt))
+            {
+                _callbackNames[name] = alt;
+                return alt;
+            }
+            return name;
         }
 
         // ---------------------------------------------------------------- 状态切换
         /// <summary>sq_AddSetStatePacket 的落地:把"切换状态"放进对象的队列,在本次回调结束后由 <see cref="DrainPackets"/> 处理。</summary>
         internal void QueueState(GameObject obj, int state, int priority, bool resetTimer)
         {
+            QueueState(obj, state, priority, resetTimer, obj.DataVector.Values.ToArray());
+        }
+
+        /// <summary>同上,数据数组由调用方给出(addSetStatePacket、sendStatePacket 等)。</summary>
+        internal void QueueState(GameObject obj, int state, int priority, bool resetTimer, long[] data)
+        {
             obj.Packets.Enqueue(new StatePacket
             {
                 State = state,
                 Priority = priority,
                 ResetTimer = resetTimer,
-                Data = obj.DataVector.Values.ToArray(),
+                Data = data,
             });
         }
 
+        /// <summary>
+        /// 调试与测试用:不经过 checkCommandEnable / checkExecutableSkill,直接让对象在下一次推进里进入某个状态
+        /// (优先级取"无视强制"(STATE_PRIORITY_IGNORE_FORCE = 4),重置计时器,数据由调用方给出,默认空)。
+        /// 用来检查那些只能由别的流程触发的状态(如觉醒后才可用的技能)本身会不会出错;不代表游戏里真能这样进入。
+        /// </summary>
+        public void ForceState(GameObject obj, int state, params long[] data)
+        {
+            QueueState(obj, state, 4, true, data ?? new long[0]);
+            DrainPackets(obj);
+        }
+
         internal void DrainPackets(GameObject obj)
+        {
+            DrainObjectPackets(obj);
+            DrainWorldPackets();
+        }
+
+        private void DrainObjectPackets(GameObject obj)
         {
             int guard = 0;
             while (obj.Packets.Count > 0 && guard++ < 256)
@@ -155,6 +204,19 @@ namespace Dnf.Game
         /// </summary>
         internal void EnterState(GameObject obj, int newState, long[] data, bool resetTimer, int priority)
         {
+            if (obj.Kind == ObjectKind.PassiveObject)
+            {
+                // 被动对象没有 onSetState 一套回调,只有 setState_po_名字(对象, 状态, 数据)
+                obj.State = newState;
+                if (obj.StateInfo != null)
+                {
+                    var pvec = new IntVector(data);
+                    Handle(pvec);
+                    InvokeCallback("setState", obj.StateInfo, out _, obj, (long)newState, pvec);
+                    Release(pvec);
+                }
+                return;
+            }
             StateInfo old = obj.StateInfo;
             int oldState = obj.State;
             if (old != null)
@@ -170,7 +232,8 @@ namespace Dnf.Game
                 obj.Timer.Reset();
             }
             obj.State = newState;
-            StateInfo info = obj.Job >= 0 ? FindState(obj.Job, newState) : null;
+            obj.StateTimeMs = 0;
+            StateInfo info = obj.Job >= 0 ? FindState(obj.Module, obj.Job, newState) : null;
             obj.StateInfo = info;
             if (info == null && newState == 0 && obj.Character != null)
             {
@@ -199,6 +262,9 @@ namespace Dnf.Game
         }
 
         // ---------------------------------------------------------------- 技能请求
+        /// <summary>最近一次技能请求的处理结果(诊断用:为什么没有进入状态)。</summary>
+        public string LastSkillRequest { get; private set; } = string.Empty;
+
         /// <summary>玩家按下技能(热键或指令):记下请求,下一次推进时按引擎的流程检查并执行。</summary>
         public void RequestSkill(GameObject obj, int skillId)
         {
@@ -216,13 +282,15 @@ namespace Dnf.Game
             {
                 return;
             }
+            LastSkillRequest = "没有登记这个技能的状态";
             try
             {
                 if (obj.GetSkillLevel(skill) <= 0)
                 {
+                    LastSkillRequest = "技能没学(等级 0)";
                     return;
                 }
-                foreach (StateInfo s in StatesOfJob(obj.Job))
+                foreach (StateInfo s in StatesOfJob(obj.Job, obj.Module))
                 {
                     if (s.Skill != skill)
                     {
@@ -231,16 +299,20 @@ namespace Dnf.Game
                     SkillDef def = Data.GetSkill(obj.Job, skill);
                     if (def != null && def.ExecutableStates.Length > 0 && Array.IndexOf(def.ExecutableStates, obj.State) < 0)
                     {
+                        LastSkillRequest = "当前状态 " + obj.State + " 不在 [executable states] {" + string.Join(",", def.ExecutableStates) + "} 里";
                         continue;
                     }
-                    if (Vm.HasFunction("checkCommandEnable_" + s.Suffix) && !(InvokeCallback("checkCommandEnable", s, out object ce, obj) && IsTrue(ce)))
+                    if (Vm.HasFunction(CallbackName("checkCommandEnable", s)) && !(InvokeCallback("checkCommandEnable", s, out object ce, obj) && IsTrue(ce)))
                     {
+                        LastSkillRequest = "checkCommandEnable 返回假";
                         continue;
                     }
                     if (InvokeCallback("checkExecutableSkill", s, out object ex, obj) && IsTrue(ex))
                     {
+                        LastSkillRequest = "checkExecutableSkill 通过";
                         break;
                     }
+                    LastSkillRequest = "checkExecutableSkill 返回假或没有这个函数";
                 }
             }
             finally
@@ -386,12 +458,31 @@ namespace Dnf.Game
                             continue;
                         }
                         a.HitObjects.Add(t.Id);
-                        RecordHit(a, t, false);
-                        InvokeCallback("onAttack", a, a, t, null, false);
+                        ApplyHit(a, t, false, Overlap(attackBox, damageBox));
                         DrainPackets(a);
                     }
                 }
             }
+        }
+
+        /// <summary>一次命中的处理:记录、onBeforeAttack、onAttack、onAfterAttack(顺序是依据名字的推断;伤害结算尚未实现)。</summary>
+        internal void ApplyHit(GameObject attacker, GameObject target, bool forced, Aabb? region = null)
+        {
+            RecordHit(attacker, target, forced);
+            Aabb area = region ?? (TryGetDamageBox(target, out Aabb damage) ? damage : new Aabb(target.X, target.X, target.Y, target.Y, target.Z, target.Z));
+            var box = new BoundingBox(area);
+            Transient(box, 2000);
+            InvokeCallback("onBeforeAttack", attacker, attacker, target, box, false);
+            InvokeCallback("onAttack", attacker, attacker, target, box, false);
+            InvokeCallback("onAfterAttack", attacker, attacker, target, box, false);
+        }
+
+        private static Aabb Overlap(Aabb a, Aabb b)
+        {
+            return new Aabb(
+                Math.Max(a.MinX, b.MinX), Math.Min(a.MaxX, b.MaxX),
+                Math.Max(a.MinY, b.MinY), Math.Min(a.MaxY, b.MaxY),
+                Math.Max(a.MinZ, b.MinZ), Math.Min(a.MaxZ, b.MaxZ));
         }
 
         internal void RecordHit(GameObject attacker, GameObject target, bool forced)

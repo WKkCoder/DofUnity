@@ -127,6 +127,8 @@ internal sealed class AniBuilder
     {
         public int Delay;
         public int? Flag;
+        public bool LoopStart;
+        public int? LoopEnd;
         public List<(ushort Type, int[] Values)> Boxes = new();
     }
 
@@ -142,6 +144,20 @@ internal sealed class AniBuilder
     public AniBuilder Frame(int delayMs, int? flag = null, params (ushort Type, int[] Values)[] boxes)
     {
         _frames.Add(new FrameSpec { Delay = delayMs, Flag = flag, Boxes = boxes.ToList() });
+        return this;
+    }
+
+    /// <summary>给刚加的那一帧打上循环起点标记(帧属性 25)。</summary>
+    public AniBuilder LoopStart()
+    {
+        _frames[_frames.Count - 1].LoopStart = true;
+        return this;
+    }
+
+    /// <summary>给刚加的那一帧打上循环终点标记(帧属性 26,负载是重复次数)。</summary>
+    public AniBuilder LoopEnd(int repeat)
+    {
+        _frames[_frames.Count - 1].LoopEnd = repeat;
         return this;
     }
 
@@ -180,7 +196,7 @@ internal sealed class AniBuilder
             U16(0xFFFF); // 无图
             I32(0);
             I32(0);
-            int props = 1 + (f.Flag.HasValue ? 1 : 0);
+            int props = 1 + (f.Flag.HasValue ? 1 : 0) + (f.LoopStart ? 1 : 0) + (f.LoopEnd.HasValue ? 1 : 0);
             U16(props);
             U16(AniFrameProperty.Delay);
             I32(f.Delay);
@@ -188,6 +204,15 @@ internal sealed class AniBuilder
             {
                 U16(AniFrameProperty.KeyFrameFlag);
                 I32(f.Flag.Value);
+            }
+            if (f.LoopStart)
+            {
+                U16(AniFrameProperty.LoopStart);
+            }
+            if (f.LoopEnd.HasValue)
+            {
+                U16(AniFrameProperty.LoopEnd);
+                I32(f.LoopEnd.Value);
             }
         }
         return s.ToArray();

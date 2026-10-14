@@ -30,6 +30,10 @@ internal static class GameCheck
         var report = new Dictionary<string, object?>();
         bool ok = true;
         ok &= IceCrash(world, report);
+        if (opts.Sweep)
+        {
+            Sweep(world, report, opts.Only);
+        }
         Coverage(world, loc, report);
 
         if (opts.JsonFile != null)
@@ -131,6 +135,183 @@ internal static class GameCheck
         return left > 0 && world.Errors.Count == 0;
     }
 
+    private sealed record SweepRow(string Module, int Job, string Suffix, int State, int Skill, string Result, int Ms, int Natives, List<string> Errors, List<string> NewUnknown, List<string> TraceCalled);
+
+    /// <summary>
+    /// 逐技能扫描:对每个登记了技能的状态,在全新的角色与假人上请求该技能,最多 12 秒,
+    /// 记录是否进入状态、是否回到站立、脚本错误与新出现的没实现接口。结果用来排接口实现的优先级,也是'支持的脚本数'的度量。
+    /// </summary>
+    private static void Sweep(GameWorld world, Dictionary<string, object?> report, List<string> only)
+    {
+        var rows = new List<SweepRow>();
+        List<StateInfo> states = world.AllStates.Where(s => s.IsSkill && (only.Count == 0 || only.Any(o => string.Equals(o, s.Suffix, StringComparison.OrdinalIgnoreCase))))
+            .OrderBy(s => s.Module, StringComparer.Ordinal).ThenBy(s => s.Job).ThenBy(s => s.State).ToList();
+        bool trace = only.Count > 0;
+        foreach (StateInfo s in states)
+        {
+            world.TraceCallbacks = trace;
+            world.CallbackTrace.Clear();
+            var calls = new List<string>();
+            if (trace)
+            {
+                world.OnNativeCall = (name, self) => calls.Add(name);
+            }
+            SweepRow row = SweepOne(world, s);
+            if (row.Result.StartsWith("没进入状态(", StringComparison.Ordinal) && !row.Result.Contains("没有登记"))
+            {
+                // 正常请求进不去(多半是只有别的流程才能触发的状态):再强制进一次,看状态本身会不会出错
+                SweepRow forced = SweepOne(world, s, true);
+                row = row with { Result = row.Result + ";" + forced.Result, Errors = forced.Errors, NewUnknown = forced.NewUnknown, TraceCalled = forced.TraceCalled, Natives = forced.Natives, Ms = forced.Ms };
+            }
+            rows.Add(row);
+            world.OnNativeCall = null;
+            if (trace)
+            {
+                Console.WriteLine("   [" + s.Suffix + "] 原生接口调用序列(连续重复合并;前 80 项,共 " + calls.Count + " 次):");
+                var compact = new List<string>();
+                for (int i = 0; i < calls.Count; )
+                {
+                    int j = i;
+                    while (j < calls.Count && calls[j] == calls[i])
+                    {
+                        j++;
+                    }
+                    compact.Add(j - i > 1 ? calls[i] + "×" + (j - i) : calls[i]);
+                    i = j;
+                }
+                Console.WriteLine("     " + string.Join(" ", compact.Take(80)));
+                List<string> sequence = world.CallbackTrace.Where(c => !c.StartsWith("onProc", StringComparison.Ordinal) && !c.StartsWith("procAppend", StringComparison.Ordinal)).ToList();
+                Console.WriteLine("   [" + s.Suffix + "] 回调序列(去掉每帧的 onProc 与 procAppend;前 60 条,共 " + sequence.Count + "):");
+                foreach (string c in sequence.Take(60))
+                {
+                    Console.WriteLine("     " + c);
+                }
+                if (sequence.Count > 60)
+                {
+                    Console.WriteLine("     ……最后 20 条:");
+                    foreach (string c in sequence.Skip(Math.Max(60, sequence.Count - 20)))
+                    {
+                        Console.WriteLine("     " + c);
+                    }
+                }
+            }
+        }
+        world.TraceCallbacks = false;
+
+        Console.WriteLine("D. 逐技能扫描(" + states.Count + " 个登记了技能的状态;假人在前 70 处,技能等级 10,最多 12 秒):");
+        foreach (IGrouping<string, SweepRow> g in rows.GroupBy(r => System.Text.RegularExpressions.Regex.Replace(r.Result, @"\([^)]*\)", "")).OrderByDescending(g => g.Count()))
+        {
+            Console.WriteLine("   " + g.Key + ":" + g.Count());
+        }
+        foreach (SweepRow r in rows)
+        {
+            Console.WriteLine("   [" + r.Result + "] " + (r.Module == GameWorld.GenericModule ? "" : r.Module + " ") + "job " + r.Job + " " + r.Suffix + " (状态 " + r.State + ",技能 " + r.Skill + ") "
+                + r.Ms + " ms,接口调用 " + r.Natives + (r.Errors.Count > 0 ? ",错误 " + r.Errors.Count + ":" + r.Errors[0] : "")
+                + (r.NewUnknown.Count > 0 ? ",缺:" + string.Join("/", r.NewUnknown) : "")
+                + (r.TraceCalled.Count > 0 ? ",占位:" + string.Join("/", r.TraceCalled) : ""));
+        }
+        var needed = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (SweepRow r in rows)
+        {
+            foreach (string n in r.NewUnknown)
+            {
+                needed[n] = needed.TryGetValue(n, out int c) ? c + 1 : 1;
+            }
+        }
+        Console.WriteLine("   扫描里缺的接口(按需要它的技能数):" + string.Join(", ", needed.OrderByDescending(kv => kv.Value).Select(kv => kv.Key + "×" + kv.Value)));
+        var traced = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (SweepRow r in rows)
+        {
+            foreach (string n in r.TraceCalled)
+            {
+                traced[n] = traced.TryGetValue(n, out int c) ? c + 1 : 1;
+            }
+        }
+        Console.WriteLine("   扫描里调用到的占位接口(Trace,按用到它的技能数):" + string.Join(", ", traced.OrderByDescending(kv => kv.Value).Select(kv => kv.Key + "×" + kv.Value)));
+        report["sweep"] = rows;
+    }
+
+    private static SweepRow SweepOne(GameWorld world, StateInfo s, bool force = false)
+    {
+        var errors = new List<string>();
+        var unknownBefore = new HashSet<string>(world.UnknownMembers.Keys.Concat(world.Host.UnknownNames.Keys), StringComparer.Ordinal);
+        long nativesBefore = world.Natives.Values.Sum(n => n.Calls);
+        Dictionary<string, long> traceBefore = world.Natives.Where(kv => kv.Value.Status == NativeStatus.Trace).ToDictionary(kv => kv.Key, kv => kv.Value.Calls, StringComparer.Ordinal);
+        world.Errors.Clear();
+        world.ResetScriptRandom(); // 每个技能从同一个随机序列起点开始,结果不依赖扫描顺序
+
+        GameObject hero = world.SpawnCharacter(s.Job, "hero", 200, 150, 0, Direction.Right, s.Module);
+        if (hero.Character == null)
+        {
+            Cleanup(world);
+            return new SweepRow(s.Module, s.Job, s.Suffix, s.State, s.Skill, "未测:没有角色数据", 0, 0, errors, new List<string>(), new List<string>());
+        }
+        SkillDef? def = world.Data.GetSkill(s.Job, s.Skill);
+        hero.SkillLevels[s.Skill] = Math.Max(1, def != null && def.MaximumLevel > 0 ? Math.Min(def.MaximumLevel, 10) : 10);
+        world.SpawnDummy("dummy", 270, 150, 0, new Aabb(-20, 20, -10, 10, 0, 80));
+        if (force)
+        {
+            world.ForceState(hero, s.State);
+        }
+        else
+        {
+            world.RequestSkill(hero, s.Skill);
+        }
+        bool entered = false;
+        int returned = -1;
+        int start = world.TimeMs;
+        for (int t = 0; t < SweepLimitMs; t += 10)
+        {
+            world.Step(10);
+            if (hero.State == s.State)
+            {
+                entered = true;
+            }
+            if (entered && hero.State != s.State && hero.State == 0)
+            {
+                returned = world.TimeMs - start;
+                break;
+            }
+            if (!hero.Valid)
+            {
+                break;
+            }
+        }
+        int ms = world.TimeMs - start;
+        errors.AddRange(world.Errors.Distinct().Take(5));
+        string result = errors.Count > 0 ? "错误" : !entered ? "没进入状态(" + (force ? "强制也没进" : world.LastSkillRequest) + ")" : returned >= 0 ? "跑完" : "超时(没回到站立;" + WhereIs(hero) + ")";
+        if (force)
+        {
+            result = "强制进入-" + result;
+        }
+        long natives = world.Natives.Values.Sum(n => n.Calls) - nativesBefore;
+        List<string> newUnknown = world.UnknownMembers.Keys.Concat(world.Host.UnknownNames.Keys).Where(n => !unknownBefore.Contains(n)).Distinct().OrderBy(n => n, StringComparer.Ordinal).ToList();
+        List<string> traceCalled = world.Natives
+            .Where(kv => kv.Value.Status == NativeStatus.Trace && kv.Value.Calls > (traceBefore.TryGetValue(kv.Key, out long b) ? b : 0))
+            .Select(kv => kv.Key).OrderBy(n => n, StringComparer.Ordinal).ToList();
+        Cleanup(world);
+        return new SweepRow(s.Module, s.Job, s.Suffix, s.State, s.Skill, result, returned >= 0 ? returned : ms, (int)natives, errors, newUnknown, traceCalled);
+    }
+
+    /// <summary>逐技能扫描里每个技能最多跑多久(游戏时间);6 秒时冰轮、元素雨等长技能会被误判成卡住。</summary>
+    private const int SweepLimitMs = 12000;
+
+    private static string WhereIs(GameObject hero)
+    {
+        string anim = hero.Animator.Clip == null ? "无动画" : hero.Animator.Ended ? "动画已结束" : "动画第 " + hero.Animator.FrameIndex + " 帧/" + hero.Animator.Clip.Frames.Length;
+        return "停在状态 " + hero.State + " 子状态 " + hero.SkillSubState + "," + anim + ",计时事件 " + hero.TimeEvents.Count + " 个";
+    }
+
+    private static void Cleanup(GameWorld world)
+    {
+        foreach (GameObject o in world.Objects.ToList())
+        {
+            world.Destroy(o);
+        }
+        world.Step(1);
+        world.Errors.Clear();
+    }
+
     /// <summary>接口覆盖率:对照 docs/sq-api-catalog.tsv(704 个名字及调用次数),看已登记的接口占多少。</summary>
     private static void Coverage(GameWorld world, DnfLocation loc, Dictionary<string, object?> report)
     {
@@ -140,7 +321,8 @@ internal static class GameCheck
             Console.WriteLine("C. 没有 docs/sq-api-catalog.tsv,跳过覆盖率");
             return;
         }
-        var implemented = new HashSet<string>(StringComparer.Ordinal);
+        // 加载入口脚本时由脚本宿主(ScriptHost)自己登记的接口,不在原生接口表里
+        var implemented = new HashSet<string>(StringComparer.Ordinal) { "pushScriptFiles", "pushState", "pushPassiveObj", "sq_RunScript", "isDebugMode" };
         var statusOf = new Dictionary<string, NativeStatus>(StringComparer.Ordinal);
         foreach (KeyValuePair<string, NativeInfo> kv in world.Natives)
         {
@@ -196,6 +378,8 @@ internal static class GameCheck
             calls = totalCalls,
             coveredCalls,
             topMissing = missing.OrderByDescending(m => m.Calls).Take(60).Select(m => new { name = m.Name, calls = m.Calls }).ToList(),
+            registered = implemented.OrderBy(n => n, StringComparer.Ordinal).ToList(),
+            missing = missing.OrderByDescending(m => m.Calls).Select(m => new { name = m.Name, calls = m.Calls }).ToList(),
         };
     }
 }

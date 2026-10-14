@@ -15,6 +15,16 @@
       "source": "local",
       "dependencies": {}
     },
+    "com.dnfunity.game": {
+      "version": "file:../../../packages/com.dnfunity.game",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.dnfunity.data": "0.1.0",
+        "com.dnfunity.squirrel": "0.1.0",
+        "com.dnfunity.script": "0.1.0"
+      }
+    },
     "com.dnfunity.render": {
       "version": "file:../../../packages/com.dnfunity.render",
       "depth": 0,

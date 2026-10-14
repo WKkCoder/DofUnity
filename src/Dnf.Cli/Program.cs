@@ -44,6 +44,12 @@ namespace Dnf.Cli
         /// <summary>render-town --scene:合成整个场景(地图图层 + NPC)而不只是 NPC,与截图整屏对照。</summary>
         public bool Scene { get; set; }
 
+        /// <summary>game-check --sweep:对每个已登记的技能状态各跑一遍,列出错误与缺的接口。</summary>
+        public bool Sweep { get; set; }
+
+        /// <summary>game-check --sweep --only 后缀(可重复):只扫状态后缀(不分大小写)匹配的技能状态,调试单个技能用。</summary>
+        public List<string> Only { get; } = new();
+
         /// <summary>render-town --scene --eval x0,y0,x1,y1(可重复):额外统计这些矩形(含 x0,y0,不含 x1,y1)内的吻合率。</summary>
         public List<(int X0, int Y0, int X1, int Y1)> EvalRects { get; } = new();
 
@@ -77,8 +83,10 @@ namespace Dnf.Cli
             "      对地图 [animation] 里每个动画的每一帧,在截图里搜索不透明像素在容差内一致最多的位置,并与位置模型的预测比较(证据 E-030)。\n" +
             "  dnf sq-check [--json <文件>]\n" +
             "      用 Squirrel 3.2 检查 PVF 里全部明文 .nut:逐个编译;再模拟引擎加载入口脚本 sqr/loadstate.nut,统计登记的状态、回调前缀与缺少的接口(证据 E-033、E-034)。\n" +
-            "  dnf game-check [--json <文件>]\n" +
+            "  dnf game-check [--sweep] [--json <文件>]\n" +
             "      用 Dnf.Game 的最小世界,在原版 Squirrel 状态脚本不改动的情况下跑男魔法师的 IceCrash 技能,记录回调与接口调用序列、没实现的接口与接口覆盖率(证据 E-036、E-037)。\n" +
+            "      --only <后缀>:配合 --sweep,只跑状态后缀匹配的技能状态(可重复),调试单个技能。\n" +
+            "      --sweep:再对每个登记了技能的状态各跑一遍(假人在前 70 处,技能等级 10,最多 12 秒),给出每个技能的结果、脚本错误与缺的接口。\n" +
             "选项:\n" +
             "  --dnf-dir <目录>          数据目录(默认读环境变量 DNF_DIR,再读仓库根的 local.env)\n" +
             "  --out <目录>              参考输出目录(默认 <仓库>/out)\n" +
@@ -166,6 +174,12 @@ namespace Dnf.Cli
                         break;
                     case "--best-frame":
                         opts.BestFrame = true;
+                        break;
+                    case "--sweep":
+                        opts.Sweep = true;
+                        break;
+                    case "--only":
+                        opts.Only.Add(NextValue(args, ref i));
                         break;
                     case "--scene":
                         opts.Scene = true;

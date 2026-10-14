@@ -36,6 +36,12 @@ namespace Dnf.Game
         /// <summary>脚本回调里发生的错误(每项一行:回调名 + 首行错误文本)。</summary>
         public List<string> Errors { get; } = new List<string>();
 
+        /// <summary>脚本用 sq_AddMessage(编号) 弹出的界面提示的编号(按先后);没有界面,只记录,测试可以检查。</summary>
+        public List<int> UiMessages { get; } = new List<int>();
+
+        /// <summary>sq_LoadSkillEffectAni(技能, 路径) 预载过的特效动画路径(按技能分);只记录,真正的预载由渲染层负责。</summary>
+        public Dictionary<int, List<string>> PreloadedSkillEffects { get; } = new Dictionary<int, List<string>>();
+
         /// <summary>回调调用记录(<see cref="TraceCallbacks"/> 为真时累计:函数名与参数摘要)。</summary>
         public List<string> CallbackTrace { get; } = new List<string>();
 
@@ -66,6 +72,7 @@ namespace Dnf.Game
                     _states[StateKey(r.Table, (int)r.Job, (int)r.Id)] = new StateInfo(r);
                 }
             }
+            IndexPassiveScripts();
             return summary;
         }
 
@@ -75,19 +82,29 @@ namespace Dnf.Game
         }
 
         public const string GenericModule = "IRDSQRCharacter";
+        public const string AvengerModule = "CNAvenger";
 
         /// <summary>找某个职业某个状态编号的登记信息;没有脚本的状态返回 null。</summary>
         public StateInfo FindState(int job, int state)
         {
-            return _states.TryGetValue(StateKey(GenericModule, job, state), out StateInfo s) ? s : null;
+            return FindState(GenericModule, job, state);
         }
 
-        /// <summary>某个职业登记的全部状态。</summary>
-        public IEnumerable<StateInfo> StatesOfJob(int job)
+        /// <summary>找某个模块、职业、状态编号的登记信息(复仇者模块的状态登记在 <see cref="AvengerModule"/> 下)。</summary>
+        public StateInfo FindState(string module, int job, int state)
+        {
+            return _states.TryGetValue(StateKey(module, job, state), out StateInfo s) ? s : null;
+        }
+
+        /// <summary>登记的全部状态(各模块、各职业)。</summary>
+        public IEnumerable<StateInfo> AllStates => _states.Values;
+
+        /// <summary>某个职业在某个模块里登记的全部状态(默认是通用模块)。</summary>
+        public IEnumerable<StateInfo> StatesOfJob(int job, string module = GenericModule)
         {
             foreach (StateInfo s in _states.Values)
             {
-                if (s.Job == job && s.Module == GenericModule)
+                if (s.Job == job && s.Module == module)
                 {
                     yield return s;
                 }
@@ -132,11 +149,12 @@ namespace Dnf.Game
         }
 
         /// <summary>创建一个玩家角色:读 .chr,状态置为站立,本机控制。</summary>
-        public GameObject SpawnCharacter(int job, string name, int x, int y, int z, int direction)
+        public GameObject SpawnCharacter(int job, string name, int x, int y, int z, int direction, string module = GenericModule)
         {
             GameObject obj = Spawn(ObjectKind.Character, name, x, y, z, direction);
             obj.Job = job;
-            obj.Character = Data.GetCharacter(job);
+            obj.Module = module;
+            obj.Def = Data.GetCharacter(job);
             obj.IsMyControl = true;
             obj.MaxHp = obj.Hp = 1000;
             obj.MaxMp = obj.Mp = 1000;
@@ -156,9 +174,15 @@ namespace Dnf.Game
         /// <summary>销毁一个对象:先结束它身上的依附体,再标记无效。对象在虚拟机里还保留一小段时间,避免脚本里残留的引用立刻失效。</summary>
         public void Destroy(GameObject obj)
         {
-            if (!obj.Valid)
+            if (!obj.Valid || obj.Destroying)
             {
                 return;
+            }
+            obj.Destroying = true;
+            if (obj.Kind == ObjectKind.PassiveObject && obj.StateInfo != null)
+            {
+                InvokeCallback("destroy", obj.StateInfo, out _, obj);
+                InvokeCallback("onDestroyObject", obj.StateInfo, out _, obj, obj);
             }
             foreach (Appendage a in new List<Appendage>(obj.Appendages))
             {
@@ -168,22 +192,131 @@ namespace Dnf.Game
             _graveyard.Add(new KeyValuePair<int, NativeObject>(TimeMs + 5000, obj));
         }
 
+        /// <summary>
+        /// 把一个临时的宿主对象(独立动画、技能对象等)交给虚拟机,并在 ttlMs 毫秒后从虚拟机注销。
+        /// 脚本把它存进变量表长期持有时,过期后再用它会被当成无效对象(null)——这个时限是为了不让句柄表无限增长。
+        /// </summary>
+        internal void Transient(NativeObject o, int ttlMs = 60000)
+        {
+            Handle(o);
+            _graveyard.Add(new KeyValuePair<int, NativeObject>(TimeMs + ttlMs, o));
+        }
+
+        // 已创建、还没有交给世界(sq_AddObject)的特效对象:超时仍没有加入的丢弃
+        private readonly List<KeyValuePair<int, GameObject>> _pending = new List<KeyValuePair<int, GameObject>>();
+
+        /// <summary>
+        /// 创建一个只画不算的特效对象。addNow 为假时先放在"待加入"里,脚本调用 sq_AddObject 后才进入世界;
+        /// 动画不循环时,autoDestroy 为真则播完自动销毁,否则最多存活 60 秒。
+        /// </summary>
+        internal GameObject CreateDrawOnly(GameObject owner, string aniPath, bool autoDestroy, bool addNow)
+        {
+            var obj = new GameObject(this, ObjectKind.Other, "draw")
+            {
+                X = owner?.X ?? 0,
+                Y = owner?.Y ?? 0,
+                Z = owner?.Z ?? 0,
+                Direction = owner?.Direction ?? Direction.Right,
+            };
+            obj.Parent = owner;
+            obj.Source = owner;
+            obj.AutoDestroyOnAnimationEnd = autoDestroy;
+            obj.LifeLimitMs = 60000;
+            obj.Animator.Set(aniPath == null ? null : Data.GetAnimation(aniPath), aniPath);
+            Handle(obj);
+            if (addNow)
+            {
+                _objects.Add(obj);
+            }
+            else
+            {
+                _pending.Add(new KeyValuePair<int, GameObject>(TimeMs + 60000, obj));
+            }
+            return obj;
+        }
+
+        /// <summary>把待加入的特效对象交给世界(sq_AddObject);已经在世界里的不重复加入。</summary>
+        internal void AddToWorld(GameObject child, GameObject parent)
+        {
+            if (child == null || !child.Valid)
+            {
+                return;
+            }
+            if (parent != null)
+            {
+                child.Parent = parent;
+            }
+            for (int i = _pending.Count - 1; i >= 0; i--)
+            {
+                if (ReferenceEquals(_pending[i].Value, child))
+                {
+                    _pending.RemoveAt(i);
+                }
+            }
+            if (!_objects.Contains(child))
+            {
+                _objects.Add(child);
+            }
+        }
+
         private void SweepGraveyard()
         {
+            for (int i = _pending.Count - 1; i >= 0; i--)
+            {
+                if (_pending[i].Key <= TimeMs)
+                {
+                    GameObject lost = _pending[i].Value;
+                    _pending.RemoveAt(i);
+                    Release(lost.DataVector);
+                    Release(lost);
+                }
+            }
             for (int i = _graveyard.Count - 1; i >= 0; i--)
             {
                 if (_graveyard[i].Key <= TimeMs)
                 {
-                    var g = (GameObject)_graveyard[i].Value;
-                    foreach (VarStore v in g.AllVarStores())
+                    NativeObject dead = _graveyard[i].Value;
+                    if (dead is GameObject g)
                     {
-                        Release(v);
+                        foreach (VarStore v in g.AllVarStores())
+                        {
+                            ReleaseVarStore(v);
+                        }
+                        Release(g.DataVector);
+                        if (g.CurrentAnimationView != null)
+                        {
+                            Release(g.CurrentAnimationView);
+                        }
+                        if (g.CurrentAttackInfo != null)
+                        {
+                            Release(g.CurrentAttackInfo);
+                        }
                     }
-                    Release(g.DataVector);
-                    Release(g);
+                    Release(dead);
                     _graveyard.RemoveAt(i);
                 }
             }
+        }
+
+        /// <summary>注销一张变量表和它名下的计时器、动画、粒子发生器等对象。</summary>
+        internal void ReleaseVarStore(VarStore v)
+        {
+            foreach (NativeObject o in v.CtVector)
+            {
+                Release(o);
+            }
+            foreach (NativeObject o in v.TimerVector)
+            {
+                Release(o);
+            }
+            foreach (NativeObject o in v.Slots.Values)
+            {
+                if (o is StubObject)
+                {
+                    Release(o);
+                }
+            }
+            Release(v);
         }
 
         // ---------------------------------------------------------------- 推进
@@ -195,6 +328,8 @@ namespace Dnf.Game
                 return;
             }
             TimeMs += dtMs;
+            StepMs = dtMs;
+            RunDelayed();
             var snapshot = new List<GameObject>(_objects);
             foreach (GameObject obj in snapshot)
             {
@@ -203,14 +338,29 @@ namespace Dnf.Game
                     continue;
                 }
                 obj.AgeMs += dtMs;
-                ProcessSkillRequest(obj);
-                DrainPackets(obj);
-                InvokeCallback("onProc", obj, obj);
-                InvokeCallback("onProcCon", obj, obj);
+                obj.StateTimeMs += dtMs;
+                if (obj.LifeLimitMs >= 0 && obj.AgeMs >= obj.LifeLimitMs)
+                {
+                    Destroy(obj);
+                    continue;
+                }
+                if (obj.Kind == ObjectKind.PassiveObject)
+                {
+                    DrainPackets(obj);
+                    InvokeCallback("procAppend", obj, obj);
+                }
+                else
+                {
+                    ProcessSkillRequest(obj);
+                    DrainPackets(obj);
+                    InvokeCallback("onProc", obj, obj);
+                    InvokeCallback("onProcCon", obj, obj);
+                }
                 IntegrateMove(obj, dtMs);
                 AdvanceTimeEvents(obj, dtMs);
                 DrainPackets(obj);
                 AdvanceAppendages(obj, dtMs);
+                AdvanceChangeStatuses(obj, dtMs);
                 AdvanceAnimation(obj, dtMs);
                 DrainPackets(obj);
             }
@@ -219,8 +369,43 @@ namespace Dnf.Game
             {
                 DrainPackets(obj);
             }
+            DrainWorldPackets();
             _objects.RemoveAll(o => !o.Valid);
             SweepGraveyard();
+        }
+
+        // 延时动作(sq_PostDelayedMessage 等):到点的在下一次推进开头按登记顺序执行
+        private readonly List<KeyValuePair<int, Action>> _delayed = new List<KeyValuePair<int, Action>>();
+
+        /// <summary>delayMs 毫秒(游戏时间)之后执行一次 action;动作里不应抛异常。</summary>
+        internal void PostDelayed(int delayMs, Action action)
+        {
+            _delayed.Add(new KeyValuePair<int, Action>(TimeMs + Math.Max(0, delayMs), action));
+        }
+
+        private void RunDelayed()
+        {
+            if (_delayed.Count == 0)
+            {
+                return;
+            }
+            var due = new List<Action>();
+            for (int i = 0; i < _delayed.Count; )
+            {
+                if (_delayed[i].Key <= TimeMs)
+                {
+                    due.Add(_delayed[i].Value);
+                    _delayed.RemoveAt(i);
+                }
+                else
+                {
+                    i++;
+                }
+            }
+            foreach (Action a in due)
+            {
+                a();
+            }
         }
 
         private void AdvanceTimeEvents(GameObject obj, int dtMs)
@@ -256,6 +441,10 @@ namespace Dnf.Game
                     {
                         InvokeCallback("onEndCurrentAni", obj, obj);
                         DrainPackets(obj);
+                        if (obj.Valid && ((obj.Def is PassiveObjectDef po && po.DestroyOnAnimationEnd) || obj.AutoDestroyOnAnimationEnd))
+                        {
+                            Destroy(obj);
+                        }
                     }
                 });
         }

@@ -56,7 +56,7 @@ function onEndCurrentAni_Foo(obj)
 function onTimeEvent_Foo(obj, index, count)
 {
 	obj.getVar().push_vector(count);
-	if (count == 2) {
+	if (count == 3) {
 		obj.sq_IntVectClear();
 		obj.sq_IntVectPush(2);
 		obj.sq_AddSetStatePacket(STATE_FOO, STATE_PRIORITY_USER, true);
@@ -132,8 +132,8 @@ function onKeyFrameFlag_Foo(obj, flag)
 
         Assert.Empty(w.Errors);
         Assert.Equal(new[] { 0, World.StateFoo, 0 }, states);
-        // 关键帧标志 1、2(起手动画)→ 三次计时事件(第 0、1、2 次)→ 标志 3(收尾动画)
-        Assert.Equal(new long[] { 101, 102, 0, 1, 2, 103 }, hero.GetVar(null).Vector.ToArray());
+        // 关键帧标志 1、2(起手动画)→ 三次计时事件(第 1、2、3 次)→ 标志 3(收尾动画)
+        Assert.Equal(new long[] { 101, 102, 1, 2, 3, 103 }, hero.GetVar(null).Vector.ToArray());
         Assert.Equal("character/test/animation/stand.ani", hero.Animator.Path);
     }
 

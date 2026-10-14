@@ -15,6 +15,14 @@ namespace Dnf.Game
             RegisterEffectNatives();
             RegisterAppendageNatives();
             RegisterMathNatives();
+            RegisterPacketNatives();
+            RegisterPassiveNatives();
+            RegisterAnimationNatives();
+            RegisterMiscNatives();
+            RegisterQueryNatives();
+            RegisterAttackNatives();
+            RegisterBuffNatives();
+            RegisterSupportNatives();
         }
 
         private void RegisterObjectNatives()
@@ -34,10 +42,14 @@ namespace Dnf.Game
             {
                 Define(n, I, "对象的 z(高度)坐标", B, c => c.Return(c.SelfAs<GameObject>().Z));
             }
-            foreach (string n in new[] { "sq_SetCurrentPos", "setCurrentPos", "SetPos", "sq_setCurrentAxisPos" })
+            foreach (string n in new[] { "setCurrentPos", "SetPos" })
             {
-                Define(n, I, "设置对象的 (x, y, z) 坐标;第 4 个参数(若有)忽略", B, c =>
+                Define(n, I, "设置对象的 (x, y, z) 坐标;第 4 个参数(若有)忽略;粒子发生器等占位对象忽略", NativeForm.Member, c =>
                 {
+                    if (c.Self is StubObject)
+                    {
+                        return c.ReturnNothing();
+                    }
                     GameObject o = c.SelfAs<GameObject>();
                     o.X = c.Int32(0);
                     o.Y = c.Int32(1);
@@ -45,6 +57,43 @@ namespace Dnf.Game
                     return c.ReturnNothing();
                 });
             }
+            DefineAny("sq_SetCurrentPos", I, "设置对象的 (x, y, z) 坐标 (对象, x, y, z):成员写法 obj.sq_SetCurrentPos(obj, ……) 与全局写法实参相同;粒子发生器等占位对象忽略", c =>
+            {
+                GameObject o = c.Arg<GameObject>(0);
+                if (o != null)
+                {
+                    o.X = c.Int32(1);
+                    o.Y = c.Int32(2);
+                    o.Z = c.Int32(3);
+                }
+                return c.ReturnNothing();
+            });
+            Define("sq_setCurrentAxisPos", I, "设置对象某个轴的坐标 (轴 0 是 x、1 是 y、2 是 z, 值)", B, c =>
+            {
+                GameObject o = c.SelfAs<GameObject>();
+                switch (c.Int32(0))
+                {
+                    case 0:
+                        o.X = c.Int32(1);
+                        break;
+                    case 1:
+                        o.Y = c.Int32(1);
+                        break;
+                    case 2:
+                        o.Z = c.Int32(1);
+                        break;
+                }
+                return c.ReturnNothing();
+            });
+            Define("sq_SetCurrentDirection", I, "设置对象的朝向 (对象, 朝向);粒子发生器等占位对象忽略", NativeForm.Global, c =>
+            {
+                if (c.Self is StubObject)
+                {
+                    return c.ReturnNothing();
+                }
+                c.SelfAs<GameObject>().Direction = c.Int32(0);
+                return c.ReturnNothing();
+            });
             foreach (string n in new[] { "getDirection", "sq_GetDirection" })
             {
                 Define(n, I, "对象的朝向(ENUM_DIRECTION_*)", B, c => c.Return(c.SelfAs<GameObject>().Direction));
@@ -132,21 +181,18 @@ namespace Dnf.Game
 
             foreach (string n in new[] { "sq_SetCurrentAnimation", "sq_setCurrentAnimation", "setCurrentAnimation" })
             {
-                Define(n, NativeStatus.Verified, "按 CUSTOM_ANI_* 下标设置当前动画:下标是角色 .chr 里 [etc motion] 的下标(E-036)。同时清空命中列表", B, c =>
-                {
-                    GameObject o = c.SelfAs<GameObject>();
-                    string path = o.Character == null ? null : o.Character.CustomAnimationPath(c.Int32(0));
-                    o.HitObjects.Clear();
-                    if (!SetAnimation(o, path))
+                Define(n, NativeStatus.Verified,
+                    "按 CUSTOM_ANI_* 下标设置当前动画:下标是角色 .chr 或被动对象 .obj 里 [etc motion] 的下标(E-036);参数是动画对象时改播那个动画。同时清空命中列表", B, c =>
                     {
-                        Errors.Add("动画不存在:" + o.Name + " CUSTOM_ANI " + c.Int32(0));
-                    }
-                    return c.ReturnNothing();
-                });
-            }
-            foreach (string n in new[] { "sq_GetCurrentAnimation", "getCurrentAnimation", "sq_GetCurrentAni", "sq_getCurrentAni" })
-            {
-                Define(n, NativeStatus.Trace, "当前动画对象(尚无动画对象类型,返回 null)", B, c => c.ReturnNull());
+                        GameObject o = c.SelfAs<GameObject>();
+                        string path = c.TypeOf(0) == SqType.Table ? c.Arg<AnimationObject>(0)?.Animator.Path : o.Def?.CustomAnimationPath(c.Int32(0));
+                        o.HitObjects.Clear();
+                        if (!SetAnimation(o, path))
+                        {
+                            Errors.Add("动画不存在:" + o.Name + " " + (c.TypeOf(0) == SqType.Table ? "(动画对象)" : "CUSTOM_ANI " + c.Int32(0)));
+                        }
+                        return c.ReturnNothing();
+                    });
             }
             foreach (string n in new[] { "sq_StopMove", "sq_stopMove" })
             {
@@ -161,26 +207,29 @@ namespace Dnf.Game
                     return c.ReturnNothing();
                 });
             }
-            Define("sq_SetStaticMoveInfo", I,
-                "静态移动参数 (轴, 速度, 加速度, 标志):轴 0 是 x、1 是 y;速度单位为每秒距离,按速度立即移动(加速度忽略)。第 5、6 个参数(若有)忽略", B, c =>
-                {
-                    StaticMove m = c.SelfAs<GameObject>().Move;
-                    int axis = c.Int32(0);
-                    int speed = c.Int32(1);
-                    int accel = c.Int32(2);
-                    if (axis == 0)
+            foreach (string n in new[] { "sq_SetStaticMoveInfo", "sq_setStaticMoveInfo" })
+            {
+                Define(n, I,
+                    "静态移动参数 (轴, 速度, 加速度, 标志):轴 0 是 x、1 是 y;速度单位为每秒距离,按速度立即移动(加速度忽略)。第 5、6 个参数(若有)忽略", B, c =>
                     {
-                        m.SpeedX = speed;
-                        m.AccelX = accel;
-                    }
-                    else if (axis == 1)
-                    {
-                        m.SpeedY = speed;
-                        m.AccelY = accel;
-                    }
-                    m.Active = true;
-                    return c.ReturnNothing();
-                });
+                        StaticMove m = c.SelfAs<GameObject>().Move;
+                        int axis = c.Int32(0);
+                        int speed = c.Int32(1);
+                        int accel = c.Int32(2);
+                        if (axis == 0)
+                        {
+                            m.SpeedX = speed;
+                            m.AccelX = accel;
+                        }
+                        else if (axis == 1)
+                        {
+                            m.SpeedY = speed;
+                            m.AccelY = accel;
+                        }
+                        m.Active = true;
+                        return c.ReturnNothing();
+                    });
+            }
             Define("setTimeEvent", I,
                 "设置计时事件 (编号, 间隔毫秒, 次数, 是否立刻触发):同编号的会被替换;到期时调用 onTimeEvent_后缀(obj, 编号, 第几次),回调返回真则取消该事件", B, c =>
                 {
@@ -193,14 +242,17 @@ namespace Dnf.Game
                 return c.ReturnNothing();
             });
             Define("isExistTimeEvent", I, "这个编号的计时事件是否还在", B, c => c.Return(c.SelfAs<GameObject>().TimeEvents.Exists(c.Int32(0))));
-            Define("sq_SetMoveDirection", I, "静态移动的方向 (x 方向, y 方向),取值 ENUM_DIRECTION_*,NEUTRAL 表示不动", B, c =>
+            foreach (string n in new[] { "sq_SetMoveDirection", "sq_setMoveDirection" })
             {
-                StaticMove m = c.SelfAs<GameObject>().Move;
-                m.DirectionX = c.Int32(0);
-                m.DirectionY = c.Int32(1);
-                m.Active = true;
-                return c.ReturnNothing();
-            });
+                Define(n, I, "静态移动的方向 (x 方向, y 方向),取值 ENUM_DIRECTION_*,NEUTRAL 表示不动", B, c =>
+                {
+                    StaticMove m = c.SelfAs<GameObject>().Move;
+                    m.DirectionX = c.Int32(0);
+                    m.DirectionY = c.Int32(1);
+                    m.Active = true;
+                    return c.ReturnNothing();
+                });
+            }
         }
     }
 }

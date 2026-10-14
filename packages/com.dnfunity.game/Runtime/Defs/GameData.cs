@@ -213,5 +213,28 @@ namespace Dnf.Game
             }
             return null;
         }
+
+        private readonly Dictionary<int, PassiveObjectDef> _passiveObjects = new Dictionary<int, PassiveObjectDef>();
+
+        /// <summary>被动对象编号对应的 .obj 定义;找不到返回 null。结果会缓存。</summary>
+        public PassiveObjectDef GetPassiveObject(int id)
+        {
+            if (_passiveObjects.TryGetValue(id, out PassiveObjectDef cached))
+            {
+                return cached;
+            }
+            PassiveObjectDef def = null;
+            string path = GetPassiveObjectPath(id);
+            if (path != null)
+            {
+                ScriptLine[] lines = ReadScript(path);
+                if (lines != null)
+                {
+                    def = new PassiveObjectDef(id, path, lines);
+                }
+            }
+            _passiveObjects[id] = def;
+            return def;
+        }
     }
 }

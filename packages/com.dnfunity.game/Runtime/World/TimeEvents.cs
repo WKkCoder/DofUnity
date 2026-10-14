@@ -14,7 +14,8 @@ namespace Dnf.Game
 
     /// <summary>
     /// 对象上的计时事件集合。按编号区分,同一编号再次设置会替换旧的。推进时按编号升序给出到期的事件(同一帧里一个事件可以到期多次)。
-    /// 到期事件的"第几次触发"从 0 数起(推断:onTimeEvent 的第三个参数 timeEventCount,**未验证**)。
+    /// 到期事件的"第几次触发"从 1 数起(推断:onTimeEvent 的第三个参数 timeEventCount;CrystalAttack 把 timeEventCount-1 当数组下标、
+    /// 用 timeEventCount > 总数 判断结束,只有第一次为 1 才自洽,**未验证**)。
     /// </summary>
     public sealed class TimeEventSet
     {
@@ -33,7 +34,9 @@ namespace Dnf.Game
             {
                 Index = index,
                 IntervalMs = intervalMs < 1 ? 1 : intervalMs,
-                RemainingCount = count,
+                // 次数 0(或负数)按"不限次数"处理(推断):全库只有 5 个脚本用 0,个个都在回调里 return true 或 stopTimeEvent 自己收尾,
+                // 其中冰轮和暗黑权能的多段命中计时器只有"一直重复"才说得通;**未验证**
+                RemainingCount = count <= 0 ? int.MaxValue : count,
                 // 立刻触发:把已经过的时间设成一个间隔,下次推进时马上到期
                 ElapsedMs = fireImmediately ? (intervalMs < 1 ? 1 : intervalMs) : 0,
             };
@@ -51,7 +54,7 @@ namespace Dnf.Game
         }
 
         /// <summary>
-        /// 推进 dtMs 毫秒,对每次到期调用 fire(事件编号, 第几次触发);fire 返回 true 表示脚本要求中止这个事件(从集合里移除)。
+        /// 推进 dtMs 毫秒,对每次到期调用 fire(事件编号, 第几次触发,从 1 起);fire 返回 true 表示脚本要求中止这个事件(从集合里移除)。
         /// fire 里可以设置或移除事件。
         /// </summary>
         public void Advance(int dtMs, System.Func<int, int, bool> fire)
@@ -74,7 +77,7 @@ namespace Dnf.Game
                 {
                     e.ElapsedMs -= e.IntervalMs;
                     e.RemainingCount--;
-                    int n = e.Fired++;
+                    int n = ++e.Fired;
                     bool stop = fire(index, n);
                     if (stop)
                     {

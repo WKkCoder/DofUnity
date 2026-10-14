@@ -31,6 +31,9 @@ namespace Dnf.Game
         /// <summary>周期事件的间隔(毫秒);没设置过为 0。</summary>
         public long Interval => _interval;
 
+        /// <summary>计时是否已到上限(Start 的第一个参数;没设置上限为否)。</summary>
+        public bool IsEnd => _max > 0 && Get() >= _max;
+
         public void Reset()
         {
             _startedAt = Now;
@@ -63,11 +66,14 @@ namespace Dnf.Game
             return _max > 0 && t > _max ? _max : t;
         }
 
+        /// <summary>周期事件是否在起点(时间 0)就触发一次(setEventOnStart);默认否,与 setParameter 之后第一次事件在一个间隔之后一致(推断)。</summary>
+        public bool EventOnStart { get; set; }
+
         public void SetParameter(long interval, int count)
         {
             _interval = Math.Max(1, interval);
             _remainingEvents = count;
-            _nextEvent = _interval;
+            _nextEvent = EventOnStart ? 0 : _interval;
         }
 
         public void ResetInstant()

@@ -16,10 +16,14 @@ namespace Dnf.Game
             table.Method(name, call =>
             {
                 info.Calls++;
+                Note(key);
                 OnNativeCall?.Invoke(key, null);
                 return body(new NativeCall(this, call, 0, null));
             });
         }
+
+        /// <summary>脚本里的静态表 CNSquirrelAppendage(依附体的创建、查询与挂接)。</summary>
+        private SqNativeTable AppendageTable { get; set; }
 
         private Appendage FindAppendage(GameObject parent, string scriptPath)
         {
@@ -38,7 +42,7 @@ namespace Dnf.Game
         {
             const NativeStatus I = NativeStatus.Inferred;
 
-            SqNativeTable t = Vm.DefineTable("CNSquirrelAppendage", true);
+            SqNativeTable t = AppendageTable = Vm.DefineTable("CNSquirrelAppendage", true);
             DefineStatic(t, "sq_AppendAppendage", I,
                 "给对象挂依附体 (被依附者, 来源, 技能, 标志, 脚本路径, 标志):已有同路径依附体时返回已有的;返回依附体,失败为 null。两个布尔参数含义未知,忽略", c =>
                 {

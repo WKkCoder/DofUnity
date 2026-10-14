@@ -36,7 +36,14 @@ namespace Dnf.Game
         /// <summary>职业编号(角色才有;-1 表示不是角色)。</summary>
         public int Job { get; internal set; } = -1;
 
-        public CharacterDef Character { get; internal set; }
+        /// <summary>对象的定义:角色是 .chr,被动对象是 .obj(没有定义的假人等为 null)。</summary>
+        public ObjectDef Def { get; internal set; }
+
+        /// <summary>角色定义(不是角色则为 null)。</summary>
+        public CharacterDef Character => Def as CharacterDef;
+
+        /// <summary>被动对象编号(PassiveObject 才有;其余为 -1)。</summary>
+        public int PassiveId { get; internal set; } = -1;
 
         public int X { get; set; }
         public int Y { get; set; }
@@ -61,6 +68,15 @@ namespace Dnf.Game
 
         public bool Valid { get; internal set; } = true;
 
+        /// <summary>正在销毁(销毁回调运行期间为真,避免回调里再次销毁自己时递归)。</summary>
+        internal bool Destroying { get; set; }
+
+        /// <summary>寿命上限(毫秒,取自 .obj 的 [object destroy condition] 里的 [time limite]);负数表示没有。</summary>
+        public int LifeLimitMs { get; internal set; } = -1;
+
+        /// <summary>对象当前动画的脚本视图(getCurrentAnimation 取到的对象);第一次需要时创建。</summary>
+        internal AnimationObject CurrentAnimationView { get; set; }
+
         public int Hp { get; set; }
         public int MaxHp { get; set; }
         public int Mp { get; set; }
@@ -71,6 +87,32 @@ namespace Dnf.Game
 
         /// <summary>创建后经过的毫秒数(脚本里 sq_GetObjectTime)。</summary>
         public int AgeMs { get; internal set; }
+
+        /// <summary>连打计数(startRapidInput 清零、addRapidInput 加一、getRapidInputFrequency 读取)。</summary>
+        internal int RapidInputCount { get; set; }
+
+        /// <summary>脚本用 sq_SetGrabable 改过的"能否被抓取"(没改过为 null,这时按对象种类判断:只有怪物能)。</summary>
+        public bool? GrabableOverride { get; set; }
+
+        /// <summary>脚本设置的自定义旋转(setCustomRotate / sq_SetCustomRotate)是否生效;只记录,角度单位(度或弧度)未确认。</summary>
+        public bool ApplyCustomRotate { get; set; }
+
+        public float CustomRotateAngle { get; set; }
+
+        /// <summary>sq_SendMessage / sq_PostDelayedMessage 送来的对象消息(消息类型 -> 最近一次的第一个参数);OBJECT_MESSAGE_GHOST 等,宿主只记录,不解释。</summary>
+        public Dictionary<int, int> ObjectMessages { get; } = new Dictionary<int, int>();
+
+        /// <summary>只画不算的特效对象:动画播完(非循环)后自动销毁(sq_CreatePooledObject / sq_CreateDrawOnlyObject 的布尔参数为真时,依据用法推断)。</summary>
+        internal bool AutoDestroyOnAnimationEnd { get; set; }
+
+        /// <summary>进入当前状态后经过的毫秒数(脚本里 sq_GetStateTimer)。</summary>
+        public int StateTimeMs { get; internal set; }
+
+        /// <summary>角色用的状态脚本模块:<see cref="GameWorld.GenericModule"/>(默认)或 <see cref="GameWorld.AvengerModule"/>。</summary>
+        public string Module { get; internal set; } = GameWorld.GenericModule;
+
+        /// <summary>挂在对象身上的属性改变依附体(buff/debuff)。</summary>
+        public List<ChangeStatus> ChangeStatuses { get; } = new List<ChangeStatus>();
 
         public IntVector DataVector { get; }
         public Dictionary<int, int> SkillLevels { get; } = new Dictionary<int, int>();

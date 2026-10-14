@@ -53,6 +53,9 @@ namespace Dnf.Game
         public Dictionary<long, float> Floats { get; } = new Dictionary<long, float>();
         public List<long> Vector { get; } = new List<long>();
         public List<NativeObject> ObjVector { get; } = new List<NativeObject>();
+
+        /// <summary>对象向量上一次清理失效对象的世界时间(毫秒);同一时刻内多次读取看到同一份列表。</summary>
+        internal int ObjVectorPrunedAt { get; set; } = -1;
         public List<NativeObject> CtVector { get; } = new List<NativeObject>();
         public List<NativeObject> TimerVector { get; } = new List<NativeObject>();
         public List<NativeObject> AniVector { get; } = new List<NativeObject>();

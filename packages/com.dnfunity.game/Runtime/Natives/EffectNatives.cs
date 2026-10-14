@@ -27,14 +27,11 @@ namespace Dnf.Game
                 Events.RemoveParticle(c.Arg<GameObject>(1), c.Str(0));
                 return c.ReturnNothing();
             });
-            foreach (string n in new[] { "sq_SetMyShake", "sq_setShake" })
+            Define("sq_SetMyShake", I, "震屏 (强度, 持续毫秒):只发出事件", B, c =>
             {
-                Define(n, I, "震屏 (强度, 持续毫秒):只发出事件", B, c =>
-                {
-                    Events.Shake(c.Self as GameObject, c.Int32(0), c.Int32(1));
-                    return c.ReturnNothing();
-                });
-            }
+                Events.Shake(c.Self as GameObject, c.Int32(0), c.Int32(1));
+                return c.ReturnNothing();
+            });
             Define("sq_flashScreen", T, "闪屏:占位", B, c => c.ReturnNothing());
             Define("sq_SetBodyEffect", T, "身体特效:占位", B, c => c.ReturnNothing());
 
@@ -46,9 +43,17 @@ namespace Dnf.Game
             {
                 return c.Return(c.Arg<GameObject>(0) is GameObject t && t.Valid && t.Kind == ObjectKind.Monster);
             });
-            Define("sq_IsGrabable", I, "目标能否被抓取 (自己, 目标):这里只有怪物能", B, c =>
+            Define("sq_IsGrabable", I, "目标能否被抓取 (自己, 目标):脚本用 sq_SetGrabable 改过就按改的,否则只有怪物能", B, c =>
             {
-                return c.Return(c.Arg<GameObject>(0) is GameObject t && t.Valid && t.Kind == ObjectKind.Monster);
+                return c.Return(c.Arg<GameObject>(0) is GameObject t && t.Valid && (t.GrabableOverride ?? t.Kind == ObjectKind.Monster));
+            });
+            DefineAny("sq_SetGrabable", I, "设置对象能否被抓取 (对象, 真假):只记录,sq_IsGrabable 读它(依据:IceMan 的依附体在施放期间设为假、结束时设回真)", c =>
+            {
+                if (c.Arg<GameObject>(0) is GameObject t)
+                {
+                    t.GrabableOverride = c.Bool(1);
+                }
+                return c.ReturnNothing();
             });
             DefineFree("sq_IsFixture", I, "目标是不是固定物 (目标):这里总是否", c => c.Return(false));
             DefineFree("sq_HoldAndDelayDie", T,
@@ -60,8 +65,7 @@ namespace Dnf.Game
                     GameObject target = c.Arg<GameObject>(0);
                     if (target != null && target.Valid)
                     {
-                        RecordHit(attacker, target, true);
-                        InvokeCallback("onAttack", attacker, attacker, target, null, false);
+                        ApplyHit(attacker, target, true);
                         DrainPackets(attacker);
                     }
                     return c.ReturnNothing();

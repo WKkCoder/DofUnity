@@ -114,7 +114,7 @@ public sealed class DefsAndCoreTests
     // ------------------------------------------------------------------ 计时事件
 
     [Fact]
-    public void TimeEventsFireInOrderWithCountsStartingAtZero()
+    public void TimeEventsFireInOrderWithCountsStartingAtOne()
     {
         var set = new TimeEventSet();
         set.Set(0, 100, 3, false);
@@ -127,7 +127,7 @@ public sealed class DefsAndCoreTests
                 return false;
             });
         }
-        Assert.Equal(new[] { (0, 0), (0, 1), (0, 2) }, fired);
+        Assert.Equal(new[] { (0, 1), (0, 2), (0, 3) }, fired);
         Assert.False(set.Exists(0));
     }
 
@@ -185,7 +185,7 @@ public sealed class DefsAndCoreTests
             }
             return false;
         });
-        Assert.Equal(new[] { "0:0" }, order);
+        Assert.Equal(new[] { "0:1" }, order);
         Assert.False(set.Exists(1));
         Assert.True(set.Exists(5));
     }

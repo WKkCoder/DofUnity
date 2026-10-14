@@ -126,6 +126,18 @@ namespace Dnf.Script
         }
 
         /// <summary>一份脚本里用 `function 名(参数)` 定义的函数(只有已运行的脚本有,按规范化路径查)。</summary>
+        private readonly Dictionary<string, string> _functionsIgnoringCase = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// 按"不分大小写"找一个已定义的脚本函数名,没有返回 null。
+        /// 观察:Spincutter.nut 登记的状态后缀是 spincutter,定义的却是 checkExecutableSkill_Spincutter(首字母大写),
+        /// 同一个文件里 onSetState_spincutter 又是小写;推断引擎按名字找这类回调时不区分大小写(或首字母大写),这里按不分大小写处理。
+        /// </summary>
+        public string ResolveFunctionIgnoringCase(string name)
+        {
+            return _functionsIgnoringCase.TryGetValue(name, out string actual) ? actual : null;
+        }
+
         public bool TryGetDefinedFunctions(string resolvedPath, out List<ScriptFunction> functions)
         {
             return _definedFunctions.TryGetValue(resolvedPath, out functions);
@@ -188,8 +200,46 @@ namespace Dnf.Script
             {
                 _loaded.Add(path);
                 _definedFunctions[path] = ScriptText.DefinedFunctionSignatures(data);
+                foreach (ScriptFunction f in _definedFunctions[path])
+                {
+                    if (!_functionsIgnoringCase.ContainsKey(f.Name))
+                    {
+                        _functionsIgnoringCase[f.Name] = f.Name;
+                    }
+                }
             }
+            DefineEngineConstants(data);
             return _vm.TryRun(path, data, out error);
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex EngineConstant =
+            new System.Text.RegularExpressions.Regex(@"\bAPID_[A-Z0-9_]+\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private readonly List<string> _engineConstants = new List<string>();
+
+        /// <summary>
+        /// 脚本用到、但任何脚本头文件里都没有定义的引擎常量(目前是依附体编号 APID_*,观察:头文件里一个也没有)。
+        /// 原版数值未知;这里按首次出现的顺序给每个名字一个互不相同的整数(从 100000 起),
+        /// 脚本只拿它在 sq_AppendAppendageID 与依附体查询之间原样传递,所以只要同名同值就够用。
+        /// </summary>
+        public IReadOnlyList<string> SyntheticConstants
+        {
+            get { return _engineConstants; }
+        }
+
+        private void DefineEngineConstants(byte[] data)
+        {
+            string text = System.Text.Encoding.ASCII.GetString(data);
+            foreach (System.Text.RegularExpressions.Match m in EngineConstant.Matches(text))
+            {
+                string name = m.Value;
+                if (_engineConstants.Contains(name) || _vm.TryGetGlobalInteger(name, out _))
+                {
+                    continue;
+                }
+                _engineConstants.Add(name);
+                _vm.RegisterGlobalInteger(name, 100000 + _engineConstants.Count);
+            }
         }
 
         /// <summary>保证一份脚本至少运行过一次(外部脚本在使用时才按路径加载,例如 Appendage 脚本)。</summary>

@@ -22,6 +22,17 @@ namespace Dnf.Game
             ScriptPath = r.ResolvedPath;
         }
 
+        /// <summary>手工构造(被动对象的回调后缀 "po_名字" 等没有 pushState 登记的情形)。</summary>
+        public StateInfo(string module, int job, int state, int skill, string suffix, string scriptPath)
+        {
+            Module = module;
+            Job = job;
+            State = state;
+            Skill = skill;
+            Suffix = suffix;
+            ScriptPath = scriptPath;
+        }
+
         public bool IsSkill => Skill >= 0;
 
         public override string ToString()
