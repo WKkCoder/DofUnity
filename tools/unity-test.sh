@@ -7,6 +7,8 @@
 #   DNF_EXPECT_PVF_AGGREGATE     PVF 聚合哈希的期望值(默认用本机已验证的值)
 #   UNITY_GRAPHICS=1             不加 -nographics,让需要图形设备的测试(GPU 与 CPU 合成器的对照)真正运行;
 #                                需要本机有可用的 GPU 与图形会话,默认关闭
+#   UNITY_TEST_TARGET            编辑器的活动构建目标(默认 StandaloneOSX)。不指定时 Unity 会沿用上一次批处理构建留下的目标
+#                                (比如刚构建过 Android),编辑器就按移动端精度编译着色器,GPU 对拍的结果会跟着变(证据 E-031)
 # 结果:out/unity-<平台>-results.xml;日志 re/unity-<平台>.log(都被 .gitignore 排除)。
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -32,6 +34,7 @@ fi
 
 set +e
 "$UNITY" -batchmode $graphics_flag -projectPath "$PWD/unity/DnfUnity" \
+  -buildTarget "${UNITY_TEST_TARGET:-StandaloneOSX}" \
   -runTests -testPlatform "$platform" -testResults "$results" -logFile "$log"
 code=$?
 set -e

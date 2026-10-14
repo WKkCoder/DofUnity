@@ -9,13 +9,15 @@ namespace Dnf.Client
     /// 舞台:一台 800×600 像素对齐的正交相机,加上一组 SpriteRenderer,把 <see cref="SceneSprite"/> 列表画到 GPU 上。
     /// 它是 <see cref="RgbaCanvas"/>(CPU 合成)的 GPU 对应物:同一份列表,两条路径的结果应当一致。
     /// 绘制顺序 = 列表顺序(靠 sortingOrder,不靠 z)。
-    /// 普通混合用 Unity 自带的 Sprites/Default;加法混合(<see cref="SpriteBlend.Additive"/>)用本包的 Dnf/SpriteAdditive,
-    /// 染色 alpha 通过 SpriteRenderer.color 的 a 分量传给它。
+    /// 普通混合用本包的 Dnf/SpriteNormal(预乘 alpha),加法混合(<see cref="SpriteBlend.Additive"/>)用 Dnf/SpriteAdditive;
+    /// 两个着色器都按 float 精度计算(内置的 Sprites/Default 在移动端会降成低精度,证据 E-031),
+    /// 染色 alpha 通过 SpriteRenderer.color 的 a 分量传给它们。
     /// </summary>
     public sealed class SpriteStage : MonoBehaviour
     {
-        /// <summary>加法着色器放在包的 Resources 文件夹里,这样播放器构建一定会带上它。</summary>
+        /// <summary>着色器放在包的 Resources 文件夹里,这样播放器构建一定会带上它们。</summary>
         private const string AdditiveShaderResource = "DnfSpriteAdditive";
+        private const string NormalShaderResource = "DnfSpriteNormal";
 
         private readonly List<SpriteRenderer> _pool = new List<SpriteRenderer>();
         private SpriteTextures _textures;
@@ -71,7 +73,7 @@ namespace Dnf.Client
                 else
                 {
                     // 普通混合忽略染色 alpha(与 CPU 合成器一致;它怎样生效没有核对过)
-                    r.sharedMaterial = _normal;
+                    r.sharedMaterial = NormalMaterial();
                     r.color = Color.white;
                 }
                 r.gameObject.SetActive(true);
@@ -88,18 +90,32 @@ namespace Dnf.Client
         {
             if (_additive == null)
             {
-                Shader shader = Resources.Load<Shader>(AdditiveShaderResource);
-                if (shader == null)
-                {
-                    shader = Shader.Find("Dnf/SpriteAdditive");
-                }
-                if (shader == null)
-                {
-                    throw new InvalidOperationException("找不到加法着色器 Dnf/SpriteAdditive(应当在 com.dnfunity.client/Runtime/Resources/ 里)");
-                }
-                _additive = new Material(shader) { name = "DnfSpriteAdditive", hideFlags = HideFlags.HideAndDontSave };
+                _additive = CreateMaterial(AdditiveShaderResource, "Dnf/SpriteAdditive");
             }
             return _additive;
+        }
+
+        private Material NormalMaterial()
+        {
+            if (_normal == null)
+            {
+                _normal = CreateMaterial(NormalShaderResource, "Dnf/SpriteNormal");
+            }
+            return _normal;
+        }
+
+        private static Material CreateMaterial(string resourceName, string shaderName)
+        {
+            Shader shader = Resources.Load<Shader>(resourceName);
+            if (shader == null)
+            {
+                shader = Shader.Find(shaderName);
+            }
+            if (shader == null)
+            {
+                throw new InvalidOperationException("找不到着色器 " + shaderName + "(应当在 com.dnfunity.client/Runtime/Resources/ 里)");
+            }
+            return new Material(shader) { name = resourceName, hideFlags = HideFlags.HideAndDontSave };
         }
 
         private SpriteRenderer Rent(int index)
@@ -111,11 +127,7 @@ namespace Dnf.Client
                 var r = go.AddComponent<SpriteRenderer>();
                 r.drawMode = SpriteDrawMode.Simple;
                 r.maskInteraction = SpriteMaskInteraction.None;
-                if (_normal == null)
-                {
-                    // 刚创建的 SpriteRenderer 带的就是默认的 Sprites/Default 材质
-                    _normal = r.sharedMaterial;
-                }
+                r.sharedMaterial = NormalMaterial();
                 _pool.Add(r);
             }
             return _pool[index];
@@ -135,6 +147,11 @@ namespace Dnf.Client
             {
                 UnityObjects.Destroy(_additive);
                 _additive = null;
+            }
+            if (_normal != null)
+            {
+                UnityObjects.Destroy(_normal);
+                _normal = null;
             }
         }
     }
