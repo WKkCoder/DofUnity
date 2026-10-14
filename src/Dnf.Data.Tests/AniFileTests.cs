@@ -94,6 +94,35 @@ public class AniFileTests
     }
 
     [Fact]
+    public void FrameAccessors_ReadInterpolationFlagTintAlphaAndGraphicEffect()
+    {
+        var keyed = Frame(0, 0, 0, 0,
+            (9, new byte[] { 255, 255, 255, 130 }),
+            (10, new byte[] { 1 }),
+            (11, new byte[] { 2, 0 }),
+            (12, TestData.LE32(1000)));
+        var off = Frame(0, 0, 0, 0, (10, new byte[] { 0 }));
+        var plain = Frame(0, 0, 0, 0);
+        // 效果类型 5 后面多 3 个字节
+        var mono = Frame(0, 0, 0, 0, (11, new byte[] { 5, 0, 1, 2, 3 }));
+        AniFile a = AniFile.Parse(TestData.BuildAni(new[] { "a.img" }, Array.Empty<(ushort, byte[])>(), new[] { keyed, off, plain, mono }));
+
+        Assert.True(a.Frames[0].InterpolatesToNext);
+        Assert.Equal(130, a.Frames[0].TintAlpha);
+        Assert.True(a.Frames[0].TryGetGraphicEffect(out int effect));
+        Assert.Equal(AniGraphicEffect.Additive, effect);
+
+        Assert.False(a.Frames[1].InterpolatesToNext);            // 显式写了 0
+        Assert.False(a.Frames[2].InterpolatesToNext);            // 没写
+        Assert.Equal(255, a.Frames[2].TintAlpha);                // 没有染色属性按 255
+        Assert.False(a.Frames[2].TryGetGraphicEffect(out int none));
+        Assert.Equal(0, none);
+
+        Assert.True(a.Frames[3].TryGetGraphicEffect(out int five));
+        Assert.Equal(5, five);
+    }
+
+    [Fact]
     public void Parse_RejectsTrailingBytes()
     {
         byte[] data = Sample().Concat(new byte[] { 0 }).ToArray();

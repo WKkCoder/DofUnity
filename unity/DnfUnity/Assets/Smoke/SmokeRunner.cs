@@ -210,6 +210,21 @@ namespace DnfUnity.Smoke
             Debug.Log("DNF_SMOKE gpu overlapping semi-transparent: " + d);
             Check("gpu semi-transparent overlap within 3 of cpu", d.MaxChannelDiff <= 3, d.ToString());
 
+            int additiveWorst = 0;
+            foreach (int tint in new[] { 1, 139, 157, 255 })
+            {
+                List<SceneSprite> additive = RenderSelfTest.AdditiveSweep(100, 100, tint);
+                d = RenderSelfTest.Compare(RenderSelfTest.RenderGpu(additive, bg), RenderSelfTest.RenderCpu(additive, bg));
+                additiveWorst = Math.Max(additiveWorst, d.MaxChannelDiff);
+                Check("gpu additive sweep (tint " + tint + ") within 1 of cpu", d.MaxChannelDiff <= 1, d.ToString());
+            }
+            Debug.Log("DNF_SMOKE gpu additive sweep worst channel diff: " + additiveWorst);
+
+            List<SceneSprite> mixed = RenderSelfTest.RandomSprites(21, 30, true, mirrorSome: true, additiveSome: true);
+            d = RenderSelfTest.Compare(RenderSelfTest.RenderGpu(mixed, bg), RenderSelfTest.RenderCpu(mixed, bg));
+            Debug.Log("DNF_SMOKE gpu mixed normal+additive: " + d);
+            Check("gpu mixed normal and additive within 4 of cpu", d.MaxChannelDiff <= 4, d.ToString());
+
             string dir = Environment.GetEnvironmentVariable("DNF_DIR");
             if (string.IsNullOrEmpty(dir) || !File.Exists(Path.Combine(dir, "Script.pvf")))
             {
@@ -219,11 +234,14 @@ namespace DnfUnity.Smoke
             using (DnfAssets assets = DnfAssets.Open(dir))
             using (var town = new TownView(assets, "map/elvengard/(r)gate.map", TownProjection.FromE024, bg))
             {
-                List<SceneSprite> sprites = town.ShowAt(0);
-                byte[] gpu = town.Stage.Capture();
-                d = RenderSelfTest.Compare(gpu, RenderSelfTest.RenderCpu(sprites, bg));
-                Debug.Log("DNF_SMOKE real town: npcs=" + town.NpcCount + " sprites=" + sprites.Count + " " + d);
-                Check("gpu real town equals cpu", town.NpcCount == 5 && d.MaxChannelDiff <= 1, d.ToString());
+                foreach (long t in new long[] { 0, 545, 1455 })
+                {
+                    List<SceneSprite> sprites = town.ShowAt(t);
+                    byte[] gpu = town.Stage.Capture();
+                    d = RenderSelfTest.Compare(gpu, RenderSelfTest.RenderCpu(sprites, bg));
+                    Debug.Log("DNF_SMOKE real town t=" + t + ": npcs=" + town.NpcCount + " layers=" + town.LayerCount + " sprites=" + sprites.Count + " " + d);
+                    Check("gpu real town equals cpu at t=" + t, town.NpcCount == 5 && town.LayerCount == 5 && d.MaxChannelDiff <= 1, d.ToString());
+                }
             }
         }
 

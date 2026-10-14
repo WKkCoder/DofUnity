@@ -9,7 +9,10 @@ namespace Dnf.Data
     /// </summary>
     public static class AniFrameProperty
     {
-        /// <summary>图形特效:u16 类型(0 到 6),类型 5 后面多 3 字节。类型 2 占 98.6%,极可能是叠加类混合(推断)。</summary>
+        /// <summary>
+        /// 图形特效:u16 类型(0 到 6),类型 5 后面多 3 字节。全库帧数:类型 2 280,153(98.6%)、5 2,117、4 895、3 604、1 368、0 82、6 24。
+        /// 类型 2 是加法混合,已用城镇光效对原版截图核对(证据 E-030);其余类型的含义**未知**。
+        /// </summary>
         public const ushort GraphicEffect = 11;
 
         /// <summary>
@@ -29,11 +32,26 @@ namespace Dnf.Data
         /// </summary>
         public const ushort Rgba = 9;
 
+        /// <summary>
+        /// 与下一帧插值的开关,u8(推断,证据 E-030):全库 51,562 帧带它(取值 1 占 51,562,取值 0 占 82)。
+        /// 带它的帧相邻两帧的染色不同的占 36.3%,不带的只有 2.1%(缩放 11.4% 对 1.6%,旋转 9.4% 对 2.3%);
+        /// 城镇光效的实测里,三个光效层的染色 alpha 在同一时刻落在帧 0 与帧 1 之间的同一个线性插值位置上(见 E-030)。
+        /// 只核对过"染色 alpha 线性插值";位置、缩放、旋转是否同样插值**未验证**。
+        /// </summary>
+        public const ushort Interpolation = 10;
+
         /// <summary>帧延时,i32,单位毫秒(取值 80、100、70、50、60 等,已核对)。</summary>
         public const ushort Delay = 12;
 
         /// <summary>u32 长度 + 字符串,形如音效键(取值如 HOLD,已核对)。</summary>
         public const ushort Sound = 16;
+    }
+
+    /// <summary>图形特效类型的取值。只有 <see cref="Additive"/> 核对过(证据 E-030)。</summary>
+    public static class AniGraphicEffect
+    {
+        /// <summary>加法混合:dst' = min(255, round(dst + src.rgb × src.a/255 × 染色alpha/255))。</summary>
+        public const int Additive = 2;
     }
 
     /// <summary>
@@ -150,6 +168,43 @@ namespace Dnf.Data
                 }
             }
             r = g = b = a = 255;
+            return false;
+        }
+
+        /// <summary>该帧是否带"与下一帧插值"开关(<see cref="AniFrameProperty.Interpolation"/>,推断,证据 E-030)。</summary>
+        public bool InterpolatesToNext
+        {
+            get
+            {
+                foreach (AniProperty p in Properties)
+                {
+                    if (p.Id == AniFrameProperty.Interpolation)
+                    {
+                        return p.Payload.Length > 0 && p.Payload[0] != 0;
+                    }
+                }
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 染色 alpha(0 到 255);没有染色属性时为 255。只用于加法混合的光效(证据 E-030);
+        /// 对普通混合的帧,染色 alpha 怎样生效**未验证**。
+        /// </summary>
+        public int TintAlpha => TryGetTint(out _, out _, out _, out byte a) ? a : 255;
+
+        /// <summary>图形特效类型(<see cref="AniFrameProperty.GraphicEffect"/>,取值 0 到 6,含义推断)。没有该属性时返回 false。</summary>
+        public bool TryGetGraphicEffect(out int effectType)
+        {
+            foreach (AniProperty p in Properties)
+            {
+                if (p.Id == AniFrameProperty.GraphicEffect && p.Payload.Length >= 2)
+                {
+                    effectType = BinaryPrimitives.ReadUInt16LittleEndian(p.Payload);
+                    return true;
+                }
+            }
+            effectType = 0;
             return false;
         }
 

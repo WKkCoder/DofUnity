@@ -108,6 +108,60 @@ namespace DnfUnity.Tests
             Assert.LessOrEqual(d.MaxChannelDiff, 3, d.ToString());
         }
 
+        [Test]
+        public void Additive_SingleLayer_AlphaAndTintSweep_IsWithinOneOfCpu()
+        {
+            RequireGraphics();
+            // 加法公式 dst + src × a/255 × A/255:GPU 在浮点里算再量化,CPU 是整数一次取整;单层应当最多差 1
+            int worst = 0;
+            foreach (int tint in new[] { 1, 77, 139, 157, 200, 255 })
+            {
+                List<SceneSprite> sprites = RenderSelfTest.AdditiveSweep(100, 100, tint);
+                foreach (var bg in new[] { new Color32(40, 40, 40, 255), new Color32(200, 90, 13, 255), new Color32(0, 0, 0, 255), new Color32(255, 255, 255, 255) })
+                {
+                    RenderSelfTest.Diff d = RenderSelfTest.Compare(RenderGpu(sprites, bg), RenderCpu(sprites, bg));
+                    TestContext.Out.WriteLine("染色 alpha " + tint + ",底色 " + bg + ": " + d);
+                    worst = Math.Max(worst, d.MaxChannelDiff);
+                    Assert.LessOrEqual(d.MaxChannelDiff, 1, "染色 alpha " + tint + ",底色 " + bg + ": " + d);
+                }
+            }
+            TestContext.Out.WriteLine("最大通道差 " + worst);
+        }
+
+        [Test]
+        public void Additive_ShaderIsFoundAndAddsOntoTheBackground()
+        {
+            RequireGraphics();
+            // 一个 4×4 的 (100,0,0,255) 块,染色 alpha 255,加到 (40,40,40) 上 → (140,40,40)
+            var px = new byte[4 * 4 * 4];
+            for (int i = 0; i < px.Length; i += 4)
+            {
+                px[i] = 100;
+                px[i + 3] = 255;
+            }
+            var frame = new SpriteFrame(4, 4, 0, 0, 4, 4, px);
+            var sprites = new List<SceneSprite> { new SceneSprite(frame, 10, 10, 0, 0, "synthetic", 0, false, SpriteBlend.Additive, 255) };
+            byte[] gpu = RenderGpu(sprites, Background);
+            int o = (11 * PixelScreen.Width + 11) * 4;
+            Assert.AreEqual(new[] { 140, 40, 40, 255 }, new[] { (int)gpu[o], gpu[o + 1], gpu[o + 2], gpu[o + 3] });
+            int outside = (11 * PixelScreen.Width + 20) * 4;
+            Assert.AreEqual(new[] { 40, 40, 40, 255 }, new[] { (int)gpu[outside], gpu[outside + 1], gpu[outside + 2], gpu[outside + 3] });
+        }
+
+        [Test]
+        public void Additive_RandomMixedSprites_StayCloseToCpu()
+        {
+            RequireGraphics();
+            foreach (int seed in new[] { 21, 22 })
+            {
+                List<SceneSprite> sprites = RenderSelfTest.RandomSprites(seed, 30, true, mirrorSome: true, additiveSome: true);
+                RenderSelfTest.Diff d = RenderSelfTest.Compare(RenderGpu(sprites, Background), RenderCpu(sprites, Background));
+                TestContext.Out.WriteLine("seed " + seed + ": " + d);
+                // 加法层叠加时每层的取整误差会累积(后一层不缩小前面的误差),所以容差比单层宽
+                Assert.LessOrEqual(d.MaxChannelDiff, 4, "seed " + seed + ": " + d);
+            }
+        }
+
         private static string DnfDirOrIgnore()
         {
             string dir = Environment.GetEnvironmentVariable("DNF_DIR");
@@ -156,7 +210,9 @@ namespace DnfUnity.Tests
             using (var view = new TownView(assets, "map/elvengard/(r)gate.map", TownProjection.FromE024, Background))
             {
                 Assert.AreEqual(5, view.NpcCount, "网关地图的 [NPC] 列表有 5 个 NPC");
-                foreach (long t in new long[] { 0, 150, 1234, 5000, 60000 })
+                Assert.AreEqual(5, view.LayerCount, "网关地图的 [animation] 有 5 个图层(其中 3 个是加法光效)");
+                // 545 ms 与 1455 ms 是原版截图里光效的相位(证据 E-030),其余是任意时刻
+                foreach (long t in new long[] { 0, 150, 545, 1234, 1455, 5000, 60000 })
                 {
                     List<SceneSprite> sprites = view.ShowAt(t);
                     byte[] gpu = view.Stage.Capture();
@@ -164,7 +220,7 @@ namespace DnfUnity.Tests
                     RenderSelfTest.Diff d = RenderSelfTest.Compare(gpu, cpu);
                     TestContext.Out.WriteLine("t=" + t + "ms: 精灵 " + sprites.Count + ";" + d);
                     Assert.LessOrEqual(d.MaxChannelDiff, 1, "t=" + t + ": " + d);
-                    if (t == 0)
+                    if (t == 545)
                     {
                         WritePng(gpu, RepoOut("unity-town-gpu.png"));
                     }

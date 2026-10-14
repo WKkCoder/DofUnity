@@ -41,7 +41,20 @@ namespace Dnf.Render
         /// <summary>像素块水平翻转后绘制;<see cref="ScreenX"/> 是翻转后像素块的左上角。</summary>
         public bool Mirrored { get; }
 
-        public SceneSprite(SpriteFrame frame, int screenX, int screenY, int sortKey, int npcId, string animationPath, int aniFrame, bool mirrored = false)
+        /// <summary>混合方式(<see cref="SpriteBlend.Additive"/> 来自 .ani 的图形特效类型 2,证据 E-030)。</summary>
+        public SpriteBlend Blend { get; }
+
+        /// <summary>染色 alpha(0 到 255),已按帧间插值算好;目前只有加法混合会用到。</summary>
+        public int TintAlpha { get; }
+
+        /// <summary>
+        /// 前后顺序的大类:0 distantback、1 middleback、2 closeback、3 bottom、4 normal(NPC 也在这一类里,类内按世界 y 排)、5 close。
+        /// 这个顺序是按图层名的字面含义排的,只有 closeback 在 GateBack 上被截图核对过位置(证据 E-030)。
+        /// </summary>
+        public int LayerRank { get; }
+
+        public SceneSprite(SpriteFrame frame, int screenX, int screenY, int sortKey, int npcId, string animationPath, int aniFrame, bool mirrored = false,
+            SpriteBlend blend = SpriteBlend.Normal, int tintAlpha = 255, int layerRank = TownScene.NormalRank)
         {
             Frame = frame;
             ScreenX = screenX;
@@ -51,6 +64,9 @@ namespace Dnf.Render
             AnimationPath = animationPath;
             AniFrame = aniFrame;
             Mirrored = mirrored;
+            Blend = blend;
+            TintAlpha = tintAlpha;
+            LayerRank = layerRank;
         }
     }
 
@@ -63,6 +79,24 @@ namespace Dnf.Render
     public static class TownScene
     {
         public const string NpcCatalogPath = "npc/npc.lst";
+
+        /// <summary>NPC 与 [normal] 图层所在的大类编号(见 <see cref="SceneSprite.LayerRank"/>)。</summary>
+        public const int NormalRank = 4;
+
+        /// <summary>图层名 → 大类编号;不认识的图层名按 normal 处理。</summary>
+        public static int LayerRank(string layer)
+        {
+            switch (layer)
+            {
+                case "[distantback]": return 0;
+                case "[middleback]": return 1;
+                case "[closeback]": return 2;
+                case "[bottom]": return 3;
+                case "[normal]": return NormalRank;
+                case "[close]": return 5;
+                default: return NormalRank;
+            }
+        }
 
         /// <summary>
         /// 读地图脚本里所有 [NPC] 行。真实数据里每个 NPC 是 5 个值:编号、朝向字符串("[left]" 或 "[right]")、x、y、z;
@@ -237,6 +271,102 @@ namespace Dnf.Render
             return new SceneSprite(sprite, sx, sy, r.Npc.Y, r.Npc.Id, r.AnimationPath, aniFrame, mirrored);
         }
 
+        /// <summary>一个已经解析好动画的地图图层([animation] 里的一项)。</summary>
+        public sealed class ResolvedLayer
+        {
+            public MapAnimation Animation { get; }
+            public AniFile Ani { get; }
+            public AniTimeline Timeline { get; }
+
+            public ResolvedLayer(MapAnimation animation, AniFile ani)
+            {
+                Animation = animation;
+                Ani = ani;
+                Timeline = new AniTimeline(ani);
+            }
+        }
+
+        /// <summary>解析地图 [animation] 里的每一项;动画文件缺失或没有帧的被跳过。</summary>
+        public static List<ResolvedLayer> ResolveLayers(DnfAssets assets, string mapPath)
+        {
+            var result = new List<ResolvedLayer>();
+            foreach (MapAnimation a in MapScript.ReadAnimations(assets, mapPath))
+            {
+                AniFile ani = assets.LoadAni(a.AnimationPath);
+                if (ani == null || ani.Frames.Length == 0)
+                {
+                    continue;
+                }
+                result.Add(new ResolvedLayer(a, ani));
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// 地图图层在 <paramref name="timeMs"/> 时刻的精灵:位置模型与 NPC 相同(GateBack、GatePillar 与三个光效层的位置都等于模型的预测,证据 E-030);
+        /// 图形特效类型 2 画成加法混合,染色 alpha 在带插值开关的帧之间线性插值。该帧没有图或图缺失时返回 null。
+        /// 缩放大小、旋转与染色颜色同 NPC 一样**还没有实现**(只处理 x 缩放为负的水平镜像)。
+        /// </summary>
+        public static SceneSprite LayerSpriteAt(DnfAssets assets, ResolvedLayer r, long timeMs, TownProjection projection)
+        {
+            AniSample sample = r.Timeline.Sample(timeMs);
+            if (sample.Frame < 0)
+            {
+                return null;
+            }
+            AniFrame f = r.Ani.Frames[sample.Frame];
+            if (f.ImageIndex < 0 || f.ImageIndex >= r.Ani.ImagePaths.Length)
+            {
+                return null;
+            }
+            string img = "sprite/" + r.Ani.ImagePaths[f.ImageIndex].Replace('\\', '/');
+            if (!assets.TryGetFrame(img, f.FrameIndex, out SpriteFrame sprite))
+            {
+                return null;
+            }
+            bool mirrored = f.TryGetScale(out float scaleX, out _) && scaleX < 0f;
+            MapAnimation a = r.Animation;
+            projection.TopLeft(a.X, a.Y, a.Z, f.X, f.Y, sprite.OffsetX, sprite.OffsetY, sprite.Width, mirrored, out int sx, out int sy);
+            bool additive = f.TryGetGraphicEffect(out int effect) && effect == AniGraphicEffect.Additive;
+            return new SceneSprite(sprite, sx, sy, a.Y, -1, a.AnimationPath, sample.Frame, mirrored,
+                additive ? SpriteBlend.Additive : SpriteBlend.Normal, r.Timeline.TintAlphaAt(timeMs), LayerRank(a.Layer));
+        }
+
+        /// <summary>
+        /// 整个场景在 <paramref name="timeMs"/> 时刻的绘制列表:地图的 [animation] 图层加上 [NPC],已排好序。
+        /// 排序:先按图层大类(distantback 到 close),大类 normal 里(NPC 也在其中)再按世界 y,其余大类保持列表顺序。
+        /// 这个顺序的前提是图层名的字面含义;normal 类里的光效与 NPC 谁在上面见证据 E-030 的核对结果。
+        /// 没有主角、名牌、界面与特效。
+        /// </summary>
+        public static List<SceneSprite> BuildScene(DnfAssets assets, string mapPath, TownProjection projection, long timeMs)
+        {
+            return BuildResolvedScene(assets, ResolveLayers(assets, mapPath), Resolve(assets, ReadMapNpcs(assets, mapPath)), projection, timeMs);
+        }
+
+        /// <summary>与 <see cref="BuildScene"/> 相同,但用已经解析好的图层与 NPC(逐帧调用时不必每次重新解析脚本)。</summary>
+        public static List<SceneSprite> BuildResolvedScene(DnfAssets assets, IReadOnlyList<ResolvedLayer> layers, IReadOnlyList<ResolvedNpc> npcs,
+            TownProjection projection, long timeMs)
+        {
+            var sprites = new List<SceneSprite>(layers.Count + npcs.Count);
+            foreach (ResolvedLayer layer in layers)
+            {
+                SceneSprite s = LayerSpriteAt(assets, layer, timeMs, projection);
+                if (s != null)
+                {
+                    sprites.Add(s);
+                }
+            }
+            foreach (ResolvedNpc r in npcs)
+            {
+                SceneSprite s = SpriteAt(assets, r, r.Timeline.FrameAt(timeMs), projection);
+                if (s != null)
+                {
+                    sprites.Add(s);
+                }
+            }
+            return StableSortByDepth(sprites);
+        }
+
         /// <summary>
         /// 构造 <paramref name="timeMs"/> 时刻的绘制列表,已按画家算法排好序(先画的在前;同一个 y 的保持列表顺序)。
         /// </summary>
@@ -269,8 +399,21 @@ namespace Dnf.Render
             }
             order.Sort((x, y) =>
             {
-                int c = x.Value.SortKey.CompareTo(y.Value.SortKey);
-                return c != 0 ? c : x.Key.CompareTo(y.Key);
+                int c = x.Value.LayerRank.CompareTo(y.Value.LayerRank);
+                if (c != 0)
+                {
+                    return c;
+                }
+                // 只有 normal 大类按世界 y 排;其他大类保持列表顺序
+                if (x.Value.LayerRank == NormalRank)
+                {
+                    c = x.Value.SortKey.CompareTo(y.Value.SortKey);
+                    if (c != 0)
+                    {
+                        return c;
+                    }
+                }
+                return x.Key.CompareTo(y.Key);
             });
             var sorted = new List<SceneSprite>(order.Count);
             foreach (KeyValuePair<int, SceneSprite> kv in order)
@@ -284,7 +427,7 @@ namespace Dnf.Render
         {
             foreach (SceneSprite s in sprites)
             {
-                canvas.Draw(s.Frame, s.ScreenX, s.ScreenY, s.Mirrored);
+                canvas.Draw(s.Frame, s.ScreenX, s.ScreenY, s.Mirrored, s.Blend, s.TintAlpha);
             }
         }
     }

@@ -46,9 +46,26 @@ namespace Dnf.Render
         /// </summary>
         public void Draw(SpriteFrame sprite, int x, int y, bool mirrored)
         {
+            Draw(sprite, x, y, mirrored, SpriteBlend.Normal, 255);
+        }
+
+        /// <summary>
+        /// 同上,并指定混合方式与染色 alpha(0 到 255)。
+        /// 加法混合 <see cref="SpriteBlend.Additive"/>:对每个 alpha 不为 0 的像素,
+        /// dst' = min(255, round(dst + src × src.a/255 × tintAlpha/255)),按通道独立,整个式子只在最后四舍五入一次。
+        /// 这条规则在原版截图上对 GatePillarLight 的 1,366 个像素逐像素精确成立、对 GateLight1 的 44,200 个像素 98.94% 精确成立(证据 E-030)。
+        /// 普通混合忽略染色 alpha(它在普通混合下怎样生效没有核对过)。画布自己的 alpha 通道在加法混合时保持不变。
+        /// </summary>
+        public void Draw(SpriteFrame sprite, int x, int y, bool mirrored, SpriteBlend blend, int tintAlpha)
+        {
             if (sprite == null)
             {
                 throw new ArgumentNullException(nameof(sprite));
+            }
+            if (blend == SpriteBlend.Additive)
+            {
+                DrawAdditive(sprite, x, y, mirrored, Math.Max(0, Math.Min(255, tintAlpha)));
+                return;
             }
             int x0 = Math.Max(0, -x);
             int y0 = Math.Max(0, -y);
@@ -102,6 +119,42 @@ namespace Dnf.Render
                         Pixels[dof + 1] = (byte)((src[so + 1] * wSrc + Pixels[dof + 1] * wDst + denom / 2) / denom);
                         Pixels[dof + 2] = (byte)((src[so + 2] * wSrc + Pixels[dof + 2] * wDst + denom / 2) / denom);
                         Pixels[dof + 3] = (byte)outA;
+                    }
+                }
+            }
+        }
+
+        private void DrawAdditive(SpriteFrame sprite, int x, int y, bool mirrored, int tintAlpha)
+        {
+            if (tintAlpha == 0)
+            {
+                return;
+            }
+            int x0 = Math.Max(0, -x);
+            int y0 = Math.Max(0, -y);
+            int x1 = Math.Min(sprite.Width, Width - x);
+            int y1 = Math.Min(sprite.Height, Height - y);
+            byte[] src = sprite.Rgba;
+            const int Denominator = 255 * 255;
+            for (int sy = y0; sy < y1; sy++)
+            {
+                int rowStart = sy * sprite.Width * 4;
+                int dof = ((y + sy) * Width + x + x0) * 4;
+                for (int sx = x0; sx < x1; sx++, dof += 4)
+                {
+                    int so = rowStart + (mirrored ? sprite.Width - 1 - sx : sx) * 4;
+                    int weight = src[so + 3] * tintAlpha;
+                    if (weight == 0)
+                    {
+                        continue;
+                    }
+                    // round(dst + src × weight / 65025) = floor((2 × (dst × 65025 + src × weight) + 65025) / (2 × 65025));
+                    // 65025 是奇数,所以不会出现恰好 .5 的平局,与浮点写法逐位相同。
+                    for (int c = 0; c < 3; c++)
+                    {
+                        int numerator = Pixels[dof + c] * Denominator + src[so + c] * weight;
+                        int value = (2 * numerator + Denominator) / (2 * Denominator);
+                        Pixels[dof + c] = (byte)(value > 255 ? 255 : value);
                     }
                 }
             }

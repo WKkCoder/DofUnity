@@ -63,6 +63,86 @@ public class AniTimelineTests
     {
         var t = new AniTimeline(AniFile.Parse(TestData.BuildAni(new[] { "A.img" }, Array.Empty<(ushort, byte[])>(), Array.Empty<TestData.AniFrameSpec>())));
         Assert.Equal(-1, t.FrameAt(0));
+        Assert.Equal(-1, t.Sample(0).Frame);
+        Assert.Equal(255, t.TintAlphaAt(0));
+    }
+
+    /// <summary>与城镇 GateOutLight、GatePillarLight 同构:alpha 0 → 255(没有染色)→ 0,帧 0、1 带插值开关且各 1000 ms,帧 2 没有时长,循环。</summary>
+    private static AniFile GlowAni(bool lastFrameInterpolates = false)
+    {
+        var f0 = new TestData.AniFrameSpec { ImageIndex = 0, FrameIndex = 0 };
+        f0.Props.Add((9, new byte[] { 255, 255, 255, 0 }));
+        f0.Props.Add((10, new byte[] { 1 }));
+        f0.Props.Add((12, TestData.LE32(1000)));
+        var f1 = new TestData.AniFrameSpec { ImageIndex = 0, FrameIndex = 0 };
+        f1.Props.Add((10, new byte[] { 1 }));
+        f1.Props.Add((12, TestData.LE32(1000)));
+        var f2 = new TestData.AniFrameSpec { ImageIndex = 0, FrameIndex = 0 };
+        f2.Props.Add((9, new byte[] { 255, 255, 255, 0 }));
+        if (lastFrameInterpolates)
+        {
+            f2.Props.Add((10, new byte[] { 1 }));
+            f2.Props.Add((12, TestData.LE32(500)));
+        }
+        return AniFile.Parse(TestData.BuildAni(new[] { "A.img" }, new (ushort, byte[])[] { (0, new byte[] { 1 }) }, new[] { f0, f1, f2 }));
+    }
+
+    [Fact]
+    public void SampleReportsTheFrameInterpolationTargetAndProgress()
+    {
+        var t = new AniTimeline(GlowAni());
+        Assert.Equal(2000, t.TotalMilliseconds);
+
+        AniSample a = t.Sample(545);
+        Assert.Equal((0, 1, true), (a.Frame, a.NextFrame, a.Interpolates));
+        Assert.Equal(0.545, a.Progress, 6);
+
+        AniSample b = t.Sample(1000);
+        Assert.Equal((1, 2, true), (b.Frame, b.NextFrame, b.Interpolates));
+        Assert.Equal(0.0, b.Progress, 6);
+
+        // 循环:2000 回到帧 0;帧 2 时长为 0,不会被选中
+        Assert.Equal(0, t.Sample(2000).Frame);
+        Assert.Equal(1, t.Sample(1999).Frame);
+        // FrameAt 就是 Sample().Frame
+        for (long ms = 0; ms < 4200; ms += 37)
+        {
+            Assert.Equal(t.Sample(ms).Frame, t.FrameAt(ms));
+        }
+    }
+
+    [Fact]
+    public void TintAlphaInterpolatesLinearlyBetweenKeyFramesAndRoundsToNearest()
+    {
+        var t = new AniTimeline(GlowAni());
+        // 帧 0 → 帧 1:0 → 255;545 ms 处 255 × 0.545 = 138.975 → 139(城镇截图里光效层的 alpha,证据 E-030)
+        Assert.Equal(0, t.TintAlphaAt(0));
+        Assert.Equal(139, t.TintAlphaAt(545));
+        Assert.Equal(255, t.TintAlphaAt(1000));
+        // 帧 1 → 帧 2:255 → 0,对称
+        Assert.Equal(139, t.TintAlphaAt(1455));
+        Assert.Equal(0, t.TintAlphaAt(1999));
+        Assert.Equal(0, t.TintAlphaAt(2000));       // 循环回帧 0
+        Assert.Equal(139, t.TintAlphaAt(2545));
+    }
+
+    [Fact]
+    public void FramesWithoutTheInterpolationFlagUseTheirOwnTintAndTheLastFrameNeverInterpolates()
+    {
+        // 没有插值开关:染色 alpha 就是本帧的(没有染色属性按 255),Interpolates 为假
+        var plain = new AniTimeline(Ani(true, 100, 200));
+        AniSample s = plain.Sample(150);
+        Assert.False(s.Interpolates);
+        Assert.Equal(s.Frame, s.NextFrame);
+        Assert.Equal(255, plain.TintAlphaAt(150));
+
+        // 最后一帧即使带开关也没有下一帧可插:不插值
+        var t = new AniTimeline(GlowAni(lastFrameInterpolates: true));
+        Assert.Equal(2500, t.TotalMilliseconds);
+        AniSample last = t.Sample(2200);
+        Assert.Equal(2, last.Frame);
+        Assert.False(last.Interpolates);
+        Assert.Equal(0, t.TintAlphaAt(2200));
     }
 }
 
@@ -137,6 +217,85 @@ public class RgbaCanvasTests
     public void SpriteFrameRejectsAWrongBufferLength()
     {
         Assert.Throws<ArgumentException>(() => new SpriteFrame(2, 2, 0, 0, 2, 2, new byte[15]));
+    }
+}
+
+public class AdditiveBlendTests
+{
+    private static SpriteFrame Sprite(int w, int h, params byte[] rgba) => new SpriteFrame(w, h, 0, 0, w, h, rgba);
+
+    [Fact]
+    public void AddsSourceTimesAlphaTimesTintAndClampsAt255()
+    {
+        // dst + src × src.a/255 × A/255 = dst + src × 128 × 139 / 65025,最后四舍五入一次
+        var c = new RgbaCanvas(1, 1);
+        c.Clear(100, 200, 250, 255);
+        c.Draw(Sprite(1, 1, 200, 100, 50, 128), 0, 0, false, SpriteBlend.Additive, 139);
+        // R: 100 + 54.72 = 154.72 → 155;G: 200 + 27.36 = 227.36 → 227;B: 250 + 13.68 = 263.68 → 255
+        Assert.Equal(new byte[] { 155, 227, 255, 255 }, c.Pixels);
+    }
+
+    [Fact]
+    public void RoundsOnceAtTheEndNotAfterEachMultiplication()
+    {
+        // 130 × 1 × 139 / 65025 = 0.28:一次取整得 100;若先把 a × A 取整成 1 再乘,会得到 101(在原版截图上是前者,证据 E-030)
+        var c = new RgbaCanvas(1, 1);
+        c.Clear(100, 0, 0, 255);
+        c.Draw(Sprite(1, 1, 130, 0, 0, 1), 0, 0, false, SpriteBlend.Additive, 139);
+        Assert.Equal(100, c.Pixels[0]);
+    }
+
+    [Fact]
+    public void FullyTransparentPixelsAndZeroTintChangeNothing()
+    {
+        var c = new RgbaCanvas(2, 1);
+        c.Clear(10, 20, 30, 255);
+        c.Draw(Sprite(2, 1, 255, 255, 255, 0, 255, 255, 255, 255), 0, 0, false, SpriteBlend.Additive, 0);
+        Assert.Equal(new byte[] { 10, 20, 30, 255, 10, 20, 30, 255 }, c.Pixels);
+        c.Draw(Sprite(2, 1, 255, 255, 255, 0, 1, 1, 1, 255), 0, 0, false, SpriteBlend.Additive, 255);
+        Assert.Equal(new byte[] { 10, 20, 30, 255, 11, 21, 31, 255 }, c.Pixels);
+    }
+
+    [Fact]
+    public void FullAlphaAndFullTintAddTheSourceColour()
+    {
+        var c = new RgbaCanvas(1, 1);
+        c.Clear(5, 250, 0, 255);
+        c.Draw(Sprite(1, 1, 7, 7, 7, 255), 0, 0, false, SpriteBlend.Additive, 255);
+        Assert.Equal(new byte[] { 12, 255, 7, 255 }, c.Pixels);
+    }
+
+    [Fact]
+    public void AdditiveDrawIsClippedAndCanBeMirrored()
+    {
+        var f = Sprite(3, 1, 10, 0, 0, 255, 0, 20, 0, 255, 0, 0, 30, 255);
+        var c = new RgbaCanvas(4, 1);
+        c.Clear(1, 1, 1, 255);
+        c.Draw(f, -1, 0, true, SpriteBlend.Additive, 255);       // 翻转后 [B,G,R],左边一格被裁掉 → [G,R]
+        Assert.Equal(new byte[] { 1, 21, 1, 255, 11, 1, 1, 255, 1, 1, 1, 255, 1, 1, 1, 255 }, c.Pixels);
+        c.Draw(f, 100, 100, false, SpriteBlend.Additive, 255);   // 完全在外面
+    }
+
+    [Fact]
+    public void AdditiveLeavesTheCanvasAlphaAlone()
+    {
+        var c = new RgbaCanvas(1, 1);
+        c.Clear(10, 10, 10, 77);
+        c.Draw(Sprite(1, 1, 10, 10, 10, 255), 0, 0, false, SpriteBlend.Additive, 255);
+        Assert.Equal(new byte[] { 20, 20, 20, 77 }, c.Pixels);
+    }
+
+    [Fact]
+    public void NormalBlendIgnoresTheTintAlpha()
+    {
+        // 普通混合下染色 alpha 怎样生效没有核对过,所以明确不处理:传 1 与传 255 结果相同
+        var a = new RgbaCanvas(1, 1);
+        var b = new RgbaCanvas(1, 1);
+        a.Clear(100, 100, 100, 255);
+        b.Clear(100, 100, 100, 255);
+        a.Draw(Sprite(1, 1, 200, 0, 0, 128), 0, 0, false, SpriteBlend.Normal, 1);
+        b.Draw(Sprite(1, 1, 200, 0, 0, 128), 0, 0, false, SpriteBlend.Normal, 255);
+        Assert.Equal(b.Pixels, a.Pixels);
     }
 }
 
@@ -305,5 +464,83 @@ public class TownSceneTests
         Assert.Equal(1, assets.Images.ImageCount);
         Assert.True(assets.TryGetFrame("sprite/map/postbox.img", 0, out SpriteFrame f));
         Assert.Equal(255, f.Rgba[8]);            // 第 2 个像素 R 通道:第一个 NPK 里是 200,第二个 NPK 里加 100 后封顶 255;取到 255 说明用的是后者
+    }
+
+    [Fact]
+    public void ReadsMapAnimationGroupsOfFiveValues()
+    {
+        using var fx = new SceneFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        List<MapAnimation> anims = MapScript.ReadAnimations(assets, "map/test/layers.map");
+        Assert.Equal(3, anims.Count);
+        // 路径相对地图所在目录解析并规范成小写
+        Assert.Equal(new[] { "map/test/animation/glow.ani", "map/test/animation/back.ani", "map/test/animation/back.ani" },
+            anims.Select(a => a.AnimationPath).ToArray());
+        Assert.Equal("Animation/Glow.ani", anims[0].RawPath);
+        Assert.Equal(new[] { "[close]", "[closeback]", "[normal]" }, anims.Select(a => a.Layer).ToArray());
+        Assert.Equal((5, 6, 7), (anims[0].X, anims[0].Y, anims[0].Z));
+        Assert.Equal((100, 50, 0), (anims[2].X, anims[2].Y, anims[2].Z));
+
+        // 没有 [animation] 的地图返回空列表;不存在的地图抛 DnfFormatException
+        Assert.Empty(MapScript.ReadAnimations(assets, "map/test/town.map"));
+        Assert.Throws<DnfFormatException>(() => MapScript.ReadAnimations(assets, "map/test/nope.map"));
+    }
+
+    [Fact]
+    public void LayerNamesMapToTheSixKnownRanksAndUnknownOnesAreNormal()
+    {
+        Assert.Equal(new[] { 0, 1, 2, 3, 4, 5 }, MapScript.KnownLayers.Select(TownScene.LayerRank).ToArray());
+        Assert.Equal(TownScene.NormalRank, TownScene.LayerRank("[something else]"));
+        Assert.Equal(TownScene.NormalRank, TownScene.LayerRank(string.Empty));
+    }
+
+    [Fact]
+    public void BuildSceneOrdersByLayerThenYAndDrawsGlowAdditivelyWithInterpolatedTint()
+    {
+        using var fx = new SceneFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        // 书写顺序:光效 [close]、背景 [closeback]、背景 [normal](y = 50)、NPC(y = 163)
+        List<SceneSprite> sprites = TownScene.BuildScene(assets, "map/test/layers.map", TownProjection.FromE024, 545);
+
+        Assert.Equal(new[] { 2, 4, 4, 5 }, sprites.Select(s => s.LayerRank).ToArray());
+        Assert.Equal(new[] { "map/test/animation/back.ani", "map/test/animation/back.ani", "npc/animation/postbox.ani", "map/test/animation/glow.ani" },
+            sprites.Select(s => s.AnimationPath).ToArray());
+        // normal 大类里:背景(y = 50)在 NPC(y = 163)前面
+        Assert.Equal(new[] { -1, -1, 32, -1 }, sprites.Select(s => s.NpcId).ToArray());
+
+        // 位置模型与 NPC 相同:x = 世界 x − 24 + ani x + 帧头 x;y = 世界 y − z + 200 + ani y + 帧头 y
+        Assert.Equal((-23, 196), (sprites[0].ScreenX, sprites[0].ScreenY));      // 背景 (0,0,0),ani (0,−5),帧头 (1,1)
+        Assert.Equal((77, 246), (sprites[1].ScreenX, sprites[1].ScreenY));       // 背景 (100,50,0)
+        Assert.Equal((-28, 180), (sprites[3].ScreenX, sprites[3].ScreenY));      // 光效 (5,6,7),ani (−10,−20)
+
+        // 光效:加法混合,545 ms 处染色 alpha 139;背景与 NPC 是普通混合
+        Assert.Equal(new[] { SpriteBlend.Normal, SpriteBlend.Normal, SpriteBlend.Normal, SpriteBlend.Additive }, sprites.Select(s => s.Blend).ToArray());
+        Assert.Equal(139, sprites[3].TintAlpha);
+        Assert.Equal(0, sprites[3].AniFrame);
+    }
+
+    [Fact]
+    public void RenderingTheSceneAddsTheGlowOnTopOfEverythingElse()
+    {
+        using var fx = new SceneFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        // 相机放到 −100:光效的像素块左上角 (5 + 100 − 10 + 1, 6 − 7 + 200 − 20 + 1) = (96, 180)
+        var projection = new TownProjection(-100, 200);
+        List<SceneSprite> sprites = TownScene.BuildScene(assets, "map/test/layers.map", projection, 1000);   // 1000 ms:帧 1,染色 alpha 255
+        SceneSprite glow = sprites.Single(s => s.Blend == SpriteBlend.Additive);
+        Assert.Equal((96, 180), (glow.ScreenX, glow.ScreenY));
+        Assert.Equal(255, glow.TintAlpha);
+
+        var canvas = new RgbaCanvas(800, 600);
+        canvas.Clear(40, 50, 60, 255);
+        TownScene.Render(canvas, sprites);
+        byte[] P(int x, int y) => canvas.Pixels.Skip((y * 800 + x) * 4).Take(4).ToArray();
+        // 两个背景的像素块分别在 (101, 196) 与 (201, 246) 起,都与光效的像素块 (96..99, 180..182) 不重叠,所以光效下面是清屏色 (40,50,60):
+        // 第 2 个像素 (200,100,50,255) 加上它,alpha 255、染色 255:→ (240,150,110)
+        Assert.Equal(new byte[] { 240, 150, 110, 255 }, P(98, 180));
+        // 第 1 个像素全透明:不变
+        Assert.Equal(new byte[] { 40, 50, 60, 255 }, P(97, 180));
+        // 第 3 个像素 (1,2,3):加法 → (41,52,63)
+        Assert.Equal(new byte[] { 41, 52, 63, 255 }, P(99, 180));
     }
 }

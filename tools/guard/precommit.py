@@ -7,7 +7,7 @@
   3. 单个文件超过 1 MiB
   4. 文件开头是原版容器的魔数(NPK、IMG、旧版 IMG、标记流脚本 B0 D0)
   5. 文本里出现反编译器输出的特征(Ghidra 自动生成的名字与类型)
-  6. 凭据:local.secrets.env 本身,或任何被暂存的文本里出现了该文件里的取值(口令、服务器地址等)
+  6. 凭据:local.secrets.env 本身,或任何被暂存的文本里出现了该文件里的取值(账号、口令、服务器地址等;短取值按独立单词匹配)
 
 绕过只有一个办法:git commit --no-verify。那是你自己的明确决定,不是守卫的漏洞。
 安装:sh tools/guard/install-hooks.sh
@@ -43,7 +43,12 @@ def git(*args):
 
 
 def secret_values():
-    """读取 local.secrets.env 里的取值(长度 >= 8),用来拦截它们出现在被暂存的文本里。"""
+    """读取 local.secrets.env 里的取值,用来拦截它们出现在被暂存的文本里。
+
+    长度 >= 8 的取值按子串匹配;长度 3 到 7 的取值(如用户名)按"独立单词"匹配
+    (前后不能紧挨字母、数字、下划线),既挡住 `--keys '账号<tab>'` 这类写进示例的泄露,
+    又不会因为它碰巧是别的单词的一部分而误伤。
+    """
     root = git("rev-parse", "--show-toplevel").decode("utf-8").strip()
     path = os.path.join(root, "local.secrets.env")
     values = []
@@ -54,8 +59,10 @@ def secret_values():
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 v = line.split("=", 1)[1].strip().strip("'\"")
-                if len(v) >= 8:  # 太短的取值(如用户名)容易误伤普通文字
-                    values.append(v)
+                if len(v) >= 8:
+                    values.append(re.compile(re.escape(v)))
+                elif len(v) >= 3:
+                    values.append(re.compile(r"(?<![A-Za-z0-9_])" + re.escape(v) + r"(?![A-Za-z0-9_])"))
     except OSError:
         pass
     return values
@@ -86,10 +93,10 @@ def main():
             text = blob.decode("utf-8")
         except UnicodeDecodeError:
             continue
-        leaked = next((s for s in secrets if s in text), None)
+        leaked = next((m for m in (pattern.search(text) for pattern in secrets) if m), None)
         if leaked:
-            line = text.count("\n", 0, text.index(leaked)) + 1
-            problems.append((n, "第 %d 行含有 local.secrets.env 里的取值(口令或服务器地址);请删掉" % line))
+            line = text.count("\n", 0, leaked.start()) + 1
+            problems.append((n, "第 %d 行含有 local.secrets.env 里的取值(账号、口令、服务器地址等);请删掉" % line))
             continue
         m = DECOMPILER_RE.search(text)
         if m:

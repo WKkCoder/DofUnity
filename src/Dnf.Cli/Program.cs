@@ -40,6 +40,18 @@ namespace Dnf.Cli
 
         /// <summary>朝向镜像:auto = 朝向 [left] 的 NPC 镜像;on = 全部镜像;off = 都不镜像。帧自己的 x 缩放为负(帧属性 7)总是生效。</summary>
         public string Mirror { get; set; } = "auto";
+
+        /// <summary>render-town --scene:合成整个场景(地图图层 + NPC)而不只是 NPC,与截图整屏对照。</summary>
+        public bool Scene { get; set; }
+
+        /// <summary>render-town --scene --eval x0,y0,x1,y1(可重复):额外统计这些矩形(含 x0,y0,不含 x1,y1)内的吻合率。</summary>
+        public List<(int X0, int Y0, int X1, int Y1)> EvalRects { get; } = new();
+
+        // fit-map(在截图里搜索地图动画层的位置)
+        public int FitTolerance { get; set; } = 8;
+        public int RangeX { get; set; } = 400;
+        public int RangeY { get; set; } = 250;
+        public int Samples { get; set; } = 2000;
     }
 
     internal static class CommandLine
@@ -58,6 +70,10 @@ namespace Dnf.Cli
             "  dnf render-town [--map <PVF 里的地图路径>] [--cam-x N] [--ground-y N] [--time <毫秒>] [--png <输出.png>] [--shot <截图.png> [--best-frame] [--radius N]] [--mirror auto|on|off]\n" +
             "      用 CPU 合成器画出地图 [NPC] 列表里的 NPC(模型见证据 E-024);带 --shot 时与原版截图逐像素对照,\n" +
             "      --best-frame 在每个 NPC 的全部帧里选精确一致像素最多的帧;--png 带 --shot 时输出 左=我们 中=原版 右=对照 的三联图。\n" +
+            "  dnf render-town --scene --shot <截图.png> [--time <毫秒>] [--map <地图>] [--png <输出.png>] [--eval x0,y0,x1,y1 ...]\n" +
+            "      合成整个场景(地图 [animation] 图层 + NPC;加法混合光效与染色 alpha 的帧间插值见证据 E-030),与截图整屏逐像素对照并按格子给出吻合率。\n" +
+            "  dnf fit-map --shot <截图.png> [--map <地图>] [--fit-tol N] [--range-x N] [--range-y N] [--samples N] [--png <输出.png>]\n" +
+            "      对地图 [animation] 里每个动画的每一帧,在截图里搜索不透明像素在容差内一致最多的位置,并与位置模型的预测比较(证据 E-030)。\n" +
             "选项:\n" +
             "  --dnf-dir <目录>          数据目录(默认读环境变量 DNF_DIR,再读仓库根的 local.env)\n" +
             "  --out <目录>              参考输出目录(默认 <仓库>/out)\n" +
@@ -146,11 +162,29 @@ namespace Dnf.Cli
                     case "--best-frame":
                         opts.BestFrame = true;
                         break;
+                    case "--scene":
+                        opts.Scene = true;
+                        break;
+                    case "--eval":
+                        opts.EvalRects.Add(ParseRect(NextValue(args, ref i)));
+                        break;
                     case "--mirror":
                         opts.Mirror = NextValue(args, ref i) is var mv && (mv is "auto" or "on" or "off") ? mv : throw new UserError("--mirror 需要 auto、on 或 off");
                         break;
                     case "--radius":
                         opts.Radius = int.TryParse(NextValue(args, ref i), out int rd) && rd >= 0 && rd <= 16 ? rd : throw new UserError("--radius 需要 0 到 16 的整数");
+                        break;
+                    case "--fit-tol":
+                        opts.FitTolerance = int.TryParse(NextValue(args, ref i), out int ft) && ft >= 0 && ft <= 255 ? ft : throw new UserError("--fit-tol 需要 0 到 255 的整数");
+                        break;
+                    case "--range-x":
+                        opts.RangeX = int.TryParse(NextValue(args, ref i), out int rx) && rx >= 0 && rx <= 2000 ? rx : throw new UserError("--range-x 需要 0 到 2000 的整数");
+                        break;
+                    case "--range-y":
+                        opts.RangeY = int.TryParse(NextValue(args, ref i), out int ry) && ry >= 0 && ry <= 2000 ? ry : throw new UserError("--range-y 需要 0 到 2000 的整数");
+                        break;
+                    case "--samples":
+                        opts.Samples = int.TryParse(NextValue(args, ref i), out int sm) && sm >= 100 && sm <= 100000 ? sm : throw new UserError("--samples 需要 100 到 100000 的整数");
                         break;
                     default:
                         if (args[i].StartsWith("--", StringComparison.Ordinal))
@@ -169,7 +203,11 @@ namespace Dnf.Cli
                 case "locate":
                     return SpriteLocator.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "render-town":
-                    return TownRender.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                    return opts.Scene
+                        ? SceneCompare.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts)
+                        : TownRender.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "fit-map":
+                    return MapFit.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "verify":
                     if (positional.Count != 1)
                     {
@@ -179,6 +217,17 @@ namespace Dnf.Cli
                 default:
                     throw new UserError("未知命令 " + command + "\n" + Usage);
             }
+        }
+
+        private static (int, int, int, int) ParseRect(string text)
+        {
+            string[] parts = text.Split(',');
+            if (parts.Length != 4 || !int.TryParse(parts[0], out int x0) || !int.TryParse(parts[1], out int y0)
+                || !int.TryParse(parts[2], out int x1) || !int.TryParse(parts[3], out int y1) || x1 <= x0 || y1 <= y0)
+            {
+                throw new UserError("--eval 需要 x0,y0,x1,y1 且 x1 > x0、y1 > y0");
+            }
+            return (x0, y0, x1, y1);
         }
 
         private static string NextValue(string[] args, ref int i)

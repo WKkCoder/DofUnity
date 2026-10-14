@@ -71,9 +71,10 @@ namespace Dnf.Client
 
         /// <summary>
         /// 随机帧;位置范围故意超出屏幕四边,检查裁剪。<paramref name="semiTransparent"/> 为假时 alpha 只有 0 与 255。
-        /// <paramref name="mirrorSome"/> 为真时随机让约一半的精灵水平镜像。
+        /// <paramref name="mirrorSome"/> 为真时随机让约一半的精灵水平镜像;
+        /// <paramref name="additiveSome"/> 为真时随机让约一半的精灵用加法混合,染色 alpha 随机取 0 到 255。
         /// </summary>
-        public static List<SceneSprite> RandomSprites(int seed, int count, bool semiTransparent, bool mirrorSome = false)
+        public static List<SceneSprite> RandomSprites(int seed, int count, bool semiTransparent, bool mirrorSome = false, bool additiveSome = false)
         {
             var rng = new System.Random(seed);
             var list = new List<SceneSprite>();
@@ -91,7 +92,10 @@ namespace Dnf.Client
                 }
                 var frame = new SpriteFrame(w, h, 0, 0, w, h, px);
                 bool mirrored = mirrorSome && rng.Next(2) == 0;
-                list.Add(new SceneSprite(frame, rng.Next(-40, PixelScreen.Width + 10), rng.Next(-40, PixelScreen.Height + 10), i, i, "synthetic", 0, mirrored));
+                bool additive = additiveSome && rng.Next(2) == 0;
+                int tint = additive ? rng.Next(256) : 255;
+                list.Add(new SceneSprite(frame, rng.Next(-40, PixelScreen.Width + 10), rng.Next(-40, PixelScreen.Height + 10), i, i, "synthetic", 0, mirrored,
+                    additive ? SpriteBlend.Additive : SpriteBlend.Normal, tint));
             }
             return list;
         }
@@ -139,6 +143,17 @@ namespace Dnf.Client
                 }
             }
             return new List<SceneSprite> { new SceneSprite(new SpriteFrame(w, h, 0, 0, w, h, px), screenX, screenY, 0, 0, "synthetic", 0) };
+        }
+
+        /// <summary>
+        /// 与 <see cref="AlphaSweep"/> 相同的 256×8 色带(第 x 列 alpha = x),但用加法混合并带染色 alpha。
+        /// 压在纯色底上检验加法公式 dst + src × a/255 × A/255 在 GPU 上的取整。
+        /// </summary>
+        public static List<SceneSprite> AdditiveSweep(int screenX, int screenY, int tintAlpha)
+        {
+            List<SceneSprite> normal = AlphaSweep(screenX, screenY);
+            SceneSprite s = normal[0];
+            return new List<SceneSprite> { new SceneSprite(s.Frame, screenX, screenY, 0, 0, "synthetic", 0, false, SpriteBlend.Additive, tintAlpha) };
         }
 
         public static byte[] RenderCpu(IReadOnlyList<SceneSprite> sprites, Color32 background)
