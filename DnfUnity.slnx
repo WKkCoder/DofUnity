@@ -3,5 +3,7 @@
     <Project Path="src/Dnf.Cli/Dnf.Cli.csproj" />
     <Project Path="src/Dnf.Data.Tests/Dnf.Data.Tests.csproj" />
     <Project Path="src/Dnf.Data/Dnf.Data.csproj" />
+    <Project Path="src/Dnf.Render.Tests/Dnf.Render.Tests.csproj" />
+    <Project Path="src/Dnf.Render/Dnf.Render.csproj" />
   </Folder>
 </Solution>

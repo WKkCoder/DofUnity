@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    源码的唯一来源是 UPM 包 packages/com.dnfunity.render/Runtime;
+    这个工程把同一批 .cs 文件编译成 netstandard2.1 程序集,供命令行工具与测试使用。
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <AssemblyName>Dnf.Render</AssemblyName>
+    <RootNamespace>Dnf.Render</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\packages\com.dnfunity.render\Runtime\**\*.cs" Link="Runtime\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Dnf.Data\Dnf.Data.csproj" />
+  </ItemGroup>
+
+</Project>

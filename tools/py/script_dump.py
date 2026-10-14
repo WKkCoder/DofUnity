@@ -6,7 +6,7 @@
   python3 tools/py/script_dump.py <路径> --out re/notes/x.txt   写到文件(re/ 不入库)
 
 输出里:整数直接写;浮点按 32 位解释;字符串用引号;类型 8 的"连接符"写成 <c:值>;
-类型 9+10 的"数值+字符串对"写成 (数值,"字符串");类型 6 写成 <data:十六进制>。
+类型 9+10 的"数值+字符串对"写成 (数值,"字符串");类型 6 写成 <paren:字符串>。
 注意:这是研究用的查看器。输出含原版脚本内容,只留在本机(re/),不要提交。
 """
 import argparse
@@ -71,7 +71,7 @@ def decode_text(raw, strings):
             vals.append('(%d,"%s")' % (v, strings.get(toks[k + 1][1])))
             k += 1
         elif ty == 6:
-            vals.append("<data:%08X>" % (v & 0xFFFFFFFF))
+            vals.append("<paren:%s>" % strings.get(v))   # 全库 2,493 个类型 6 的值都是有效的字符串池下标,如 (UP)
         else:
             vals.append("<t%d:%d>" % (ty, v))
         k += 1

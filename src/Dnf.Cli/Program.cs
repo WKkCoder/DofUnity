@@ -28,6 +28,15 @@ namespace Dnf.Cli
         public int Tolerance { get; set; }
         public int Top { get; set; } = 60;
         public string? JsonFile { get; set; }
+
+        // render-town(合成城镇里的 NPC,可与截图对照)
+        public string MapPath { get; set; } = "map/elvengard/(r)gate.map";
+        public int CameraX { get; set; } = 24;
+        public int GroundY { get; set; } = 200;
+        public long TimeMs { get; set; }
+        public string? PngFile { get; set; }
+        public bool BestFrame { get; set; }
+        public int Radius { get; set; } = 3;
     }
 
     internal static class CommandLine
@@ -43,6 +52,9 @@ namespace Dnf.Cli
             "      拿一张原版客户端的截图,在全部 IMG 帧里找出不透明像素与截图逐像素相同的帧,并给出位置。\n" +
             "      locate 的选项: --npk-filter <子串>(只扫文件名含它的 NPK)、--min-opaque <N>(默认 150)、\n" +
             "      --min-ratio <0..1>(默认 0.85)、--tol <0..7>(每通道允许的差,默认 0=逐像素相同)、--max-dim <像素>(默认 1200)、--top <N>(打印前 N 个,默认 60)、--json <文件>\n" +
+            "  dnf render-town [--map <PVF 里的地图路径>] [--cam-x N] [--ground-y N] [--time <毫秒>] [--png <输出.png>] [--shot <截图.png> [--best-frame] [--radius N]]\n" +
+            "      用 CPU 合成器画出地图 [NPC] 列表里的 NPC(模型见证据 E-024);带 --shot 时与原版截图逐像素对照,\n" +
+            "      --best-frame 在每个 NPC 的全部帧里选精确一致像素最多的帧;--png 带 --shot 时输出 左=我们 中=原版 右=对照 的三联图。\n" +
             "选项:\n" +
             "  --dnf-dir <目录>          数据目录(默认读环境变量 DNF_DIR,再读仓库根的 local.env)\n" +
             "  --out <目录>              参考输出目录(默认 <仓库>/out)\n" +
@@ -113,6 +125,27 @@ namespace Dnf.Cli
                     case "--json":
                         opts.JsonFile = NextValue(args, ref i);
                         break;
+                    case "--map":
+                        opts.MapPath = NextValue(args, ref i);
+                        break;
+                    case "--cam-x":
+                        opts.CameraX = int.TryParse(NextValue(args, ref i), out int cx) ? cx : throw new UserError("--cam-x 需要整数");
+                        break;
+                    case "--ground-y":
+                        opts.GroundY = int.TryParse(NextValue(args, ref i), out int gy) ? gy : throw new UserError("--ground-y 需要整数");
+                        break;
+                    case "--time":
+                        opts.TimeMs = long.TryParse(NextValue(args, ref i), out long tm) && tm >= 0 ? tm : throw new UserError("--time 需要非负整数毫秒");
+                        break;
+                    case "--png":
+                        opts.PngFile = NextValue(args, ref i);
+                        break;
+                    case "--best-frame":
+                        opts.BestFrame = true;
+                        break;
+                    case "--radius":
+                        opts.Radius = int.TryParse(NextValue(args, ref i), out int rd) && rd >= 0 && rd <= 16 ? rd : throw new UserError("--radius 需要 0 到 16 的整数");
+                        break;
                     default:
                         if (args[i].StartsWith("--", StringComparison.Ordinal))
                         {
@@ -129,6 +162,8 @@ namespace Dnf.Cli
                     return Info(opts);
                 case "locate":
                     return SpriteLocator.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "render-town":
+                    return TownRender.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "verify":
                     if (positional.Count != 1)
                     {

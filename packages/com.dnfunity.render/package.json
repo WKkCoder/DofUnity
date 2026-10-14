@@ -1,0 +1,15 @@
+{
+  "name": "com.dnfunity.render",
+  "version": "0.1.0",
+  "displayName": "DNF Render",
+  "description": "DNF 动画与场景的合成层:按 .ani 的帧与偏移把 IMG 帧放到屏幕坐标,含一个纯 C# 的 CPU 合成器作为对照标准。不含任何原版内容。",
+  "unity": "6000.0",
+  "dependencies": {
+    "com.dnfunity.data": "0.1.0"
+  },
+  "keywords": [
+    "dnf",
+    "ani",
+    "sprite"
+  ]
+}

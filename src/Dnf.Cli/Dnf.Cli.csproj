@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Dnf.Data\Dnf.Data.csproj" />
+    <ProjectReference Include="..\Dnf.Render\Dnf.Render.csproj" />
   </ItemGroup>
 
 </Project>

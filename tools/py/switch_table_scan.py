@@ -153,6 +153,8 @@ def main():
     ap.add_argument("--exe")
     ap.add_argument("--max-hits", type=int, default=40)
     ap.add_argument("--code-sections", default="0,3,5,8", help="哪些 nsn 节算代码范围(按节序号,逗号分隔)")
+    ap.add_argument("--min-default-frac", type=float, default=0.6,
+                    help="非 case 下标里至少这个比例指向同一个默认处理(1.0 = 严格,全部相同;默认 0.6)")
     args = ap.parse_args()
     if args.selftest:
         selftest()
@@ -181,9 +183,9 @@ def main():
     hits4 = []
     hits1 = []
     for si, s in enumerate(secs):
-        for off, d, tg in find_dword_tables(s["data"], cases, in_code):
+        for off, d, tg in find_dword_tables(s["data"], cases, in_code, args.min_default_frac):
             hits4.append((si, s["name"], base + s["vaddr"] + off, d, tg))
-        for off, d, tg in find_byte_tables(s["data"], cases):
+        for off, d, tg in find_byte_tables(s["data"], cases, args.min_default_frac):
             hits1.append((si, s["name"], base + s["vaddr"] + off, d, tg))
 
     print("cases=%s  表长 N=%d  默认下标=%s" % (cases, n, defaults))

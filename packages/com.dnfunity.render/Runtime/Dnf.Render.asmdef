@@ -1,0 +1,16 @@
+{
+  "name": "Dnf.Render",
+  "rootNamespace": "Dnf.Render",
+  "references": [
+    "Dnf.Data"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": true
+}

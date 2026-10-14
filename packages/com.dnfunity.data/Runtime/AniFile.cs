@@ -19,6 +19,15 @@ namespace Dnf.Data
         public const ushort Sound = 16;
     }
 
+    /// <summary>
+    /// 全局属性 id。结构(负载长度)在全库验证过;含义是推断:id 0 是"循环播放"(证据 E-025:
+    /// 名字像 stay、wait、move、walk、run、idle 的多帧动画里 92% 带它,名字像 attack、damage、die、down、cast 的只有 2%)。
+    /// </summary>
+    public static class AniGlobalProperty
+    {
+        public const ushort Loop = 0;
+    }
+
     public readonly struct AniProperty
     {
         public ushort Id { get; }
@@ -109,6 +118,22 @@ namespace Dnf.Data
         public string[] ImagePaths { get; }
         public AniProperty[] GlobalProperties { get; }
         public AniFrame[] Frames { get; }
+
+        /// <summary>是否循环播放(全局属性 0 存在且负载首字节非 0;推断,见 <see cref="AniGlobalProperty"/>)。</summary>
+        public bool Loops
+        {
+            get
+            {
+                foreach (AniProperty p in GlobalProperties)
+                {
+                    if (p.Id == AniGlobalProperty.Loop)
+                    {
+                        return p.Payload.Length > 0 && p.Payload[0] != 0;
+                    }
+                }
+                return false;
+            }
+        }
 
         private AniFile(string[] paths, AniProperty[] globals, AniFrame[] frames)
         {
