@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Dnf.Data.Tests/Dnf.Data.Tests.csproj" />
+    <Project Path="src/Dnf.Data/Dnf.Data.csproj" />
+  </Folder>
+</Solution>

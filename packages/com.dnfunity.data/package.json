@@ -1,0 +1,12 @@
+{
+  "name": "com.dnfunity.data",
+  "version": "0.1.0",
+  "displayName": "DNF Data",
+  "description": "DNF 数据层:读取用户自备的 PVF、NPK、IMG v2、二进制 ANI 与标记流脚本。不含任何原版内容,不依赖 UnityEngine。",
+  "unity": "6000.0",
+  "keywords": [
+    "dnf",
+    "pvf",
+    "npk"
+  ]
+}
