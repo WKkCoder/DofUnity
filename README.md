@@ -7,7 +7,7 @@
 
 | 阶段 | 状态 |
 |---|---|
-| P1 数据层 | **C# 库与命令行已完成,全库对拍零差异**(PVF 334,998 个文件哈希逐一一致;147,273 个标记流脚本;187,365 个 `.ani`;80,328 个 IMG、9,860,711 个帧解码并校验 Adler-32;随机 1000 帧逐像素一致)。Unity 编辑器里编译该包待验证 |
+| P1 数据层 | **C# 库与命令行已完成,全库对拍零差异**(PVF 334,998 个文件哈希逐一一致;147,273 个标记流脚本;187,365 个 `.ani`;80,328 个 IMG、9,860,711 个帧解码并校验 Adler-32;随机 1000 帧逐像素一致)。Unity 6 里编译并运行该包已验证(6 个 EditMode 测试通过,含读取真实 PVF 全部文件) |
 | P2 语义目录 | 脚本语法已破解,tag 目录已生成(3,408 种);语义待标注 |
 | P6 逆向 | `DNF.exe` 已做只读探查,Ghidra 导入与分析进行中 |
 
@@ -21,7 +21,7 @@ tools/py/    Python 参考实现与扫描脚本(只读,标准库)——C# 库的
 tools/guard/ 提交前守卫:挡住原版内容与反编译输出
 packages/    com.dnfunity.data:Unity 包(数据层库的唯一源码)
 src/         Dnf.Data(netstandard2.1 工程,链接上面的源码)、Dnf.Data.Tests(合成数据单元测试)、Dnf.Cli(全库对拍命令行)
-unity/       Unity 工程(待建)
+unity/       Unity 工程 DnfUnity(引用 packages/com.dnfunity.data;目前只有 EditMode 测试)
 re/  out/    逆向产物与生成物,已被 .gitignore 排除
 ```
 
@@ -46,6 +46,8 @@ tools/verify-p1.sh
 ```
 
 需要用户级 .NET SDK(`tools/env.sh` 会把 `~/.dotnet` 加进当前 shell 的 PATH)。报告写到 `out/p1_verification_all.json`。
+
+5. 在 Unity 里跑测试(批处理模式,不需要登录):`tools/unity-test.sh`。结果在 `out/unity-EditMode-results.xml`。
 
 ## 测试策略
 
