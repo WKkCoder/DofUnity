@@ -7,17 +7,20 @@
   3. 单个文件超过 1 MiB
   4. 文件开头是原版容器的魔数(NPK、IMG、旧版 IMG、标记流脚本 B0 D0)
   5. 文本里出现反编译器输出的特征(Ghidra 自动生成的名字与类型)
+  6. 凭据:local.secrets.env 本身,或任何被暂存的文本里出现了该文件里的取值(口令、服务器地址等)
 
 绕过只有一个办法:git commit --no-verify。那是你自己的明确决定,不是守卫的漏洞。
 安装:sh tools/guard/install-hooks.sh
 """
+import os
 import re
 import subprocess
 import sys
 
 MAX_BYTES = 1 << 20
 FORBIDDEN_PREFIXES = ("re/", "out/")
-FORBIDDEN_NAMES = ("local.env",)
+FORBIDDEN_NAMES = ("local.env", "local.secrets.env")
+FORBIDDEN_SUFFIXES = (".secrets.env",)
 FORBIDDEN_EXTS = (".pvf", ".npk", ".img", ".ani", ".exe", ".pcap", ".pcapng")
 MAGICS = [
     (b"NeoplePack_Bill", "NPK 容器"),
@@ -39,13 +42,33 @@ def git(*args):
     return subprocess.run(["git", *args], capture_output=True, check=True).stdout
 
 
+def secret_values():
+    """读取 local.secrets.env 里的取值(长度 >= 8),用来拦截它们出现在被暂存的文本里。"""
+    root = git("rev-parse", "--show-toplevel").decode("utf-8").strip()
+    path = os.path.join(root, "local.secrets.env")
+    values = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                v = line.split("=", 1)[1].strip().strip("'\"")
+                if len(v) >= 8:  # 太短的取值(如用户名)容易误伤普通文字
+                    values.append(v)
+    except OSError:
+        pass
+    return values
+
+
 def main():
     names = [n for n in git("diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z").decode("utf-8").split("\0") if n]
     problems = []
+    secrets = secret_values()
     for n in names:
         low = n.lower()
-        if n.startswith(FORBIDDEN_PREFIXES) or n in FORBIDDEN_NAMES:
-            problems.append((n, "路径属于逆向产物或本机配置,不能提交"))
+        if n.startswith(FORBIDDEN_PREFIXES) or n in FORBIDDEN_NAMES or low.endswith(FORBIDDEN_SUFFIXES):
+            problems.append((n, "路径属于逆向产物、本机配置或凭据,不能提交"))
             continue
         if low.endswith(FORBIDDEN_EXTS):
             problems.append((n, "扩展名属于原版文件或抓包"))
@@ -62,6 +85,11 @@ def main():
         try:
             text = blob.decode("utf-8")
         except UnicodeDecodeError:
+            continue
+        leaked = next((s for s in secrets if s in text), None)
+        if leaked:
+            line = text.count("\n", 0, text.index(leaked)) + 1
+            problems.append((n, "第 %d 行含有 local.secrets.env 里的取值(口令或服务器地址);请删掉" % line))
             continue
         m = DECOMPILER_RE.search(text)
         if m:
