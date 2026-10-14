@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # 用 Unity 批处理模式为一个平台构建最小冒烟播放器,桌面平台(macOS)再把播放器跑一遍。
 # 用法: tools/unity-build-smoke.sh <macos|windows|android>
-# 日志:re/unity-build-<平台>.log;播放器日志:re/unity-run-macos.log(都被 .gitignore 排除)
+# 日志:re/unity-build-<平台>.log;播放器日志:re/unity-run-macos.log、re/unity-run-macos-gpu.log(都被 .gitignore 排除)
+# 环境变量: UNITY_GRAPHICS=1 让 macOS 播放器在无图形设备的那遍之后,再带图形设备跑一遍(需要 GPU 与图形会话);
+#           DNF_DIR 有效时,带图形设备的那遍还会渲染真实城镇并与 CPU 合成器对照。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . tools/env.sh
@@ -40,7 +42,21 @@ if [ "$platform" = "macos" ]; then
   "$app" -batchmode -nographics -logFile "$run_log"
   rc=$?
   set -e
-  echo "播放器退出码: $rc"
+  echo "播放器退出码(无图形设备): $rc"
   grep -E 'DNF_SMOKE' "$run_log" || true
+  if [ "$rc" -ne 0 ]; then
+    exit "$rc"
+  fi
+  if [ "${UNITY_GRAPHICS:-0}" = "1" ]; then
+    # 带图形设备再跑一遍:GPU 与 CPU 合成器的对照;设置了 DNF_DIR 时还会渲染真实城镇
+    gpu_log="$PWD/re/unity-run-macos-gpu.log"
+    rm -f "$gpu_log"
+    set +e
+    "$app" -batchmode -logFile "$gpu_log"
+    rc=$?
+    set -e
+    echo "播放器退出码(带图形设备): $rc"
+    grep -E 'DNF_SMOKE' "$gpu_log" || true
+  fi
   exit "$rc"
 fi

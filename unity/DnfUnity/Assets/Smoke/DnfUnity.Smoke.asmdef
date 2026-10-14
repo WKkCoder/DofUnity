@@ -2,7 +2,9 @@
     "name": "DnfUnity.Smoke",
     "rootNamespace": "DnfUnity.Smoke",
     "references": [
-        "Dnf.Data"
+        "Dnf.Data",
+        "Dnf.Render",
+        "Dnf.Client"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

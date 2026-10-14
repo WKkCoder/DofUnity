@@ -1,10 +1,13 @@
 using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using Dnf.Client;
 using Dnf.Data;
+using Dnf.Render;
 using UnityEngine;
 
 namespace DnfUnity.Smoke
@@ -13,6 +16,8 @@ namespace DnfUnity.Smoke
     /// 播放器(不是编辑器)里的冒烟自检:数据层包在目标平台的运行时(Mono 或 IL2CPP)上,
     /// 与运行时相关的几条路径(Span 强转、DeflateStream、SHA-256、CRC-32、PVF 解密)是否行为正确。
     /// 期望值与 Assets/Tests/EditMode/DataLayerSmokeTests.cs 相同,来自 Python 参考实现。
+    /// 有图形设备时(播放器不带 -nographics)还会做 GPU 与 CPU 合成器的对照(Dnf.Client.RenderSelfTest);
+    /// 设置了环境变量 DNF_DIR 时再对真实城镇场景做一次。没有图形设备时这些检查被跳过(日志里有 SKIP 行)。
     /// 结果写进日志的一行:DNF_SMOKE_RESULT pass=N fail=M backend=... platform=...
     /// 批处理模式下(桌面播放器 -batchmode)自检完成后用退出码退出:0 通过,1 失败。
     /// </summary>
@@ -159,6 +164,58 @@ namespace DnfUnity.Smoke
                 string hash = Hex(sha.ComputeHash(Encoding.ASCII.GetBytes("abc")));
                 Check("sha256 abc",
                     hash == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+            }
+
+            RunGpuChecks();
+        }
+
+        private void RunGpuChecks()
+        {
+            Check("gamma color space", QualitySettings.activeColorSpace == ColorSpace.Gamma, QualitySettings.activeColorSpace.ToString());
+            if (!RenderSelfTest.GraphicsAvailable)
+            {
+                Debug.Log("DNF_SMOKE SKIP gpu checks: no graphics device (nographics)");
+                return;
+            }
+            Debug.Log("DNF_SMOKE gpu device=" + SystemInfo.graphicsDeviceType + " name=" + SystemInfo.graphicsDeviceName);
+
+            var bg = new Color32(40, 40, 40, 255);
+            var none = new List<SceneSprite>();
+            RenderSelfTest.Diff d = RenderSelfTest.Compare(RenderSelfTest.RenderGpu(none, bg), RenderSelfTest.RenderCpu(none, bg));
+            Check("gpu empty stage is the background", d.AllExact, d.ToString());
+
+            List<SceneSprite> opaque = RenderSelfTest.RandomSprites(1, 40, false);
+            d = RenderSelfTest.Compare(RenderSelfTest.RenderGpu(opaque, bg), RenderSelfTest.RenderCpu(opaque, bg));
+            Check("gpu opaque sprites equal cpu byte for byte", d.AllExact, d.ToString());
+
+            List<SceneSprite> edges = RenderSelfTest.EdgeSprites();
+            d = RenderSelfTest.Compare(RenderSelfTest.RenderGpu(edges, bg), RenderSelfTest.RenderCpu(edges, bg));
+            Check("gpu placement is pixel exact at the screen edges", d.AllExact, d.ToString());
+
+            List<SceneSprite> sweep = RenderSelfTest.AlphaSweep(100, 100);
+            d = RenderSelfTest.Compare(RenderSelfTest.RenderGpu(sweep, bg), RenderSelfTest.RenderCpu(sweep, bg));
+            Debug.Log("DNF_SMOKE gpu alpha sweep: " + d);
+            Check("gpu semi-transparent single layer within 1 of cpu", d.MaxChannelDiff <= 1, d.ToString());
+
+            List<SceneSprite> overlap = RenderSelfTest.RandomSprites(11, 30, true);
+            d = RenderSelfTest.Compare(RenderSelfTest.RenderGpu(overlap, bg), RenderSelfTest.RenderCpu(overlap, bg));
+            Debug.Log("DNF_SMOKE gpu overlapping semi-transparent: " + d);
+            Check("gpu semi-transparent overlap within 3 of cpu", d.MaxChannelDiff <= 3, d.ToString());
+
+            string dir = Environment.GetEnvironmentVariable("DNF_DIR");
+            if (string.IsNullOrEmpty(dir) || !File.Exists(Path.Combine(dir, "Script.pvf")))
+            {
+                Debug.Log("DNF_SMOKE SKIP real town: DNF_DIR is not set");
+                return;
+            }
+            using (DnfAssets assets = DnfAssets.Open(dir))
+            using (var town = new TownView(assets, "map/elvengard/(r)gate.map", TownProjection.FromE024, bg))
+            {
+                List<SceneSprite> sprites = town.ShowAt(0);
+                byte[] gpu = town.Stage.Capture();
+                d = RenderSelfTest.Compare(gpu, RenderSelfTest.RenderCpu(sprites, bg));
+                Debug.Log("DNF_SMOKE real town: npcs=" + town.NpcCount + " sprites=" + sprites.Count + " " + d);
+                Check("gpu real town equals cpu", town.NpcCount == 5 && d.MaxChannelDiff <= 1, d.ToString());
             }
         }
 

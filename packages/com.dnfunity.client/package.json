@@ -1,0 +1,16 @@
+{
+  "name": "com.dnfunity.client",
+  "version": "0.1.0",
+  "displayName": "DNF Client",
+  "description": "DNF 客户端的 Unity 层:800×600 像素对齐的舞台、把 Dnf.Render 的精灵画到 GPU 上、帧读回。不含任何原版内容;运行时读取用户自备的数据。",
+  "unity": "6000.0",
+  "dependencies": {
+    "com.dnfunity.data": "0.1.0",
+    "com.dnfunity.render": "0.1.0"
+  },
+  "keywords": [
+    "dnf",
+    "sprite",
+    "pixel-perfect"
+  ]
+}

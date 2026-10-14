@@ -9,7 +9,7 @@
 |---|---|
 | P1 数据层 | **C# 库与命令行已完成,全库对拍零差异**(PVF 334,998 个文件哈希逐一一致;147,273 个标记流脚本;187,365 个 `.ani`;80,328 个 IMG、9,860,711 个帧解码并校验 Adler-32;随机 1000 帧逐像素一致)。Unity 6 里编译并运行该包已验证(9 个 EditMode 测试通过,含读取真实 PVF 全部文件并校验目录树与每个文件的 CRC-32)。**像素规则已用原版客户端的屏幕输出校验**:在一张城镇截图里识别出 33 个精灵,解码结果与屏幕逐像素一致;校验同时更正了 1555 的 5 位通道展开(`round(v*255/31)`,不是位复制),见证据 E-023 |
 | P2 语义目录 | 脚本语法已破解,tag 目录已生成(3,408 种);语义待标注 |
-| P3 动画与渲染 | 进行中:位置模型(E-024)与像素规则(E-023)已对上原版的一个城镇场景;纯 C# 合成器 `Dnf.Render` 与 `dnf render-town` 复现了同样的数字(E-027,18 个单元测试);Unity 侧的播放组件待做 |
+| P3 动画与渲染 | 进行中:位置模型(E-024)与像素规则(E-023)已对上原版的一个城镇场景;纯 C# 合成器 `Dnf.Render` 与 `dnf render-town` 复现了同样的数字(E-027,18 个单元测试);**Unity 的 GPU 渲染路径(`Dnf.Client`)与 CPU 合成器逐字节一致**(Metal,编辑器与 macOS 播放器,含真实城镇 NPC,E-028);其余三个平台的 GPU 未验证;下一步是动画播放与更多场景元素 |
 | P6 逆向 | Ghidra 对 `DNF.exe` 的只读静态分析已完成;已定位 PVF 解密与校验例程,并发现每个文件的 `crc` 同时是 CRC-32 校验值(全库 334,998 个文件与目录树通过,E-011) |
 
 详见 [路线图](docs/roadmap.md)、[格式规格](docs/formats.md)、[证据台账](docs/evidence/ledger.md)、[范围与边界](docs/boundaries.md)、[逆向工作流](docs/reverse-workflow.md)。
@@ -20,7 +20,7 @@
 docs/        路线图、格式规格、边界、证据台账
 tools/py/    Python 参考实现与扫描脚本(只读,标准库)——C# 库的对照标准
 tools/guard/ 提交前守卫:挡住原版内容与反编译输出
-packages/    com.dnfunity.data:Unity 包(数据层库的唯一源码);com.dnfunity.render:纯 C# 的 CPU 合成器与城镇场景(Unity GPU 路径的参照实现)
+packages/    com.dnfunity.data:Unity 包(数据层库的唯一源码);com.dnfunity.render:纯 C# 的 CPU 合成器与城镇场景(Unity GPU 路径的参照实现);com.dnfunity.client:Unity 层(800×600 像素对齐的舞台、GPU 绘制、帧读回)
 src/         Dnf.Data、Dnf.Render(netstandard2.1 工程,链接上面的源码)、Dnf.Data.Tests、Dnf.Render.Tests(合成数据单元测试)、Dnf.Cli(全库对拍与画面对照命令行)
 unity/       Unity 工程 DnfUnity(引用 packages/com.dnfunity.data;目前只有 EditMode 测试)
 re/  out/    逆向产物与生成物,已被 .gitignore 排除
@@ -50,6 +50,7 @@ tools/verify-p1.sh
 需要用户级 .NET SDK(`tools/env.sh` 会把 `~/.dotnet` 加进当前 shell 的 PATH)。报告写到 `out/p1_verification_all.json`。
 
 5. 在 Unity 里跑测试(批处理模式,不需要登录):`tools/unity-test.sh`。结果在 `out/unity-EditMode-results.xml`。
+   加 `UNITY_GRAPHICS=1` 会去掉 `-nographics`,让 GPU 与 CPU 合成器的对照真正运行(需要 GPU);`UNITY_GRAPHICS=1 tools/unity-build-smoke.sh macos` 在 macOS 播放器里再做一遍。
 
 6. 对照原版画面(需要一张原版客户端的 800×600 截图,窗口内容 1:1,放在 `re/` 下;截图不入库):
 

@@ -1,10 +1,27 @@
 {
   "dependencies": {
+    "com.dnfunity.client": {
+      "version": "file:../../../packages/com.dnfunity.client",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.dnfunity.data": "0.1.0",
+        "com.dnfunity.render": "0.1.0"
+      }
+    },
     "com.dnfunity.data": {
       "version": "file:../../../packages/com.dnfunity.data",
       "depth": 0,
       "source": "local",
       "dependencies": {}
+    },
+    "com.dnfunity.render": {
+      "version": "file:../../../packages/com.dnfunity.render",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.dnfunity.data": "0.1.0"
+      }
     },
     "com.unity.ext.nunit": {
       "version": "2.0.5",

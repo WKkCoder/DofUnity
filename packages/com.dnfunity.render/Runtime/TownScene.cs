@@ -129,12 +129,14 @@ namespace Dnf.Render
             public TownNpc Npc { get; }
             public string AnimationPath { get; }
             public AniFile Ani { get; }
+            public AniTimeline Timeline { get; }
 
             public ResolvedNpc(TownNpc npc, string animationPath, AniFile ani)
             {
                 Npc = npc;
                 AnimationPath = animationPath;
                 Ani = ani;
+                Timeline = new AniTimeline(ani);
             }
         }
 
@@ -193,11 +195,16 @@ namespace Dnf.Render
         /// </summary>
         public static List<SceneSprite> Build(DnfAssets assets, IReadOnlyList<TownNpc> npcs, TownProjection projection, long timeMs)
         {
-            var sprites = new List<SceneSprite>(npcs.Count);
-            foreach (ResolvedNpc r in Resolve(assets, npcs))
+            return BuildResolved(assets, Resolve(assets, npcs), projection, timeMs);
+        }
+
+        /// <summary>与 <see cref="Build"/> 相同,但用已经解析好的 NPC 列表(逐帧调用时不必每次重新解析脚本)。</summary>
+        public static List<SceneSprite> BuildResolved(DnfAssets assets, IReadOnlyList<ResolvedNpc> resolved, TownProjection projection, long timeMs)
+        {
+            var sprites = new List<SceneSprite>(resolved.Count);
+            foreach (ResolvedNpc r in resolved)
             {
-                int k = new AniTimeline(r.Ani).FrameAt(timeMs);
-                SceneSprite s = SpriteAt(assets, r, k, projection);
+                SceneSprite s = SpriteAt(assets, r, r.Timeline.FrameAt(timeMs), projection);
                 if (s != null)
                 {
                     sprites.Add(s);

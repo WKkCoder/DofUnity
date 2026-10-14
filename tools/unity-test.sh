@@ -5,6 +5,8 @@
 #   UNITY_EDITOR                 Unity 可执行文件(默认 Hub 的 6000.3.26f1 路径)
 #   DNF_DIR                      数据目录(可由 local.env 提供);缺省时真实数据测试被跳过
 #   DNF_EXPECT_PVF_AGGREGATE     PVF 聚合哈希的期望值(默认用本机已验证的值)
+#   UNITY_GRAPHICS=1             不加 -nographics,让需要图形设备的测试(GPU 与 CPU 合成器的对照)真正运行;
+#                                需要本机有可用的 GPU 与图形会话,默认关闭
 # 结果:out/unity-<平台>-results.xml;日志 re/unity-<平台>.log(都被 .gitignore 排除)。
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -23,8 +25,13 @@ results="$PWD/out/unity-${platform}-results.xml"
 log="$PWD/re/unity-${platform}.log"
 rm -f "$results"
 
+graphics_flag="-nographics"
+if [ "${UNITY_GRAPHICS:-0}" = "1" ]; then
+  graphics_flag=""
+fi
+
 set +e
-"$UNITY" -batchmode -nographics -projectPath "$PWD/unity/DnfUnity" \
+"$UNITY" -batchmode $graphics_flag -projectPath "$PWD/unity/DnfUnity" \
   -runTests -testPlatform "$platform" -testResults "$results" -logFile "$log"
 code=$?
 set -e

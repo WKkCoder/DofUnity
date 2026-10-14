@@ -1,6 +1,8 @@
 {
   "dependencies": {
     "com.dnfunity.data": "file:../../../packages/com.dnfunity.data",
+    "com.dnfunity.render": "file:../../../packages/com.dnfunity.render",
+    "com.dnfunity.client": "file:../../../packages/com.dnfunity.client",
     "com.unity.test-framework": "1.6.0",
     "com.unity.modules.androidjni": "1.0.0",
     "com.unity.modules.audio": "1.0.0",

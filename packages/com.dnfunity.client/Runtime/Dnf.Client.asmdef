@@ -1,0 +1,17 @@
+{
+    "name": "Dnf.Client",
+    "rootNamespace": "Dnf.Client",
+    "references": [
+        "Dnf.Data",
+        "Dnf.Render"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
