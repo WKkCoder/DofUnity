@@ -1,0 +1,16 @@
+{
+    "name": "DnfUnity.Smoke",
+    "rootNamespace": "DnfUnity.Smoke",
+    "references": [
+        "Dnf.Data"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

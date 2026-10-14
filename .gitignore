@@ -39,6 +39,7 @@ unity/**/Logs/
 unity/**/UserSettings/
 unity/**/Build/
 unity/**/Builds/
+unity/**/.utmp/
 unity/**/.vs/
 unity/**/*.csproj
 unity/**/*.sln
