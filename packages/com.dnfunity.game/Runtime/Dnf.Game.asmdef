@@ -1,0 +1,18 @@
+{
+    "name": "Dnf.Game",
+    "rootNamespace": "Dnf.Game",
+    "references": [
+        "Dnf.Data",
+        "Dnf.Squirrel",
+        "Dnf.Script"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}

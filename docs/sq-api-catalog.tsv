@@ -1,0 +1,705 @@
+name	form	calls	files	arg_counts	top_receivers
+getVar	member	1579	96	0:586,1:993	obj:1466,appendage:64,Monster:16,actobj:10
+get_vector	member	519	66	1:519	(链式):338,sq_var:171,var:5,var_awakening:3
+push_vector	member	469	68	1:469	(链式):389,sq_var:72,var:7,awakening_var:1
+set_vector	member	315	62	2:315	(链式):166,sq_var:140,var_devil:5,awakening_var:2
+isMyControlObject	member	306	117	0:305,1:1	obj:282,parentObj:7,parentChr:4,damager:4
+sq_IntVectPush	member	212	50	1:212	obj:212
+getSkillSubState	member	198	60	0:198	obj:183,pChr:12,attacker:2,sqrChr:1
+sq_LoadSkillEffectAni	member	195	1	2:195	obj:195
+sq_AddFunctionName	member	189	39	2:189	appendage:189
+readDword	member	185	53	0:185	reciveData:117,receiveData:67,recive:1
+clear_vector	member	171	65	0:171	(链式):152,sq_var:17,var:2
+sq_BinaryWriteDword	free	171	36	1:171	
+sq_GetLevelData	both	171	54	1:1,2:6,3:41,4:123	obj:42,parentObj:6
+sq_GetSkillLevel	both	167	67	1:53,2:114	obj:50,parentObj:2,sqrChr:1
+getXPos	member	165	72	0:165	obj:119,parentObj:9,sourceObj:7,activeObject:4
+sq_AddSetStatePacket	member	160	50	3:160	obj:160
+sq_GetIntData	both	155	50	2:76,3:73,4:6	obj:76
+getParent	member	146	49	0:146	appendage:128,obj:18
+sq_PlaySound	member	145	70	1:132,2:13	obj:142,parentObj:2,sqrObj:1
+getYPos	member	143	70	0:143	obj:109,parentObj:7,sourceObj:5,damager:5
+getZPos	member	133	67	0:133	obj:102,parentObj:7,damager:4,darkCircle:4
+sq_IntVectClear	member	130	50	0:130	obj:130
+getDirection	member	129	56	0:129	obj:112,parentObj:7,sourceObj:5,pChr:2
+sq_GetCurrentAttackInfo	free	129	69	1:129	
+GetAnimationMap	member	105	10	2:105	sq_var:65,(链式):38,getvar:2
+pushPassiveObj	member	104	3	2:104	IRDSQRCharacter:93,CNAvenger:11
+getState	member	102	44	0:102	obj:49,parentObj:17,pChr:15,mage:3
+sq_SetCurrentAnimation	member	101	45	1:101	obj:101
+setValid	member	98	36	1:98	appendage:70,backObj:4,bspin_dodge_obj:3,pRope1:2
+sq_SendDestroyPacketPassiveObject	free	98	55	1:98	
+sq_GetGlobalIntVector	free	89	23	0:89	
+sq_SetCurrentAttackBonusRate	both	89	57	1:12,2:77	obj:12
+sq_IntVectorPush	free	87	21	2:87	
+Get	member	79	49	0:79	(链式):53,t:20,timer:5,currentTime:1
+setInt	member	79	25	2:79	var:39,sq_var:24,(链式):16
+getInt	member	77	26	1:77	var:49,sq_var:22,(链式):6
+get_ct_vector	member	74	28	1:74	(链式):45,sq_var:10,var_awakening:6,var:5
+sq_GetCurrentAnimation	free	72	46	1:72	
+sq_SendCreatePassiveObjectPacket	both	72	40	5:58,7:14	obj:58
+get_obj_vector	member	70	17	1:70	(链式):39,sq_var:27,var:4
+getTopCharacter	member	69	39	0:69	obj:67,parentObj:1,passiveobj:1
+sq_IntVectorClear	free	68	21	1:68	
+pushState	member	67	4	4:15,5:52	IRDSQRCharacter:52,CNAvenger:15
+addSetStatePacket	member	66	20	5:66	obj:65,parentObj:1
+sq_GetDistancePos	both	66	34	3:66	obj:1
+sq_AddStateLayerAnimation	member	62	4	4:62	obj:62
+sq_CreateCNRDAnimation	member	62	4	1:62	obj:62
+sq_RGB	free	62	30	3:62	
+getCurrentAnimation	member	61	33	0:61	obj:47,castingObj:2,pChr:2,pObj:1
+setCurrentPos	member	58	25	3:58	obj:18,pooledObj:7,damager:3,lightObj:2
+sq_IsUseSkill	member	58	58	1:58	obj:58
+setCurrentAnimation	member	56	27	1:56	obj:54,pObj:2
+sq_GetBonusRateWithPassive	both	56	33	3:2,4:50,5:4	obj:45,mage:3,parentObj:2,sqrParent:2
+getTimer	member	55	31	0:55	appendage:55
+get_obj_vector_size	member	55	14	0:54,1:1	(链式):27,sq_var:21,var:7
+sq_BinaryStartWrite	free	55	40	0:55	
+sq_GetVectorData	both	54	36	2:54	obj:35
+sq_GetYPos	free	54	20	1:54	
+sq_IsCommandEnable	member	54	54	1:54	obj:54
+readWord	member	53	17	0:53	receiveData:30,reciveData:23
+readFloat	member	51	19	0:51	receiveData:36,reciveData:15
+sq_GetState	both	49	48	0:47,1:2	obj:47
+sq_GetXPos	free	49	20	1:49	
+sq_GetZPos	free	49	22	1:49	
+sq_SetCurrentAttackInfo	both	49	24	1:17,2:32	obj:17
+sq_addSetStatePacket	member	49	16	3:49	obj:49
+Start	member	47	29	2:47	t:26,(链式):9,timer:7,time:2
+get_timer_vector	member	47	26	1:47	sq_var:27,(链式):20
+push_obj_vector	member	47	18	1:47	(链式):34,sq_var:9,var:4
+sq_AppendAppendage	member	46	29	6:46	CNSquirrelAppendage:46
+Reset	member	45	27	0:45	t:26,(链式):9,timer:7,frozenT:1
+setBool	member	44	16	2:44	var:16,sq_var:16,(链式):12
+sq_StopMove	member	44	43	0:44	obj:44
+sq_getIntData	member	44	11	1:15,2:29	obj:44
+sq_GetCurrentTime	free	42	34	1:42	
+setSkillSubState	member	41	40	1:41	obj:41
+getCustomAnimation	member	40	20	1:40	obj:40
+sq_setCurrentAxisPos	free	40	13	3:40	
+resetInstant	member	39	28	1:39	t:22,sq_timer_:6,timer_:5,t2:3
+setParameter	member	39	28	2:39	t:22,sq_timer_:6,timer_:5,t2:3
+size_vector	member	38	14	0:38	sq_var:22,(链式):15,awakening_var:1
+GetSquirrelAppendage	member	37	13	1:37	obj:33,active_damager:2,ao:1,aoDamager:1
+GetparticleCreaterMap	member	36	16	3:36	sq_var:23,(链式):13
+sq_GetCurrentFrameIndex	both	36	24	0:1,1:35	obj:24
+sq_GetCurrentAni	member	35	19	0:35	obj:35
+sq_GetUniformVelocity	free	34	26	4:34	
+sq_SetMyShake	free	34	21	3:34	
+Restart	member	33	16	1:33	particleCreater:32,particle:1
+push_timer_vector	member	33	22	0:33	sq_var:24,(链式):9
+setTimeEvent	member	33	14	4:33	obj:33
+push_ct_vector	member	32	26	0:32	(链式):25,sq_var:4,var:2,awakening_var:1
+sq_IsMyControlObject	both	32	13	0:28,1:4	obj:28
+sq_setCurrentAnimation	member	32	11	1:32	obj:32
+sendStateOnlyPacket	member	31	14	1:31	obj:25,wall:2,iceCoreObj:1,holongObj:1
+sq_CreateAnimation	free	31	14	2:31	
+getAttackIndex	member	30	7	0:30	obj:30
+sq_BinaryWriteWord	free	30	12	1:30	
+sq_SetStaticSpeedInfo	member	30	26	6:30	obj:30
+sq_WriteDword	member	30	12	1:30	obj:30
+getThrowElement	member	29	14	0:29	obj:22,parentObj:4,mage:3
+setCurrentDirection	member	29	17	1:29	obj:9,pooledObj:5,damager:3,lightObj:2
+setSkillCommandEnable	member	29	7	2:29	obj:29
+sq_GetCNRDObjectToSQRCharacter	free	29	8	1:29	
+sq_getCurrentAni	member	29	10	0:29	obj:29
+pushScriptFiles	member	28	13	1:28	IRDSQRCharacter:25,CNAvenger:3
+sq_AddObjectParticleCreater	member	27	3	1:27	obj:27
+sq_GetSkill	free	27	13	2:27	
+sq_SetCurrentPos	both	27	16	4:27	obj:2
+sq_getRandom	free	27	13	2:27	
+clear_ct_vector	member	26	23	0:26	(链式):23,sq_var:2,awakening_var:1
+clear_obj_vector	member	26	18	0:26	sq_var:12,(链式):12,var:2
+sq_Abs	free	26	10	1:26	
+sq_SetStaticMoveInfo	member	26	9	4:22,6:4	obj:26
+isOnEvent	member	25	17	1:25	t:9,hitT:5,sq_timer_:5,timer_:3
+sq_GetAccel	free	25	11	5:25	
+sq_flashScreen	free	25	19	8:25	
+sq_setCurrentAttackInfo	member	25	12	1:25	obj:25
+sq_SetMoveParticle	member	24	12	3:24	obj:24
+getObject	member	23	6	1:23	var:14,sq_var:9
+getObjectManager	member	23	15	0:23	obj:23
+sq_AnimationProc	free	23	6	1:23	
+sq_GetCNRDObjectToActiveObject	free	23	12	1:23	
+addParameter	member	22	7	3:22	change_appendage:22
+clear_timer_vector	member	22	22	0:22	sq_var:15,(链式):7
+getBool	member	22	15	1:22	var:9,sq_var:9,(链式):4
+getDelaySum	member	22	13	1:12,2:10	pAni:12,ani:5,animation:3,poleAni:2
+getSize	member	22	5	0:22	receiveData:18,reciveData:4
+sq_AddObject	both	22	14	1:7,4:15	obj:7
+isValid	member	21	15	0:21	appendage:15,obj:3,auraAppendage:2,hpmaxup_appendage:1
+sq_GetDirection	both	21	13	0:1,1:20	obj:2
+sq_StartWrite	member	20	17	0:20	obj:20
+sq_drawCurrentFrame	free	20	5	4:20	
+printc	free	19	13	1:19	
+setImageRateFromOriginal	member	19	14	2:19	currentAni:6,animation:5,ani:5,pAni:1
+sq_AddDrawOnlyAniFromParent	free	19	8	5:19	
+sq_BinaryWriteFloat	free	19	13	1:19	
+sq_SetAttackBoundingBoxSizeRate	free	19	14	4:19	
+sq_WriteWord	member	19	11	1:19	obj:19
+sq_getJob	free	19	10	1:19	
+sq_stopMove	member	19	15	0:19	obj:19
+SetPos	member	18	13	3:18	particleCreater:17,particle:1
+sq_AddParticleObject	free	18	13	2:18	
+sq_BinaryGetReadSize	free	18	3	0:18	
+sq_CreateChangeStatus	free	18	3	4:18	
+sq_EndDrawCastGauge	free	18	18	1:18	
+sq_GetAnimationFrameIndex	free	18	9	1:18	
+sq_GetCastTime	free	18	18	3:18	
+sq_IsEnd	free	18	14	1:18	
+sq_ani_GetCurrentFrameIndex	member	18	9	1:18	obj:18
+stopSound	member	18	13	1:18	obj:16,sqrObj:1,parentObj:1
+getSource	member	17	10	0:17	appendage:17
+resetHitObjectList	member	17	17	0:17	obj:17
+setImageRate	member	17	7	2:17	pAni:4,ani:3,hud_creator_b_gauge:2,gauge_normal_flash:2
+sq_StartDrawCastGauge	free	17	17	3:17	
+GetYPos	member	16	8	0:16	IMouse:16
+sq_BinaryParameterWriteDword	free	16	2	1:16	
+sq_GetCurrentModuleType	free	16	5	0:16	
+sq_GetSTATE	member	16	11	0:16	obj:16
+sq_RemoveAppendage	both	16	12	2:16	CNSquirrelAppendage:15
+GetXPos	member	15	8	0:15	IMouse:15
+sq_Append	member	15	10	2:1,3:11,4:2,5:1	CNSquirrelAppendage:9,ap:1,apFire:1,apWater:1
+sq_IsAppendAppendage	member	15	8	2:15	CNSquirrelAppendage:15
+sq_RunScript	free	15	1	1:15	
+sq_getVectorData	member	15	10	2:15	obj:15
+sq_setShake	member	15	10	3:15	obj:15
+setObject	member	14	6	2:14	sq_var:8,var:6
+sq_GetObjectHeight	free	14	7	1:14	
+sq_SendChangeSkillEffectPacket	free	14	8	2:14	
+sq_setAttackPowerWithPassive	member	14	7	5:14	obj:14
+GetCurrentFrameIndex	member	13	11	0:13	pAni:9,ani:2,main_gauge_b:1,currentAni:1
+setCurrentAnimationFromCutomIndex	free	13	7	2:13	
+setFloat	member	13	8	2:13	sq_var:8,var:5
+sq_ALPHA	free	13	10	1:12,4:1	
+sq_CreatePooledObject	free	13	8	2:13	
+sq_GetCustomAttackInfo	free	13	6	2:13	
+getThrowIndex	member	12	3	0:12	obj:12
+isMovablePos	member	12	9	2:12	obj:9,damager:2,mage:1
+sq_GetOppositeDirection	free	12	11	1:12	
+sq_GetPowerWithPassive	member	12	12	5:12	obj:10,sourceObj:1,sqrChr:1
+sq_GetUniqueId	free	12	9	1:12	
+sq_IsGrabable	free	12	8	2:12	
+sq_IsHoldable	free	12	7	2:12	
+sq_ObjectToSQRCharacter	free	12	8	1:12	
+sq_SendCreatePassiveObjectPacketPos	free	12	10	6:12	
+sq_getBonusRateWithPassive	member	12	8	4:12	obj:12
+getFloat	member	11	8	1:11	var:7,sq_var:4
+sq_GetGroup	free	11	9	1:11	
+sq_IsValidActiveStatus	free	11	5	2:11	
+sq_SetChangeStatusIntoAttackInfo	free	11	10	6:11	
+sq_SetValidTime	member	11	9	1:11	appendage:10,healAppendage:1
+sq_WriteFloat	member	11	7	1:11	obj:11
+clearParameter	member	10	7	0:10	change_appendage:10
+getFieldXPos	member	10	9	2:10	objectManager:10
+getMyPassiveObject	member	10	5	2:10	obj:10
+isDead	member	10	4	0:10	obj:5,activeObj:4,parentObj:1
+setCurrentFrameWithChildLayer	member	10	6	1:10	ani:8,buttonAni:2
+setElement	member	10	5	1:10	attackInfo:7,pAttack:3
+sq_CreateParticle	free	10	6	9:10	
+sq_IsKeyDown	free	10	4	2:10	
+sq_addFlashScreen	free	10	7	8:10	
+sq_getChangeStatus	member	10	7	1:10	appendage:10
+applyBasicAttackUp	member	9	8	2:9	obj:5,mage:4
+getFieldYPos	member	9	8	3:9	objectManager:9
+getMainControl	member	9	6	0:9	stage:9
+getObjectHeight	member	9	5	0:9	parentObj:5,damager:3,aoDamager:1
+getWeaponSubType	member	9	3	0:9	obj:9
+setAttackXAccel	member	9	3	1:9	obj:9
+setAttackXAccelFast	member	9	3	1:9	obj:9
+setAttackXVelocity	member	9	3	1:9	obj:9
+setAttackXVelocityFast	member	9	3	1:9	obj:9
+setEffectLayer	member	9	6	7:9	pAni:4,aniL:3,ani:1,buttonAni:1
+setSpeedRate	member	9	7	1:9	ani:3,pAni:3,currentAni:3
+sq_CreateDrawOnlyObject	free	9	6	4:9	
+sq_DrawSpecificFrameEffect_SIMPLE	free	9	1	7:9	
+sq_GetFrameStartTime	free	9	9	2:9	
+sq_GetObject	free	9	8	3:9	
+sq_GetObjectManagerStage	free	9	6	1:9	
+sq_GetPassiveObject	both	9	7	1:7,2:2	obj:7
+sq_RGBA	free	9	3	4:9	
+sq_SetShake	both	9	7	3:9	obj:7
+sq_ToRadian	free	9	7	1:9	
+sq_ani_IsEnd	member	9	8	1:9	obj:9
+sq_binaryData_writeDword	member	9	6	1:9	obj:9
+sq_getLevelData	member	9	5	1:3,3:6	obj:9
+addLayerAnimation	member	8	5	3:8	currentAni:3,iceAni:2,pAni:2,ani:1
+getSkillManager	member	8	2	0:8	obj:4,aiChr:3,grabChr:1
+isEnemy	member	8	5	1:8	obj:7,parentObj:1
+isMessage	member	8	5	0:8	obj:8
+isSameObject	free	8	7	2:8	
+readByte	member	8	3	0:8	receiveData:7,reciveData:1
+remove_obj_vector	member	8	4	1:8	(链式):5,sq_var:3
+setAppendCauseSkill	member	8	6	4:8	appendage:7,healAppendage:1
+sq_GetAniRealImageSize	free	8	4	2:8	
+sq_GetAppendage	member	8	6	2:8	CNSquirrelAppendage:8
+sq_GetObjectTime	free	8	6	1:8	
+sq_RemoveParticle	free	8	4	2:8	
+sq_binaryData_startWrite	member	8	6	0:8	obj:8
+sq_createCNRDAnimation	member	8	4	1:8	obj:8
+IsRBDown	member	7	4	0:7	control:7
+getCollisionObject	member	7	4	1:7	objectManager:6,ObjectManager:1
+getCollisionObjectNumber	member	7	4	0:7	objectManager:6,ObjectManager:1
+getMyPassiveObjectCount	member	7	3	1:7	obj:7
+isObjectType	member	7	5	1:7	object:6,attacker:1
+setAutoLayerWorkAnimationAddSizeRate	member	7	6	1:7	animation:5,currentAni:1,ani:1
+setCommandChecker	member	7	1	1:7	skillMgr:4,aiChr:2,grabChr:1
+setCustomRotate	member	7	3	2:7	parentObj:4,obj:2,effect:1
+setDirection	member	7	5	1:7	obj:7
+setRGBA	member	7	2	4:7	ani:1,ani1:1,ani2:1,ani3:1
+sq_AddChangeStatus	member	7	6	3:1,7:6	appendage:7
+sq_AddEffectFront	member	7	6	1:7	appendage:7
+sq_AddMessage	free	7	4	1:7	
+sq_GetShuttleValue	free	7	6	4:7	
+sq_GetSkillIndex	member	7	2	0:7	appendage:7
+sq_IsFixture	free	7	6	1:7	
+sq_RemoveMoveParticle	member	7	6	0:7	obj:7
+sq_SetCurrentAttackPower	both	7	7	1:1,2:6	obj:1
+sq_createCNRDPooledObject	member	7	4	2:7	obj:7
+DamageTest	free	6	1	7:6	
+getAnimation	member	6	1	1:6	var:6
+getHp	member	6	3	0:6	obj:2,sqrObj:2,parentObj:2
+isCurrentAnimationIndex	member	6	2	1:6	obj:6
+isInDamagableState	member	6	3	1:6	object:6
+setObjectHeight	member	6	3	1:6	obj:6
+sq_Cos	free	6	4	1:6	
+sq_GetObjectId	free	6	4	1:6	
+sq_GetParentState	member	6	4	0:6	obj:6
+sq_IsEnterSkill	member	6	6	1:6	obj:6
+sq_SetApplyConversionSkill	member	6	2	0:6	obj:6
+sq_SetCurrentAttackeHitStunTime	free	6	5	2:6	
+sq_SetCustomRotate	free	6	5	2:6	
+sq_SetMoveDirection	member	6	4	2:6	obj:6
+sq_SetZVelocity	free	6	3	3:6	
+sq_Sin	free	6	4	1:6	
+sq_binaryData_writeWord	member	6	2	1:6	obj:6
+sq_isMyControlObject	member	6	6	0:6	obj:6
+sq_moveWithParent	free	6	3	2:6	
+sq_setXScrollStop	member	6	2	1:6	obj:6
+GetCurrentFrame	member	5	5	0:5	aniL:3,ani:1,buttonAni:1
+IsLBDown	member	5	4	0:5	control:4,IMouse:1
+Proc	member	5	4	0:5	currentAni:4,ani:1
+SetEnable	member	5	1	1:5	quiestUI:1,group:1,chatControl:1,mainControl:1
+getAppendageInfo	member	5	5	0:5	appendage:3,ap:1,masterAppendage:1
+getThrowState	member	5	2	0:5	obj:5
+isInBattle	member	5	4	0:5	obj:3,parentObj:1,parentChr:1
+sq_AddSetStatePacketActiveObject	free	5	2	4:5	
+sq_AppendAppendageID	member	5	4	4:1,5:4	CNSquirrelAppendage:5
+sq_Atan2	free	5	5	2:5	
+sq_BinaryWriteByte	free	5	3	1:5	
+sq_CosTable	free	5	3	1:5	
+sq_DeleteEffectFront	member	5	2	0:5	appendage:5
+sq_GetAttackBonusRate	free	5	4	3:5	
+sq_GetCNRDObjectToCollisionObject	free	5	3	1:5	
+sq_GetCurrentAttackBonusRate	free	5	3	1:5	
+sq_GetDelaySum	free	5	5	1:5	
+sq_HoldAndDelayDie	free	5	5	9:5	
+sq_SendHitObjectPacket	free	5	4	5:5	
+sq_SetObjectParticlePos	member	5	1	3:5	obj:5
+sq_SimpleMoveToNearMovablePos	free	5	5	2:5	
+sq_SinTable	free	5	3	1:5	
+sq_p00_sendCreatePassiveObjectPacket	member	5	4	5:5	obj:5
+sq_setStaticMoveInfo	member	5	2	4:4,6:1	obj:5
+startCantUseSkillWarning	member	5	4	0:5	obj:5
+GetGraphicEffect	member	4	4	0:4	(链式):3,currentFrame:1
+SetVisible	member	4	1	1:4	quiestUI:1,group:1,chatControl:1,mainControl:1
+addAllKeyCommand	member	4	1	1:4	skillMgr:4
+addCustomAnimation	member	4	1	1:4	obj:4
+flushCommandEnable	member	4	1	0:4	aiChr:3,grabChr:1
+flushSetStatePacket	member	4	3	0:4	obj:3,parentObj:1
+getCommandChecker	member	4	1	0:4	aiChr:3,grabChr:1
+getCurrentSkillTree	member	4	1	0:4	aiChr:3,grabChr:1
+getEventTerm	member	4	3	0:4	t:4
+getPassiveObjectIndex	member	4	1	0:4	passiveobj:4
+getSendState	member	4	1	0:4	parentObj:4
+getSlotindex	member	4	1	1:4	skillmgr:4
+getTeam	member	4	1	0:4	attacker:4
+isExcutableState	member	4	2	1:4	obj:3,skill:1
+sendStatePacket	member	4	3	2:4	obj:3,iceCoreObj:1
+setAIModeByControlObject	member	4	1	1:4	aiChr:3,grabChr:1
+setAttackBoundingBoxSizeRate	member	4	2	2:4	ani:4
+setEnd	member	4	2	1:4	ani:4
+setParent	member	4	1	1:4	skillMgr:4
+setSealActiveFunction	member	4	2	1:4	skill:4
+setValidTime	member	4	4	1:4	(链式):2,appendageInfo:2
+sq_AniLayerListSize	free	4	4	1:4	
+sq_ChangeDrawLayer	free	4	1	2:4	
+sq_CreateParticleByGlobal	free	4	2	9:4	
+sq_DeleteAni	free	4	1	1:4	
+sq_EffectLayerAppendage	free	4	3	6:4	
+sq_FindShootingTarget	free	4	3	13:4	
+sq_GetCNRDObjectToAICharacter	free	4	1	1:4	
+sq_GetCenterZPos	free	4	2	1:4	
+sq_GetCustomAni	both	4	2	1:3,2:1	obj:3
+sq_GetDistance	free	4	4	5:4	
+sq_GetDistanceObject	free	4	2	3:4	
+sq_GetObjectByObjectId	free	4	4	2:4	
+sq_GetParentSkillSubState	member	4	3	0:4	obj:4
+sq_GetShootingHorizonAngle	free	4	4	5:4	
+sq_GetShootingVerticalAngle	free	4	4	6:4	
+sq_GetStateTimer	member	4	3	0:4	obj:4
+sq_GetTeam	member	4	1	0:4	parentObj:4
+sq_IsClipCursor	free	4	1	0:4	
+sq_IsEnterCommand	free	4	3	2:4	
+sq_ReleaseActiveStatus	free	4	2	2:4	
+sq_SendMessage	free	4	2	4:4	
+sq_SetCurrentAttackInfoFromCustomIndex	free	4	3	2:4	
+sq_SetKeyxEnable	free	4	3	3:4	
+sq_SetTargetObjectAICharacter	free	4	1	3:4	
+sq_SetVelocity	free	4	1	3:4	
+sq_SetfRotateAngle	free	4	4	2:4	
+sq_isPVPMode	free	4	3	0:4	
+sq_setAnimationSpeedRate	member	4	2	2:4	obj:4
+sq_setCurrentAttackBonusRate	member	4	4	1:4	obj:4
+GetFrameStartTime	member	3	2	1:3	pAni:3
+applyBoundingBoxRate	member	3	2	3:3	currentAni:2,pAni:1
+checkModuleType	free	3	2	1:3	
+endSkillCoolTime	member	3	2	1:3	obj:3
+getAppendage	member	3	2	1:3	var:2,var2:1
+getHpMax	member	3	2	0:3	sqrChr:1,obj:1,parentObj:1
+getXDistance	member	3	2	1:3	obj:3
+initCommandChecker	member	3	1	2:3	aiChr:2,grabChr:1
+recalcAStarAttributesByMovableObject	member	3	1	2:3	map:3
+setAIMode	member	3	1	1:3	cmdChecker:3
+setAttractionInfo	member	3	3	4:3	auraAppendage:3
+setCommandEnable	member	3	1	1:3	skill:3
+setCustomOutline	member	3	1	4:3	vObj:2,object:1
+setSkillMpRate	member	3	1	2:3	obj:3
+sq_AddAttackCancelStartFrame	member	3	1	1:3	obj:3
+sq_AddAuraMaster	member	3	3	7:3	appendage:3
+sq_AddChangeStatusAppendageID	member	3	2	7:3	appendage:3
+sq_AddHitObject	free	3	3	2:3	
+sq_AddSetStatePacketCollisionObject	free	3	1	5:3	
+sq_BinaryWriteBool	free	3	2	1:3	
+sq_DeleteAppendages	member	3	3	0:3	appendage:3
+sq_GetCenterXPos	free	3	1	1:3	
+sq_GetDefaultAttackInfo	both	3	3	1:3	obj:2
+sq_GetDungeonByStage	free	3	3	1:3	
+sq_GetGlobaludpModuleStage	free	3	3	0:3	
+sq_GetInputDirection	member	3	2	1:3	obj:3
+sq_GetMap	free	3	1	1:3	
+sq_GetMyControlObjectSize	free	3	1	1:3	
+sq_GetSkillSubState	member	3	1	1:3	obj:3
+sq_IsDownHotKeyCreatorCursor	free	3	1	0:3	
+sq_IsInBattle	free	3	3	0:3	
+sq_IsOpenCreatorControlPopupWindows	free	3	1	0:3	
+sq_RemoveSkillLoad	member	3	2	1:3	obj:2,mage:1
+sq_Rewind	both	3	2	1:3	obj:1
+sq_SendCreatePassiveObjectPacketFromPassivePos	free	3	2	6:3	
+sq_SetAnimationCurrentTimeByFrame	free	3	2	3:3	
+sq_SetAnimationFrameIndex	free	3	2	2:3	
+sq_SetCameraScrollPosition	member	3	3	3:3	obj:3
+sq_SetCurrentAttackeDamageAct	free	3	2	2:3	
+sq_SetCurrentDirection	free	3	2	2:3	
+sq_SetCustomDamageType	free	3	2	3:3	
+sq_SetSpeedToMoveParticle	free	3	3	3:3	
+sq_WriteByte	member	3	2	1:3	obj:3
+sq_findNearLinearMovableXPos	member	3	2	5:3	damager:3
+sq_getAniLayerListObject	free	3	3	2:3	
+sq_getAuraMaster	member	3	3	1:3	appendage:3
+sq_getCustomAni	member	3	1	1:3	obj:3
+sq_getGrowType	free	3	3	1:3	
+sq_getNewAttackInfoPacket	free	3	2	0:3	
+sq_getStateTimer	member	3	2	0:3	obj:3
+sq_removeAttractAimPointMark	member	3	1	0:3	obj:3
+sq_setMoveDirection	member	3	2	2:3	obj:3
+clear_ani_vector	member	2	2	0:2	sq_var:2
+commandListReset	member	2	1	0:2	cmdChecker:2
+fadeOut	member	2	2	0:2	pflashScreen:2
+getCustomRotateAngle	member	2	1	0:2	parentObj:2
+getDelayBySpeedRate	member	2	1	1:2	currentAni:2
+getFieldZPos	member	2	2	3:2	objectManager:2
+getMp	member	2	1	0:2	obj:2
+getSkillMpRate	member	2	1	1:2	obj:2
+getStaticVar	member	2	1	0:2	CNAvenger:2
+get_ani_vector	member	2	1	1:2	sq_var:2
+isBoss	member	2	1	0:2	activeObj:2
+isCurrentCutomAniIndex	member	2	1	1:2	obj:2
+isEnd	member	2	2	0:2	t:1,appendage:1
+isOverSkillLevel	member	2	2	2:2	obj:2
+isSealActiveFunction	member	2	1	0:2	skill:2
+playSound	member	2	2	5:2	obj:2
+readBool	member	2	2	0:2	reciveData:1,receiveData:1
+setAnimation	member	2	1	2:2	var:2
+setAppendage	member	2	2	2:2	var:1,var2:1
+setCarryWeapon	member	2	1	1:2	obj:2
+setEnableChangeState	member	2	1	1:2	obj:2
+setThrowElement	member	2	2	1:2	mage:1,obj:1
+sq_BinaryParameterStartWrite	free	2	2	0:2	
+sq_ClearKeyFrameFlag	member	2	1	1:2	obj:2
+sq_CreatePassiveObjectAfterWarning	free	2	2	4:2	
+sq_DrawSkillIcon	free	2	1	4:2	
+sq_DrawSpecificFrame	free	2	2	7:2	
+sq_EffectLayerAppendageOnlyBody	free	2	1	6:2	
+sq_GetAimPosX	member	2	1	3:2	obj:2
+sq_GetCNRDObjectToCharacter	free	2	2	1:2	
+sq_GetCNRDObjectToFlashScreen	free	2	2	1:2	
+sq_GetDuegonIndex	free	2	2	1:2	
+sq_GetGlobalMainControl	free	2	1	0:2	
+sq_GetMapIndex	free	2	2	1:2	
+sq_GetMyControlObject	free	2	1	2:2	
+sq_GetMyMasterCharacter	free	2	1	0:2	
+sq_GetPassiveObjectByState	free	2	1	3:2	
+sq_GetPopupWindows	free	2	1	0:2	
+sq_GetSkillLoad	member	2	1	1:2	obj:2
+sq_GetSourceChrTarget	member	2	1	0:2	appendage:2
+sq_IsDownKey	free	2	2	3:2	
+sq_IsESCClosableWindow	free	2	1	1:2	
+sq_IsIgnoreOpenPopupCreator	free	2	1	2:2	
+sq_IsIntersectRect	free	2	2	8:2	
+sq_IsMyCharacter	free	2	2	1:2	
+sq_IsRidingObject	free	2	1	1:2	
+sq_IsSameAni	free	2	2	2:2	
+sq_IsVisibleCursor	free	2	1	0:2	
+sq_IsinMapArea	free	2	1	5:2	
+sq_MoveToAppendageForce	free	2	1	9:2	
+sq_MoveToNearMovablePos	free	2	2	10:2	
+sq_PostDelayedMessage	free	2	2	5:2	
+sq_RemovePassiveSkillAttackBonusRate	member	2	1	1:2	sqrObj:2
+sq_SendHitObjectPacketByAttackInfo	free	2	1	3:2	
+sq_SetAimPointMarkPosition	member	2	1	2:2	obj:2
+sq_SetAllCommandEnable	free	2	1	2:2	
+sq_SetAttackInfoForceHitStunTime	free	2	2	2:2	
+sq_SetAttackInfoHitDelayRateDamager	free	2	1	2:2	
+sq_SetChangeStatusIntoAttackInfoWithEtc	free	2	2	8:2	
+sq_SetClipCursor	free	2	1	1:2	
+sq_SetExSkillSlotVisible	free	2	1	1:2	
+sq_SetGrabable	free	2	1	2:2	
+sq_SetMaxHitCounterPerObject	member	2	1	1:2	obj:2
+sq_SetPause	free	2	1	3:2	
+sq_SetSkillSlotEnable	free	2	1	2:2	
+sq_SetSkillSlotPos	free	2	1	3:2	
+sq_SetSkillSlotVisible	free	2	1	2:2	
+sq_SetSoundTagBackStepStart	member	2	1	1:2	obj:2
+sq_SetSoundTagCoolTime	member	2	1	1:2	obj:2
+sq_SetSoundTagCreatureCommand	member	2	1	1:2	obj:2
+sq_SetSoundTagDie	member	2	1	1:2	obj:2
+sq_SetSoundTagLackMp	member	2	1	1:2	obj:2
+sq_SetSoundTagThrowItem	member	2	1	1:2	obj:2
+sq_SetVisibleCursor	free	2	1	1:2	
+sq_ToDegree	free	2	2	1:2	
+sq_WriteBool	member	2	2	1:2	obj:2
+sq_ZStop	member	2	1	0:2	obj:2
+sq_addPassiveSkillAttackBonusRate	member	2	1	2:2	obj:2
+sq_drawCurrentFrameEffect_SIMPLE	free	2	1	5:2	
+sq_getAttractAimPosX	member	2	1	3:2	obj:2
+sq_getAttractAimPosY	member	2	1	3:2	obj:2
+sq_getHpMaxUp	member	2	2	1:2	appendage:2
+sq_getMyBuffInfoCount	free	2	1	0:2	
+sq_getRandomUnique	free	2	1	3:2	
+sq_getSkillLevel	member	2	2	1:2	obj:2
+sq_getSquirrelAuraMaster	member	2	2	1:2	appendage:2
+sq_sendSetActiveStatusPacket	free	2	2	7:2	
+sq_setFullScreenEffect	free	2	1	2:2	
+sq_setXScroll	member	2	2	4:2	obj:2
+sq_setXScrollStart	member	2	2	2:2	obj:2
+startSkillCoolTime	member	2	2	3:2	obj:2
+stopTimeEvent	member	2	2	1:2	obj:2
+IsEnable	member	1	1	0:1	mainControl:1
+IsLBUp	member	1	1	0:1	IMouse:1
+addHitObject	member	1	1	1:1	obj:1
+addRapidInput	member	1	1	0:1	obj:1
+callBackAllObject	member	1	1	3:1	obj:1
+getAngleDistanceXPos	member	1	1	4:1	CNRDObject:1
+getAngleDistanceYPos	member	1	1	4:1	CNRDObject:1
+getBuffSkillIndex	member	1	1	0:1	obj:1
+getCollisionObjectIndex	member	1	1	0:1	object:1
+getCurrentSkillIndex	member	1	1	0:1	obj:1
+getCurrentTime	member	1	1	0:1	pAni:1
+getDefaultAnimation	member	1	1	0:1	obj:1
+getDefaultAttackInfo	member	1	1	0:1	obj:1
+getDownState	member	1	1	0:1	parentObj:1
+getDustParticleType	member	1	1	1:1	obj:1
+getLastAlsObject	member	1	1	0:1	pAni:1
+getMeetItemObject	member	1	1	2:1	objMgr:1
+getMpMax	member	1	1	0:1	sqrChr:1
+getOverItemObject	member	1	1	0:1	obj:1
+getRapidInputFrequency	member	1	1	0:1	obj:1
+getValidTime	member	1	1	0:1	(链式):1
+get_obj_vector_index	member	1	1	1:1	sq_var:1
+isApplyCustomRotate	member	1	1	0:1	parentObj:1
+isCarryWeapon	member	1	1	0:1	obj:1
+isChampion	member	1	1	0:1	activeObj:1
+isCommonChampion	member	1	1	0:1	activeObj:1
+isCooling	member	1	1	0:1	loadSlot:1
+isDebugMode	free	1	1	0:1	
+isDownSkillLastKey	member	1	1	0:1	obj:1
+isEnableBasicAttack	member	1	1	0:1	obj:1
+isExistTimeEvent	member	1	1	1:1	obj:1
+isGhostMode	member	1	1	0:1	parentObj:1
+isInActiveSkillBlockedMap	member	1	1	0:1	obj:1
+isInCoolTime	member	1	1	0:1	skill:1
+isLoop	member	1	1	0:1	currentAni:1
+isMeleeAttack	member	1	1	0:1	attacker:1
+isMissileObject	member	1	1	0:1	attacker:1
+isOverPos	member	1	1	2:1	object:1
+isSealFunction	member	1	1	0:1	skill:1
+isSkillClassType	member	1	1	2:1	obj:1
+isStay	member	1	1	0:1	obj:1
+isSuperChampion	member	1	1	0:1	activeObj:1
+is_obj_vector	member	1	1	1:1	var:1
+procGetItem	member	1	1	0:1	obj:1
+push_ani_vector	member	1	1	1:1	sq_var:1
+releaseClip	free	1	1	0:1	
+resetCurrentCoolTime	member	1	1	0:1	skill:1
+resizeWithChild	member	1	1	1:1	ani:1
+sendDestroyPacket	member	1	1	1:1	obj:1
+sendSetMpPacket	member	1	1	1:1	obj:1
+setAttackType	member	1	1	1:1	attackInfo:1
+setBuffIconImage	member	1	1	1:1	appendage:1
+setClip	free	1	1	4:1	
+setCurrentEffectNoChild	member	1	1	2:1	ani:1
+setEnableIsBuff	member	1	1	1:1	appendage:1
+setEventOnStart	member	1	1	1:1	sq_timer_:1
+setFrameDelay	member	1	1	3:1	ani:1
+setHp	member	1	1	3:1	obj:1
+setImageRateFromOriginalOnlyChild	member	1	1	2:1	ani:1
+setIsApplyAnotherPlayersEffectAlphaRate	member	1	1	1:1	animation:1
+setIsCustomSelectSkill	member	1	1	1:1	obj:1
+setNeverApplyAnotherPlayersEffectAlphaRate	member	1	1	1:1	animation:1
+setState	member	1	1	2:1	appendage:1
+setThrowObjectAnimationIndex	member	1	1	1:1	obj:1
+setThrowObjectFrameIndex	member	1	1	1:1	obj:1
+setThrowObjectXDistance	member	1	1	1:1	obj:1
+setThrowObjectZDistance	member	1	1	1:1	obj:1
+sq_AccelMoveToAppendageForce	free	1	1	10:1	
+sq_AddAimPointMark	member	1	1	4:1	obj:1
+sq_AddAttackBox	free	1	1	7:1	
+sq_AddHpMaxUp	member	1	1	6:1	appendage:1
+sq_AddMessagePrintf	free	1	1	2:1	
+sq_AddPassiveSkillAttackBonusRate	member	1	1	2:1	sqrObj:1
+sq_AddSkillLoad	member	1	1	4:1	obj:1
+sq_AddSquirrelAuraMaster	member	1	1	7:1	appendage:1
+sq_AtrractionForce	free	1	1	8:1	
+sq_AttractToMe	free	1	1	4:1	
+sq_ChangeAttackTypeToOpposite	free	1	1	1:1	
+sq_ClearAttackBox	free	1	1	1:1	
+sq_CurrentAnimationProc	free	1	1	1:1	
+sq_FindFirstTarget	member	1	1	4:1	obj:1
+sq_FindNextTarget	member	1	1	3:1	obj:1
+sq_FindTarget	free	1	1	5:1	
+sq_GetAbilityConvertRate	free	1	1	2:1	
+sq_GetAniFrameNumber	free	1	1	2:1	
+sq_GetAttackAni	member	1	1	1:1	obj:1
+sq_GetAttackBoundRect	free	1	1	1:1	
+sq_GetAttackCancelStartFrameSize	member	1	1	0:1	obj:1
+sq_GetAttackInfoHitDelayRateDamager	free	1	1	1:1	
+sq_GetAttackType	free	1	1	1:1	
+sq_GetBoundingBoxXSize	free	1	1	1:1	
+sq_GetCurrentAttackeDamageAct	free	1	1	1:1	
+sq_GetDashAttackAni	member	1	1	0:1	obj:1
+sq_GetDashAttackInfo	member	1	1	0:1	obj:1
+sq_GetFrontAnimation	member	1	1	1:1	appendage:1
+sq_GetGlobalChatControl	free	1	1	0:1	
+sq_GetGrowAvatarViewControl	free	1	1	1:1	
+sq_GetHeightObject	free	1	1	1:1	
+sq_GetJumpAttackAni	member	1	1	0:1	obj:1
+sq_GetJumpAttackInfo	member	1	1	0:1	obj:1
+sq_GetKeyxEnable	free	1	1	2:1	
+sq_GetMouseXPos	free	1	1	0:1	
+sq_GetMouseYPos	free	1	1	0:1	
+sq_GetMoveParent	free	1	1	1:1	
+sq_GetObjectWeight	free	1	1	1:1	
+sq_GetParticleInfo	free	1	1	2:1	
+sq_GetPopupWindowMainCotrol	free	1	1	1:1	
+sq_GetResultState	free	1	1	0:1	
+sq_GetRewardState	free	1	1	0:1	
+sq_GetScreenXPos	free	1	1	1:1	
+sq_GetScreenYPos	free	1	1	1:1	
+sq_GetShadowTypeByAnimation	free	1	1	0:1	
+sq_GetSkillPower	member	1	1	2:1	obj:1
+sq_GetStateCashShop	free	1	1	0:1	
+sq_GetStrikerSkillUi	free	1	1	0:1	
+sq_GetUISystemChatControl	free	1	1	1:1	
+sq_GetVelocity	free	1	1	2:1	
+sq_GetWidthObject	free	1	1	1:1	
+sq_IsAiCharacter	free	1	1	1:1	
+sq_IsAncientDungeon	free	1	1	1:1	
+sq_IsBoss	free	1	1	1:1	
+sq_IsDespairTower	free	1	1	1:1	
+sq_IsDimensionDungeon	free	1	1	1:1	
+sq_IsEnterSkillLastKeyUnits	member	1	1	1:1	obj:1
+sq_IsExistObject	free	1	1	2:1	
+sq_IsHellMonster	free	1	1	1:1	
+sq_IsInCategory	free	1	1	2:1	
+sq_IsInScreenCollisionObject	free	1	1	2:1	
+sq_IsItemRecover	free	1	1	1:1	
+sq_IsKeyFrameFlag	member	1	1	2:1	obj:1
+sq_IsMousePtInWindowRect	free	1	1	0:1	
+sq_IsMovablePosCollisionObject	free	1	1	3:1	
+sq_IsNamed	free	1	1	1:1	
+sq_IsPauseTypeWorld	free	1	1	1:1	
+sq_IsSetActiveStatus	free	1	1	3:1	
+sq_IsTowerDungeon	free	1	1	0:1	
+sq_JumpDownStartFrame	member	1	1	1:1	obj:1
+sq_JumpLandStartFrame	member	1	1	1:1	obj:1
+sq_JumpUpStartFrame	member	1	1	1:1	obj:1
+sq_PlayMoveSound	member	1	1	0:1	obj:1
+sq_RemoveAimPointMark	member	1	1	0:1	obj:1
+sq_RemoveChangeStatus	free	1	1	2:1	
+sq_SendCreatePassiveObjectPacketFromPassive	free	1	1	7:1	
+sq_SendHitObjectPacketWithNoStuck	free	1	1	5:1	
+sq_SendSetHpPacket	member	1	1	3:1	sqrObj:1
+sq_SetAddWeaponDamage	free	1	1	2:1	
+sq_SetAnimationSpeedRate	member	1	1	2:1	obj:1
+sq_SetBodyEffect	free	1	1	8:1	
+sq_SetCurrentAttacknBackForce	free	1	1	2:1	
+sq_SetCurrentAttacknUpForce	free	1	1	2:1	
+sq_SetCurrentTimeByFrame	member	1	1	2:1	obj:1
+sq_SetDirection	member	1	1	1:1	obj:1
+sq_SetDownBounceDownFrame	member	1	1	1:1	obj:1
+sq_SetDownBounceUpFrame	member	1	1	1:1	obj:1
+sq_SetDownDownFrame	member	1	1	1:1	obj:1
+sq_SetDownLieFrame	member	1	1	1:1	obj:1
+sq_SetDownUpFrame	member	1	1	1:1	obj:1
+sq_SetEnableKeyInputType	free	1	1	4:1	
+sq_SetEnumDrawLayer	free	1	1	2:1	
+sq_SetFrameDelayTime	free	1	1	3:1	
+sq_SetMyControlCharacter	free	1	1	1:1	
+sq_SetObjectBounding	free	1	1	2:1	
+sq_SetSkillSubState	member	1	1	2:1	obj:1
+sq_SetfindNearLinearMovablePos	member	1	1	5:1	obj:1
+sq_addAttractAimPointMark	member	1	1	4:1	obj:1
+sq_binaryData_writeFloat	member	1	1	1:1	obj:1
+sq_bottomcreateFlash	member	1	1	5:1	obj:1
+sq_createAttackObjectWithPath	free	1	1	9:1	
+sq_createCommonElementalAttack	free	1	1	6:1	
+sq_drawToolTip	free	1	1	9:1	
+sq_getAttackAni	member	1	1	1:1	obj:1
+sq_getAttackCancelStartFrame	member	1	1	1:1	obj:1
+sq_getAttackCancelStartFrameSize	member	1	1	0:1	obj:1
+sq_getBuffAni	member	1	1	0:1	obj:1
+sq_getDamageAni	member	1	1	1:1	obj:1
+sq_getDashAni	member	1	1	0:1	obj:1
+sq_getDashAttackAni	member	1	1	0:1	obj:1
+sq_getDashAttackSlideStopFrame	member	1	1	0:1	obj:1
+sq_getDownAni	member	1	1	0:1	obj:1
+sq_getGetItemAni	member	1	1	0:1	obj:1
+sq_getInputDirection	member	1	1	1:1	obj:1
+sq_getJumpAni	member	1	1	0:1	obj:1
+sq_getJumpAttackAni	member	1	1	0:1	obj:1
+sq_getJumpAttackInfo	member	1	1	0:1	obj:1
+sq_getJumpDownStartFrame	member	1	1	0:1	obj:1
+sq_getJumpLandStartFrame	member	1	1	0:1	obj:1
+sq_getJumpUpStartFrame	member	1	1	0:1	obj:1
+sq_getMoveAni	member	1	1	0:1	obj:1
+sq_getOverturnAni	member	1	1	0:1	obj:1
+sq_getPassiveAttackRate	member	1	1	3:1	obj:1
+sq_getPowerWithPassive	member	1	1	5:1	obj:1
+sq_getRestAni	member	1	1	0:1	obj:1
+sq_getSitAni	member	1	1	0:1	obj:1
+sq_getStayAni	member	1	1	0:1	obj:1
+sq_getThrowChargeAni	member	1	1	1:1	obj:1
+sq_getThrowShootAni	member	1	1	1:1	obj:1
+sq_isEnableBackStepState	member	1	1	0:1	obj:1
+sq_isMyCharacter	member	1	1	0:1	obj:1
+sq_isSendTimeOutPacket	free	1	1	0:1	
+sq_removeSuperArmor	member	1	1	1:1	obj:1
+sq_requestBuySkill	free	1	1	3:1	
+sq_setAttackInfoType	free	1	1	2:1	
+sq_setAttractAimInfo	member	1	1	4:1	obj:1
+sq_setCustomHitEffectFileName	member	1	1	1:1	obj:1
+sq_setSuperArmor	member	1	1	1:1	obj:1
+sq_setfindNearMovablePos	member	1	1	5:1	obj:1
+startRapidInput	member	1	1	0:1	obj:1
+use	member	1	1	1:1	loadSlot:1

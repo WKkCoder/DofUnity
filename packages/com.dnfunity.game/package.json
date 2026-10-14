@@ -1,0 +1,17 @@
+{
+  "name": "com.dnfunity.game",
+  "version": "0.1.0",
+  "displayName": "DNF Game Core",
+  "description": "DNF 游戏逻辑核心:从 PVF 读出角色、技能、动画等定义,用一个最小的世界模型运行原版的 Squirrel 状态脚本,并提供 sq_* 原生接口的实现。不含任何原版内容;运行时读取用户自备的数据。",
+  "unity": "6000.0",
+  "dependencies": {
+    "com.dnfunity.data": "0.1.0",
+    "com.dnfunity.squirrel": "0.1.0",
+    "com.dnfunity.script": "0.1.0"
+  },
+  "keywords": [
+    "dnf",
+    "game",
+    "simulation"
+  ]
+}

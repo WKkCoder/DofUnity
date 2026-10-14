@@ -132,6 +132,10 @@ namespace Dnf.Squirrel
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         public static extern long sq_call(IntPtr v, long nparams, ulong retval, ulong raiseerror);
 
+        /// <summary>闭包的形参个数(脚本闭包含 this,即声明个数加 1)与自由变量个数。idx 必须是脚本闭包或原生闭包。</summary>
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        public static extern long sq_getclosureinfo(IntPtr v, long idx, out ulong nparams, out ulong nfreevars);
+
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         public static extern long sq_throwerror(IntPtr v, byte[] err);
 

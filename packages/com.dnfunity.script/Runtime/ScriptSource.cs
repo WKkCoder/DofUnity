@@ -43,6 +43,13 @@ namespace Dnf.Script
             return this;
         }
 
+        /// <summary>加入一个二进制文件(标记流脚本、.ani、stringtable.bin 等测试数据)。</summary>
+        public MemoryScriptSource AddBytes(string path, byte[] data)
+        {
+            _files[PvfPath.Normalize(path)] = data;
+            return this;
+        }
+
         public bool TryRead(string path, out byte[] data)
         {
             return _files.TryGetValue(path, out data);

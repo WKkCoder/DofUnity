@@ -77,6 +77,8 @@ namespace Dnf.Cli
             "      对地图 [animation] 里每个动画的每一帧,在截图里搜索不透明像素在容差内一致最多的位置,并与位置模型的预测比较(证据 E-030)。\n" +
             "  dnf sq-check [--json <文件>]\n" +
             "      用 Squirrel 3.2 检查 PVF 里全部明文 .nut:逐个编译;再模拟引擎加载入口脚本 sqr/loadstate.nut,统计登记的状态、回调前缀与缺少的接口(证据 E-033、E-034)。\n" +
+            "  dnf game-check [--json <文件>]\n" +
+            "      用 Dnf.Game 的最小世界,在原版 Squirrel 状态脚本不改动的情况下跑男魔法师的 IceCrash 技能,记录回调与接口调用序列、没实现的接口与接口覆盖率(证据 E-036、E-037)。\n" +
             "选项:\n" +
             "  --dnf-dir <目录>          数据目录(默认读环境变量 DNF_DIR,再读仓库根的 local.env)\n" +
             "  --out <目录>              参考输出目录(默认 <仓库>/out)\n" +
@@ -213,6 +215,8 @@ namespace Dnf.Cli
                     return MapFit.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "sq-check":
                     return SquirrelCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "game-check":
+                    return GameCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "verify":
                     if (positional.Count != 1)
                     {

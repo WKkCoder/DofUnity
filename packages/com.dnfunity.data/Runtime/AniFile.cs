@@ -11,7 +11,8 @@ namespace Dnf.Data
     {
         /// <summary>
         /// 图形特效:u16 类型(0 到 6),类型 5 后面多 3 字节。全库帧数:类型 2 280,153(98.6%)、5 2,117、4 895、3 604、1 368、0 82、6 24。
-        /// 类型 2 是加法混合,已用城镇光效对原版截图核对(证据 E-030);其余类型的含义**未知**。
+        /// 类型 2 是加法混合,已用城镇光效对原版截图核对(证据 E-030);其余类型的名字来自脚本头文件里的枚举 GRAPHICEFFECT_*(证据 E-037,
+        /// 见 <see cref="AniGraphicEffect"/>),渲染公式**未核对**。
         /// </summary>
         public const ushort GraphicEffect = 11;
 
@@ -45,13 +46,40 @@ namespace Dnf.Data
 
         /// <summary>u32 长度 + 字符串,形如音效键(取值如 HOLD,已核对)。</summary>
         public const ushort Sound = 16;
+
+        /// <summary>
+        /// 关键帧标志,i32 标志编号(推断,证据 E-036):全库 7,860 帧带它,取值 1 占 5,374、2 占 1,512、3 占 500;
+        /// 魔法师(男)的 20 个可检验的状态脚本里,19 个脚本在 onKeyFrameFlag_* 中比较的编号全部出现在该状态所用动画的这个属性里
+        /// (例如 IceCrash 的起手动画两帧带 1、2,收尾动画一帧带 3,正是脚本处理的 1、2、3)。引擎在动画播到这一帧时调用 onKeyFrameFlag 回调。
+        /// </summary>
+        public const ushort KeyFrameFlag = 23;
     }
 
-    /// <summary>图形特效类型的取值。只有 <see cref="Additive"/> 核对过(证据 E-030)。</summary>
+    /// <summary>判定框类型(推断,证据 E-036):14 是受击框,15 是攻击框(攻击框只出现在出招的帧上)。</summary>
+    public static class AniBoxType
+    {
+        public const ushort Damage = 14;
+        public const ushort Attack = 15;
+    }
+
+    /// <summary>
+    /// 图形特效类型的取值。名字来自脚本头文件 dnf_enum_header.nut 里的枚举 GRAPHICEFFECT_*(证据 E-037:
+    /// NONE 0、DODGE 1、LINEARDODGE 2、DARK 3、XOR 4、MONOCHROME 5、SPACE_DISTORT 6、MAX 7)。
+    /// 只有 <see cref="Additive"/>(即 LINEARDODGE,线性减淡 = 加法混合)用城镇光效对原版截图核对过(证据 E-030);
+    /// 其余类型只知道名字,渲染公式**未核对**(DODGE 可能是颜色减淡、DARK 可能是变暗,都只是名字的字面意思)。
+    /// </summary>
     public static class AniGraphicEffect
     {
-        /// <summary>加法混合:dst' = min(255, round(dst + src.rgb × src.a/255 × 染色alpha/255))。</summary>
+        public const int None = 0;
+        public const int Dodge = 1;
+
+        /// <summary>加法混合(LINEARDODGE):dst' = min(255, round(dst + src.rgb × src.a/255 × 染色alpha/255))。</summary>
         public const int Additive = 2;
+        public const int LinearDodge = 2;
+        public const int Dark = 3;
+        public const int Xor = 4;
+        public const int Monochrome = 5;
+        public const int SpaceDistort = 6;
     }
 
     /// <summary>
@@ -222,6 +250,24 @@ namespace Dnf.Data
             milliseconds = 0;
             return false;
         }
+
+        /// <summary>帧延时(毫秒);没有该属性时按 0。</summary>
+        public int DelayMs => TryGetDelayMs(out int ms) ? ms : 0;
+
+        /// <summary>关键帧标志编号(<see cref="AniFrameProperty.KeyFrameFlag"/>,推断,证据 E-036)。没有该属性时返回 false。</summary>
+        public bool TryGetKeyFrameFlag(out int flag)
+        {
+            foreach (AniProperty p in Properties)
+            {
+                if (p.Id == AniFrameProperty.KeyFrameFlag && p.Payload.Length == 4)
+                {
+                    flag = BinaryPrimitives.ReadInt32LittleEndian(p.Payload);
+                    return true;
+                }
+            }
+            flag = 0;
+            return false;
+        }
     }
 
     /// <summary>
@@ -254,6 +300,20 @@ namespace Dnf.Data
                     }
                 }
                 return false;
+            }
+        }
+
+        /// <summary>所有帧的延时之和(毫秒)。</summary>
+        public int TotalDurationMs
+        {
+            get
+            {
+                long sum = 0;
+                foreach (AniFrame f in Frames)
+                {
+                    sum += f.DelayMs;
+                }
+                return sum > int.MaxValue ? int.MaxValue : (int)sum;
             }
         }
 

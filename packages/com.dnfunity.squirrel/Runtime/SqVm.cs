@@ -286,6 +286,100 @@ namespace Dnf.Squirrel
             }
         }
 
+        /// <summary>根表里这个名字的脚本函数声明了几个形参(不含 this);不存在或不是脚本函数返回 -1。</summary>
+        public int GetFunctionArity(string name)
+        {
+            EnsureOpen();
+            long top = SqNative.sq_gettop(_h);
+            try
+            {
+                SqNative.sq_pushroottable(_h);
+                PushString(name);
+                if (SqNative.sq_rawget(_h, -2) < 0)
+                {
+                    return -1;
+                }
+                return ClosureArityAtTop();
+            }
+            finally
+            {
+                SqNative.sq_settop(_h, top);
+            }
+        }
+
+        /// <summary>栈顶是脚本闭包时返回声明的形参个数(不含 this),否则 -1。</summary>
+        private int ClosureArityAtTop()
+        {
+            if (SqNative.ToSqType(SqNative.sq_gettype(_h, -1)) != SqType.Closure)
+            {
+                return -1;
+            }
+            ulong nparams;
+            ulong nfree;
+            if (SqNative.sq_getclosureinfo(_h, -1, out nparams, out nfree) < 0)
+            {
+                return -1;
+            }
+            return (int)nparams - 1;
+        }
+
+        /// <summary>
+        /// 调用根表里的脚本函数,实参个数按函数声明的形参个数调整:多出来的丢掉,不足的补 null
+        /// (Squirrel 要求实参个数与形参个数完全一致,而引擎回调的参数个数在同一类回调的各个脚本里并不统一)。
+        /// 函数不存在时返回 false 且 <paramref name="error"/> 为 null;脚本抛出错误时返回 false 且 error 有文本。
+        /// </summary>
+        public bool TryCallAdapted(string function, out object result, out string error, params object[] args)
+        {
+            EnsureOpen();
+            result = null;
+            error = null;
+            long top = SqNative.sq_gettop(_h);
+            _errors.Length = 0;
+            try
+            {
+                SqNative.sq_pushroottable(_h);
+                PushString(function);
+                if (SqNative.sq_rawget(_h, -2) < 0)
+                {
+                    return false;
+                }
+                SqNative.sq_remove(_h, -2);
+                int available = args == null ? 0 : args.Length;
+                int declared = ClosureArityAtTop();
+                if (declared < 0)
+                {
+                    if (SqNative.ToSqType(SqNative.sq_gettype(_h, -1)) != SqType.NativeClosure)
+                    {
+                        return false;
+                    }
+                    declared = available;
+                }
+                SqNative.sq_pushroottable(_h);
+                for (int i = 0; i < declared; i++)
+                {
+                    if (i < available)
+                    {
+                        PushValue(args[i]);
+                    }
+                    else
+                    {
+                        SqNative.sq_pushnull(_h);
+                    }
+                }
+                if (SqNative.sq_call(_h, declared + 1, 1, 1) < 0)
+                {
+                    error = ErrorText();
+                    return false;
+                }
+                result = ReadValue(-1);
+                return true;
+            }
+            finally
+            {
+                SqNative.sq_settop(_h, top);
+            }
+        }
+
         // ---------------------------------------------------------------- 原生表、全局函数、对象
         /// <summary>在根表里登记一个全局原生函数。</summary>
         public void RegisterGlobal(string name, SqNativeFn fn)
@@ -430,14 +524,18 @@ namespace Dnf.Squirrel
             SqNative.sq_settop(_h, top);
         }
 
-        /// <summary>同上,作用在一个对象原型上:对象调用原型里没有的方法时,按名字向 factory 要。</summary>
-        public void SetMissingMemberHandler(SqNativeTable proto, Func<string, SqNativeFn> factory)
+        /// <summary>
+        /// 同上,作用在一个对象原型上:对象调用原型里没有的方法时,按名字向 factory 要。
+        /// propertyFactory 可选:对象读原型里没有的"属性"(例如 obj.sq_var,不带括号)时先问它,
+        /// 返回的函数会被立即调用(this 是这个对象),它的返回值就是属性值,不会缓存;返回 null 表示不是属性,再走 factory。
+        /// </summary>
+        public void SetMissingMemberHandler(SqNativeTable proto, Func<string, SqNativeFn> factory, Func<string, SqNativeFn> propertyFactory = null)
         {
             EnsureOpen();
-            proto.Method("_get", MissingLookup(factory, proto.Id));
+            proto.Method("_get", MissingLookup(factory, proto.Id, propertyFactory));
         }
 
-        private SqNativeFn MissingLookup(Func<string, SqNativeFn> factory, long cacheTableId)
+        private SqNativeFn MissingLookup(Func<string, SqNativeFn> factory, long cacheTableId, Func<string, SqNativeFn> propertyFactory = null)
         {
             return call =>
             {
@@ -446,6 +544,14 @@ namespace Dnf.Squirrel
                     throw new SqNotFoundException();
                 }
                 string name = call.String(0);
+                if (propertyFactory != null)
+                {
+                    SqNativeFn getter = propertyFactory(name);
+                    if (getter != null)
+                    {
+                        return getter(call);
+                    }
+                }
                 SqNativeFn fn = factory(name);
                 if (fn == null)
                 {

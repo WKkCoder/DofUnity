@@ -139,6 +139,7 @@ def main():
     files_with = {k: defaultdict(set) for k in per}
     receivers = defaultdict(Counter)
     per_file = defaultdict(Counter)  # 路径 -> {sq_ 名字: 调用次数}
+    other_per_file = defaultdict(Counter)  # 路径 -> {非 sq_ 的成员或自由调用名字: 调用次数}
     total_bytes = 0
     for e in nuts:
         data = pvf.read(e)
@@ -150,6 +151,10 @@ def main():
                 receivers[name][receiver or "(链式或表达式)"] += 1
             if name.startswith("sq_") and kind in ("call", "member_call"):
                 per_file[e.path][name] += 1
+            elif kind == "member_call":
+                other_per_file[e.path][name] += 1
+            elif kind == "call":
+                other_per_file[e.path]["free:" + name] += 1
 
     defined = set(per["def"])
     sq_all = set(n for k in per for n in per[k] if n.startswith("sq_"))
@@ -197,6 +202,7 @@ def main():
         "other_free_calls": dict(sorted(other_free.items(), key=lambda kv: (-kv[1], kv[0]))),
         "member_calls_nonsq": dict(sorted(members.items(), key=lambda kv: (-kv[1], kv[0]))),
         "sq_per_file": {p: dict(c) for p, c in per_file.items()},
+        "other_per_file": {p: dict(c) for p, c in other_per_file.items()},
     }
     os.makedirs(dnfpaths.OUT_DIR, exist_ok=True)
     path = os.path.join(dnfpaths.OUT_DIR, "sq_inventory.json")
