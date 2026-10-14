@@ -6,7 +6,9 @@ namespace Dnf.Data
 {
     /// <summary>
     /// PVF 的逐字解密。目录树与每个文件相同:按 32 位小端字,out = ROR32(word ^ crc ^ 0x81A79011, 6)。
-    /// 目录树用头里的 dirTreeCrc,文件用自己目录项里的 crc(它只是密钥,不是内容校验和)。
+    /// 目录树用头里的 dirTreeCrc,文件用自己目录项里的 crc。这个 crc 同时是校验值:
+    /// 对解密后(含对齐填充)的整段做 CRC-32,种子分别是 nFiles(目录树)与 fileNo(文件),结果等于它自己
+    /// (客户端 DNF.exe 的 VA 0x011AB180 例程就是这样解密并校验的,见 <see cref="Crc32"/> 与证据台账 E-011)。
     /// </summary>
     public static class PvfCipher
     {

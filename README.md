@@ -7,9 +7,9 @@
 
 | 阶段 | 状态 |
 |---|---|
-| P1 数据层 | **C# 库与命令行已完成,全库对拍零差异**(PVF 334,998 个文件哈希逐一一致;147,273 个标记流脚本;187,365 个 `.ani`;80,328 个 IMG、9,860,711 个帧解码并校验 Adler-32;随机 1000 帧逐像素一致)。Unity 6 里编译并运行该包已验证(6 个 EditMode 测试通过,含读取真实 PVF 全部文件) |
+| P1 数据层 | **C# 库与命令行已完成,全库对拍零差异**(PVF 334,998 个文件哈希逐一一致;147,273 个标记流脚本;187,365 个 `.ani`;80,328 个 IMG、9,860,711 个帧解码并校验 Adler-32;随机 1000 帧逐像素一致)。Unity 6 里编译并运行该包已验证(9 个 EditMode 测试通过,含读取真实 PVF 全部文件并校验目录树与每个文件的 CRC-32) |
 | P2 语义目录 | 脚本语法已破解,tag 目录已生成(3,408 种);语义待标注 |
-| P6 逆向 | `DNF.exe` 已做只读探查,Ghidra 导入与分析进行中 |
+| P6 逆向 | Ghidra 对 `DNF.exe` 的只读静态分析已完成;已定位 PVF 解密与校验例程,并发现每个文件的 `crc` 同时是 CRC-32 校验值(全库 334,998 个文件与目录树通过,E-011) |
 
 详见 [路线图](docs/roadmap.md)、[格式规格](docs/formats.md)、[证据台账](docs/evidence/ledger.md)、[范围与边界](docs/boundaries.md)、[逆向工作流](docs/reverse-workflow.md)。
 
@@ -37,9 +37,10 @@ python3 tools/py/scan_imgs.py   # 全量扫描 IMG v2
 python3 tools/py/tag_catalog.py # tag 目录与覆盖率
 python3 tools/py/ani_spec.py    # 二进制 .ani 全库验证
 python3 tools/py/pe_probe.py    # DNF.exe 静态探查
+python3 tools/py/pvf_crc_probe.py # PVF 每个文件与目录树的 CRC-32 校验(客户端自己的规则,E-011)
 ```
 
-4. 一条命令验收 P1(单元测试 + C# 全库对拍,约 20 秒;参考输出缺失时会先用上面的脚本生成):
+4. 一条命令验收 P1(单元测试 + C# 全库对拍 + 客户端校验规则,约 30 秒;参考输出缺失时会先用上面的脚本生成):
 
 ```sh
 tools/verify-p1.sh

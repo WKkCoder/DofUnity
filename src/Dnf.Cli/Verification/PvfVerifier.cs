@@ -9,6 +9,8 @@ namespace Dnf.Cli.Verification;
 /// <summary>
 /// 与 Python 参考实现生成的清单(out/pvf_manifest.tsv.gz)逐文件对拍:路径、解密后长度、明文 SHA-256,
 /// 再比较"全部十六进制哈希按目录顺序拼起来再哈希一次"的聚合值。
+/// 另外按客户端自己的规则校验每个文件和目录树(CRC-32,见证据台账 E-011):这一项不依赖 Python 清单,
+/// 解密只要有一个字错,对应文件的校验就会失败(2^-32 的偶然通过概率)。
 /// </summary>
 internal static class PvfVerifier
 {
@@ -29,17 +31,37 @@ internal static class PvfVerifier
         r.Metrics["manifest_rows"] = (long)manifest.Count;
         r.ExpectEqual("文件数", manifest.Count, pvf.Count);
 
+        r.Metrics["directory_checksum_valid"] = pvf.DirectoryChecksumValid;
+        r.Expect(pvf.DirectoryChecksumValid, "目录树校验失败:解密后整段的 CRC-32(种子 = 文件数)不等于头里的 dirTreeCrc");
+
         int n = pvf.Count;
         var hashes = new string[n];
         long totalBytes = 0;
+        long checksumFailures = 0;
+        var firstFailures = new System.Collections.Concurrent.ConcurrentQueue<string>();
         var options = new ParallelOptions { MaxDegreeOfParallelism = opts.Threads };
         Parallel.For(0, n, options, i =>
         {
-            byte[] data = pvf.Read(pvf.Entries[i]);
+            byte[] data = pvf.Read(pvf.Entries[i], out bool checksumOk);
+            if (!checksumOk)
+            {
+                Interlocked.Increment(ref checksumFailures);
+                if (firstFailures.Count < 10)
+                {
+                    firstFailures.Enqueue(pvf.Entries[i].Path);
+                }
+            }
             hashes[i] = Convert.ToHexStringLower(SHA256.HashData(data));
             Interlocked.Add(ref totalBytes, data.Length);
         });
         r.Metrics["plaintext_bytes"] = totalBytes;
+        r.Metrics["file_checksum_failures"] = checksumFailures;
+        r.Metrics["file_checksum_passes"] = (long)n - checksumFailures;
+        foreach (string path in firstFailures)
+        {
+            r.Fail("文件校验失败(CRC-32,种子 = fileNo): " + path);
+        }
+        r.Expect(checksumFailures == 0, "有 " + checksumFailures + " 个文件的校验没有通过");
 
         using var aggregate = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         using var manifestAggregate = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);

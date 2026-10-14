@@ -47,6 +47,15 @@ namespace DnfUnity.Tests
             Assert.AreEqual(expectedHex, Hex(data));
         }
 
+        // 期望值来自 Python 的 zlib.crc32(bytes(range(32)), seed)。
+        [TestCase(0u, 0x91267E8Au)]
+        [TestCase(0xDEADBEEFu, 0xCE7EA316u)]
+        [TestCase(334998u, 0x40C677E0u)]
+        public void Crc32_MatchesZlibReference(uint seed, uint expected)
+        {
+            Assert.AreEqual(expected, Crc32.Compute(Ascending(32), seed));
+        }
+
         [Test]
         public void ImgPixels_MatchPythonReference()
         {
@@ -132,7 +141,8 @@ namespace DnfUnity.Tests
 
         /// <summary>
         /// 真实数据集成测试:只有设置了环境变量 DNF_DIR 与 DNF_EXPECT_PVF_AGGREGATE 才运行。
-        /// 读出 Script.pvf 的全部文件,把"每个文件明文的十六进制 SHA-256 按目录顺序拼接后再哈希"与期望值比较。
+        /// 读出 Script.pvf 的全部文件,把"每个文件明文的十六进制 SHA-256 按目录顺序拼接后再哈希"与期望值比较,
+        /// 同时按原版客户端的规则校验目录树与每个文件的 CRC-32(证据台账 E-011),要求全部通过。
         /// </summary>
         [Test]
         public void RealPvf_AggregateHashMatches()
@@ -151,15 +161,23 @@ namespace DnfUnity.Tests
             using (SHA256 each = SHA256.Create())
             {
                 var input = new MemoryStream();
+                int checksumFailures = 0;
                 for (int i = 0; i < pvf.Count; i++)
                 {
-                    byte[] hash = each.ComputeHash(pvf.Read(pvf.Entries[i]));
+                    byte[] data = pvf.Read(pvf.Entries[i], out bool checksumOk);
+                    if (!checksumOk)
+                    {
+                        checksumFailures++;
+                    }
+                    byte[] hash = each.ComputeHash(data);
                     byte[] hex = Encoding.ASCII.GetBytes(Hex(hash));
                     input.Write(hex, 0, hex.Length);
                 }
                 input.Position = 0;
                 Assert.AreEqual(expected.ToLowerInvariant(), Hex(aggregate.ComputeHash(input)));
                 Assert.AreEqual(334998, pvf.Count);
+                Assert.IsTrue(pvf.DirectoryChecksumValid, "目录树校验应当通过");
+                Assert.AreEqual(0, checksumFailures, "文件校验失败的个数");
             }
         }
     }

@@ -37,33 +37,52 @@ internal static class TestData
 
     // ---------------------------------------------------------------- PVF
 
+    /// <summary>测试里第 i 个文件的 fileNo。故意取非 0、非连续的值,好让"种子 = fileNo"的校验真正被检验到。</summary>
+    public static uint FileNo(int index) => 19819u + 7001u * (uint)index;
+
+    /// <summary>
+    /// 构造合成 PVF。<paramref name="validChecksums"/> 为 false 时(旧行为):文件密钥取规格里的 Crc、
+    /// 对齐填充用 0xEE、目录树密钥取 treeCrc——这些都不满足客户端的校验规则,用来测"库不依赖校验也能读"。
+    /// 为 true 时按真实数据的规则造:填充为零,文件的 crc = CRC-32(整段明文,种子 = fileNo),
+    /// 目录树的 crc = CRC-32(整段明文,种子 = 文件数),规格里的 Crc 与 treeCrc 被忽略。
+    /// </summary>
     public static (byte[] Pvf, int TrailingBytes) BuildPvf(
         IReadOnlyList<PvfFileSpec> files,
         uint treeCrc = 0x19036113u,
         uint version = 66282u,
-        int extraTreeBytes = 1)
+        int extraTreeBytes = 1,
+        bool validChecksums = false)
     {
         var data = new MemoryStream();
         var tree = new MemoryStream();
-        uint fileNo = 0;
+        int index = 0;
         foreach (PvfFileSpec f in files)
         {
+            uint fileNo = FileNo(index++);
             uint rel = (uint)data.Length;
             int padded = (f.Content.Length + 3) & ~3;
             var enc = new byte[padded];
             Array.Copy(f.Content, enc, f.Content.Length);
-            for (int i = f.Content.Length; i < padded; i++)
+            uint crc = f.Crc;
+            if (validChecksums)
             {
-                enc[i] = 0xEE; // 对齐填充,解密后会被截掉
+                crc = Crc32.Compute(enc, fileNo);
             }
-            PvfCipher.EncryptInPlace(enc, f.Crc);
+            else
+            {
+                for (int i = f.Content.Length; i < padded; i++)
+                {
+                    enc[i] = 0xEE; // 对齐填充,解密后会被截掉
+                }
+            }
+            PvfCipher.EncryptInPlace(enc, crc);
             data.Write(enc);
 
-            U32(tree, fileNo++);
+            U32(tree, fileNo);
             U32(tree, (uint)f.Path.Length);
             tree.Write(Latin1Bytes(f.Path));
             U32(tree, (uint)f.Content.Length);
-            U32(tree, f.Crc);
+            U32(tree, crc);
             U32(tree, rel);
         }
         int parsedLength = (int)tree.Length;
@@ -74,6 +93,10 @@ internal static class TestData
         }
         byte[] treeBytes = tree.ToArray();
         int trailing = treeBytes.Length - parsedLength;
+        if (validChecksums)
+        {
+            treeCrc = Crc32.Compute(treeBytes, (uint)files.Count);
+        }
         PvfCipher.EncryptInPlace(treeBytes, treeCrc);
 
         var pvf = new MemoryStream();

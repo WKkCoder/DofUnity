@@ -25,3 +25,13 @@ dotnet test src/Dnf.Data.Tests/Dnf.Data.Tests.csproj -c Release
 echo "== 全库对拍(用户自备数据)=="
 dotnet build src/Dnf.Cli/Dnf.Cli.csproj -c Release -v q
 dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll verify all "$@"
+
+echo "== 客户端校验规则(Python,独立于 C#):PVF 每个文件与目录树的 CRC-32 =="
+python3 tools/py/pvf_crc_probe.py --out out/pvf_crc_probe.json > /dev/null
+python3 - <<'EOF'
+import json, sys
+r = json.load(open("out/pvf_crc_probe.json"))
+ok = r["h1_seed_fileNo_padded"] == r["files_checked"] and r["dirtree"]["crc32_seed_nFiles_matches"]
+print("文件校验通过 %d/%d;目录树校验%s" % (r["h1_seed_fileNo_padded"], r["files_checked"], "通过" if r["dirtree"]["crc32_seed_nFiles_matches"] else "失败"))
+sys.exit(0 if ok else 1)
+EOF

@@ -5,7 +5,10 @@ using System.IO;
 
 namespace Dnf.Data
 {
-    /// <summary>PVF 目录项。<see cref="Crc"/> 只是解密密钥,不是内容校验和。</summary>
+    /// <summary>
+    /// PVF 目录项。<see cref="Crc"/> 同时是解密密钥与校验值:解密后(含对齐填充)的整段明文做 CRC-32,
+    /// 种子取 <see cref="FileNumber"/>,结果等于 <see cref="Crc"/>。
+    /// </summary>
     public readonly struct PvfEntry
     {
         public string Path { get; }
@@ -46,8 +49,14 @@ namespace Dnf.Data
         public uint Version { get; }
         public uint DirectoryCrc { get; }
 
-        /// <summary>目录树解析完后多出的字节数。真实数据里是 1,原因未解释。</summary>
+        /// <summary>目录树解析完后多出的字节数。真实数据里是 1 个零字节:把目录树补齐到 4 字节倍数的填充,校验和覆盖它。</summary>
         public int DirectoryTrailingBytes { get; }
+
+        /// <summary>
+        /// 目录树的校验是否通过:长度是 4 的倍数,且解密后整段的 CRC-32(种子 = 文件数)等于头里的 dirTreeCrc。
+        /// 与客户端的做法一致;不通过时库仍然会解析目录,由调用方决定是否拒绝。
+        /// </summary>
+        public bool DirectoryChecksumValid { get; }
 
         public IReadOnlyList<PvfEntry> Entries => _entries;
 
@@ -116,6 +125,7 @@ namespace Dnf.Data
                 throw new DnfFormatException("PVF 目录树被截断");
             }
             PvfCipher.DecryptInPlace(tree, DirectoryCrc);
+            DirectoryChecksumValid = (treeLen & 3u) == 0 && Crc32.Compute(tree, nFiles) == DirectoryCrc;
             _dataBase = headerLength + treeLen;
             _entries = ParseDirectory(tree, (int)nFiles, out int leftover);
             DirectoryTrailingBytes = leftover;
@@ -180,8 +190,33 @@ namespace Dnf.Data
             return d;
         }
 
-        /// <summary>读取并解密一个文件的全部内容。</summary>
+        /// <summary>读取并解密一个文件的全部内容,不做校验(快)。</summary>
         public byte[] Read(PvfEntry entry)
+        {
+            return ReadCore(entry, false, out _);
+        }
+
+        /// <summary>
+        /// 读取并解密一个文件的全部内容,同时按客户端的规则校验:解密后(含对齐填充)的整段明文做 CRC-32,
+        /// 种子取目录项的 fileNo,应当等于目录项的 crc。校验不通过时仍返回内容,<paramref name="checksumValid"/> 为 false。
+        /// </summary>
+        public byte[] Read(PvfEntry entry, out bool checksumValid)
+        {
+            return ReadCore(entry, true, out checksumValid);
+        }
+
+        /// <summary>读取、解密并校验;校验不通过抛 <see cref="DnfFormatException"/>(客户端遇到这种文件也会拒绝加载)。</summary>
+        public byte[] ReadVerified(PvfEntry entry)
+        {
+            byte[] data = ReadCore(entry, true, out bool ok);
+            if (!ok)
+            {
+                throw new DnfFormatException("PVF 文件校验失败: " + entry.Path);
+            }
+            return data;
+        }
+
+        private byte[] ReadCore(PvfEntry entry, bool verify, out bool checksumValid)
         {
             if (entry.Length > int.MaxValue - 4)
             {
@@ -196,6 +231,8 @@ namespace Dnf.Data
                 throw new DnfFormatException("PVF 文件数据被截断: " + entry.Path + " 需要 " + length + " 实得 " + got);
             }
             PvfCipher.DecryptInPlace(buffer, entry.Crc);
+            // 对齐填充读不满(数据区恰好在文件末尾被截)时,校验按"整段"算必然不过,如实报告。
+            checksumValid = !verify || (got == padded && Crc32.Compute(buffer, entry.FileNumber) == entry.Crc);
             if (padded == length)
             {
                 return buffer;

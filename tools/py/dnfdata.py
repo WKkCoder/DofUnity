@@ -7,6 +7,9 @@
   PVF  : [u32 guidLen][guid][u32 version][u32 dirTreeLen][u32 dirTreeCrc][u32 nFiles]
          目录树与文件内容都按 32 位小端字解密: out = ROR32(word ^ crc ^ 0x81A79011, 6)
          目录项: u32 fileNo, u32 pathLen, path, u32 length, u32 crc, u32 relOffset
+         同一个 crc 也是校验值(E-011,全库成立,见 pvf_crc_probe.py):
+           文件:   crc == zlib.crc32(解密后按 4 字节对齐的整段, 种子 = fileNo)
+           目录树: dirTreeCrc == zlib.crc32(解密后的整段, 种子 = nFiles);整段含末尾 1 个零填充字节
          文件数据起点 = guidLen + 20 + dirTreeLen + relOffset,读取长度按 4 字节向上对齐
   NPK  : "NeoplePack_Bill\\0" + u32 count + count * 264 字节目录项
          目录项: u32 offset, u32 size, 256 字节路径(与固定密钥逐字节异或)
