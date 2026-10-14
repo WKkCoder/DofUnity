@@ -83,11 +83,12 @@ namespace Dnf.Data
                 }
             }
             uint count = BinaryPrimitives.ReadUInt32LittleEndian(head.AsSpan(16));
-            if ((long)count * EntryLength + HeaderLength > fileLength)
+            long tocLength = (long)count * EntryLength;
+            if (tocLength + HeaderLength > fileLength || tocLength > int.MaxValue)
             {
                 throw new DnfFormatException("NPK 目录表超出文件: count=" + count);
             }
-            var toc = new byte[(int)count * EntryLength];
+            var toc = new byte[(int)tocLength];
             if (ReadAt(HeaderLength, toc, 0, toc.Length) != toc.Length)
             {
                 throw new DnfFormatException("NPK 目录表被截断");

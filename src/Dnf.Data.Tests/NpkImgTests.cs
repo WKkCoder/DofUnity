@@ -38,6 +38,15 @@ public class NpkArchiveTests
     }
 
     [Fact]
+    public void Open_RejectsHugeEntryCountWithoutOverflow()
+    {
+        // 头里声称有 0xFFFFFFFF 个条目,但文件只有 20 字节。必须抛格式异常,而不是整数溢出。
+        byte[] head = TestData.BuildNpk(Array.Empty<(string, byte[])>()).Take(20).ToArray();
+        head[16] = head[17] = head[18] = head[19] = 0xFF;
+        Assert.Throws<DnfFormatException>(() => new NpkArchive(new MemoryStream(head)));
+    }
+
+    [Fact]
     public void Read_ThrowsWhenEntryDataMissing()
     {
         byte[] npk = TestData.BuildNpk(new (string, byte[])[] { ("a.img", new byte[100]) });

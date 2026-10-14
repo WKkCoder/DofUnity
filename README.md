@@ -7,7 +7,7 @@
 
 | 阶段 | 状态 |
 |---|---|
-| P1 数据层 | Python 参考实现已在全库验证(PVF 334,998 个文件;80,328 个 IMG v2;187,365 个 `.ani` 全部吃完)。C# 库未开始 |
+| P1 数据层 | **C# 库与命令行已完成,全库对拍零差异**(PVF 334,998 个文件哈希逐一一致;147,273 个标记流脚本;187,365 个 `.ani`;80,328 个 IMG、9,860,711 个帧解码并校验 Adler-32;随机 1000 帧逐像素一致)。Unity 编辑器里编译该包待验证 |
 | P2 语义目录 | 脚本语法已破解,tag 目录已生成(3,408 种);语义待标注 |
 | P6 逆向 | `DNF.exe` 已做只读探查,Ghidra 导入与分析进行中 |
 
@@ -19,7 +19,8 @@
 docs/        路线图、格式规格、边界、证据台账
 tools/py/    Python 参考实现与扫描脚本(只读,标准库)——C# 库的对照标准
 tools/guard/ 提交前守卫:挡住原版内容与反编译输出
-src/         C# 数据层库与命令行(待建)
+packages/    com.dnfunity.data:Unity 包(数据层库的唯一源码)
+src/         Dnf.Data(netstandard2.1 工程,链接上面的源码)、Dnf.Data.Tests(合成数据单元测试)、Dnf.Cli(全库对拍命令行)
 unity/       Unity 工程(待建)
 re/  out/    逆向产物与生成物,已被 .gitignore 排除
 ```
@@ -37,6 +38,14 @@ python3 tools/py/tag_catalog.py # tag 目录与覆盖率
 python3 tools/py/ani_spec.py    # 二进制 .ani 全库验证
 python3 tools/py/pe_probe.py    # DNF.exe 静态探查
 ```
+
+4. 一条命令验收 P1(单元测试 + C# 全库对拍,约 20 秒;参考输出缺失时会先用上面的脚本生成):
+
+```sh
+tools/verify-p1.sh
+```
+
+需要用户级 .NET SDK(`tools/env.sh` 会把 `~/.dotnet` 加进当前 shell 的 PATH)。报告写到 `out/p1_verification_all.json`。
 
 ## 测试策略
 
