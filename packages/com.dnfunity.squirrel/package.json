@@ -1,0 +1,12 @@
+{
+  "name": "com.dnfunity.squirrel",
+  "version": "0.1.0",
+  "displayName": "DNF Squirrel",
+  "description": "Squirrel 3.2 脚本虚拟机的原生封装与 C# 宿主接口(MIT 许可的 Squirrel 源码在 native/squirrel)。不含任何原版内容。",
+  "unity": "6000.0",
+  "keywords": [
+    "dnf",
+    "squirrel",
+    "script"
+  ]
+}

@@ -23,6 +23,21 @@
         "com.dnfunity.data": "0.1.0"
       }
     },
+    "com.dnfunity.script": {
+      "version": "file:../../../packages/com.dnfunity.script",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.dnfunity.data": "0.1.0",
+        "com.dnfunity.squirrel": "0.1.0"
+      }
+    },
+    "com.dnfunity.squirrel": {
+      "version": "file:../../../packages/com.dnfunity.squirrel",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {}
+    },
     "com.unity.ext.nunit": {
       "version": "2.0.5",
       "depth": 1,

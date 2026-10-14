@@ -1,6 +1,8 @@
 {
   "dependencies": {
     "com.dnfunity.data": "file:../../../packages/com.dnfunity.data",
+    "com.dnfunity.squirrel": "file:../../../packages/com.dnfunity.squirrel",
+    "com.dnfunity.script": "file:../../../packages/com.dnfunity.script",
     "com.dnfunity.render": "file:../../../packages/com.dnfunity.render",
     "com.dnfunity.client": "file:../../../packages/com.dnfunity.client",
     "com.unity.test-framework": "1.6.0",

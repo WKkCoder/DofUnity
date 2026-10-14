@@ -75,6 +75,8 @@ namespace Dnf.Cli
             "      合成整个场景(地图 [animation] 图层 + NPC;加法混合光效与染色 alpha 的帧间插值见证据 E-030),与截图整屏逐像素对照并按格子给出吻合率。\n" +
             "  dnf fit-map --shot <截图.png> [--map <地图>] [--fit-tol N] [--range-x N] [--range-y N] [--samples N] [--png <输出.png>]\n" +
             "      对地图 [animation] 里每个动画的每一帧,在截图里搜索不透明像素在容差内一致最多的位置,并与位置模型的预测比较(证据 E-030)。\n" +
+            "  dnf sq-check [--json <文件>]\n" +
+            "      用 Squirrel 3.2 检查 PVF 里全部明文 .nut:逐个编译;再模拟引擎加载入口脚本 sqr/loadstate.nut,统计登记的状态、回调前缀与缺少的接口(证据 E-033、E-034)。\n" +
             "选项:\n" +
             "  --dnf-dir <目录>          数据目录(默认读环境变量 DNF_DIR,再读仓库根的 local.env)\n" +
             "  --out <目录>              参考输出目录(默认 <仓库>/out)\n" +
@@ -209,6 +211,8 @@ namespace Dnf.Cli
                         : TownRender.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "fit-map":
                     return MapFit.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "sq-check":
+                    return SquirrelCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "verify":
                     if (positional.Count != 1)
                     {

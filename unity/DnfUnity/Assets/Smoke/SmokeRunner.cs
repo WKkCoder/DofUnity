@@ -8,6 +8,8 @@ using System.Text;
 using Dnf.Client;
 using Dnf.Data;
 using Dnf.Render;
+using Dnf.Script;
+using Dnf.Squirrel;
 using UnityEngine;
 
 namespace DnfUnity.Smoke
@@ -166,7 +168,68 @@ namespace DnfUnity.Smoke
                     hash == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
             }
 
+            RunScriptChecks();
             RunGpuChecks();
+        }
+
+        /// <summary>
+        /// Squirrel 原生插件与脚本宿主在目标平台的运行时上能用:插件被打进播放器并能加载、P/Invoke 与原生回调(IL2CPP 需要静态回调)往返正常、
+        /// 脚本按原版的加载约定运行(证据 E-033、E-035)。设置了 DNF_DIR 时再对真实数据跑一遍整条加载链。
+        /// </summary>
+        private void RunScriptChecks()
+        {
+            try
+            {
+                Check("squirrel plugin version", SqVm.Version == 320, SqVm.Version.ToString());
+                using (var vm = new SqVm())
+                {
+                    long noted = 0;
+                    vm.RegisterGlobal("host_add", c => c.Return(c.Int(0) + c.Int(1)));
+                    vm.RegisterGlobal("host_note", c =>
+                    {
+                        noted = c.Int(0);
+                        return c.ReturnNothing();
+                    });
+                    string error;
+                    bool ran = vm.TryRun("smoke", "BIG <- 1 << 40; function twice(x) { host_note(host_add(x, x)); return host_add(x, x) * 2; }", out error);
+                    object result;
+                    bool called = ran && vm.TryCall("twice", out result, out error, 21L);
+                    long big;
+                    Check("squirrel script <-> native round trip", ran && called && noted == 42 && vm.TryGetGlobalInteger("BIG", out big) && big == (1L << 40), error);
+                    Check("squirrel script error is reported", !vm.TryRun("bad", "this_does_not_exist_anywhere();", out error) && !string.IsNullOrEmpty(error), error);
+                }
+
+                var source = new MemoryScriptSource()
+                    .Add("sqr/loadstate.nut", "IRDSQRCharacter.pushScriptFiles(\"h.nut\"); IRDSQRCharacter.pushState(8, \"s.nut\", \"S\", STATE_X, SKILL_X);")
+                    .Add("sqr/h.nut", "STATE_X <- 70; SKILL_X <- 12;")
+                    .Add("sqr/s.nut", "function onSetState_S(obj, state, datas, isResetTimer) { }");
+                using (var host = new ScriptHost(source))
+                {
+                    ScriptLoadSummary summary = host.LoadAll();
+                    Check("script host follows the engine load contract", summary.EntryOk && summary.States == 1 && summary.ScriptFiles == 1,
+                        string.Join("; ", host.Errors));
+                }
+
+                string dir = Environment.GetEnvironmentVariable("DNF_DIR");
+                if (string.IsNullOrEmpty(dir) || !File.Exists(Path.Combine(dir, "Script.pvf")))
+                {
+                    Debug.Log("DNF_SMOKE SKIP real scripts: DNF_DIR is not set");
+                    return;
+                }
+                using (PvfArchive pvf = PvfArchive.Open(Path.Combine(dir, "Script.pvf")))
+                using (var real = new ScriptHost(new PvfScriptSource(pvf)))
+                {
+                    ScriptLoadSummary s = real.LoadAll();
+                    Debug.Log("DNF_SMOKE real scripts: loaded=" + s.LoadedScripts + " files=" + s.ScriptFiles + " states=" + s.States + " passive=" + s.PassiveObjects + " errors=" + s.Errors);
+                    Check("real script chain loads (169 scripts, 28/67/104 registrations)",
+                        s.EntryOk && s.Errors == 0 && s.Missing == 0 && s.LoadedScripts == 169 && s.ScriptFiles == 28 && s.States == 67 && s.PassiveObjects == 104,
+                        string.Join("; ", real.Errors));
+                }
+            }
+            catch (Exception e)
+            {
+                Check("script engine checks threw", false, e.ToString());
+            }
         }
 
         private void RunGpuChecks()

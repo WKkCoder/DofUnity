@@ -5,5 +5,9 @@
     <Project Path="src/Dnf.Data/Dnf.Data.csproj" />
     <Project Path="src/Dnf.Render.Tests/Dnf.Render.Tests.csproj" />
     <Project Path="src/Dnf.Render/Dnf.Render.csproj" />
+    <Project Path="src/Dnf.Script.Tests/Dnf.Script.Tests.csproj" />
+    <Project Path="src/Dnf.Script/Dnf.Script.csproj" />
+    <Project Path="src/Dnf.Squirrel.Tests/Dnf.Squirrel.Tests.csproj" />
+    <Project Path="src/Dnf.Squirrel/Dnf.Squirrel.csproj" />
   </Folder>
 </Solution>

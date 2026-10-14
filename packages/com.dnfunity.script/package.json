@@ -1,0 +1,16 @@
+{
+  "name": "com.dnfunity.script",
+  "version": "0.1.0",
+  "displayName": "DNF Script Host",
+  "description": "DNF 脚本引擎的宿主:从 PVF 里按原版的加载约定运行 Squirrel 脚本,登记状态与被动对象,并提供 sq_* 原生接口。不含任何原版内容;运行时读取用户自备的数据。",
+  "unity": "6000.0",
+  "dependencies": {
+    "com.dnfunity.data": "0.1.0",
+    "com.dnfunity.squirrel": "0.1.0"
+  },
+  "keywords": [
+    "dnf",
+    "squirrel",
+    "script"
+  ]
+}

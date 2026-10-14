@@ -4,7 +4,9 @@
     "references": [
         "Dnf.Data",
         "Dnf.Render",
-        "Dnf.Client"
+        "Dnf.Client",
+        "Dnf.Squirrel",
+        "Dnf.Script"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

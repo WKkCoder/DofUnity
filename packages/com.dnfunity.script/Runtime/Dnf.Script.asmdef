@@ -1,0 +1,17 @@
+{
+    "name": "Dnf.Script",
+    "rootNamespace": "Dnf.Script",
+    "references": [
+        "Dnf.Data",
+        "Dnf.Squirrel"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}
