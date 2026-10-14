@@ -98,6 +98,10 @@ namespace DnfUnity.Smoke
             byte[] p4444 = { 0x00, 0x00, 0x23, 0xF1, 0x21, 0x84, 0x34, 0x12, 0xFF, 0xFF };
             Check("img argb4444",
                 Hex(ImgPixels.ToRgba(ImgPixelFormat.Argb4444, p4444, 5)) == "00000000112233ff4422118822334411ffffffff");
+            // 1555:5 位通道按 round(v*255/31) 展开(与原版屏幕输出一致,证据 E-023);位复制在 v=3、7、24、28 上会差 1
+            byte[] p1555 = { 0xF8, 0x8C, 0x03, 0xF3 };
+            Check("img argb1555 rounding like the original client",
+                Hex(ImgPixels.ToRgba(ImgPixelFormat.Argb1555, p1555, 2)) == "193ac5ffe6c519ff");
             byte[] p8888 = { 1, 2, 3, 4, 255, 0, 128, 255, 9, 8, 7, 6 };
             Check("img argb8888",
                 Hex(ImgPixels.ToRgba(ImgPixelFormat.Argb8888, p8888, 3)) == "030201048000ffff07080906");

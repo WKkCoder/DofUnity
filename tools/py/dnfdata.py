@@ -237,13 +237,22 @@ def _tab4444():
     return _TAB4444
 
 
+def _x5(v):
+    """5 位通道展开成 8 位:round(v*255/31)。
+
+    这是与原版客户端屏幕输出逐像素一致的展开(见 docs/evidence/ledger.md 的 E-023);
+    早先用的位复制 (v<<3)|(v>>2) 在 v=3、7、28 等取值上差 1,会让约 12% 到 36% 的像素与原版不同。
+    """
+    return (v * 255 + 15) // 31
+
+
 def _tab1555():
     global _TAB1555
     if _TAB1555 is None:
         t = []
         for p in range(65536):
             a, r, g, b = (p >> 15) & 1, (p >> 10) & 31, (p >> 5) & 31, p & 31
-            t.append(bytes(((r << 3) | (r >> 2), (g << 3) | (g >> 2), (b << 3) | (b >> 2), 255 if a else 0)))
+            t.append(bytes((_x5(r), _x5(g), _x5(b), 255 if a else 0)))
         _TAB1555 = t
     return _TAB1555
 

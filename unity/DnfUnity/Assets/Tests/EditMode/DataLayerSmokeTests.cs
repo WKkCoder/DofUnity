@@ -67,6 +67,11 @@ namespace DnfUnity.Tests
             Assert.AreEqual("00000000000000ff00ff00ffffffff00ffffffff7b00ff00",
                 Hex(ImgPixels.ToRgba(ImgPixelFormat.Argb1555, p1555, 6)));
 
+            // 5 位通道按 round(v*255/31) 展开(与原版屏幕输出一致,E-023);位复制在 v=3、7、24、28 上会差 1
+            byte[] p1555Rounding = { 0xF8, 0x8C, 0x03, 0xF3 };
+            Assert.AreEqual("193ac5ffe6c519ff",
+                Hex(ImgPixels.ToRgba(ImgPixelFormat.Argb1555, p1555Rounding, 2)));
+
             byte[] p8888 = { 1, 2, 3, 4, 255, 0, 128, 255, 9, 8, 7, 6 };
             Assert.AreEqual("030201048000ffff07080906",
                 Hex(ImgPixels.ToRgba(ImgPixelFormat.Argb8888, p8888, 3)));

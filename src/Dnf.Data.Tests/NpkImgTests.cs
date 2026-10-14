@@ -85,6 +85,27 @@ public class ImgFileTests
     }
 
     [Fact]
+    public void Argb1555_ExpandsFiveBitChannelsByRoundingLikeTheOriginalClient()
+    {
+        // 5 位值 3、7、24、28 在位复制下是 24、57、198、231,而原版屏幕输出里是 25、58、197、230(证据 E-023)。
+        // 像素 0x8CF8:r=3 g=7 b=24;像素 0xF303:r=28 g=24 b=3。
+        byte[] raw = Pixels16(0x8CF8, 0xF303);
+        Assert.Equal("193ac5ffe6c519ff", Hex(ImgPixels.ToRgba(ImgPixelFormat.Argb1555, raw, 2)));
+    }
+
+    [Fact]
+    public void Argb1555_FiveBitExpansionIsRoundedNormalization()
+    {
+        for (int v = 0; v < 32; v++)
+        {
+            // 红色通道放在 bit 10..14,A 位为 1
+            byte[] raw = Pixels16((ushort)(0x8000 | (v << 10)));
+            byte red = ImgPixels.ToRgba(ImgPixelFormat.Argb1555, raw, 1)[0];
+            Assert.Equal((byte)Math.Round(v * 255.0 / 31.0, MidpointRounding.AwayFromZero), red);
+        }
+    }
+
+    [Fact]
     public void Argb8888_SwapsBlueAndRed()
     {
         byte[] raw = { 1, 2, 3, 4, 255, 0, 128, 255, 9, 8, 7, 6 };

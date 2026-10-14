@@ -5,9 +5,11 @@ namespace Dnf.Data
 {
     /// <summary>
     /// 像素格式转换。输出统一为 RGBA8888(字节顺序 R、G、B、A),行优先,不填充。
-    /// 4444 每通道乘 17;1555 用位复制 (v&lt;&lt;3)|(v&gt;&gt;2),A 位为 1 时不透明、为 0 时全透明。
-    /// 8888 在内存里是 B、G、R、A。
-    /// 注意:这是参考实现的约定,尚未与原版客户端的屏幕输出逐像素比较。
+    /// 4444 每通道乘 17(恰好等于 round(v*255/15));1555 每通道 round(v*255/31) = (v*255+15)/31,
+    /// A 位为 1 时不透明、为 0 时全透明。8888 在内存里是 B、G、R、A。
+    /// 这个展开规则用原版客户端的屏幕截图校验过(证据台账 E-023):所有被识别出来的 1555 帧,不透明像素与截图逐像素相同;
+    /// 常见的位复制 (v&lt;&lt;3)|(v&gt;&gt;2) 在 v=3、7、24、28 上差 1,会让 12% 到 36% 的像素与原版不同。
+    /// 4444 的展开尚无样本验证;它与 GPU 的标准归一化规则一致,所以预期相同。
     /// </summary>
     public static class ImgPixels
     {
@@ -44,13 +46,16 @@ namespace Dnf.Data
                     for (int p = 0; p < 65536; p++)
                     {
                         uint a = (uint)((p >> 15) & 1), r = (uint)((p >> 10) & 31), g = (uint)((p >> 5) & 31), b = (uint)(p & 31);
-                        t[p] = Pack((r << 3) | (r >> 2), (g << 3) | (g >> 2), (b << 3) | (b >> 2), a != 0 ? 255u : 0u);
+                        t[p] = Pack(Expand5(r), Expand5(g), Expand5(b), a != 0 ? 255u : 0u);
                     }
                     _lut1555 = t;
                 }
                 return t;
             }
         }
+
+        /// <summary>5 位通道展开成 8 位:round(v*255/31)。</summary>
+        private static uint Expand5(uint v) => (v * 255u + 15u) / 31u;
 
         /// <summary>把四个通道按 R、G、B、A 的内存顺序打成小端 uint。</summary>
         private static uint Pack(uint r, uint g, uint b, uint a) => r | (g << 8) | (b << 16) | (a << 24);

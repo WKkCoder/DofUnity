@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using Dnf.Cli;
+using Dnf.Cli.Analysis;
 using Dnf.Cli.Verification;
 using Dnf.Data;
 
@@ -16,6 +17,17 @@ namespace Dnf.Cli
         public string? OutDir { get; set; }
         public int Threads { get; set; } = Math.Max(2, Environment.ProcessorCount - 2);
         public string? ExpectAggregate { get; set; }
+
+        // locate(用截图反向识别精灵)
+        public string? Screenshot { get; set; }
+        public string? NpkFilter { get; set; }
+        public int MinOpaque { get; set; } = 150;
+        public double MinRatio { get; set; } = 0.85;
+        public int MaxDim { get; set; } = 1200;
+        public int MaxAnchor { get; set; } = 300;
+        public int Tolerance { get; set; }
+        public int Top { get; set; } = 60;
+        public string? JsonFile { get; set; }
     }
 
     internal static class CommandLine
@@ -27,6 +39,10 @@ namespace Dnf.Cli
             "  dnf verify <pvf|tags|ani|imgs|pixels|all> [选项]\n" +
             "      用 C# 数据层重新解析全部用户自备数据,与 Python 参考实现的输出逐项对拍。\n" +
             "      参考输出在 <仓库>/out/(见 docs/roadmap.md 里 P1 的生成命令)。\n" +
+            "  dnf locate --shot <截图.png> [选项]\n" +
+            "      拿一张原版客户端的截图,在全部 IMG 帧里找出不透明像素与截图逐像素相同的帧,并给出位置。\n" +
+            "      locate 的选项: --npk-filter <子串>(只扫文件名含它的 NPK)、--min-opaque <N>(默认 150)、\n" +
+            "      --min-ratio <0..1>(默认 0.85)、--tol <0..7>(每通道允许的差,默认 0=逐像素相同)、--max-dim <像素>(默认 1200)、--top <N>(打印前 N 个,默认 60)、--json <文件>\n" +
             "选项:\n" +
             "  --dnf-dir <目录>          数据目录(默认读环境变量 DNF_DIR,再读仓库根的 local.env)\n" +
             "  --out <目录>              参考输出目录(默认 <仓库>/out)\n" +
@@ -72,6 +88,31 @@ namespace Dnf.Cli
                     case "--expect-aggregate":
                         opts.ExpectAggregate = NextValue(args, ref i);
                         break;
+                    case "--shot":
+                        opts.Screenshot = NextValue(args, ref i);
+                        break;
+                    case "--npk-filter":
+                        opts.NpkFilter = NextValue(args, ref i);
+                        break;
+                    case "--min-opaque":
+                        opts.MinOpaque = int.TryParse(NextValue(args, ref i), out int mo) && mo > 0 ? mo : throw new UserError("--min-opaque 需要正整数");
+                        break;
+                    case "--min-ratio":
+                        opts.MinRatio = double.TryParse(NextValue(args, ref i), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double mr) && mr > 0 && mr <= 1
+                            ? mr : throw new UserError("--min-ratio 需要 (0,1] 之间的小数");
+                        break;
+                    case "--tol":
+                        opts.Tolerance = int.TryParse(NextValue(args, ref i), out int tl) && tl >= 0 && tl <= 7 ? tl : throw new UserError("--tol 需要 0 到 7 的整数");
+                        break;
+                    case "--max-dim":
+                        opts.MaxDim = int.TryParse(NextValue(args, ref i), out int md) && md > 0 ? md : throw new UserError("--max-dim 需要正整数");
+                        break;
+                    case "--top":
+                        opts.Top = int.TryParse(NextValue(args, ref i), out int tp) && tp > 0 ? tp : throw new UserError("--top 需要正整数");
+                        break;
+                    case "--json":
+                        opts.JsonFile = NextValue(args, ref i);
+                        break;
                     default:
                         if (args[i].StartsWith("--", StringComparison.Ordinal))
                         {
@@ -86,6 +127,8 @@ namespace Dnf.Cli
             {
                 case "info":
                     return Info(opts);
+                case "locate":
+                    return SpriteLocator.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "verify":
                     if (positional.Count != 1)
                     {

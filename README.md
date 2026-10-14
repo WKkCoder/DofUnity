@@ -7,7 +7,7 @@
 
 | 阶段 | 状态 |
 |---|---|
-| P1 数据层 | **C# 库与命令行已完成,全库对拍零差异**(PVF 334,998 个文件哈希逐一一致;147,273 个标记流脚本;187,365 个 `.ani`;80,328 个 IMG、9,860,711 个帧解码并校验 Adler-32;随机 1000 帧逐像素一致)。Unity 6 里编译并运行该包已验证(9 个 EditMode 测试通过,含读取真实 PVF 全部文件并校验目录树与每个文件的 CRC-32) |
+| P1 数据层 | **C# 库与命令行已完成,全库对拍零差异**(PVF 334,998 个文件哈希逐一一致;147,273 个标记流脚本;187,365 个 `.ani`;80,328 个 IMG、9,860,711 个帧解码并校验 Adler-32;随机 1000 帧逐像素一致)。Unity 6 里编译并运行该包已验证(9 个 EditMode 测试通过,含读取真实 PVF 全部文件并校验目录树与每个文件的 CRC-32)。**像素规则已用原版客户端的屏幕输出校验**:在一张城镇截图里识别出 33 个精灵,解码结果与屏幕逐像素一致;校验同时更正了 1555 的 5 位通道展开(`round(v*255/31)`,不是位复制),见证据 E-023 |
 | P2 语义目录 | 脚本语法已破解,tag 目录已生成(3,408 种);语义待标注 |
 | P6 逆向 | Ghidra 对 `DNF.exe` 的只读静态分析已完成;已定位 PVF 解密与校验例程,并发现每个文件的 `crc` 同时是 CRC-32 校验值(全库 334,998 个文件与目录树通过,E-011) |
 
@@ -49,6 +49,15 @@ tools/verify-p1.sh
 需要用户级 .NET SDK(`tools/env.sh` 会把 `~/.dotnet` 加进当前 shell 的 PATH)。报告写到 `out/p1_verification_all.json`。
 
 5. 在 Unity 里跑测试(批处理模式,不需要登录):`tools/unity-test.sh`。结果在 `out/unity-EditMode-results.xml`。
+
+6. 对照原版画面(需要一张原版客户端的 800×600 截图,窗口内容 1:1,放在 `re/` 下;截图不入库):
+
+```sh
+# 在全部 IMG 帧里找"不透明像素与截图完全相同"的帧,并给出它们在截图里的位置(约 20 秒)
+dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll locate --shot <截图.png> --min-ratio 0.99 --json out/locate.json
+# 用 Python 参考实现独立复核,同时比较 1555 的两种展开规则
+python3 tools/py/screen_match_check.py --shot <截图.png> --locate out/locate.json
+```
 
 ## 测试策略
 
