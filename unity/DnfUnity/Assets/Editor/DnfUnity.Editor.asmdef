@@ -2,7 +2,8 @@
     "name": "DnfUnity.Editor",
     "rootNamespace": "DnfUnity.Editor",
     "references": [
-        "DnfUnity.Smoke"
+        "DnfUnity.Smoke",
+        "Dnf.Client"
     ],
     "includePlatforms": [
         "Editor"

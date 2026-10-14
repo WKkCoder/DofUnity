@@ -71,6 +71,7 @@ namespace Dnf.Cli
             "      用 CPU 合成器画出地图 [NPC] 列表里的 NPC(模型见证据 E-024);带 --shot 时与原版截图逐像素对照,\n" +
             "      --best-frame 在每个 NPC 的全部帧里选精确一致像素最多的帧;--png 带 --shot 时输出 左=我们 中=原版 右=对照 的三联图。\n" +
             "  dnf render-town --scene --shot <截图.png> [--time <毫秒>] [--map <地图>] [--png <输出.png>] [--eval x0,y0,x1,y1 ...]\n" +
+            "  dnf render-town --scene --png <输出.png> [--time <毫秒>] [--map <地图>]      (不带截图:只输出 800×600 的 CPU 合成结果)\n" +
             "      合成整个场景(地图 [animation] 图层 + NPC;加法混合光效与染色 alpha 的帧间插值见证据 E-030),与截图整屏逐像素对照并按格子给出吻合率。\n" +
             "  dnf fit-map --shot <截图.png> [--map <地图>] [--fit-tol N] [--range-x N] [--range-y N] [--samples N] [--png <输出.png>]\n" +
             "      对地图 [animation] 里每个动画的每一帧,在截图里搜索不透明像素在容差内一致最多的位置,并与位置模型的预测比较(证据 E-030)。\n" +

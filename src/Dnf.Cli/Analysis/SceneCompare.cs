@@ -12,13 +12,13 @@ internal static class SceneCompare
 {
     public static int Run(DnfLocation loc, Options opts)
     {
-        if (opts.Screenshot == null)
+        if (opts.Screenshot == null && opts.PngFile == null)
         {
-            throw new UserError("--scene 需要 --shot <截图.png>");
+            throw new UserError("--scene 需要 --shot <截图.png>(与原版截图对照),或者 --png <输出.png>(只输出我们的 800×600 合成结果)");
         }
         var sw = Stopwatch.StartNew();
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
-        Raster shot = PngReader.Load(opts.Screenshot);
+        Raster? shotOrNull = opts.Screenshot == null ? null : PngReader.Load(opts.Screenshot);
         var projection = new TownProjection(opts.CameraX, opts.GroundY);
         List<SceneSprite> sprites = TownScene.BuildScene(assets, opts.MapPath, projection, opts.TimeMs);
         Console.WriteLine("地图 " + opts.MapPath + ",时间 " + opts.TimeMs + " ms:绘制列表 " + sprites.Count + " 个精灵");
@@ -34,6 +34,14 @@ internal static class SceneCompare
         TownScene.Render(canvas, sprites);
 
         const int W = 800, H = 600;
+        if (shotOrNull == null)
+        {
+            // 没有原版截图:只输出合成结果,用作 Unity 播放器渲染的 CPU 参照
+            PngWriter.Write(opts.PngFile!, W, H, canvas.Pixels);
+            Console.WriteLine("已写 " + opts.PngFile + "(我们的 800×600 合成结果,背景 40,40,40)");
+            return 0;
+        }
+        Raster shot = shotOrNull;
         int exact = 0, near = 0, total = W * H;
         const int Cell = 100;
         int cols = W / Cell, rows = H / Cell;

@@ -67,6 +67,23 @@ python3 tools/py/screen_match_check.py --shot <截图.png> --locate out/locate.j
 dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --shot <截图.png> --best-frame --png re/notes/town/render_town.png
 ```
 
+8. 合成整个城镇场景(地图图层、叠加光效、NPC)并与同一张截图整屏对照(光效区域逐字节一致,整屏约 65%;`--eval` 统计任意矩形;`--time` 是动画时间,光效的相位 545 与 1455 毫秒对得上,证据 E-030):
+
+```sh
+dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --shot <截图.png> --time 545 --eval 340,30,600,180 --png re/notes/town/scene.png
+# 不带截图:只输出 800×600 的 CPU 合成结果
+dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --png out/town-cpu-545.png --time 545
+```
+
+9. 在 Unity 里实时看这个城镇(运行时读取你自备的数据,不复制、不分发任何原版内容):
+
+```sh
+tools/unity-build-town.sh macos      # 构建 macOS 播放器;DNF_DIR 有效时还会离屏渲染一帧并与 CPU 合成器逐字节比较,再实时跑 4 秒
+open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 与 ImagePacks2 的目录>"
+```
+
+   不带参数启动时窗口里有输入框,路径会记在 PlayerPrefs 里。按键:空格 暂停/继续、左右方向键 暂停时按 50 毫秒步进、H 隐藏文字、Esc 退出;画面按整数倍放大并居中。`windows`、`android` 也能构建(没有运行过);Android 把数据放在应用的持久数据目录下的 `DNF/` 文件夹。目前没有主角、名牌与界面。
+
 ## 测试策略
 
 - **合成数据测试**(可提交):测试里自己构造最小的 PVF、NPK、IMG,验证解析器。
