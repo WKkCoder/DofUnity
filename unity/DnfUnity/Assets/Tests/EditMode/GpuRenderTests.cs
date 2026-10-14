@@ -70,6 +70,21 @@ namespace DnfUnity.Tests
         }
 
         [Test]
+        public void MirroredSprites_GpuEqualsCpu_ByteForByte()
+        {
+            RequireGraphics();
+            List<SceneSprite> edges = RenderSelfTest.EdgeSprites(mirrored: true);
+            RenderSelfTest.Diff d = RenderSelfTest.Compare(RenderGpu(edges, Background), RenderCpu(edges, Background));
+            Assert.AreEqual(d.Pixels, d.Exact, "边缘:" + d);
+            foreach (int seed in new[] { 5, 6 })
+            {
+                List<SceneSprite> sprites = RenderSelfTest.RandomSprites(seed, 40, false, mirrorSome: true);
+                d = RenderSelfTest.Compare(RenderGpu(sprites, Background), RenderCpu(sprites, Background));
+                Assert.AreEqual(d.Pixels, d.Exact, "seed " + seed + ": " + d);
+            }
+        }
+
+        [Test]
         public void SemiTransparent_SingleLayer_IsWithinOneOfCpu()
         {
             RequireGraphics();

@@ -112,6 +112,28 @@ public class RgbaCanvasTests
     }
 
     [Fact]
+    public void MirroredDrawFlipsLeftAndRight()
+    {
+        var f = new SpriteFrame(3, 1, 0, 0, 3, 1, new byte[] { 1, 0, 0, 255, 0, 2, 0, 255, 0, 0, 3, 255 });
+        var c = new RgbaCanvas(5, 2);
+        c.Clear(9, 9, 9, 255);
+        c.Draw(f, 1, 1, mirrored: true);
+        Assert.Equal(new byte[] { 0, 0, 3, 255, 0, 2, 0, 255, 1, 0, 0, 255 }, c.Pixels.Skip((1 * 5 + 1) * 4).Take(12).ToArray());
+        Assert.Equal(new byte[] { 9, 9, 9, 255 }, c.Pixels.Skip((1 * 5 + 0) * 4).Take(4).ToArray());
+        Assert.Equal(new byte[] { 9, 9, 9, 255 }, c.Pixels.Skip((1 * 5 + 4) * 4).Take(4).ToArray());
+    }
+
+    [Fact]
+    public void MirroredDrawIsClippedLikeTheNormalOne()
+    {
+        var f = new SpriteFrame(3, 1, 0, 0, 3, 1, new byte[] { 1, 0, 0, 255, 0, 2, 0, 255, 0, 0, 3, 255 });
+        var c = new RgbaCanvas(4, 1);
+        c.Clear(9, 9, 9, 255);
+        c.Draw(f, -1, 0, mirrored: true);              // 翻转后是 [B,G,R],左边一格被裁掉,剩下 [G,R]
+        Assert.Equal(new byte[] { 0, 2, 0, 255, 1, 0, 0, 255, 9, 9, 9, 255, 9, 9, 9, 255 }, c.Pixels);
+    }
+
+    [Fact]
     public void SpriteFrameRejectsAWrongBufferLength()
     {
         Assert.Throws<ArgumentException>(() => new SpriteFrame(2, 2, 0, 0, 2, 2, new byte[15]));
@@ -134,6 +156,20 @@ public class TownProjectionTests
         // 世界 (477,160,0),偏移 (−51,−162),帧头 (23,55) → (425,253)
         TownProjection.FromE024.TopLeft(477, 160, 0, -51, -162, 23, 55, out int x, out int y);
         Assert.Equal((425, 253), (x, y));
+    }
+
+    [Fact]
+    public void MirroringUsesTheWorldXAsTheAxis()
+    {
+        TownProjection p = TownProjection.FromE024;
+        // 不镜像:左边缘 = 100 - 24 + (-10) + 2 = 68,宽 8,所以占 [68, 76)
+        p.TopLeft(100, 50, 0, -10, -20, 2, 3, 8, false, out int x0, out int y0);
+        Assert.Equal((68, 50 + 200 - 20 + 3), (x0, y0));
+        // 镜像:轴在 100 - 24 = 76,占 [68, 76) 的镜像是 [76, 84)
+        p.TopLeft(100, 50, 0, -10, -20, 2, 3, 8, true, out int x1, out int y1);
+        Assert.Equal((76, y0), (x1, y1));
+        // 镜像两次回到原处:用"镜像后的左边缘"再镜像一次(此时宽度不变,偏移取反)
+        Assert.Equal(x0, 2 * 76 - x1 - 8);
     }
 
     [Fact]
@@ -175,6 +211,46 @@ public class TownSceneTests
         // 第 0 个像素是 (10,20,30,128),背景 (40,50,60):
         // R = (10*128 + 40*127 + 127)/255 = 25;G = (20*128 + 50*127 + 127)/255 = 35;B = (30*128 + 60*127 + 127)/255 = 45
         Assert.Equal(new byte[] { 25, 35, 45, 255 }, P(623, 309));
+    }
+
+    [Fact]
+    public void ReadsTheRealMapNpcFormatWithFacingStringsAndTheLegacyFourNumberForm()
+    {
+        using var fx = new SceneFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+
+        List<TownNpc> real = TownScene.ReadMapNpcs(assets, "map/test/facing.map");
+        Assert.Equal(new[] { 32, 32, 33, 33 }, real.Select(n => n.Id).ToArray());
+        Assert.Equal(new[] { false, true, false, true }, real.Select(n => n.FacingLeft).ToArray());
+        Assert.All(real, n => Assert.Equal((691, 163, 0), (n.X, n.Y, n.Z)));
+
+        List<TownNpc> legacy = TownScene.ReadMapNpcs(assets, "map/test/town.map");
+        Assert.Equal(new[] { 32, 99 }, legacy.Select(n => n.Id).ToArray());
+        Assert.All(legacy, n => Assert.False(n.FacingLeft));
+    }
+
+    [Fact]
+    public void FacingLeftAndANegativeFrameScaleEachMirrorAndTwoMirrorsCancel()
+    {
+        using var fx = new SceneFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        List<TownNpc> npcs = TownScene.ReadMapNpcs(assets, "map/test/facing.map");
+        List<SceneSprite> sprites = TownScene.Build(assets, npcs, TownProjection.FromE024, 0);
+
+        // 同一个 y,按列表顺序:[右,无缩放] [左,无缩放] [右,x 缩放 -1] [左,x 缩放 -1]
+        Assert.Equal(new[] { false, true, true, false }, sprites.Select(s => s.Mirrored).ToArray());
+        // 不翻转的左边缘 623;翻转的 = 691 - 24 - (-45 + 1 + 4) = 707
+        Assert.Equal(new[] { 623, 707, 707, 623 }, sprites.Select(s => s.ScreenX).ToArray());
+
+        var canvas = new RgbaCanvas(800, 600);
+        canvas.Clear(40, 50, 60, 255);
+        TownScene.Render(canvas, new[] { sprites[1] });             // 只画那个翻转的
+        byte[] P(int x, int y) => canvas.Pixels.Skip((y * 800 + x) * 4).Take(4).ToArray();
+        // 第 0 行原来是 [半透明, 透明, (200,100,50), (1,2,3)],翻转后是 [(1,2,3), (200,100,50), 透明, 半透明]
+        Assert.Equal(new byte[] { 1, 2, 3, 255 }, P(707, 309));
+        Assert.Equal(new byte[] { 200, 100, 50, 255 }, P(708, 309));
+        Assert.Equal(new byte[] { 40, 50, 60, 255 }, P(709, 309));
+        Assert.Equal(new byte[] { 25, 35, 45, 255 }, P(710, 309));
     }
 
     [Fact]

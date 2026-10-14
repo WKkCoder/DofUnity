@@ -12,6 +12,23 @@ namespace Dnf.Data
         /// <summary>图形特效:u16 类型(0 到 6),类型 5 后面多 3 字节。类型 2 占 98.6%,极可能是叠加类混合(推断)。</summary>
         public const ushort GraphicEffect = 11;
 
+        /// <summary>
+        /// 图像缩放,两个 f32 (x, y)(推断,证据 E-029):全库 89,607 帧带它,最常见的取值是 (-1, 1)(13,653 帧,水平镜像),
+        /// 其余是 0.5 到 2.0 的缩放(多为 x 与 y 相同)。镜像用城镇里的两个 NPC 在原版截图上核对过(赛丽亚、露娜)。
+        /// </summary>
+        public const ushort ImageRate = 7;
+
+        /// <summary>
+        /// 旋转,一个 f32,弧度(推断,证据 E-029):取值集中在 ±π/2、π、±π/12、±π/6、±π/4 这类值上。围绕哪个点旋转**未知**。
+        /// </summary>
+        public const ushort ImageRotate = 8;
+
+        /// <summary>
+        /// 染色,4 个字节 R、G、B、A(推断,证据 E-029):最常见的是 (255,255,255,170)(41,750 帧),即白色乘半透明;
+        /// 另有 (255,150,0,255) 橙、(255,0,0,255) 红、(0,0,0,255) 黑等。怎样与像素相乘**未验证**。
+        /// </summary>
+        public const ushort Rgba = 9;
+
         /// <summary>帧延时,i32,单位毫秒(取值 80、100、70、50、60 等,已核对)。</summary>
         public const ushort Delay = 12;
 
@@ -84,6 +101,56 @@ namespace Dnf.Data
             Y = y;
             Boxes = boxes;
             Properties = properties;
+        }
+
+        /// <summary>图像缩放(<see cref="AniFrameProperty.ImageRate"/>,推断)。没有该属性时返回 false(此时缩放为 1,1)。</summary>
+        public bool TryGetScale(out float x, out float y)
+        {
+            foreach (AniProperty p in Properties)
+            {
+                if (p.Id == AniFrameProperty.ImageRate && p.Payload.Length == 8)
+                {
+                    x = BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(p.Payload));
+                    y = BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(new ReadOnlySpan<byte>(p.Payload, 4, 4)));
+                    return true;
+                }
+            }
+            x = 1f;
+            y = 1f;
+            return false;
+        }
+
+        /// <summary>旋转角,弧度(<see cref="AniFrameProperty.ImageRotate"/>,推断)。没有该属性时返回 false。</summary>
+        public bool TryGetRotationRadians(out float radians)
+        {
+            foreach (AniProperty p in Properties)
+            {
+                if (p.Id == AniFrameProperty.ImageRotate && p.Payload.Length == 4)
+                {
+                    radians = BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(p.Payload));
+                    return true;
+                }
+            }
+            radians = 0f;
+            return false;
+        }
+
+        /// <summary>染色 R、G、B、A(<see cref="AniFrameProperty.Rgba"/>,推断)。没有该属性时返回 false(此时按白色不透明)。</summary>
+        public bool TryGetTint(out byte r, out byte g, out byte b, out byte a)
+        {
+            foreach (AniProperty p in Properties)
+            {
+                if (p.Id == AniFrameProperty.Rgba && p.Payload.Length == 4)
+                {
+                    r = p.Payload[0];
+                    g = p.Payload[1];
+                    b = p.Payload[2];
+                    a = p.Payload[3];
+                    return true;
+                }
+            }
+            r = g = b = a = 255;
+            return false;
         }
 
         /// <summary>读取帧延时(毫秒)。没有该属性时返回 false。</summary>

@@ -10,9 +10,11 @@ internal sealed class SceneFixture : IDisposable
     public string Root { get; }
 
     // 字符串池:0 [NPC]  1 [/NPC]  2 [field animation]  3 Animation/PostBox.ani  4 postbox.npc  5 other.npc
+    //          6 Animation/PostBoxFlip.ani  7 postboxflip.npc  8 [left]  9 [right]
     private static readonly string[] Pool =
     {
         "[NPC]", "[/NPC]", "[field animation]", "Animation/PostBox.ani", "postbox.npc", "other.npc",
+        "Animation/PostBoxFlip.ani", "postboxflip.npc", "[left]", "[right]",
     };
 
     private const byte Tag = (byte)TokenType.Tag;
@@ -41,9 +43,21 @@ internal sealed class SceneFixture : IDisposable
         {
             new("stringtable.bin", TestData.BuildStringTable(strings), 0),
             // npc.lst:没有标签,"编号 路径" 一对一对
-            new("npc/npc.lst", TestData.BuildTokenScript(new (byte, int)[] { (Int, 32), (Str, 4), (Int, 99), (Str, 5) }), 0),
+            new("npc/npc.lst", TestData.BuildTokenScript(new (byte, int)[] { (Int, 32), (Str, 4), (Int, 99), (Str, 5), (Int, 33), (Str, 7) }), 0),
             new("npc/postbox.npc", TestData.BuildTokenScript(new (byte, int)[] { (Tag, 2), (Str, 3) }), 0),
-            new("npc/animation/postbox.ani", BuildPostboxAni(), 0),
+            new("npc/animation/postbox.ani", BuildPostboxAni(flipX: false), 0),
+            new("npc/postboxflip.npc", TestData.BuildTokenScript(new (byte, int)[] { (Tag, 2), (Str, 6) }), 0),
+            new("npc/animation/postboxflip.ani", BuildPostboxAni(flipX: true), 0),
+            // 真实数据的写法:每个 NPC 是 编号、朝向字符串、x、y、z 五个值
+            new("map/test/facing.map", TestData.BuildTokenScript(new (byte, int)[]
+            {
+                (Tag, 0),
+                (Int, 32), (Str, 9), (Int, 691), (Int, 163), (Int, 0),    // 朝右,.ani 没有缩放:不翻转
+                (Int, 32), (Str, 8), (Int, 691), (Int, 163), (Int, 0),    // 朝左:翻转
+                (Int, 33), (Str, 9), (Int, 691), (Int, 163), (Int, 0),    // 朝右,.ani 的 x 缩放为 -1:翻转
+                (Int, 33), (Str, 8), (Int, 691), (Int, 163), (Int, 0),    // 朝左,.ani 的 x 缩放为 -1:两次翻转抵消
+                (Tag, 1),
+            }), 0),
             new("map/test/town.map", TestData.BuildTokenScript(new (byte, int)[]
             {
                 (Tag, 0), (Int, 32), (Int, 691), (Int, 163), (Int, 0), (Int, 99), (Int, 100), (Int, 100), (Int, 0), (Tag, 1),
@@ -63,10 +77,14 @@ internal sealed class SceneFixture : IDisposable
         }
     }
 
-    private static byte[] BuildPostboxAni()
+    private static byte[] BuildPostboxAni(bool flipX)
     {
         var f0 = new TestData.AniFrameSpec { ImageIndex = 0, FrameIndex = 0, X = -45, Y = -55 };
         f0.Props.Add((12, TestData.LE32(200)));
+        if (flipX)
+        {
+            f0.Props.Add((7, BitConverter.GetBytes(-1.0f).Concat(BitConverter.GetBytes(1.0f)).ToArray()));
+        }
         return TestData.BuildAni(new[] { "Map/PostBox.img" }, new (ushort, byte[])[] { (0, new byte[] { 1 }) }, new[] { f0 });
     }
 

@@ -68,6 +68,32 @@ public class AniFileTests
     }
 
     [Fact]
+    public void FrameAccessors_ReadScaleRotationAndTint()
+    {
+        var scaled = Frame(0, 0, 0, 0,
+            (7, BitConverter.GetBytes(-1.0f).Concat(BitConverter.GetBytes(1.5f)).ToArray()),
+            (8, BitConverter.GetBytes(1.5707964f)),
+            (9, new byte[] { 255, 150, 0, 170 }));
+        var plain = Frame(0, 0, 0, 0);
+        AniFile a = AniFile.Parse(TestData.BuildAni(new[] { "a.img" }, Array.Empty<(ushort, byte[])>(), new[] { scaled, plain }));
+
+        Assert.True(a.Frames[0].TryGetScale(out float sx, out float sy));
+        Assert.Equal((-1.0f, 1.5f), (sx, sy));
+        Assert.True(a.Frames[0].TryGetRotationRadians(out float rot));
+        Assert.Equal(1.5707964f, rot);
+        Assert.True(a.Frames[0].TryGetTint(out byte r, out byte g, out byte b, out byte al));
+        Assert.Equal((255, 150, 0, 170), (r, g, b, al));
+
+        // 没有属性时返回 false,并给出"什么都不做"的默认值
+        Assert.False(a.Frames[1].TryGetScale(out sx, out sy));
+        Assert.Equal((1.0f, 1.0f), (sx, sy));
+        Assert.False(a.Frames[1].TryGetRotationRadians(out rot));
+        Assert.Equal(0f, rot);
+        Assert.False(a.Frames[1].TryGetTint(out r, out g, out b, out al));
+        Assert.Equal((255, 255, 255, 255), (r, g, b, al));
+    }
+
+    [Fact]
     public void Parse_RejectsTrailingBytes()
     {
         byte[] data = Sample().Concat(new byte[] { 0 }).ToArray();

@@ -37,6 +37,9 @@ namespace Dnf.Cli
         public string? PngFile { get; set; }
         public bool BestFrame { get; set; }
         public int Radius { get; set; } = 3;
+
+        /// <summary>朝向镜像:auto = 朝向 [left] 的 NPC 镜像;on = 全部镜像;off = 都不镜像。帧自己的 x 缩放为负(帧属性 7)总是生效。</summary>
+        public string Mirror { get; set; } = "auto";
     }
 
     internal static class CommandLine
@@ -52,7 +55,7 @@ namespace Dnf.Cli
             "      拿一张原版客户端的截图,在全部 IMG 帧里找出不透明像素与截图逐像素相同的帧,并给出位置。\n" +
             "      locate 的选项: --npk-filter <子串>(只扫文件名含它的 NPK)、--min-opaque <N>(默认 150)、\n" +
             "      --min-ratio <0..1>(默认 0.85)、--tol <0..7>(每通道允许的差,默认 0=逐像素相同)、--max-dim <像素>(默认 1200)、--top <N>(打印前 N 个,默认 60)、--json <文件>\n" +
-            "  dnf render-town [--map <PVF 里的地图路径>] [--cam-x N] [--ground-y N] [--time <毫秒>] [--png <输出.png>] [--shot <截图.png> [--best-frame] [--radius N]]\n" +
+            "  dnf render-town [--map <PVF 里的地图路径>] [--cam-x N] [--ground-y N] [--time <毫秒>] [--png <输出.png>] [--shot <截图.png> [--best-frame] [--radius N]] [--mirror auto|on|off]\n" +
             "      用 CPU 合成器画出地图 [NPC] 列表里的 NPC(模型见证据 E-024);带 --shot 时与原版截图逐像素对照,\n" +
             "      --best-frame 在每个 NPC 的全部帧里选精确一致像素最多的帧;--png 带 --shot 时输出 左=我们 中=原版 右=对照 的三联图。\n" +
             "选项:\n" +
@@ -142,6 +145,9 @@ namespace Dnf.Cli
                         break;
                     case "--best-frame":
                         opts.BestFrame = true;
+                        break;
+                    case "--mirror":
+                        opts.Mirror = NextValue(args, ref i) is var mv && (mv is "auto" or "on" or "off") ? mv : throw new UserError("--mirror 需要 auto、on 或 off");
                         break;
                     case "--radius":
                         opts.Radius = int.TryParse(NextValue(args, ref i), out int rd) && rd >= 0 && rd <= 16 ? rd : throw new UserError("--radius 需要 0 到 16 的整数");

@@ -53,7 +53,9 @@ namespace Dnf.Client
                 SpriteRenderer r = Rent(used);
                 r.sprite = sprite;
                 r.sortingOrder = used;
-                r.transform.position = PixelScreen.ToWorld(s.ScreenX, s.ScreenY);
+                // flipX 以枢轴(左上角)为轴翻转,翻转后的精灵占 [x - 宽, x];要让它占 [ScreenX, ScreenX + 宽],位置就得右移一个宽度
+                r.flipX = s.Mirrored;
+                r.transform.position = PixelScreen.ToWorld(s.Mirrored ? s.ScreenX + s.Frame.Width : s.ScreenX, s.ScreenY);
                 r.gameObject.SetActive(true);
                 used++;
             }

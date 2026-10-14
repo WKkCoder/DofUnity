@@ -38,6 +38,14 @@ namespace Dnf.Render
         /// <summary>把像素块的左上角放在 (x, y) 处绘制,超出画布的部分裁掉。</summary>
         public void Draw(SpriteFrame sprite, int x, int y)
         {
+            Draw(sprite, x, y, false);
+        }
+
+        /// <summary>
+        /// 同上;<paramref name="mirrored"/> 为真时像素块水平翻转(左右颠倒),(x, y) 仍然是翻转后像素块的左上角。
+        /// </summary>
+        public void Draw(SpriteFrame sprite, int x, int y, bool mirrored)
+        {
             if (sprite == null)
             {
                 throw new ArgumentNullException(nameof(sprite));
@@ -49,10 +57,11 @@ namespace Dnf.Render
             byte[] src = sprite.Rgba;
             for (int sy = y0; sy < y1; sy++)
             {
-                int so = (sy * sprite.Width + x0) * 4;
+                int rowStart = sy * sprite.Width * 4;
                 int dof = ((y + sy) * Width + x + x0) * 4;
-                for (int sx = x0; sx < x1; sx++, so += 4, dof += 4)
+                for (int sx = x0; sx < x1; sx++, dof += 4)
                 {
+                    int so = rowStart + (mirrored ? sprite.Width - 1 - sx : sx) * 4;
                     int a = src[so + 3];
                     if (a == 0)
                     {

@@ -4,7 +4,7 @@ using Dnf.Data;
 
 namespace Dnf.Render
 {
-    /// <summary>地图脚本 [NPC] 列表里的一项:NPC 编号与世界坐标。</summary>
+    /// <summary>地图脚本 [NPC] 列表里的一项:NPC 编号、朝向与世界坐标。</summary>
     public readonly struct TownNpc
     {
         public int Id { get; }
@@ -12,12 +12,16 @@ namespace Dnf.Render
         public int Y { get; }
         public int Z { get; }
 
-        public TownNpc(int id, int x, int y, int z)
+        /// <summary>地图里写的朝向是 [left]。画面是否因此镜像见 <see cref="TownProjection"/> 的镜像重载与证据 E-029。</summary>
+        public bool FacingLeft { get; }
+
+        public TownNpc(int id, int x, int y, int z, bool facingLeft = false)
         {
             Id = id;
             X = x;
             Y = y;
             Z = z;
+            FacingLeft = facingLeft;
         }
     }
 
@@ -34,7 +38,10 @@ namespace Dnf.Render
         public string AnimationPath { get; }
         public int AniFrame { get; }
 
-        public SceneSprite(SpriteFrame frame, int screenX, int screenY, int sortKey, int npcId, string animationPath, int aniFrame)
+        /// <summary>像素块水平翻转后绘制;<see cref="ScreenX"/> 是翻转后像素块的左上角。</summary>
+        public bool Mirrored { get; }
+
+        public SceneSprite(SpriteFrame frame, int screenX, int screenY, int sortKey, int npcId, string animationPath, int aniFrame, bool mirrored = false)
         {
             Frame = frame;
             ScreenX = screenX;
@@ -43,6 +50,7 @@ namespace Dnf.Render
             NpcId = npcId;
             AnimationPath = animationPath;
             AniFrame = aniFrame;
+            Mirrored = mirrored;
         }
     }
 
@@ -56,7 +64,10 @@ namespace Dnf.Render
     {
         public const string NpcCatalogPath = "npc/npc.lst";
 
-        /// <summary>读地图脚本里所有 [NPC] 行,每 4 个整数一个 NPC:编号、x、y、z。</summary>
+        /// <summary>
+        /// 读地图脚本里所有 [NPC] 行。真实数据里每个 NPC 是 5 个值:编号、朝向字符串("[left]" 或 "[right]")、x、y、z;
+        /// 没有朝向字符串的 4 个值写法也接受(朝向按右算)。
+        /// </summary>
         public static List<TownNpc> ReadMapNpcs(DnfAssets assets, string mapPath)
         {
             ScriptLine[] doc = assets.ReadScript(mapPath);
@@ -71,10 +82,32 @@ namespace Dnf.Render
                 {
                     continue;
                 }
-                List<int> n = line.Ints();
-                for (int i = 0; i + 3 < n.Count; i += 4)
+                ScriptValue[] v = line.Values;
+                int i = 0;
+                while (i < v.Length)
                 {
-                    result.Add(new TownNpc(n[i], n[i + 1], n[i + 2], n[i + 3]));
+                    if (!v[i].IsNumber)
+                    {
+                        i++;
+                        continue;
+                    }
+                    int id = v[i++].Int;
+                    bool left = false;
+                    if (i < v.Length && v[i].Kind == ScriptValueKind.String)
+                    {
+                        left = string.Equals(v[i].Text, "[left]", StringComparison.OrdinalIgnoreCase);
+                        i++;
+                    }
+                    if (i + 2 >= v.Length)
+                    {
+                        break;
+                    }
+                    if (!v[i].IsNumber || !v[i + 1].IsNumber || !v[i + 2].IsNumber)
+                    {
+                        break;
+                    }
+                    result.Add(new TownNpc(id, v[i].Int, v[i + 1].Int, v[i + 2].Int, left));
+                    i += 3;
                 }
             }
             return result;
@@ -169,8 +202,21 @@ namespace Dnf.Render
             return result;
         }
 
-        /// <summary>某个 NPC 的 .ani 第 <paramref name="aniFrame"/> 帧对应的精灵;该帧没有图或图缺失时返回 null。</summary>
+        /// <summary>
+        /// 某个 NPC 的 .ani 第 <paramref name="aniFrame"/> 帧对应的精灵;该帧没有图或图缺失时返回 null。
+        /// 朝向 [left] 的 NPC 水平镜像(证据 E-029)。
+        /// </summary>
         public static SceneSprite SpriteAt(DnfAssets assets, ResolvedNpc r, int aniFrame, TownProjection projection)
+        {
+            return SpriteAt(assets, r, aniFrame, projection, r.Npc.FacingLeft);
+        }
+
+        /// <summary>
+        /// 同上,但明确指定"朝向镜像"。最终是否水平翻转 = 朝向镜像 XOR 帧自己的 x 缩放为负
+        /// (帧属性 7 的 x 为 -1 表示镜像,两次镜像抵消;赛丽亚的 .ani 每一帧都带 (-1, 1),地图里她朝 [left],所以画面上不翻转)。
+        /// 其余的缩放、旋转与染色(帧属性 7、8、9 的其他取值)**还没有实现**。
+        /// </summary>
+        public static SceneSprite SpriteAt(DnfAssets assets, ResolvedNpc r, int aniFrame, TownProjection projection, bool facingMirror)
         {
             if ((uint)aniFrame >= (uint)r.Ani.Frames.Length)
             {
@@ -186,8 +232,9 @@ namespace Dnf.Render
             {
                 return null;
             }
-            projection.TopLeft(r.Npc.X, r.Npc.Y, r.Npc.Z, f.X, f.Y, sprite.OffsetX, sprite.OffsetY, out int sx, out int sy);
-            return new SceneSprite(sprite, sx, sy, r.Npc.Y, r.Npc.Id, r.AnimationPath, aniFrame);
+            bool mirrored = facingMirror ^ (f.TryGetScale(out float scaleX, out _) && scaleX < 0f);
+            projection.TopLeft(r.Npc.X, r.Npc.Y, r.Npc.Z, f.X, f.Y, sprite.OffsetX, sprite.OffsetY, sprite.Width, mirrored, out int sx, out int sy);
+            return new SceneSprite(sprite, sx, sy, r.Npc.Y, r.Npc.Id, r.AnimationPath, aniFrame, mirrored);
         }
 
         /// <summary>
@@ -237,7 +284,7 @@ namespace Dnf.Render
         {
             foreach (SceneSprite s in sprites)
             {
-                canvas.Draw(s.Frame, s.ScreenX, s.ScreenY);
+                canvas.Draw(s.Frame, s.ScreenX, s.ScreenY, s.Mirrored);
             }
         }
     }

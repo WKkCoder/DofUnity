@@ -26,5 +26,17 @@ namespace Dnf.Render
             screenX = worldX - CameraX + aniX + imgX;
             screenY = worldY - worldZ + GroundY + aniY + imgY;
         }
+
+        /// <summary>
+        /// 同上,但可以水平镜像:镜像以物体的世界 x 为轴,像素块的左边缘 = 世界 x − 相机 x − (帧偏移 x + 帧头 x + 像素块宽度)。
+        /// 镜像只是一个假设(地图里 [NPC] 的朝向字符串 [left]/[right],证据 E-029 在检验它)。
+        /// </summary>
+        public void TopLeft(int worldX, int worldY, int worldZ, int aniX, int aniY, int imgX, int imgY, int spriteWidth, bool mirrored, out int screenX, out int screenY)
+        {
+            screenX = mirrored
+                ? worldX - CameraX - (aniX + imgX + spriteWidth)
+                : worldX - CameraX + aniX + imgX;
+            screenY = worldY - worldZ + GroundY + aniY + imgY;
+        }
     }
 }

@@ -192,6 +192,14 @@ namespace DnfUnity.Smoke
             d = RenderSelfTest.Compare(RenderSelfTest.RenderGpu(edges, bg), RenderSelfTest.RenderCpu(edges, bg));
             Check("gpu placement is pixel exact at the screen edges", d.AllExact, d.ToString());
 
+            List<SceneSprite> mirroredEdges = RenderSelfTest.EdgeSprites(mirrored: true);
+            d = RenderSelfTest.Compare(RenderSelfTest.RenderGpu(mirroredEdges, bg), RenderSelfTest.RenderCpu(mirroredEdges, bg));
+            Check("gpu mirrored placement is pixel exact at the screen edges", d.AllExact, d.ToString());
+
+            List<SceneSprite> mirroredRandom = RenderSelfTest.RandomSprites(5, 40, false, mirrorSome: true);
+            d = RenderSelfTest.Compare(RenderSelfTest.RenderGpu(mirroredRandom, bg), RenderSelfTest.RenderCpu(mirroredRandom, bg));
+            Check("gpu mirrored random sprites equal cpu byte for byte", d.AllExact, d.ToString());
+
             List<SceneSprite> sweep = RenderSelfTest.AlphaSweep(100, 100);
             d = RenderSelfTest.Compare(RenderSelfTest.RenderGpu(sweep, bg), RenderSelfTest.RenderCpu(sweep, bg));
             Debug.Log("DNF_SMOKE gpu alpha sweep: " + d);

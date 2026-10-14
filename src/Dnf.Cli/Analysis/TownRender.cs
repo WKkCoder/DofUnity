@@ -26,7 +26,7 @@ internal static class TownRender
 
         // 选每个 NPC 要画的帧:默认按时间;--best-frame 则在它的全部帧里选与截图精确一致像素最多的
         var chosen = new List<SceneSprite>();
-        Console.WriteLine("NPC   ani帧  峰值偏移  峰值精确  邻居最大  不透明  预测左上角   动画");
+        Console.WriteLine("NPC   朝向  镜像  ani帧  峰值偏移  峰值精确  邻居最大  不透明  预测左上角   动画");
         foreach (TownScene.ResolvedNpc r in resolved)
         {
             SceneSprite? best = null;
@@ -39,7 +39,8 @@ internal static class TownRender
                 : new[] { new AniTimeline(r.Ani).FrameAt(opts.TimeMs) };
             foreach (int k in frames)
             {
-                SceneSprite? s = TownScene.SpriteAt(assets, r, k, projection);
+                bool mirrored = opts.Mirror switch { "on" => true, "off" => false, _ => r.Npc.FacingLeft };
+                SceneSprite? s = TownScene.SpriteAt(assets, r, k, projection, mirrored);
                 if (s == null)
                 {
                     continue;
@@ -54,7 +55,7 @@ internal static class TownRender
                 {
                     for (int dx = -opts.Radius; dx <= opts.Radius; dx++)
                     {
-                        grid[(dx, dy)] = ExactCount(shot, s.Frame, s.ScreenX + dx, s.ScreenY + dy);
+                        grid[(dx, dy)] = ExactCount(shot, s.Frame, s.ScreenX + dx, s.ScreenY + dy, s.Mirrored);
                     }
                 }
                 KeyValuePair<(int, int), (int total, int exact)> peak = grid.OrderByDescending(kv => kv.Value.exact).First();
@@ -75,14 +76,14 @@ internal static class TownRender
             chosen.Add(best);
             if (shot != null)
             {
-                Console.WriteLine(r.Npc.Id.ToString().PadRight(6) + best.AniFrame.ToString().PadRight(7)
+                Console.WriteLine(r.Npc.Id.ToString().PadRight(6) + (r.Npc.FacingLeft ? "left" : "right").PadRight(6) + (best.Mirrored ? "是" : "否").PadRight(5) + best.AniFrame.ToString().PadRight(7)
                     + ("(" + bestOffset.dx.ToString("+0;-0;+0") + "," + bestOffset.dy.ToString("+0;-0;+0") + ")").PadRight(10)
                     + bestExact.ToString().PadRight(10) + bestNeighbor.ToString().PadRight(10) + bestOpaque.ToString().PadRight(8)
                     + ("(" + best.ScreenX + "," + best.ScreenY + ")").PadRight(13) + best.AnimationPath);
             }
             else
             {
-                Console.WriteLine(r.Npc.Id.ToString().PadRight(6) + best.AniFrame.ToString().PadRight(7) + "-         -         -         -       "
+                Console.WriteLine(r.Npc.Id.ToString().PadRight(6) + (r.Npc.FacingLeft ? "left" : "right").PadRight(6) + (best.Mirrored ? "是" : "否").PadRight(5) + best.AniFrame.ToString().PadRight(7) + "-         -         -         -       "
                     + ("(" + best.ScreenX + "," + best.ScreenY + ")").PadRight(13) + best.AnimationPath);
             }
         }
@@ -107,7 +108,7 @@ internal static class TownRender
     }
 
     /// <summary>在 (x0,y0) 处数不透明像素有多少个与截图完全相同。返回 (不透明且在屏幕内的像素数, 其中一致的个数)。</summary>
-    internal static (int total, int exact) ExactCount(Raster shot, SpriteFrame f, int x0, int y0)
+    internal static (int total, int exact) ExactCount(Raster shot, SpriteFrame f, int x0, int y0, bool mirrored = false)
     {
         int total = 0, exact = 0;
         for (int y = 0; y < f.Height; y++)
@@ -124,7 +125,7 @@ internal static class TownRender
                 {
                     continue;
                 }
-                int o = (y * f.Width + x) * 4;
+                int o = (y * f.Width + (mirrored ? f.Width - 1 - x : x)) * 4;
                 if (f.Rgba[o + 3] != 255)
                 {
                     continue;
@@ -163,7 +164,7 @@ internal static class TownRender
                     {
                         continue;
                     }
-                    int o = (y * f.Width + x) * 4;
+                    int o = (y * f.Width + (s.Mirrored ? f.Width - 1 - x : x)) * 4;
                     if (f.Rgba[o + 3] != 255)
                     {
                         continue;

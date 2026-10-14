@@ -69,8 +69,11 @@ namespace Dnf.Client
             return d;
         }
 
-        /// <summary>随机帧;位置范围故意超出屏幕四边,检查裁剪。<paramref name="semiTransparent"/> 为假时 alpha 只有 0 与 255。</summary>
-        public static List<SceneSprite> RandomSprites(int seed, int count, bool semiTransparent)
+        /// <summary>
+        /// 随机帧;位置范围故意超出屏幕四边,检查裁剪。<paramref name="semiTransparent"/> 为假时 alpha 只有 0 与 255。
+        /// <paramref name="mirrorSome"/> 为真时随机让约一半的精灵水平镜像。
+        /// </summary>
+        public static List<SceneSprite> RandomSprites(int seed, int count, bool semiTransparent, bool mirrorSome = false)
         {
             var rng = new System.Random(seed);
             var list = new List<SceneSprite>();
@@ -87,13 +90,17 @@ namespace Dnf.Client
                     px[k + 3] = semiTransparent ? (byte)rng.Next(256) : (rng.Next(4) == 0 ? (byte)0 : (byte)255);
                 }
                 var frame = new SpriteFrame(w, h, 0, 0, w, h, px);
-                list.Add(new SceneSprite(frame, rng.Next(-40, PixelScreen.Width + 10), rng.Next(-40, PixelScreen.Height + 10), i, i, "synthetic", 0));
+                bool mirrored = mirrorSome && rng.Next(2) == 0;
+                list.Add(new SceneSprite(frame, rng.Next(-40, PixelScreen.Width + 10), rng.Next(-40, PixelScreen.Height + 10), i, i, "synthetic", 0, mirrored));
             }
             return list;
         }
 
-        /// <summary>4×3、每个像素颜色都不同的不透明块,放在四个角与四条边的内外:任何半个像素的偏移都会被发现。</summary>
-        public static List<SceneSprite> EdgeSprites()
+        /// <summary>
+        /// 4×3、每个像素颜色都不同的不透明块,放在四个角与四条边的内外:任何半个像素的偏移都会被发现。
+        /// <paramref name="mirrored"/> 为真时全部水平镜像(镜像后的左上角仍是给定的位置)。
+        /// </summary>
+        public static List<SceneSprite> EdgeSprites(bool mirrored = false)
         {
             var px = new byte[4 * 3 * 4];
             for (int i = 0; i < 12; i++)
@@ -109,7 +116,7 @@ namespace Dnf.Client
             var list = new List<SceneSprite>();
             for (int i = 0; i < xs.Length; i++)
             {
-                list.Add(new SceneSprite(frame, xs[i], ys[i], i, 0, "synthetic", 0));
+                list.Add(new SceneSprite(frame, xs[i], ys[i], i, 0, "synthetic", 0, mirrored));
             }
             return list;
         }
