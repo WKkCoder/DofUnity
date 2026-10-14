@@ -1,0 +1,9 @@
+# S04 城镇行走:向右走约 3 秒,每秒一张(看行走动画、镜头跟随、地图滚动);小工具每次调用约 0.9 秒,所以连拍就是约 1 秒一张
+check
+shot S04-t0
+bgkey <hold:right:3000>
+shot S04-t1
+shot S04-t2
+shot S04-t3
+join
+shot S04-t4
