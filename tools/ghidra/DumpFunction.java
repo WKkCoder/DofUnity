@@ -97,6 +97,11 @@ public class DumpFunction extends GhidraScript {
         if (hi != null && !hi.isEmpty()) {
             protectedHi = Long.parseLong(hi.trim(), 16);
         }
+        // 2026-10-15 用户授权逆向受保护区域(E-059):显式设 DNF_ALLOW_PROTECTED=1 才关掉守卫
+        if ("1".equals(System.getenv("DNF_ALLOW_PROTECTED"))) {
+            protectedLo = 0L;
+            protectedHi = 0L;
+        }
         String[] args = getScriptArgs();
         if (args.length < 2) {
             printerr("用法: DumpFunction.java <输出目录> <函数地址> [<函数地址> ...]");

@@ -97,6 +97,11 @@ public class InferCalleeParams extends GhidraScript {
         String hi = System.getenv("DNF_PROTECTED_HI");
         if (lo != null && !lo.isEmpty()) protectedLo = Long.parseLong(lo.trim(), 16);
         if (hi != null && !hi.isEmpty()) protectedHi = Long.parseLong(hi.trim(), 16);
+        // 2026-10-15 用户授权逆向受保护区域(E-059):显式设 DNF_ALLOW_PROTECTED=1 才关掉守卫
+        if ("1".equals(System.getenv("DNF_ALLOW_PROTECTED"))) {
+            protectedLo = 0L;
+            protectedHi = 0L;
+        }
 
         FunctionManager fm = currentProgram.getFunctionManager();
         Set<Address> callees = new LinkedHashSet<>();

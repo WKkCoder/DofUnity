@@ -30,8 +30,9 @@ def main(argv):
             print("%08x  不在任何节内" % addr)
             continue
         name = "节 #%d" % hit[0]
-        if 3 <= hit[0] <= 8:
-            print("%08x  位于 %s(受保护区域及其相邻的节),按约定不读" % (addr, name))
+        if 3 <= hit[0] <= 8 and os.environ.get("DNF_ALLOW_PROTECTED") != "1":
+            # 2026-10-15 用户授权逆向受保护区域(E-059);要读就显式设 DNF_ALLOW_PROTECTED=1,每次越界都留下痕迹
+            print("%08x  位于 %s(受保护区域及其相邻的节),默认不读;需要时设 DNF_ALLOW_PROTECTED=1" % (addr, name))
             continue
         if kind == "b":
             n = int(parts[2]) if len(parts) > 2 else 16
