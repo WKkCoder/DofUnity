@@ -35,6 +35,9 @@ namespace Dnf.Cli
         /// <summary>damage-check --cases:`tools/py/damage_ref.py --gen` 生成的随机对拍用例(放 out/,不入库)。</summary>
         public string? CasesFile { get; set; }
 
+        /// <summary>script-stats --ext:要统计的脚本扩展名(默认 ai)。</summary>
+        public string? Ext { get; set; }
+
         // render-town(合成城镇里的 NPC,可与截图对照)
         public string MapPath { get; set; } = "map/elvengard/(r)gate.map";
         public int CameraX { get; set; } = 24;
@@ -97,6 +100,10 @@ namespace Dnf.Cli
             "      用 Dnf.Game 的 .atk 加载器读全库 .atk(证据 E-047),统计不规整情况;--dump 写出每个文件读到的字段,可与 tools/py/atk_ref.py --dump 逐行对拍。\n" +
             "  dnf act-check [--dump <文件>] [--json <文件>]\n" +
             "      用 Dnf.Game 的语法树解析器读全库 .act(证据 E-050),统计节点、块、多余与笔误闭合;--json 写出\"父标签 → 子标签 → 次数\"表,可与 tools/py/act_tree.py 逐项对拍。\n" +
+            "  dnf ai-check [--dump <文件>] [--json <文件>]\n" +
+            "      用 Dnf.Game 的 .ai 解析器读全库 .ai(证据 E-052):能否读完、错误、剩余标记、关键字与运算符直方图,以及 [void] 函数真假两路的返回形状(用来判断真假方向);名表运行时从数据包的 AICharacter/OperatingValue.lst 读。\n" +
+            "  dnf script-stats --ext <扩展名> [--top N] [--json <文件>]\n" +
+            "      按标签统计某一类标记流脚本的词汇:次数、文件数、每个值位置上的值种类与字符串直方图、\"第一个字符串 → 形状\"表。用来在读客户端解释器前弄清脚本的词汇;输出放 out/,不入库。\n" +
             "  dnf damage-check [--cases <文件>]\n" +
             "      伤害公式(证据 E-049)。不带 --cases:读 PVF 里的 Etc/EtcParameter.etc 与 Creature/Common/creatureCommon.cre,只报告个数与完整性(不输出原版数值);\n" +
             "      带 --cases:读 tools/py/damage_ref.py --gen 生成的随机用例,用 C# 公式复算并与 Python 参考实现逐项比较。\n" +
@@ -200,6 +207,9 @@ namespace Dnf.Cli
                     case "--only":
                         opts.Only.Add(NextValue(args, ref i));
                         break;
+                    case "--ext":
+                        opts.Ext = NextValue(args, ref i);
+                        break;
                     case "--scene":
                         opts.Scene = true;
                         break;
@@ -254,6 +264,10 @@ namespace Dnf.Cli
                     return AtkCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "act-check":
                     return ActCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "ai-check":
+                    return AiCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "script-stats":
+                    return ScriptStats.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "damage-check":
                     return opts.CasesFile != null
                         ? DamageCheck.RunCases(opts)

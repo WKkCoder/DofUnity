@@ -54,6 +54,13 @@ internal sealed class TokenStreamBuilder
 
     public ScriptCursor Cursor()
     {
+        (ScriptToken[] tokens, PvfStringTable strings) = Build();
+        return new ScriptCursor(tokens, strings);
+    }
+
+    /// <summary>标记数组与字符串池,供直接吃标记数组的解析器用。</summary>
+    public (ScriptToken[] Tokens, PvfStringTable Strings) Build()
+    {
         var s = new MemoryStream();
         void U32(uint v) => s.Write(BitConverter.GetBytes(v));
         U32((uint)_pool.Count);
@@ -68,6 +75,20 @@ internal sealed class TokenStreamBuilder
         {
             s.Write(Encoding.Latin1.GetBytes(item));
         }
-        return new ScriptCursor(_tokens.ToArray(), new PvfStringTable(s.ToArray()));
+        return (_tokens.ToArray(), new PvfStringTable(s.ToArray()));
+    }
+
+    /// <summary>标记流文件的原始字节:B0 D0 + 每个标记 5 字节(类型 + 小端 i32)。</summary>
+    public byte[] Bytes()
+    {
+        var s = new MemoryStream();
+        s.WriteByte(TokenScript.Magic0);
+        s.WriteByte(TokenScript.Magic1);
+        foreach (ScriptToken t in _tokens)
+        {
+            s.WriteByte(t.Type);
+            s.Write(BitConverter.GetBytes(t.Value));
+        }
+        return s.ToArray();
     }
 }
