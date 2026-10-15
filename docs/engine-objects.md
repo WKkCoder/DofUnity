@@ -38,6 +38,13 @@
 - `[WHICH]` 的 `[CHARACTER]`、`[MONSTER]`、`[PASSIVE]` 三个选择器用同样的种类码(`0x111`、`0x211`、`0x21`)筛选对象管理器里的对象;`[AI CHARACTER]` 用槽 `0x38`。
 - `[IS INDEX]`(`.act` 条件 0x19/0x1a)依次尝试三种类:`Monster`(读字段 `+0x254`)、`PassiveObject`(读字段 `+0xd64`)、`Character` 的那个子类(调槽 `0x40`),取第一个能转换的类做比较。槽 `0x40`(`getObjectIndex`)在各类的实现:`CollisionObject`/`ActiveObject`/`Monster` 共用"读 `+0x254`";`PassiveObject` 读 `+0xd64`;`Character` 读 `+0x3c08`;`Character` 的那个子类用一个读 `+0x5668` 一带的函数。
 
+## 命中相关的虚槽(详见 [hit-pipeline.md](hit-pipeline.md),证据 E-057)
+
+槽位移(字节):`+0x2b0` 命中判定 `tryHit`、`+0x2b4` 碰撞盒几何、`+0x2c4`/`+0x2c8` 本地命中钩子(攻击方/受击方)、
+`+0x2cc`/`+0x2d0`/`+0x2d4` 攻击方的 BeforeAttack/Attack/AfterAttack、`+0x2d8`/`+0x2dc`/`+0x2e0` 受击方的 BeforeDamage/Damage/AfterDamage、
+`+0x210`/`+0x214` 命中登记(是否已命中过、登记表地址)、`+0x230` 解析"实际对象"、`+0x328`/`+0x32c` 根所有者/所属者、`+0x37c` 是否可被打、`+0x388` 受击反应、`+0x398`/`+0x39c`/`+0x3a0` 受击反馈/stuck 特效/硬直毫秒与模式、
+`+0x2a0`/`+0x2a4`/`+0x2a8`/`+0x500` 是 `setHp`/`getHp`/`getHpMax`/`isDead`。六个核心类各槽的实现地址由 `tools/py/vslots.py` 从磁盘读出。
+
 ## 没读出来的
 
 - 类的真名。名字抹掉了,只能靠用途起名;上表里"我们的名字"是读代码后的命名,**不是**原名。

@@ -112,6 +112,8 @@ public class DumpFunction extends GhidraScript {
         if (timeoutText != null && !timeoutText.isEmpty()) {
             decompileTimeout = Integer.parseInt(timeoutText.trim());
         }
+        // 只要反汇编与调用关系、不要反编译(几万字节的加载函数反编译要几分钟):DNF_SKIP_DECOMPILE=1
+        boolean skipDecompile = "1".equals(System.getenv("DNF_SKIP_DECOMPILE"));
         // 反编译结果的最大载荷(MB),默认用 Ghidra 的设置;大函数会报"Response buffer size exceeded",用 DNF_DECOMPILE_PAYLOAD_MB 调大
         String payloadText = System.getenv("DNF_DECOMPILE_PAYLOAD_MB");
         DecompInterface decomp = new DecompInterface();
@@ -155,12 +157,15 @@ public class DumpFunction extends GhidraScript {
                     }
                 }
 
-                DecompileResults res = decomp.decompileFunction(f, decompileTimeout, monitor);
-                try (PrintWriter w = new PrintWriter(new File(outDir, tag + ".c.txt"), "UTF-8")) {
-                    if (res != null && res.decompileCompleted() && res.getDecompiledFunction() != null) {
-                        w.println(res.getDecompiledFunction().getC());
-                    } else {
-                        w.println("// 反编译失败: " + (res == null ? "无结果" : res.getErrorMessage()));
+                DecompileResults res = null;
+                if (!skipDecompile) {
+                    res = decomp.decompileFunction(f, decompileTimeout, monitor);
+                    try (PrintWriter w = new PrintWriter(new File(outDir, tag + ".c.txt"), "UTF-8")) {
+                        if (res != null && res.decompileCompleted() && res.getDecompiledFunction() != null) {
+                            w.println(res.getDecompiledFunction().getC());
+                        } else {
+                            w.println("// 反编译失败: " + (res == null ? "无结果" : res.getErrorMessage()));
+                        }
                     }
                 }
                 if (res != null && res.decompileCompleted() && res.getCCodeMarkup() != null) {
