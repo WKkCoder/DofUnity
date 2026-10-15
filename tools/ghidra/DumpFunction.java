@@ -10,6 +10,7 @@
 //   <地址>.c.txt      反编译(Ghidra 的自动命名,仅供阅读)
 //   <地址>.xref.txt   调用者(谁调用了它)与被调用者(它调用了谁)的地址
 import ghidra.app.decompiler.DecompInterface;
+import ghidra.app.decompiler.DecompileOptions;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
@@ -37,7 +38,20 @@ public class DumpFunction extends GhidraScript {
         outDir.mkdirs();
         FunctionManager fm = currentProgram.getFunctionManager();
 
+        // 反编译的超时秒数,默认 120;很大的函数(几万字节)可以用环境变量 DNF_DECOMPILE_TIMEOUT 调大
+        int decompileTimeout = 120;
+        String timeoutText = System.getenv("DNF_DECOMPILE_TIMEOUT");
+        if (timeoutText != null && !timeoutText.isEmpty()) {
+            decompileTimeout = Integer.parseInt(timeoutText.trim());
+        }
+        // 反编译结果的最大载荷(MB),默认用 Ghidra 的设置;大函数会报"Response buffer size exceeded",用 DNF_DECOMPILE_PAYLOAD_MB 调大
+        String payloadText = System.getenv("DNF_DECOMPILE_PAYLOAD_MB");
         DecompInterface decomp = new DecompInterface();
+        if (payloadText != null && !payloadText.isEmpty()) {
+            DecompileOptions options = new DecompileOptions();
+            options.setMaxPayloadMBytes(Integer.parseInt(payloadText.trim()));
+            decomp.setOptions(options);
+        }
         decomp.openProgram(currentProgram);
         try {
             for (int i = 1; i < args.length; i++) {
@@ -66,7 +80,7 @@ public class DumpFunction extends GhidraScript {
                 }
 
                 try (PrintWriter w = new PrintWriter(new File(outDir, tag + ".c.txt"), "UTF-8")) {
-                    DecompileResults res = decomp.decompileFunction(f, 120, monitor);
+                    DecompileResults res = decomp.decompileFunction(f, decompileTimeout, monitor);
                     if (res != null && res.decompileCompleted() && res.getDecompiledFunction() != null) {
                         w.println(res.getDecompiledFunction().getC());
                     } else {
