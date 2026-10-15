@@ -95,6 +95,8 @@ namespace Dnf.Cli
             "      --sweep:再对每个登记了技能的状态各跑一遍(假人在前 70 处,技能等级 10,最多 12 秒),给出每个技能的结果、脚本错误与缺的接口。\n" +
             "  dnf atk-check [--dump <文件>] [--json <文件>]\n" +
             "      用 Dnf.Game 的 .atk 加载器读全库 .atk(证据 E-047),统计不规整情况;--dump 写出每个文件读到的字段,可与 tools/py/atk_ref.py --dump 逐行对拍。\n" +
+            "  dnf act-check [--dump <文件>] [--json <文件>]\n" +
+            "      用 Dnf.Game 的语法树解析器读全库 .act(证据 E-050),统计节点、块、多余与笔误闭合;--json 写出\"父标签 → 子标签 → 次数\"表,可与 tools/py/act_tree.py 逐项对拍。\n" +
             "  dnf damage-check [--cases <文件>]\n" +
             "      伤害公式(证据 E-049)。不带 --cases:读 PVF 里的 Etc/EtcParameter.etc 与 Creature/Common/creatureCommon.cre,只报告个数与完整性(不输出原版数值);\n" +
             "      带 --cases:读 tools/py/damage_ref.py --gen 生成的随机用例,用 C# 公式复算并与 Python 参考实现逐项比较。\n" +
@@ -250,6 +252,8 @@ namespace Dnf.Cli
                     return GameCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "atk-check":
                     return AtkCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "act-check":
+                    return ActCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "damage-check":
                     return opts.CasesFile != null
                         ? DamageCheck.RunCases(opts)

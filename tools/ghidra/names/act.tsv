@@ -1,0 +1,39 @@
+# 读 .act 加载函数(importActionScript)与执行函数时用的路标名字。名字来自客户端自己的日志字符串(函数名,如 ScanType、
+# CNRDAction::doBehavior)或我们对行为的命名,
+# 不是原版符号;原型用于让反编译结果显示调用参数。格式:地址<TAB>名字<TAB>可选原型<TAB>可选调用约定
+01333530	importActionScript
+0132fb50	getTagToSign
+0119fef0	decodeLiteral
+00401d80	wstrEqualsLit
+00401c30	wstrCompare
+01225210	ScanType
+01223660	readInt
+01223710	readFloat
+012236e0	readIntChecked
+012238c0	readString
+01225150	readStringToWstr
+011a54b0	scriptNextToken
+011a55c0	tokenInt
+011a55e0	tokenHexInt
+011a5620	tokenFloat
+011a5640	tokenText
+011a2ce0	logScriptError
+00493770	vectorPushStub	void vectorPushStub(int *value)	__thiscall
+012253d0	ScanTypeOrStr
+01225630	ScanAbsOrRel
+012258f0	ScanTypeOrInt
+01225b20	ScanStrOrInt
+01226060	ScanAnyData
+01226f90	ScanTypeOrFloat
+010b56c0	CNRDAction_doBehavior
+010d3630	CNRDAction_checkTriggerEvent	bool CNRDAction_checkTriggerEvent(int *rec, void *targets)	__thiscall
+# 执行函数里反复出现的小助手(含义见 docs/act-script.md;名字是我们起的)
+0107b2e0	recordParam
+010d17d0	targetsErase
+01176170	targetsBegin
+007c4340	targetsEnd
+0080be10	iterNext
+006cbb80	iterNotEqual
+00ce5640	iterDeref
+013d76df	dynamicCast
+007f9eb0	isMyControlObject

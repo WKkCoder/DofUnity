@@ -8,10 +8,15 @@
 // 每个函数产出三个文件:
 //   <地址>.asm.txt    反汇编
 //   <地址>.c.txt      反编译(Ghidra 的自动命名,仅供阅读)
+//   <地址>.cl.txt     同一份反编译,逐行带上"这一行对应的最低指令地址"(每行:8 位十六进制地址、制表符、缩进后的文本;
+//                     没有地址的行写 00000000),用来把 C 文本按汇编地址切段(比如按类型分派链的处理块切)
 //   <地址>.xref.txt   调用者(谁调用了它)与被调用者(它调用了谁)的地址
+import ghidra.app.decompiler.ClangLine;
+import ghidra.app.decompiler.ClangToken;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
 import ghidra.app.decompiler.DecompileResults;
+import ghidra.app.decompiler.PrettyPrinter;
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Function;
@@ -27,8 +32,71 @@ import java.util.TreeMap;
 
 public class DumpFunction extends GhidraScript {
 
+    // 受保护区域的虚拟地址范围(节 #3 到 #8,见 docs/evidence/ledger.md 的 E-044);可用环境变量覆盖(十六进制)
+    private long protectedLo = 0x01dd9000L;
+    private long protectedHi = 0x02c98000L;
+
+    private boolean isProtected(Address a) {
+        long v = a.getOffset();
+        return v >= protectedLo && v < protectedHi;
+    }
+
+
+    /** 一条非调用指令可能流向的地址:getFlows() 加上操作数里直接写出的地址(有的跳转没有建引用)。 */
+    private java.util.List<Address> jumpTargets(Instruction ins) {
+        java.util.List<Address> out = new java.util.ArrayList<>();
+        Address[] flows = ins.getFlows();
+        if (flows != null) {
+            for (Address t : flows) {
+                if (t != null) out.add(t);
+            }
+        }
+        if ((ins.getFlowType().isJump() || ins.getFlowType().isTerminal()) && ins.getNumOperands() > 0) {
+            Address a0 = ins.getAddress(0);
+            if (a0 != null) out.add(a0);
+            for (Object o : ins.getOpObjects(0)) {
+                if (o instanceof Address) {
+                    out.add((Address) o);
+                } else if (o instanceof ghidra.program.model.scalar.Scalar) {
+                    long v = ((ghidra.program.model.scalar.Scalar) o).getUnsignedValue();
+                    out.add(ins.getAddress().getNewAddress(v));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 返回拒绝原因;null 表示可以处理。 */
+    private String protectedReason(Function f) {
+        if (isProtected(f.getEntryPoint())) {
+            return "入口在受保护区域";
+        }
+        InstructionIterator it = currentProgram.getListing().getInstructions(f.getBody(), true);
+        while (it.hasNext()) {
+            Instruction ins = it.next();
+            // 普通调用只是引用地址,反编译器不会把被调用者并进来;但"调用并终止"(尾跳,如跳板)要算
+            if (ins.getFlowType().isCall() && !ins.getFlowType().isTerminal()) {
+                continue;
+            }
+            for (Address t : jumpTargets(ins)) {
+                if (isProtected(t)) {
+                    return "在 " + ins.getAddress() + " 跳进受保护区域";
+                }
+            }
+        }
+        return null;
+    }
+
     @Override
     protected void run() throws Exception {
+        String lo = System.getenv("DNF_PROTECTED_LO");
+        String hi = System.getenv("DNF_PROTECTED_HI");
+        if (lo != null && !lo.isEmpty()) {
+            protectedLo = Long.parseLong(lo.trim(), 16);
+        }
+        if (hi != null && !hi.isEmpty()) {
+            protectedHi = Long.parseLong(hi.trim(), 16);
+        }
         String[] args = getScriptArgs();
         if (args.length < 2) {
             printerr("用法: DumpFunction.java <输出目录> <函数地址> [<函数地址> ...]");
@@ -66,6 +134,14 @@ public class DumpFunction extends GhidraScript {
                 }
                 String tag = f.getEntryPoint().toString();
 
+                // 受保护区域守卫:函数本身在受保护区域,或者有"跳"(不是调用)进受保护区域的指令(跳板、尾跳),
+                // 一律拒绝:反编译器会顺着跳转把那里的字节当作本函数的一部分读进来。
+                String why = protectedReason(f);
+                if (why != null) {
+                    printerr("拒绝(受保护区域): " + tag + " " + why);
+                    continue;
+                }
+
                 try (PrintWriter w = new PrintWriter(new File(outDir, tag + ".asm.txt"), "UTF-8")) {
                     w.println("; 函数入口 " + tag + ",大小 " + f.getBody().getNumAddresses() + " 字节");
                     InstructionIterator it = currentProgram.getListing().getInstructions(f.getBody(), true);
@@ -79,12 +155,32 @@ public class DumpFunction extends GhidraScript {
                     }
                 }
 
+                DecompileResults res = decomp.decompileFunction(f, decompileTimeout, monitor);
                 try (PrintWriter w = new PrintWriter(new File(outDir, tag + ".c.txt"), "UTF-8")) {
-                    DecompileResults res = decomp.decompileFunction(f, decompileTimeout, monitor);
                     if (res != null && res.decompileCompleted() && res.getDecompiledFunction() != null) {
                         w.println(res.getDecompiledFunction().getC());
                     } else {
                         w.println("// 反编译失败: " + (res == null ? "无结果" : res.getErrorMessage()));
+                    }
+                }
+                if (res != null && res.decompileCompleted() && res.getCCodeMarkup() != null) {
+                    try (PrintWriter w = new PrintWriter(new File(outDir, tag + ".cl.txt"), "UTF-8")) {
+                        PrettyPrinter pp = new PrettyPrinter(f, res.getCCodeMarkup(), null);
+                        for (ClangLine cl : pp.getLines()) {
+                            long min = Long.MAX_VALUE;
+                            StringBuilder sb = new StringBuilder();
+                            for (int k = 0; k < cl.getIndent(); k++) {
+                                sb.append(' ');
+                            }
+                            for (ClangToken t : cl.getAllTokens()) {
+                                sb.append(t.getText());
+                                Address ta = t.getMinAddress();
+                                if (ta != null && ta.getOffset() < min) {
+                                    min = ta.getOffset();
+                                }
+                            }
+                            w.println(String.format("%08x\t%s", min == Long.MAX_VALUE ? 0L : min, sb));
+                        }
                     }
                 }
 

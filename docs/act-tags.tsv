@@ -1,0 +1,404 @@
+section	tag	type	owner	count	files	shapes	evidence
+behavior	[CREATE PASSIVEOBJECT]	0x62	[BEHAVIOR]	13357	4324	-:13357	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x688);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SUMMON MONSTER]	0x63	[BEHAVIOR]	856	523	-:856	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x75e);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[TELEPORT]	0x64	[BEHAVIOR]	460	338	-:460	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x801);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DEBUFF]	0x65	[BEHAVIOR]	6	6	-:6	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x7ef);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DEBUFF GHOST]	0x66	[BEHAVIOR]	6	6	-:6	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x7f8);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CHANGE ATTACKINFO]	0x67	[BEHAVIOR]	81	69	s:80 -:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x83d);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET X SPEED]	0x68	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x853);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET Y SPEED]	0x69	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x85d);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET Z SPEED]	0x6a	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x867);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET SPEED]	0x6b	[BEHAVIOR]	4356	2066	-:4356	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x8a7);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET MOVEVELS]	0x6c	[BEHAVIOR]	5	4	-:5	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x872);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[TRIGGER]	0x6e	[BEHAVIOR]	40315	10911	-:34539 i:5776	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x8d1);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[RESTORE]	0x6f	[BEHAVIOR]	432	378	-:432	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x935);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[PLAY SOUND]	0x70	[BEHAVIOR]	17	14	s:17	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x750);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SEND DO BEHAVIOR]	0x71	[BEHAVIOR]	80	77	-:80	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x96f);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DESTROY BY FORCE]	0x73	[BEHAVIOR]	8	8	-:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x965);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DESTROY]	0x73	[BEHAVIOR]	2805	2653	-:2805	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x95d);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET HP]	0x74	[BEHAVIOR]	65	64	i:65	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x9b9);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[ATTACKRECT]	0x75	[BEHAVIOR]	1110	854	-:1110	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x9a9);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET DIRECTION]	0x76	[BEHAVIOR]	860	783	-:860	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x9c3);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET ACTION]	0x77	[BEHAVIOR]	4693	3705	-:4675 i2:18	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x9df);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SEND MESSAGE]	0x79	[BEHAVIOR]	97	92	-:97	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xa85);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[REMOVE CATEGORY]	0x7a	[BEHAVIOR]	104	104	-:104	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xaaf);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[ACTIVE STATUS]	0x7b	[BEHAVIOR]	211	157	-:210 s i4:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xac7);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET FRAME]	0x7d	[BEHAVIOR]	562	461	i:562	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xbf2);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CASTING]	0x7e	[BEHAVIOR]	372	343	i2:372	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xbfa);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[ABS CASTING]	0x7f	[BEHAVIOR]	109	73	i2:85 -:21 i:3	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xc05);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CASTING EX]	0x80	[BEHAVIOR]	7	7	i2:7	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x500);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DIM]	0x81	[BEHAVIOR]	1667	959	s:1667	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xc1c);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[APPEND HIT]	0x82	[BEHAVIOR]	41	34	i3:41	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xc50);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET POS FORCE]	0x83	[BEHAVIOR]	305	171	-:305	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xc60);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[MASTER APPENDAGE]	0x85	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0xcec);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[FLIP HOLD ANIMATION]	0x86	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0xd73);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SHAKE INPUT]	0x87	[BEHAVIOR]	1	1	-:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xd81);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SHAKE HOLD POS]	0x88	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0xd7a);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET COLOR]	0x89	[BEHAVIOR]	5	5	i3:5	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xd67);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[ICE APPENDAGE]	0x8a	[BEHAVIOR]	7	6	i3:6 -:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xd9a);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[THORNS APPENDAGE]	0x8b	[BEHAVIOR]	1	1	i7:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xda6);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[REFLECTBUFF APPENDAGE]	0x8c	[BEHAVIOR]	19	3	i:19	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x458);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DARKSCALP APPENDAGE]	0x8d	[BEHAVIOR]	1	1	i10:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x463);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DESOLATEPAIN APPENDAGE]	0x8e	[BEHAVIOR]	1	1	i8:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x478);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[TELEKINESIS APPENDAGE]	0x8f	[BEHAVIOR]	12	4	i9:12	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x48b);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[VIRTUALHP APPENDAGE]	0x90	[BEHAVIOR]	15	8	i4:15	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x140);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[REMOVE VIRTUALHP]	0x91	[BEHAVIOR]	6	6	-:6	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x14d);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[TERROR APPENDAGE]	0x92	[BEHAVIOR]	3	3	i3:3	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x156);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DESPAIR APPENDAGE]	0x93	[BEHAVIOR]	1	1	i5:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x163);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CHANGE TEAM]	0x94	[BEHAVIOR]	9	3	i3:9	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x172);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DEFAULT TEAM]	0x95	[BEHAVIOR]	3	3	-:3	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x17f);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CHANGE SIGHT]	0x96	[BEHAVIOR]	1	1	-:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x189);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DEFAULT SIGHT]	0x97	[BEHAVIOR]	1	1	-:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x191);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SHAKING GAGE]	0x98	[BEHAVIOR]	2	2	i5:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x19a);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CHANGE DISGUISER]	0x99	[BEHAVIOR]	7	7	i2:7	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1a9);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DEFALUT DISGUISER]	0x9a	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1b3);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[RHYTHM ACTION]	0x9b	[BEHAVIOR]	5	5	i3:5	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1bc);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[STRAIGHT MOVE]	0x9c	[BEHAVIOR]	38	20	-:38	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1253);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DRAIN APPENDAGE]	0x9d	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x2fc);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CUT SCENE]	0x9e	[BEHAVIOR]	1	1	-:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x314);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[INFECTION APPENDAGE]	0x9f	[BEHAVIOR]	1	1	i5 f:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x4a9);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET CASTING GAUGEPOS]	0xa0	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x4c1);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET RESPAWN POS]	0xa1	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x4d1);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[RESTORE TARGET]	0xa2	[BEHAVIOR]	10	10	-:10	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x4e2);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CHANGE RIDABLESKILL PATTERN]	0xa3	[BEHAVIOR]	2	2	i:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x4f0);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[ANGER APPENDAGE]	0xa4	[BEHAVIOR]	1	1	i6:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x36e);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[ATTACKABLEAREA APPENDAGE]	0xa5	[BEHAVIOR]	2	2	i5:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x384);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[REMOVE ACTIVE STATUS]	0xa6	[BEHAVIOR]	4	4	-:3 s:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x397);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[REMOVE APPENDAGE]	0xa7	[BEHAVIOR]	6	4	-:6	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x3c3);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CURSE APPENDAGE]	0xa8	[BEHAVIOR]	1	1	i4:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xdd2);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SHAKING]	0xa9	[BEHAVIOR]	810	702	i2:810	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xe27);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[PARTICLE]	0xaa	[BEHAVIOR]	1495	634	s i3:1493 s:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xe30);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CHANGE DIRECTION BY TARGET]	0xab	[BEHAVIOR]	47	46	i:47	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xe42);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SAY SPEECH]	0xac	[BEHAVIOR]	494	360	L:472 s:19 L i3:3	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xe56);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DELETE APPENDAGE]	0xad	[BEHAVIOR]	51	45	i:51	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xe6d);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CAMOUFLAGE]	0xae	[BEHAVIOR]	39	28	i2:39	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xe96);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET ALPHA]	0xb0	[BEHAVIOR]	6	6	-:6	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x155d);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET OVERTURN]	0xb1	[BEHAVIOR]	26	12	-:26	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x10a4);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SUMMON APC]	0xb2	[BEHAVIOR]	18	14	-:18	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x101d);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET HOLD DOWNANI]	0xb3	[BEHAVIOR]	15	11	-:15	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x10ab);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET HOLD DAMAGEANI]	0xb4	[BEHAVIOR]	4	4	i:4	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x10b2);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CHANGE ACTION FILE]	0xb5	[BEHAVIOR]	1216	330	-:1216	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x10ba);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[COLOR CHANGE EFFECT]	0xb6	[BEHAVIOR]	121	109	-:121	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x10f7);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[WIND APPENDAGE]	0xb7	[BEHAVIOR]	32	17	f2 i3:32	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xdb6);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[HP APPENDAGE]	0xb8	[BEHAVIOR]	13	13	i2:13	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xd29);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[FLASH SCREEN EX]	0xb9	[BEHAVIOR]	10	7	i8:10	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xece);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[FLASH SCREEN]	0xb9	[BEHAVIOR]	231	183	i7:222 -:9	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xea9);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET SPEED CONTROL]	0xba	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1157);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[ADD LAYER]	0xbb	[BEHAVIOR]	63	28	i4:62 i2:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xf07);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[REMOVE LAYER]	0xbc	[BEHAVIOR]	48	15	i:48	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xf29);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET GRABABLE]	0xbd	[BEHAVIOR]	7	5	i:7	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xf35);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET DAMAGE CHECK]	0xbe	[BEHAVIOR]	6	6	i2:6	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xf59);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET COME IN ACTION]	0xbf	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0xf41);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET OUTLINE]	0xc0	[BEHAVIOR]	69	30	i5:69	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xf67);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[IS CHANGE TARGET]	0xc1	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0xf7b);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET TARGET]	0xc2	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0xfac);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET DAMAGE BOX]	0xc3	[BEHAVIOR]	106	78	-:106	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xf9c);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET TEAM]	0xc4	[BEHAVIOR]	56	38	i:56	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1185);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[IS DIRECTION TO MOVE]	0xc5	[BEHAVIOR]	15	14	i:15	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xe4c);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET WIDTH]	0xc6	[BEHAVIOR]	4	3	i2:4	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x118f);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET PASSTYPE]	0xc7	[BEHAVIOR]	9	9	-:9	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x119a);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[PULL APPENDAGE]	0xc8	[BEHAVIOR]	76	68	f2 i:68 i3:4 -:4	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xdc5);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[PULL APPENDAGE EX]	0xc9	[BEHAVIOR]	21	21	-:21	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x56d);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[RESTART COOLTIME]	0xca	[BEHAVIOR]	2	2	-:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x563);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET RANDOM TARGET]	0xcb	[BEHAVIOR]	1	1	-:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xf86);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[MIND CONTROL APPENDAGE]	0xcc	[BEHAVIOR]	11	11	i3:11	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xdea);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SUFFOCATION APPENDAGE]	0xcd	[BEHAVIOR]	4	2	-:4	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xdf6);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[MUCU LIMIT CONTROL]	0xce	[BEHAVIOR]	10	10	i:10	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xe1c);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET PARTY TARGET]	0xcf	[BEHAVIOR]	8	8	i2:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xf8e);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[ADD CATEGORY]	0xd0	[BEHAVIOR]	82	82	-:82	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xabb);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DISEASE APPENDAGE]	0xd1	[BEHAVIOR]	3	3	i4:3	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x660);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[HELLOFHEAL APPENDAGE]	0xd2	[BEHAVIOR]	3	3	i2:3	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x67a);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CHARACTER COOLTIME RESET]	0xd3	[BEHAVIOR]	4	4	i:4	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11c5);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SAY SPEECH WITH POSITION]	0xd5	[BEHAVIOR]	87	56	L i2:87	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xe60);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SAVE POSITION]	0xd6	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0xb18);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CHANGE FLOATING HEIGHT]	0xd7	[BEHAVIOR]	132	67	i:132	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xb21);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CHANGE GRAVITY]	0xd8	[BEHAVIOR]	17	14	i:13 -:4	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xb2c);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[ZOOM IT]	0xd9	[BEHAVIOR]	18	15	i2:18	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xb37);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CHANGE MY TARGET]	0xda	[BEHAVIOR]	23	23	-:23	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xb49);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[JUMP TO TARGET]	0xdb	[BEHAVIOR]	20	20	i3 f i5:19 i9:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xb66);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[TAKE IT]	0xdc	[BEHAVIOR]	1	1	i5:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xb8f);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[THROW ITS OWN]	0xdd	[BEHAVIOR]	1	1	-:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xb9d);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[BOUNCE FROM THE WALL]	0xde	[BEHAVIOR]	2	1	i2:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xba5);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET USE HOMING]	0xdf	[BEHAVIOR]	50	42	i:50	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xbb1);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET VISIBLITY]	0xe0	[BEHAVIOR]	29	22	i:29	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xbbb);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[MOVE TO]	0xe1	[BEHAVIOR]	8	8	-:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x89a);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET INTERPOLATION]	0xe2	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0xf4d);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[MAKE VIBRATION]	0xe3	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0xbc7);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CENTER MSG]	0xe4	[BEHAVIOR]	33	14	L i:33	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xbdb);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[START KEYSTROKE MODE]	0xe5	[BEHAVIOR]	16	16	i5:16	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xfb6);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[END KEYSTROKE MODE]	0xe6	[BEHAVIOR]	4	4	-:4	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xfe7);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[FOLLOWING TYPE]	0xe7	[BEHAVIOR]	2	2	i:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xff1);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET WHOLE ALPHA]	0xe8	[BEHAVIOR]	8	8	i:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xfff);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET WHOLE DAMAGETYPE]	0xe9	[BEHAVIOR]	7	6	i:7	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x100d);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[REFRESH MOVEINFO]	0xea	[BEHAVIOR]	3	3	-:3	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x3e4);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[FOLLOWING TARGET AND DIRECTION]	0xeb	[BEHAVIOR]	1	1	-:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x745);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CHANGE AI]	0xec	[BEHAVIOR]	154	46	-:154	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x3ee);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[FIX TARGET ME]	0xed	[BEHAVIOR]	4	4	-:4	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xb54);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[NAME HIDE ON]	0xef	[BEHAVIOR]	12	12	-:12	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x35b);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[NAME HIDE OFF]	0xf0	[BEHAVIOR]	5	5	-:5	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x363);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[AURA]	0xf1	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0xde0);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[TRIGGER QUESTEVENT]	0xf2	[BEHAVIOR]	13	13	i:13	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x404);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[LOCK QUEST UNTIL]	0xf3	[BEHAVIOR]	6	6	-:6	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x418);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[UNLOCK QUEST]	0xf4	[BEHAVIOR]	2	2	i:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x449);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET SAVED TARGET]	0xf5	[BEHAVIOR]	17	17	i:17	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x5a5);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[MOVE TO TARGET]	0xf6	[BEHAVIOR]	22	22	i:22	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x5af);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[HIT APPENDAGE]	0xf7	[BEHAVIOR]	1	1	s i10:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x5bb);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET SYMBOL]	0xf8	[BEHAVIOR]	16	7	i:16	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x5e6);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET SYMBOL OPTION]	0xf9	[BEHAVIOR]	13	4	i:13	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x5f2);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET PARTY SYMBOL]	0xfa	[BEHAVIOR]	2	1	i:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x5fe);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[LANDTYPE APPENDAGE]	0xfb	[BEHAVIOR]	6	6	i2:6	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x609);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DAMAGE APPENDAGE]	0xfc	[BEHAVIOR]	1	1	i14:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x616);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[RESOLUTION APPENDAGE]	0xfd	[BEHAVIOR]	9	9	i13 f:8 i17 f:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x63e);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[FORCE JUMP TO]	0xfe	[BEHAVIOR]	2	2	i3:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xb7d);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET SHADOW]	0xff	[BEHAVIOR]	4	2	i:4	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11d0);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET AS PASSABLE OBJECT]	0x100	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11dc);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[BOOSTER APPENDAGE]	0x101	[BEHAVIOR]	24	6	-:24	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11e5);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[CAMERA TRACE]	0x102	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x12b2);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[MOVE APPENDAGE]	0x103	[BEHAVIOR]	2	2	i5:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x12d3);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[FREEZE APPENDAGE]	0x104	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x12e1);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[TRAP APPENDAGE]	0x105	[BEHAVIOR]	1	1	-:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x12f1);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[RANDOM GENERATE PASSIVE OBJECT]	0x106	[BEHAVIOR]	8	2	-:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x12fc);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[MOVE PATTERN]	0x107	[BEHAVIOR]	15	15	-:15	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1338);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[MOVE PATTERN OFF]	0x108	[BEHAVIOR]	12	12	-:12	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1379);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[DISABLE KEYINPUT]	0x109	[BEHAVIOR]	9	3	-:9	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1383);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[EXCHANGE HP RATE]	0x10a	[BEHAVIOR]	2	2	-:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x138e);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET MOVABLE AREA]	0x10b	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1399);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SHOW HITGAUGE]	0x10c	[BEHAVIOR]	10	10	-:10	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1402);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[HIDE HITGAUGE]	0x10d	[BEHAVIOR]	2	2	-:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1440);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[GUARD APPENDAGE]	0x10e	[BEHAVIOR]	2	2	-:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x144e);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[EVENT RHYTHM ACTION]	0x10f	[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x203);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET POSITION HP GAUGE]	0x110	[BEHAVIOR]	6	6	i3:6	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1520);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET POSITION CASTING GAUGE]	0x111|0x5	[BEHAVIOR]	5	5	i3:5	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1532);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET UNBEATABLE]	0x112	[BEHAVIOR]	5	5	-:5	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1544);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[APPENDAGE]		[BEHAVIOR]	324	302	i:324	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xcbe);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[NO BUFF APPENDAGE]		[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0xcbf);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+behavior	[SET DEFAULT ACTION]		[BEHAVIOR]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0xbec);174 个标签中 148 个在全库里是 [BEHAVIOR] 的子标签
+keyword	ABSOLUTE		?	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x18ed);字典 01da1d34 的归属没有确定(最佳重合度低于 0.6)
+keyword	ABSOLUTE		?	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x13ee);字典 01da1dc4 的归属没有确定(最佳重合度低于 0.6)
+keyword	RELATIVE		?	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x18ec);字典 01da1d34 的归属没有确定(最佳重合度低于 0.6)
+keyword	RELATIVE		?	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x13ed);字典 01da1dc4 的归属没有确定(最佳重合度低于 0.6)
+keyword	[ACCELERATE]		[MOVE PATTERN]	32	14	i:32	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x134f);字典 01da1dfc 的 9 个标签有 6 个出现在全库的 [MOVE PATTERN] 之下
+keyword	[ACCELERATE]		[STRAIGHT MOVE]	32	14	i:32	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1282);字典 01da1e88 的 10 个标签有 10 个出现在全库的 [STRAIGHT MOVE] 之下
+keyword	[ALL ALIVE]		[TRIGGER]	2	2	-:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1937);字典 01da1d18 的 3 个标签有 3 个出现在全库的 [TRIGGER] 之下
+keyword	[ALL DEATH]		[TRIGGER]	1	1	-:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x193b);字典 01da1d18 的 3 个标签有 3 个出现在全库的 [TRIGGER] 之下
+keyword	[APPEND DELAY TIME]		[SUFFOCATION APPENDAGE]	1	1	i:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xe07);字典 01da1ec0 的 5 个标签有 4 个出现在全库的 [SUFFOCATION APPENDAGE] 之下
+keyword	[AREA]		[MOVE PATTERN]	48	48	i4:34 i6:14	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1365);字典 01da1dfc 的 9 个标签有 6 个出现在全库的 [MOVE PATTERN] 之下
+keyword	[AXIS]		[STRAIGHT MOVE]	38	20	-:38	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x126c);字典 01da1e88 的 10 个标签有 10 个出现在全库的 [STRAIGHT MOVE] 之下
+keyword	[BACK ATTACK]		[GUARD APPENDAGE]	2	2	i:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1464);字典 01da1da8 的 5 个标签有 5 个出现在全库的 [GUARD APPENDAGE] 之下
+keyword	[BOOSTER ACCEL]		[BOOSTER APPENDAGE]	8	2	i:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11f6);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[BOOSTER MAX VELOCITY]		[BOOSTER APPENDAGE]	8	2	i:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11f4);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[BOOSTER RECOVERY TIME]		[BOOSTER APPENDAGE]	8	2	i:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11fe);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[BOOSTER USING TIME]		[BOOSTER APPENDAGE]	8	2	i:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11fd);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[BOOSTER VELOCITY]		[BOOSTER APPENDAGE]	8	2	i:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11f5);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[BOOSTING ANI]		[BOOSTER APPENDAGE]	16	4	-:16	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1222);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[BOOSTING SOUND]		[BOOSTER APPENDAGE]	8	2	s:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x120e);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[CHANGE MODULE]		?	6	6	i:6	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x42f);字典 01da1f14 的归属没有确定(最佳重合度低于 0.6)
+keyword	[CLEAR DUNGEON]		?	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x429);字典 01da1f14 的归属没有确定(最佳重合度低于 0.6)
+keyword	[CLEAR MAP]		?	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x42c);字典 01da1f14 的归属没有确定(最佳重合度低于 0.6)
+keyword	[COORDINATE]		[IS IN AREA]	20	19	s:20	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x18e1);字典 01da1d50 的 3 个标签有 3 个出现在全库的 [IS IN AREA] 之下
+keyword	[COORDINATE]		[IS IN AREA]	20	19	s:20	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x13e2);字典 01da1de0 的 3 个标签有 3 个出现在全库的 [IS IN AREA] 之下
+keyword	[COUNT]		[CHECK PLAYER NUM]	26	14	i:26	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1b54);字典 01da1cfc 的 2 个标签有 2 个出现在全库的 [CHECK PLAYER NUM] 之下
+keyword	[COUNT]		[SHOW HITGAUGE]	26	14	i:26	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1417);字典 01da1d6c 的 3 个标签有 3 个出现在全库的 [SHOW HITGAUGE] 之下
+keyword	[CREATE FREQUENCE]		[RANDOM GENERATE PASSIVE OBJECT]	8	2	i2:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1315);字典 01da1e18 的 6 个标签有 5 个出现在全库的 [RANDOM GENERATE PASSIVE OBJECT] 之下
+keyword	[DAMAGE HP]		[STRAIGHT MOVE]	38	20	i:38	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1268);字典 01da1e88 的 10 个标签有 10 个出现在全库的 [STRAIGHT MOVE] 之下
+keyword	[DAMAGE MOTION]		[DAMAGE]	2	2	i:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x9f6);字典 01da1edc 的 8 个标签有 5 个出现在全库的 [DAMAGE] 之下
+keyword	[DAMAGE]		[GUARD APPENDAGE]	241	120	i s:225 s:11 -:4 i:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1471);字典 01da1da8 的 5 个标签有 5 个出现在全库的 [GUARD APPENDAGE] 之下
+keyword	[DAMAGE]		[BEHAVIOR]	241	120	i s:225 s:11 -:4 i:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x129e);字典 01da1e50 的 6 个标签有 6 个出现在全库的 [BEHAVIOR] 之下
+keyword	[DAMAGE]		[SUFFOCATION APPENDAGE]	241	120	i s:225 s:11 -:4 i:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xe06);字典 01da1ec0 的 5 个标签有 4 个出现在全库的 [SUFFOCATION APPENDAGE] 之下
+keyword	[DEFAULT ANI]		[BOOSTER APPENDAGE]	24	6	-:24	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1219);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[DESTROYED]		?	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x432);字典 01da1f14 的归属没有确定(最佳重合度低于 0.6)
+keyword	[DIRECTION]		[DAMAGE]	17	6	-:17	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x9fd);字典 01da1edc 的 8 个标签有 5 个出现在全库的 [DAMAGE] 之下
+keyword	[DISABLE KEYINPUT]		[BOOSTER APPENDAGE]	9	3	-:9	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1207);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[DISTANCE]		[STRAIGHT MOVE]	2105	1106	-:2081 i:24	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1263);字典 01da1e88 的 10 个标签有 10 个出现在全库的 [STRAIGHT MOVE] 之下
+keyword	[DOWN]		[BEHAVIOR]	206	173	-:118 s:65 i2:12 i:11	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x129b);字典 01da1e50 的 6 个标签有 6 个出现在全库的 [BEHAVIOR] 之下
+keyword	[DRAW ONLY]		[BOOSTER APPENDAGE]	8	2	-:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x120a);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[DURATION TIME]		[SUFFOCATION APPENDAGE]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0xe09);字典 01da1ec0 的 5 个标签有 4 个出现在全库的 [SUFFOCATION APPENDAGE] 之下
+keyword	[EVADE TIME]		[BOOSTER APPENDAGE]	8	2	i:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11f7);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[EVEN ONE DEATH]		[TRIGGER]	3	3	-:3	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x193f);字典 01da1d18 的 3 个标签有 3 个出现在全库的 [TRIGGER] 之下
+keyword	[FALLING INIT VELOCITY]		[BOOSTER APPENDAGE]	16	4	i:16	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11f9);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[FORCE HIT STUN TIME]		[DAMAGE]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x9f8);字典 01da1edc 的 8 个标签有 5 个出现在全库的 [DAMAGE] 之下
+keyword	[FREQUENCY TIME]		[SUFFOCATION APPENDAGE]	1	1	i:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xe08);字典 01da1ec0 的 5 个标签有 4 个出现在全库的 [SUFFOCATION APPENDAGE] 之下
+keyword	[GENERATE AREA]		[RANDOM GENERATE PASSIVE OBJECT]	8	2	i6:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x130b);字典 01da1e18 的 6 个标签有 5 个出现在全库的 [RANDOM GENERATE PASSIVE OBJECT] 之下
+keyword	[GRAVITY]		[BOOSTER APPENDAGE]	16	4	i:16	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11f8);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[HEIGHT]		[BOOSTER APPENDAGE]	16	4	i:16	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11fb);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[HIT DELAY]		[DAMAGE]	2	2	i:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x9f5);字典 01da1edc 的 8 个标签有 5 个出现在全库的 [DAMAGE] 之下
+keyword	[HIT TYPE]		[DAMAGE]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x9fe);字典 01da1edc 的 8 个标签有 5 个出现在全库的 [DAMAGE] 之下
+keyword	[INCLUDE DEAD]		[CHECK PLAYER NUM]	112	19	i:112	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1b55);字典 01da1cfc 的 2 个标签有 2 个出现在全库的 [CHECK PLAYER NUM] 之下
+keyword	[INIT POS]		[BOOSTER APPENDAGE]	8	2	i3:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1234);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[JUMP]		[BEHAVIOR]	36	18	-:34 s:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1295);字典 01da1e50 的 6 个标签有 6 个出现在全库的 [BEHAVIOR] 之下
+keyword	[KNOCK BACK PIXEL]		[DAMAGE]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x9f9);字典 01da1edc 的 8 个标签有 5 个出现在全库的 [DAMAGE] 之下
+keyword	[KNOCK BACK TYPE]		[DAMAGE]	2	2	-:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x9ff);字典 01da1edc 的 8 个标签有 5 个出现在全库的 [DAMAGE] 之下
+keyword	[KNOCK BACK]		[GUARD APPENDAGE]	2	2	i:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1463);字典 01da1da8 的 5 个标签有 5 个出现在全库的 [GUARD APPENDAGE] 之下
+keyword	[LANDING MODE]		[BOOSTER APPENDAGE]	8	2	-:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1209);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[LEVEL]		[SUFFOCATION APPENDAGE]	14232	4747	i:14206 -:26	字典项(加载函数 0x01333530 里的 tag→编号表,键 0xe05);字典 01da1ec0 的 5 个标签有 4 个出现在全库的 [SUFFOCATION APPENDAGE] 之下
+keyword	[LIMIT HEIGHT]		[BOOSTER APPENDAGE]	8	2	i:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11ff);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[LINE GAP]		[BOOSTER APPENDAGE]	8	2	i:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11fc);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[LOOP]		[MOVE PATTERN]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1361);字典 01da1dfc 的 9 个标签有 6 个出现在全库的 [MOVE PATTERN] 之下
+keyword	[MAGICAL]		[DAMAGE]	2	2	f:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1492);字典 01da1d88 的 3 个标签有 2 个出现在全库的 [DAMAGE] 之下
+keyword	[MIN DISTANCE]		[PULL APPENDAGE EX]	21	20	i:21	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x596);字典 01da1ef8 的 5 个标签有 5 个出现在全库的 [PULL APPENDAGE EX] 之下
+keyword	[MIN MOVE DISTANCE]		[MOVE PATTERN]	6	6	i:6	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x136e);字典 01da1dfc 的 9 个标签有 6 个出现在全库的 [MOVE PATTERN] 之下
+keyword	[MOVE COUNT]		[MOVE PATTERN]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1359);字典 01da1dfc 的 9 个标签有 6 个出现在全库的 [MOVE PATTERN] 之下
+keyword	[MOVING MOTION]		[STRAIGHT MOVE]	38	20	-:38	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x128d);字典 01da1e88 的 10 个标签有 10 个出现在全库的 [STRAIGHT MOVE] 之下
+keyword	[OFFSET POS]		[PULL APPENDAGE EX]	21	20	i2:21	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x591);字典 01da1ef8 的 5 个标签有 5 个出现在全库的 [PULL APPENDAGE EX] 之下
+keyword	[OFF]		<root>	6115	1766	-:6115	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x12c3);字典 01da1e34 的 3 个标签有 2 个出现在全库的 <root> 之下
+keyword	[ON]		<root>	4332	1533	-:4321 i2:6 i:5	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x12c2);字典 01da1e34 的 3 个标签有 2 个出现在全库的 <root> 之下
+keyword	[OPERATOR]		[DAMAGE]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1481);字典 01da1d88 的 3 个标签有 2 个出现在全库的 [DAMAGE] 之下
+keyword	[OVERTURN]		[BEHAVIOR]	38	36	s:38	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x12a4);字典 01da1e50 的 6 个标签有 6 个出现在全库的 [BEHAVIOR] 之下
+keyword	[PASSIVE OBJECT INDEX]		[RANDOM GENERATE PASSIVE OBJECT]	8	2	i2:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1321);字典 01da1e18 的 6 个标签有 5 个出现在全库的 [RANDOM GENERATE PASSIVE OBJECT] 之下
+keyword	[PHYSICAL]		[DAMAGE]	2	2	f:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1491);字典 01da1d88 的 3 个标签有 2 个出现在全库的 [DAMAGE] 之下
+keyword	[POS]		[IS IN AREA]	14754	4979	i3:13508 -:1024 i:161 i2:61	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x18b3);字典 01da1d50 的 3 个标签有 3 个出现在全库的 [IS IN AREA] 之下
+keyword	[POS]		[SHOW HITGAUGE]	14754	4979	i3:13508 -:1024 i:161 i2:61	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1420);字典 01da1d6c 的 3 个标签有 3 个出现在全库的 [SHOW HITGAUGE] 之下
+keyword	[POS]		[IS IN AREA]	14754	4979	i3:13508 -:1024 i:161 i2:61	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x13ae);字典 01da1de0 的 3 个标签有 3 个出现在全库的 [IS IN AREA] 之下
+keyword	[POS]		[MOVE PATTERN]	14754	4979	i3:13508 -:1024 i:161 i2:61	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1353);字典 01da1dfc 的 9 个标签有 6 个出现在全库的 [MOVE PATTERN] 之下
+keyword	[RANGE]		[IS IN AREA]	41	16	i3:41	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x18ca);字典 01da1d50 的 3 个标签有 3 个出现在全库的 [IS IN AREA] 之下
+keyword	[RANGE]		[IS IN AREA]	41	16	i3:41	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x13c8);字典 01da1de0 的 3 个标签有 3 个出现在全库的 [IS IN AREA] 之下
+keyword	[RELEASE ANI]		[BOOSTER APPENDAGE]	8	2	-:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x122b);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[RELEASE MOTION]		[STRAIGHT MOVE]	24	6	-:24	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x128e);字典 01da1e88 的 10 个标签有 10 个出现在全库的 [STRAIGHT MOVE] 之下
+keyword	[RETURN XPOS]		[STRAIGHT MOVE]	12	12	i:12	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1264);字典 01da1e88 的 10 个标签有 10 个出现在全库的 [STRAIGHT MOVE] 之下
+keyword	[RETURN YPOS]		[STRAIGHT MOVE]	12	12	i:12	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1265);字典 01da1e88 的 10 个标签有 10 个出现在全库的 [STRAIGHT MOVE] 之下
+keyword	[RETURN ZPOS]		[STRAIGHT MOVE]	12	12	i:12	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1266);字典 01da1e88 的 10 个标签有 10 个出现在全库的 [STRAIGHT MOVE] 之下
+keyword	[RIGIDITY]		[DAMAGE]	2	2	i:2	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x9f7);字典 01da1edc 的 8 个标签有 5 个出现在全库的 [DAMAGE] 之下
+keyword	[SIT]		[BEHAVIOR]	64	61	s:57 -:7	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x12a1);字典 01da1e50 的 6 个标签有 6 个出现在全库的 [BEHAVIOR] 之下
+keyword	[SOUND]		[GUARD APPENDAGE]	5057	5057	s i:3026 s i s i:1348 s i s i s i:307 s i s i s i s i s i s i ...:125	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x14a5);字典 01da1da8 的 5 个标签有 5 个出现在全库的 [GUARD APPENDAGE] 之下
+keyword	[SPEED]		[PULL APPENDAGE EX]	25	24	f2:22 f i:2 i2:1	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x582);字典 01da1ef8 的 5 个标签有 5 个出现在全库的 [PULL APPENDAGE EX] 之下
+keyword	[STAND]		[BEHAVIOR]	427	390	-:427	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1298);字典 01da1e50 的 6 个标签有 6 个出现在全库的 [BEHAVIOR] 之下
+keyword	[STAY TIME]		[MOVE PATTERN]	14	14	i:14	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x135d);字典 01da1dfc 的 9 个标签有 6 个出现在全库的 [MOVE PATTERN] 之下
+keyword	[TERMINAL VELOCITY]		[BOOSTER APPENDAGE]	16	4	i:16	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x11fa);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[TIME]		[SHOW HITGAUGE]	31	31	i:31	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x142e);字典 01da1d6c 的 3 个标签有 3 个出现在全库的 [SHOW HITGAUGE] 之下
+keyword	[TIME]		[GUARD APPENDAGE]	31	31	i:31	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1465);字典 01da1da8 的 5 个标签有 5 个出现在全库的 [GUARD APPENDAGE] 之下
+keyword	[TIME]		[STRAIGHT MOVE]	31	31	i:31	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1267);字典 01da1e88 的 10 个标签有 10 个出现在全库的 [STRAIGHT MOVE] 之下
+keyword	[TRACE ZPOS]		<root>	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x12c4);字典 01da1e34 的 3 个标签有 2 个出现在全库的 <root> 之下
+keyword	[TYPE]		[MOVE PATTERN]	26	26	i:15 s:11	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1347);字典 01da1dfc 的 9 个标签有 6 个出现在全库的 [MOVE PATTERN] 之下
+keyword	[USE TARGET X POS]		[RANDOM GENERATE PASSIVE OBJECT]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x131b);字典 01da1e18 的 6 个标签有 5 个出现在全库的 [RANDOM GENERATE PASSIVE OBJECT] 之下
+keyword	[USE TARGET Y POS]		[RANDOM GENERATE PASSIVE OBJECT]	8	2	-:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x131c);字典 01da1e18 的 6 个标签有 5 个出现在全库的 [RANDOM GENERATE PASSIVE OBJECT] 之下
+keyword	[USE TARGET Z POS]		[RANDOM GENERATE PASSIVE OBJECT]	8	2	-:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x131d);字典 01da1e18 的 6 个标签有 5 个出现在全库的 [RANDOM GENERATE PASSIVE OBJECT] 之下
+keyword	[USE TARGET]		[PULL APPENDAGE EX]	25	24	i:25	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x58b);字典 01da1ef8 的 5 个标签有 5 个出现在全库的 [PULL APPENDAGE EX] 之下
+keyword	[VALIDTIME]		[PULL APPENDAGE EX]	25	24	i:25	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x587);字典 01da1ef8 的 5 个标签有 5 个出现在全库的 [PULL APPENDAGE EX] 之下
+keyword	[VELOCITY]		[MOVE PATTERN]	14	14	i:14	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x134b);字典 01da1dfc 的 9 个标签有 6 个出现在全库的 [MOVE PATTERN] 之下
+keyword	[X]		[STRAIGHT MOVE]	0	0		字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1273);字典 01da1e6c 的 3 个标签有 2 个出现在全库的 [STRAIGHT MOVE] 之下
+keyword	[Y]		[STRAIGHT MOVE]	24	6	-:24	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1276);字典 01da1e6c 的 3 个标签有 2 个出现在全库的 [STRAIGHT MOVE] 之下
+keyword	[ZPOS CAMERA VIEW]		[BOOSTER APPENDAGE]	8	2	-:8	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1208);字典 01da1ea4 的 21 个标签有 21 个出现在全库的 [BOOSTER APPENDAGE] 之下
+keyword	[Z]		[STRAIGHT MOVE]	14	14	-:14	字典项(加载函数 0x01333530 里的 tag→编号表,键 0x1279);字典 01da1e6c 的 3 个标签有 2 个出现在全库的 [STRAIGHT MOVE] 之下
+object-type	[COLLISION OBJECT]	0x0	[IS OBJECT TYPE]	0	0		0x013322f0 里该关键字分支赋给局部变量、随后推入记录的常数
+object-type	[ACTIVE OBJECT]	0x1	[IS OBJECT TYPE]	0	0		0x013322f0 里该关键字分支赋给局部变量、随后推入记录的常数
+object-type	[CHARACTER]	0x2	[IS OBJECT TYPE]	1968	956	-:1968	0x013322f0 里该关键字分支赋给局部变量、随后推入记录的常数
+object-type	[MONSTER]	0x3	[IS OBJECT TYPE]	1716	946	-:1716	0x013322f0 里该关键字分支赋给局部变量、随后推入记录的常数
+object-type	[AI CHARACTER]	0x4	[IS OBJECT TYPE]	87	67	-:87	0x013322f0 里该关键字分支赋给局部变量、随后推入记录的常数
+object-type	[PASSIVE OBJECT]	0x5	[IS OBJECT TYPE]	65	45	-:65	0x013322f0 里该关键字分支赋给局部变量、随后推入记录的常数
+object-type	[TRAP]	0x6	[IS OBJECT TYPE]	0	0		0x013322f0 里该关键字分支赋给局部变量、随后推入记录的常数
+object-type	[BREAKABLE]	0x7	[IS OBJECT TYPE]	0	0		0x013322f0 里该关键字分支赋给局部变量、随后推入记录的常数
+selector	[ME]	0x0	[WHICH]	33784	10286	i:31257 -:2286 i2:241	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[LAST ATTACKER]	0x1	[WHICH]	70	35	-:70	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[LAST ACTIVE ATTACKER]	0x2	[WHICH]	18	11	i:14 -:4	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[LAST ATTACKSUCCESS]	0x3	[WHICH]	792	362	-:438 i:354	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[CHARACTER ATTACKSUCCESS]	0x4	[WHICH]	93	3	i:87 -:6	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[LAST ATTACKSUCCESSES]	0x5	[WHICH]	399	41	-:379 i:20	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[LAST ACTIVE ATTACKSUCCESS]	0x6	[WHICH]	115	39	-:101 i:14	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[LAST ATTACKERS]	0x7	[WHICH]	0	0		0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[TARGET]	0x8	[WHICH]	608	181	i:433 -:175	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[SUMMON MASTER]	0x9	[WHICH]	184	108	-:113 i:71	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[ALL OUR TEAM]	0xb	[WHICH]	10	8	-:10	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[ALL ENEMY]	0xc	[WHICH]	130	110	-:130	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[ALL CHARACTER TEAM]	0xd	[WHICH]	410	218	-:410	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[ALL MONSTER TEAM]	0xe	[WHICH]	230	131	-:230	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[CHARACTER]	0xf	[WHICH]	1968	956	-:1968	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[MONSTER]	0x10	[WHICH]	1716	946	-:1716	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[AI CHARACTER]	0x11	[WHICH]	87	67	-:87	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[CREATE OBJECT]	0x12	[WHICH]	8	7	-:8	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[DESTROY OBJECT]	0x13	[WHICH]	20	18	-:20	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[PASSIVE]	0x14	[WHICH]	3694	1018	-:3694	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[LOAD TARGET]	0x15	[WHICH]	134	49	i:93 i2:41	0x013322f0:编号 0x15 之后再读两个整数推入记录
+selector	[PARTY TARGET]	0x16	[WHICH]	413	176	-:413	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[PLAYER]	0x17	[WHICH]	344	150	-:344	0x013322f0 里该关键字分支推入记录参数 0 的常数
+selector	[SUMMON OBJECT]	0x18	[WHICH]	20	11	-:20	0x013322f0:该链末尾的编号 0x18
+trigger	[FRAME]	0x1	[TRIGGER]|[CHECKUP]	26895	9206	i2:26895	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[XSPEED]	0x2	[TRIGGER]|[CHECKUP]	0	0		加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[YSPEED]	0x3	[TRIGGER]|[CHECKUP]	0	0		加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[ZSPEED]	0x4	[TRIGGER]|[CHECKUP]	26	23	-:26	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[ZPOS]	0x5	[TRIGGER]|[CHECKUP]	1061	807	-:1061	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[CHARGED TIME]	0x6	[TRIGGER]|[CHECKUP]	2	1	-:2	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[ON DAMAGE]	0x7	[TRIGGER]|[CHECKUP]	491	368	-:491	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[CHECK STUCK]	0x8	[TRIGGER]|[CHECKUP]	7	7	i:7	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[ON ATTACKSUCCESS]	0x9	[TRIGGER]|[CHECKUP]	922	842	-:922	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[ON CREATE OBJECT]	0xa	[TRIGGER]|[CHECKUP]	12	11	-:12	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[ON DESTROY OBJECT]	0xb	[TRIGGER]|[CHECKUP]	33	30	-:33	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[ON DESTROY ME]	0xc	[TRIGGER]|[CHECKUP]	3	3	-:3	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[ON SET ACTION]	0xd	[TRIGGER]|[CHECKUP]	1115	1062	-:1115	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[ON END ACTION]	0xe	[TRIGGER]|[CHECKUP]	9	9	-:9	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[ON SHAKE INPUT]	0xf	[TRIGGER]|[CHECKUP]	0	0		加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[ON MOVE COLLISION]	0x11	[TRIGGER]|[CHECKUP]	13	13	-:13	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[ON CHANGE LIFE]	0x12	[TRIGGER]|[CHECKUP]	6	6	-:6	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS MEET PROB]	0x13	[TRIGGER]|[CHECKUP]	0	0		加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS NAME]	0x14	[TRIGGER]|[CHECKUP]	13	6	s:13	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS CATEGORY]	0x15	[TRIGGER]|[CHECKUP]	2	2	-:2	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS OBJECT TYPE]	0x16	[TRIGGER]|[CHECKUP]	985	417	-:985	条件解析函数 0x013322f0:类型号 0x16,随后读关键字(对象类型,见 object-type 段)到非关键字为止
+trigger	[IS LEFT]	0x17	[TRIGGER]|[CHECKUP]	24	20	-:24	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS RIGHT]	0x18	[TRIGGER]|[CHECKUP]	26	22	-:26	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS INDEX]	0x19	[TRIGGER]|[CHECKUP]	5071	1801	i:4467 i2:240 i3:108 i4:86	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS NOT INDEX]	0x1a	[TRIGGER]|[CHECKUP]	247	35	i:247	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[CHECK PARTY SLOT]	0x1b	[TRIGGER]|[CHECKUP]	1	1	i2:1	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS TEAM]	0x1c	[TRIGGER]|[CHECKUP]	56	36	-:56	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[HP]	0x1d	[TRIGGER]|[CHECKUP]	822	633	i:424 -:394 i2:3 f:1	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[MP]	0x1e	[TRIGGER]|[CHECKUP]	7	7	i:7	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[WHICH]	0x1f	[TRIGGER]|[CHECKUP]	10403	3984	-:10403	条件解析函数 0x013322f0 的分支里写入的记录类型号
+trigger	[DISTANCE]	0x21	[TRIGGER]|[CHECKUP]	2105	1106	-:2081 i:24	条件解析函数 0x013322f0 的分支里写入的记录类型号
+trigger	[IS BACKPOS]	0x22	[TRIGGER]|[CHECKUP]	6	3	-:6	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS FRONTPOS]	0x22	[TRIGGER]|[CHECKUP]	8	5	-:8	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[CHECK GHOST]	0x23	[TRIGGER]|[CHECKUP]	5	5	-:5	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[CHECK BUFF]	0x24	[TRIGGER]|[CHECKUP]	6	6	-:6	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[CHECK SPECIFIC BUFF]	0x25	[TRIGGER]|[CHECKUP]	8	8	-:8	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[CHECK THREAT]	0x26	[TRIGGER]|[CHECKUP]	0	0		加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[CHECKED NO]	0x27	[TRIGGER]|[CHECKUP]	5254	1710	-:5254	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IF]	0x28	[TRIGGER]|[CHECKUP]	1794	937	s:1789 -:5	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS AI TARGET]	0x29	[TRIGGER]|[CHECKUP]	0	0		加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[DIRECT DO BEHAVIOR]	0x2b	[TRIGGER]|[CHECKUP]	167	148	-:167	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[GET TARGET]	0x2c	[TRIGGER]|[CHECKUP]	461	320	i:461	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS GRABABLE]	0x2d	[TRIGGER]|[CHECKUP]	105	91	i:105	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[TRIGGER CHECK]	0x2e	[TRIGGER]|[CHECKUP]	1647	207	-:1647	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS MISSILE DAMAGE]	0x2f	[TRIGGER]|[CHECKUP]	0	0		加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS FIRE DAMAGE]	0x30	[TRIGGER]|[CHECKUP]	35	23	-:35	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS WATER DAMAGE]	0x31	[TRIGGER]|[CHECKUP]	11	9	-:11	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS DARK DAMAGE]	0x32	[TRIGGER]|[CHECKUP]	4	2	-:4	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS LIGHT DAMAGE]	0x33	[TRIGGER]|[CHECKUP]	4	2	-:4	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS NONE DAMAGE]	0x34	[TRIGGER]|[CHECKUP]	2	2	-:2	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS PHYSICAL DAMAGE]	0x35	[TRIGGER]|[CHECKUP]	0	0		加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS MAGICAL DAMAGE]	0x36	[TRIGGER]|[CHECKUP]	0	0		加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS ABSOLUTE DAMAGE]	0x37	[TRIGGER]|[CHECKUP]	0	0		加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS END MAP]	0x38	[TRIGGER]|[CHECKUP]	26	24	-:26	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS END MAP VERTICALLY]	0x39	[TRIGGER]|[CHECKUP]	4	4	-:4	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS DAMAGEBOX ENABLE]	0x3a	[TRIGGER]|[CHECKUP]	1	1	i:1	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS VISIBLE]	0x3b	[TRIGGER]|[CHECKUP]	17	7	i:17	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[AXIS INDEX]	0x3c	[TRIGGER]|[CHECKUP]	2	2	i:2	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[SAVE TARGET OBJECT]	0x3d	[TRIGGER]|[CHECKUP]	60	57	i:44 -:16	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[CHECK DISTANCE]	0x3e	[TRIGGER]|[CHECKUP]	73	48	i2:73	条件解析函数 0x013322f0 的分支里写入的记录类型号
+trigger	[CHECK AREA]	0x40	[TRIGGER]|[CHECKUP]	4	1	i4:4	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[FRONTSIDE]	0x41	[TRIGGER]|[CHECKUP]	42	15	-:42	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[BACKSIDE]	0x42	[TRIGGER]|[CHECKUP]	3	3	-:3	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[FACE TO FACE]	0x43	[TRIGGER]|[CHECKUP]	7	4	-:7	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[WITHIN SIGHT]	0x44	[TRIGGER]|[CHECKUP]	6	6	-:6	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[OUT OF SIGHT]	0x45	[TRIGGER]|[CHECKUP]	0	0		加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS OURTEAMATTACKED]	0x46	[TRIGGER]|[CHECKUP]	3	3	-:3	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS TARGETACTIVESTATUS]	0x47	[TRIGGER]|[CHECKUP]	14	14	i:14	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[RANDOM CHECK]	0x48	[TRIGGER]|[CHECKUP]	26	22	i2:24 i:2	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS TARGET STATE]	0x49	[TRIGGER]|[CHECKUP]	81	63	i:81	加载函数 0x01333530:类型号 = 0x49 + (标签是否等于 [IS NOT TARGET STATE]),随后读整数到非整数为止
+trigger	[IS NOT TARGET STATE]	0x4a	[TRIGGER]|[CHECKUP]	22	18	i:22	同上(与 [IS TARGET STATE] 共用解析,类型号加 1)
+trigger	[IS IN POS]	0x4b	[TRIGGER]|[CHECKUP]	2222	123	i3:2222	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS IN AREA]	0x4c	[TRIGGER]|[CHECKUP]	41	16	-:41	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[CHECK PARTYMEMBERS STATE]	0x4d	[TRIGGER]|[CHECKUP]	6	3	-:6	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[CHECK SYMBOL]	0x51	[TRIGGER]|[CHECKUP]	258	56	i2:258	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[CHECK PARTY SYMBOL]	0x52	[TRIGGER]|[CHECKUP]	4	2	i2:4	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[CHECK TIME]	0x53	[TRIGGER]|[CHECKUP]	1101	307	i:1101	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[NOTHING BREAKABLEOBJ]	0x54	[TRIGGER]|[CHECKUP]	0	0		加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS PROPERTY CAPACITY OVER]	0x55	[TRIGGER]|[CHECKUP]	0	0		加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[LAST ATTACK PRIORITY]	0x56	[TRIGGER]|[CHECKUP]	0	0		条件解析函数 0x013322f0 的分支里写入的记录类型号
+trigger	[LAST TARGET PRIORITY]	0x57	[TRIGGER]|[CHECKUP]	8	8	-:8	条件解析函数 0x013322f0 的分支里写入的记录类型号
+trigger	[ON END BEHAVIOR]	0x58	[TRIGGER]|[CHECKUP]	8	8	-:8	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS DAMAGE ENABLE]	0x59	[TRIGGER]|[CHECKUP]	3	3	-:3	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[REALDUNGEON CHECKUP]	0x5a	[TRIGGER]|[CHECKUP]	44	3	i3:44	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[AREA]	0x5b	[TRIGGER]|[CHECKUP]	48	48	i4:34 i6:14	条件解析函数 0x013322f0 的分支里写入的记录类型号
+trigger	[DELAY DO BEHAVIOR]	0x5c	[TRIGGER]|[CHECKUP]	278	35	-:278	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS MOUNT]	0x5d	[TRIGGER]|[CHECKUP]	0	0		加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS DIRECTION LEFT]	0x5e	[TRIGGER]|[CHECKUP]	13	9	-:13	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS DIRECTION RIGHT]	0x5f	[TRIGGER]|[CHECKUP]	14	10	-:14	加载函数 0x01333530 的分支里写入的记录类型号
+trigger	[IS CHILD]	0x60	[TRIGGER]|[CHECKUP]	14	13	i:14	加载函数 0x01333530:类型号 0x60,随后读一个整数
+trigger	[CHECK PLAYER NUM]	0x61	[TRIGGER]|[CHECKUP]	16	4	-:16	加载函数 0x01333530 的分支里写入的记录类型号
