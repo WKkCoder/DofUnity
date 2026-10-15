@@ -1,0 +1,158 @@
+kind	code	tag	summary	confidence	open
+runner	0x010a59e0	ON SHAKE INPUT	虚表槽0;0xf 置事件标志后 DO BEHAVIOR	高	01566d7c 调用者未定位
+runner	0x010a5ec0	ON MOVE COLLISION	param_1=轴索引;0x11+0x3c+DO BEHAVIOR	高	同左
+runner	0x010a8c30	ON DAMAGE	0087a580 受击;写 action+0x98	高	param_3/stuck 细节
+runner	0x010a97b0	ON CHANGE LIFE	008202f0;0x12 经 010a2c00 置位	高	栈参未知
+runner	0x010a9eb0	ON DESTROY	010ac190;0xb/0xc+0x108 第二列表	高	010a2c00 类型表
+runner	0x010aa920	ON CREATE	创建对象虚表槽 010acdf0；事件 0xa；param=新对象	高	010a2c00 事件表
+runner	0x010ab080	ON SET ACTION	010aed60；事件 0xd；+0x108 延迟 WHICH 预处理	高	+0x108 入队时机
+runner	0x010aba90	ON END ACTION	010ace00 帧末；事件 0xe	高	
+runner	0x010ad580	帧 tick	010ade50 追帧；内联 CHECK TIME；无 eventSeen	高	0x10 类型标签
+runner	0x010aefc0	ON ATTACKSUCCESS	008774e0；事件 0x9；写 +0x9c	高	param_2 含义
+func	0x00977450	符号码比较	PRIMER 已核对	高	—
+func	0x010d1320	FRAME	PRIMER 已核对	高	—
+func	0x010d17d0	targetsErase	评估函数删目标	中	缺 cl2 导出
+func	0x010d1850	DO BEHAVIOR 入口	解析目标后 010d1550 执行 k	高	目标码全集
+func	0x010d1f40	SAVE TARGET OBJECT	007ff0b0 写槽位	高	槽位语义
+func	0x010d25e0	WHICH	按 selector 码重填目标集	高	PARTY/ TARGET 分支
+func	0x01330670	LOAD/CHECKUP	01330670 目标子句加载	中	字符串完整映射
+func	0x01566d7c	虚表	010a59e0 shake + 010a5ec0 碰撞	中	类名 RTTI
+func	trigger_layout	触发器 0x24 布局	+0x14..+0x1d 等	中	+0x00 向量与加载写入
+sel	0x00	ME	拥有者	高	
+sel	0x01	LAST ATTACKER	+0x98	高	
+sel	0x02	LAST ACTIVE ATTACKER	主控链	中	
+sel	0x03	LAST ATTACKSUCCESS	命中	中	
+sel	0x04	CHARACTER ATTACKSUCCESS	角色命中	中	
+sel	0x05	LAST ATTACKSUCCESSES	列表	中	
+sel	0x06	LAST ACTIVE ATTACKSUCCESS	激活命中	中	
+sel	0x07	LAST ATTACKERS	时间窗历史	低	全库 0 次
+sel	0x08	TARGET	多源	中	
+sel	0x09	SUMMON MASTER	召唤者	中	
+sel	0x0b	ALL OUR TEAM	同队	高	
+sel	0x0c	ALL ENEMY	敌对	高	
+sel	0x0d	ALL CHARACTER TEAM	同队角色	中	
+sel	0x0e	ALL MONSTER TEAM	同队怪	中	
+sel	0x0f	CHARACTER	全场角色	高	
+sel	0x10	MONSTER	全场怪	高	
+sel	0x11	AI CHARACTER	AI	高	
+sel	0x12	CREATE OBJECT	创建对象	高	
+sel	0x13	DESTROY OBJECT	销毁对象	中	
+sel	0x14	PASSIVE	被动对象	高	
+sel	0x15	LOAD TARGET	脚本槽	中	
+sel	0x16	PARTY TARGET	队伍块	低	
+sel	0x17	PLAYER	玩家槽	中	
+sel	0x18	SUMMON OBJECT	己方召唤	中	
+cond	0x00	DO BEHAVIOR	运行器内联 fire+010d1850	高	—
+cond	0x01	[FRAME]	仅 runner 010d1320；checkTriggerEvent 无分支	高	—
+cond	0x02	[XSPEED]	逐对象比较 X 轴 float 速度与符号码阈值	中	加载侧读参未核
+cond	0x03	[YSPEED]	逐对象比较 Y 轴 float 速度	中	加载侧未核
+cond	0x04	[ZSPEED]	逐对象比较 Z 轴 float；与 stuck 子检查共用 0x16 循环	中	rec+0xb 布局
+cond	0x05	[ZPOS]	逐对象：getZPos 与符号码+整数	高	参数<=2 时跳过块
+cond	0x06	[CHARGED TIME]	逐对象比较 +0x559c 与符号码	中	字段命名
+cond	0x07	ON DAMAGE	仅 8c30 不 abort	高	评估侧 r?
+cond	0x08	[CHECK STUCK]	IF 码 0；stuck 位；0x2e 内 MP 排序截断	中	i:7 与链 0 关系
+cond	0x09	ON ATTACKSUCCESS	五运行器均 abort	高	—
+cond	0x0a	ON CREATE OBJECT	aa920 + selector 12	高	
+cond	0x0b	[ON DESTROY OBJECT]	IF 码 3；嵌套 0xb 选 destroy 比较器	高	运行器细节
+cond	0x0c	ON DESTROY ME	destroyed==owner	高	—
+cond	0x0d	ON SET ACTION	事件记录；ab080 主运行器	高	
+cond	0x0e	ON END ACTION	aba90	高	
+cond	0x0f	ON SHAKE INPUT	仅 59e0 置位	高	—
+cond	0x11	ON MOVE COLLISION	仅 5ec0	高	—
+cond	0x12	ON CHANGE LIFE	仅 97b0	高	—
+cond	0x14	[IS NAME]	逐对象：名 +0x258 匹配任一参数字符串	中	加载字符串编码
+cond	0x15	[IS CATEGORY]	逐对象：双 cast category OR 匹配	中	参数类型
+cond	0x16	[IS OBJECT TYPE]	逐对象：多 object-type param AND；虚槽 +0x34/+0x38 种类码	高	+0x34 槽正式名
+cond	0x17	[IS LEFT]	目标 X <= 拥有者 X	高	—
+cond	0x18	[IS RIGHT]	目标 X > 拥有者 X	高	—
+cond	0x19	[IS INDEX]	逐对象：怪物/角色/被动索引 OR 匹配任一 param 则保留（见卡）	高	0x1a 多 param 精确语义；AI 是否仅 920c
+cond	0x1a	[IS NOT INDEX]	与 0x19 同块；索引「非命中」保留逻辑（见 cond_0x1a）	中	与 0x19 对称的布尔式需脚本用例验证
+cond	0x1b	[CHECK PARTY SLOT]	派对槽 API 副作用，不改 targets	低	00926500 语义
+cond	0x1c	[IS TEAM]	多子标签 OR：同队/敌队/007dd440/field_0x191==100	高	007dd440
+cond	0x1d	[HP]	逐对象：920c/98fc 取 HP；可 %Max；符号码比较	高	f:1 脚本路径
+cond	0x1e	[MP]	同 HP 结构，getMp/MpMax；样本极少	高	是否仅 98fc
+cond	0x1f	WHICH	010d25e0;r2 补选择器	高	—
+cond	0x20	(无标签)	评估与运行器均 noop/忽略	中	谁写入类型 32
+cond	0x21	[DISTANCE]	逐对象：拥有者对目标整数距离 vs 符号码+阈值	中	拥有者 vtbl+0x8 距离定义
+cond	0x22	[IS BACKPOS]/[IS FRONTPOS]	params[0] 与 owner +0x110 背/正面	中	+0x110 命名
+cond	0x23	[CHECK GHOST]	扫描 ghost 类但评估恒 pass	低	设计意图
+cond	0x24	[CHECK BUFF]	敌方 buff 0xb6/0x10 + 默认动画则整触发失败	中	buff 含义
+cond	0x25	[CHECK SPECIFIC BUFF]	rec+0xb 指定 buff 与层数	中	加载映射
+cond	0x26	[CHECK THREAT]	威胁列表与阈值；可能 early pass	低	删目标/fail 路径
+cond	0x27	CHECKED NO	00977450 比 target 数	高	—
+cond	0x28	[IF]	整体：左右表达式列表求值整数比较；不改集合	中	010ae520/字符串求值细节
+cond	0x29	[IS AI TARGET]	AI +0x7b0 设目标，非过滤	低	全库 0 次
+cond	0x2b	DIRECT DO BEHAVIOR	同 0x00	高	直接差异在行为层
+cond	0x2c	[GET TARGET]	在已有目标非空时按 mode 排序/随机/距离/上次命中扩充集合并截断至 maxN	中	00879690/00cee000 排序键；mode5 与 010d25e0 细节
+cond	0x2d	[IS GRABABLE]	按 vtbl+0x380 与参数 0/1 过滤可抓取/不可抓取	高	—
+cond	0x2e	[TRIGGER CHECK]	读指定触发器池第 N 条的 [ENABLE]；种类 3 为整段真假，否则按目标过滤；[ON]/[OFF] 对应 P=0/1	中	种类 0xe 双对象池；是否还检查触发次数
+cond	0x38	[IS END MAP]	拥有者近地图右缘且 X 轴速度>0	中	左端 x≤150 特例；函数 0x0046ef10
+cond	0x39	[IS END MAP VERTICALLY]	拥有者近地图上缘且 Y 轴速度>0	中	函数 0x0062d080
+cond	0x3a	[IS DAMAGEBOX ENABLE]	目标伤害盒开关与参数 0/1 一致	中	全库仅 1 例
+cond	0x3b	[IS VISIBLE]	目标可见性字节等于参数	高	+0x1d4 语义
+cond	0x3c	AXIS INDEX	仅 5ec0 轴掩码	高	—
+cond	0x3d	SAVE TARGET OBJECT	010d1f40	高	—
+cond	0x3e	[CHECK DISTANCE]	拥有者经 008791a0 做全局距离判定，不改目标集	中	008791a0 语义
+cond	0x3f	(无标签)	owner+0x14c gate	低	加载标签
+cond	0x40	[CHECK AREA]	查询区域命中则删目标（param1/2）	低	函数 0x008791a0；param0/3 未用
+cond	0x41	[FRONTSIDE]	目标正面朝向动作拥有者（X 轴+getDirection 0左/1右）	高	+0x36c 槽名
+cond	0x42	[BACKSIDE]	目标背对拥有者（0x41 朝向规则取反）	高	—
+cond	0x43	[FACE TO FACE]	拥有者与目标互相面向	中	完整真值表需对照汇编
+cond	0x44	[WITHIN SIGHT]	拥有者朝向目标一侧（仅 X/dir，无距离）	中	—
+cond	0x45	[OUT OF SIGHT]	拥有者背对目标（0x44 互补）	中	catalog 未统计
+cond	0x46	[IS OURTEAMATTACKED]	场景中有人被该目标攻击且与我方相关	低	函数 0x00872c60
+cond	0x47	[IS TARGETACTIVESTATUS]	目标指定 active status 为真	中	+0x540
+cond	0x48	[RANDOM CHECK]	本机控制时 rand%denom≤threshold 保留	高	单参时分母 100
+cond	0x49	[IS TARGET STATE]	getState 相等保留；param=-1 时 @019d9acc+0x36b0 分支	中	加载多整数 vs 执行只读 param[0]
+cond	0x4a	[IS NOT TARGET STATE]	getState 不等保留；其余同 0x49	中	同上
+cond	0x4b	[IS IN POS]	逐对象：X/Y/Z 整型全等	高	—
+cond	0x4c	[IS IN AREA]	脚本块 POS/RANGE AABB 过滤目标	中	子记录解析
+cond	0x4d	[CHECK PARTYMEMBERS STATE]	四名队员存活/死亡组合门闩	中	全局 party 对象
+cond	0x51	[CHECK SYMBOL]	按 obj+0x200 与整数比较过滤目标，配对 [SET SYMBOL]	高	比较码 0/1 脚本命名
+cond	0x52	[CHECK PARTY SYMBOL]	派对 field_0x30 与整数比较，整段真假	高	派对符号由谁写入
+cond	0x53	CHECK TIME	timeGetTime 毫秒周期；仅 ad580 内联	高	
+cond	0x54	[NOTHING BREAKABLEOBJ]	场景无可破坏物时为真	中	breakable 标志细节
+cond	0x55	[IS PROPERTY CAPACITY OVER]	目标属性条数>参数索引	中	catalog 缺失
+cond	0x58	ON END BEHAVIOR	非本五 runner	低	主运行器地址
+cond	0x59	[IS DAMAGE ENABLE]	目标 +0x36c 伤害开启	高	—
+cond	0x5a	[REALDUNGEON CHECKUP]	RealDungeon 键值表查询+比较，整段真假	中	三 mode 脚本含义；007ddad0/007ddb20
+cond	0x5b	[AREA]	相对拥有者 X/Y 轴对齐范围过滤	高	Z 未参与
+cond	0x5c	DELAY DO BEHAVIOR	006c8420 排队；count 先加	中	取消语义
+cond	0x5d	[IS MOUNT]	+0x55a8==0x17 与参数 0/1 一致	中	catalog 缺失
+cond	0x5e	[IS DIRECTION LEFT]	拥有者 getDirection==0 为真	高	不滤 targets
+cond	0x5f	[IS DIRECTION RIGHT]	拥有者 getDirection==1 为真	高	不滤 targets
+cond	0x60	[IS CHILD]	vtbl+0x1f4 父指针是否等于 action.owner	高	槽名
+cond	0x61	[CHECK PLAYER NUM]	派对 009266c0 人数与 [COUNT] 期望值比较	中	多条 COUNT 时取哪条
+beh	0x62	[CREATE PASSIVEOBJECT]	在本机拥有者处按 INDEX/LEVEL/POS 与可选标志生成被动对象(vtbl+0xd1)	中	队伍码1重复、01562220 浮点常数、创建器内部
+beh	0x63	[SUMMON MONSTER]	对目标集合里每个可战斗对象,按"编号、等级、三轴偏移"召唤怪物;前置:行为拥有者存在且是本机控制的对象;参数流里可含 [RANDOM] 结构	中	随机结构与召唤数量上限
+beh	0x64	[TELEPORT]	把目标集合里的对象按三轴偏移瞬移;只改位置与少量关联状态,不换动作脚本	中	关联状态的完整列表
+beh	0x67	[CHANGE ATTACKINFO]	DEFAULT(-1)或索引切换action+0xfb表(0x2cc)并刷新+0x200	中	具名attackinfo执行路径、+0x200槽名
+beh	0x6b	[SET SPEED]	对目标速度控制器(+0x50→+0xc)写 X/Y/Z 浮点速度，X 随朝向取反	高	加载侧 3/4 修饰在执行块无分支
+beh	0x6e	[TRIGGER]	运行时按编号启用/禁用/重置动作上的触发器条目	中	整数加载分支切片缺失；motion 分池语义未全核对
+beh	0x6f	[RESTORE]	按种类恢复目标(ActiveObject 族)的数值,数量可按百分比	中	种类码与数值的对应
+beh	0x71	[SEND DO BEHAVIOR]	对目标+0x148动作实例远程执行第k号BEHAVIOR(010d1370)	中	加载侧选择器在执行侧未再读
+beh	0x73	[DESTROY] / [DESTROY BY FORCE]	分类型调用销毁/死亡虚函数；FORCE 附 SKIP MASTER CHECK 绕过 master 校验	中	master 规则细节与各 +0x7e4 等语义
+beh	0x74	[SET HP]	valueOf设HP(+0x2a0);hp<=0时怪物/AI旁路结构	中	0x211/0x111类型码、011a0930
+beh	0x75	[ATTACKRECT]	开、关、重置目标对象的攻击判定矩形(虚槽 0x360 / 0x208)	高	—
+beh	0x76	[SET DIRECTION]	设置目标朝向(虚槽 0xf0);行为拥有者不是本机控制对象时整段跳过	高	各参数取值到方向的完整映射
+beh	0x77	[SET ACTION]	按动作族码与 ATTACK/CUSTOM 索引切换状态(函数 0x010b1d50 + vtbl+0x172/0xa7)	中	完整关键字→族码表、内置 stateId 全表
+beh	0x79	[SEND MESSAGE]	本机控owner时向AI发五类COMMAND组包(0x34/2)	中	对端接收与触发器耦合
+beh	0x7a	[REMOVE CATEGORY]	查类别表后0x28c移除,怪物+0x4f94清零	中	id 0x1a含义、0x28c返回值
+beh	0x7b	[ACTIVE STATUS]	对目标施加异常状态（种类+概率+多种附加整数）	中	各 status 分支字段未逐条展开
+beh	0x7d	[SET FRAME]	参数大于 0 时,设置当前动作所关联动画的当前帧	高	帧写入在被调函数里,没有跟入
+beh	0x7e	[CASTING]	参数 1 大于 0 时写拥有者(CollisionObject 族)的施法相关字段	中	字段含义
+beh	0x7f	[ABS CASTING]	本机控制实体上按两整数创建绝对读条(gauge+0x280对象,常量20000)	中	paramA/B与[CASTING]差异、目标集合检查
+beh	0x81	[DIM]	在 action+0x120 按变量名读写 int；支持 =/+/-/GET TIME	高	GET TIME 的时间单位
+beh	0x83	[SET POS FORCE]	对目标施加强制位移（起止点与多种移动模式）	中	010b3ca0 插值细节未读
+beh	0xa9	[SHAKING]	参数 1 不小于 0 时调用场景的震屏(参数 0、参数 1)	高	—
+beh	0xaa	[PARTICLE]	以拥有者坐标加三轴偏移生成粒子,不随朝向镜像,不用目标集合	中	粒子类型与朝向处理
+beh	0xac	[SAY SPEECH]	对目标显示语句:ActiveObject 族走带语音界面的虚槽 0x6c4,PassiveObject 族走虚槽 0x460	中	字符串来源
+beh	0xad	[DELETE APPENDAGE]	按名/[%]/float匹配owner下appendage并detach	低	0x4d分支、00982c90规则、param布局
+beh	0xb5	[CHANGE ACTION FILE]	给目标换成另一个动作脚本文件;不保留当前帧与内部子状态,换文件后靠后面的 [SET ACTION] 重新切入	中	已加载的动作脚本是否复用
+beh	0xb9	[FLASH SCREEN]	全屏闪光（七参数时间/alpha/RGB，EX 第八模式）	中	010c6b3e 以后渲染调用未切片
+beh	0xc3	[SET DAMAGE BOX]	对0x019d91e8目标开关受击盒(0x368);OFF时按帧清0x534/0x540	高	帧槽0x534/0x540命名
+beh	0xc4	[SET TEAM]	valueOf整数调setTeam(0x228)	高	team枚举
+beh	0xd0	[ADD CATEGORY]	查表后0x288添加,0x019db264写+0x4f94与锚点坐标	中	0x288与0x1a语义
+beh	0xd7	[CHANGE FLOATING HEIGHT]	设置或关闭目标浮空高度（像素）	高	008331b0 模式码与 +1000 修正的精确含义
+beh	0xdf	[SET USE HOMING]	param!=0则owner+0x50开homming再进黑盒022c34cf	中	+0x50与黑盒语义
+beh	0xec	[CHANGE AI]	切换 AI 宿主上的 .ai 脚本与 modeId	中	对象索引非 0x111/0x211 时行为未验证
