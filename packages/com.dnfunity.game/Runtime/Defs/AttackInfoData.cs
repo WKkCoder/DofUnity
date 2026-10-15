@@ -102,7 +102,11 @@ namespace Dnf.Game
         public int[] Extra { get; internal set; } = Array.Empty<int>();
     }
 
-    /// <summary>[catch object] 里的一组(两个整数加一个浮点);含义待战斗阶段确认。</summary>
+    /// <summary>
+    /// [catch object] 里的一组(两个整数加一个浮点)。含义来自客户端怪物受击入口开头的抓取判定(证据 E-058):
+    /// First 与调用点给的常数 1 比较;Second 与受击方 +0x254(推断是怪物编号)比较;
+    /// Third 是血量百分比阈值,条件是 当前血量 × 100 / 最大血量 ≤ Third。三项都满足就抓到(怪物进入 STATE_UNSUMMON,推断)。
+    /// </summary>
     public readonly struct CatchObjectEntry
     {
         public int First { get; }
