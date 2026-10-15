@@ -29,6 +29,9 @@ namespace Dnf.Cli
         public int Top { get; set; } = 60;
         public string? JsonFile { get; set; }
 
+        /// <summary>atk-check --dump:把每个 .atk 读出的字段逐行写到这个文件(放 out/,不入库),用来与 Python 参考实现对拍。</summary>
+        public string? DumpFile { get; set; }
+
         // render-town(合成城镇里的 NPC,可与截图对照)
         public string MapPath { get; set; } = "map/elvengard/(r)gate.map";
         public int CameraX { get; set; } = 24;
@@ -87,6 +90,8 @@ namespace Dnf.Cli
             "      用 Dnf.Game 的最小世界,在原版 Squirrel 状态脚本不改动的情况下跑男魔法师的 IceCrash 技能,记录回调与接口调用序列、没实现的接口与接口覆盖率(证据 E-036、E-037)。\n" +
             "      --only <后缀>:配合 --sweep,只跑状态后缀匹配的技能状态(可重复),调试单个技能。\n" +
             "      --sweep:再对每个登记了技能的状态各跑一遍(假人在前 70 处,技能等级 10,最多 12 秒),给出每个技能的结果、脚本错误与缺的接口。\n" +
+            "  dnf atk-check [--dump <文件>] [--json <文件>]\n" +
+            "      用 Dnf.Game 的 .atk 加载器读全库 .atk(证据 E-047),统计不规整情况;--dump 写出每个文件读到的字段,可与 tools/py/atk_ref.py --dump 逐行对拍。\n" +
             "选项:\n" +
             "  --dnf-dir <目录>          数据目录(默认读环境变量 DNF_DIR,再读仓库根的 local.env)\n" +
             "  --out <目录>              参考输出目录(默认 <仓库>/out)\n" +
@@ -156,6 +161,9 @@ namespace Dnf.Cli
                         break;
                     case "--json":
                         opts.JsonFile = NextValue(args, ref i);
+                        break;
+                    case "--dump":
+                        opts.DumpFile = NextValue(args, ref i);
                         break;
                     case "--map":
                         opts.MapPath = NextValue(args, ref i);
@@ -231,6 +239,8 @@ namespace Dnf.Cli
                     return SquirrelCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "game-check":
                     return GameCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "atk-check":
+                    return AtkCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "verify":
                     if (positional.Count != 1)
                     {

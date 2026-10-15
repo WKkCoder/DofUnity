@@ -197,7 +197,22 @@ namespace Dnf.Game
             ScriptLine[] lines = ReadScript(key);
             if (lines != null)
             {
-                def = new AttackInfoDef(key, lines);
+                AttackInfoData data = null;
+                AttackInfoLoadReport report = null;
+                PvfStringTable strings = Strings;
+                if (strings != null && _source.TryRead(key, out byte[] raw) && TokenScript.IsTokenScript(raw))
+                {
+                    try
+                    {
+                        data = AttackInfoLoader.Load(new ScriptCursor(TokenScript.Parse(raw), strings), out report);
+                    }
+                    catch (DnfFormatException)
+                    {
+                        data = null;
+                        report = null;
+                    }
+                }
+                def = new AttackInfoDef(key, lines, data, report);
             }
             _attackInfos[key] = def;
             return def;
