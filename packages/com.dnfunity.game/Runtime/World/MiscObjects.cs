@@ -37,7 +37,7 @@ namespace Dnf.Game
 
         public int CauseKind { get; internal set; }
 
-        /// <summary>挂接时给的依附体编号(APID_*,本项目里是合成值);没给为 0。sq_RemoveChangeStatus(对象, 编号) 按它移除。</summary>
+        /// <summary>挂接时给的依附体编号(APID_*,取值见 <c>Dnf.Script.EngineConstants</c>,证据 E-045);没给为 0。sq_RemoveChangeStatus(对象, 编号) 按它移除。</summary>
         public int AppendageId { get; internal set; }
 
         public GameObject Parent { get; internal set; }

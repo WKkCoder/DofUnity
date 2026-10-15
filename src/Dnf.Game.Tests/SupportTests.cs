@@ -316,6 +316,27 @@ function onSetState_Foo(obj, state, datas, isResetTimer)
     }
 
     [Fact]
+    public void ClientRegisteredAppendageIdConstantsHaveTheirOriginalValues()
+    {
+        // 证据 E-045:取值读自客户端注册函数里的"名字 + 立即数"(APID_COMMON 例外,见 EngineConstants 的注释)
+        (GameWorld w, _) = NativeTests.Run(@"
+	::R_COMMON <- APID_COMMON;
+	::R_ENCHANT <- APID_SKILL_LIGHT_ENCHANT_WEAPON;
+	::R_RESONANCE <- APID_RESONANCE;
+	::R_SHIELD <- APID_AT_MAGE_ELEMENT_SHIELD;
+	::R_CHAIN_LIGHT <- APID_SKILL_ELEMENTAL_CHAIN_LIGHT;
+");
+        Assert.Empty(w.Errors);
+        Assert.Equal(0, Result(w, "R_COMMON"));
+        Assert.Equal(1, Result(w, "R_ENCHANT"));
+        Assert.Equal(191, Result(w, "R_RESONANCE"));
+        Assert.Equal(328, Result(w, "R_SHIELD"));
+        Assert.Equal(195, Result(w, "R_CHAIN_LIGHT"));
+        Assert.Equal(10, Dnf.Script.EngineConstants.AppendageIds.Count);
+        Assert.Equal(10, Dnf.Script.EngineConstants.AppendageIds.Values.Distinct().Count());
+    }
+
+    [Fact]
     public void EngineProvidedAppendageIdConstantsAreSynthesizedPerName()
     {
         (GameWorld w, _) = NativeTests.Run(@"

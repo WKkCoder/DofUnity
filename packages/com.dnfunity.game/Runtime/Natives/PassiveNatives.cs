@@ -42,7 +42,7 @@ namespace Dnf.Game
             int oy = c.Int32(3);
             int oz = c.Int32(4);
             int dir = c.Has(5) && !c.IsNull(5) ? c.Int32(5) : creator.Direction;
-            byte[] data = TakeWritten();
+            byte[] data = WrittenData();
             QueueWorldPacket(() => CreatePassiveObject(creator, id, ox, oy, oz, dir, absolute, data));
             return c.Return(0);
         }
@@ -141,7 +141,7 @@ namespace Dnf.Game
                 {
                     GameObject chr = c.SelfAs<GameObject>();
                     int skill = c.Int32(0);
-                    byte[] data = TakeWritten();
+                    byte[] data = WrittenData();
                     QueueWorldPacket(() => ChangeSkillEffect(chr, skill, data));
                     return c.ReturnNothing();
                 });

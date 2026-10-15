@@ -115,8 +115,18 @@ namespace Dnf.Game
                 SkillDef def = Data.GetSkill(SkillOwner(who).Job, s.SkillId);
                 return c.Return(def == null || def.ExecutableStates.Length == 0 || Array.IndexOf(def.ExecutableStates, who.State) >= 0);
             });
-            Define("sq_getJob", I, "角色的职业编号 (角色)", G, c => c.Return(SkillOwner(c.SelfAs<GameObject>()).Job));
-            Define("sq_getGrowType", T, "角色的觉醒/成长类型:没有实现,返回 0", G, c => c.Return(0));
+            Define("sq_getJob", I, "角色的职业编号 (角色);传入 null 返回 -1。客户端 0x005aee70:取对象的'角色信息'(虚表槽 0x738)里偏移 0 的整数(E-046)", G, c =>
+            {
+                GameObject o = ObjOrNull(c);
+                return c.Return(o == null ? -1 : SkillOwner(o).Job);
+            });
+            Define("sq_getGrowType", I,
+                "角色的成长类型(转职/觉醒方向,编号含义按职业各自定义:GROW_TYPE_*) (角色);传入 null 返回 -1。客户端 0x005aee50:与 sq_getJob 读同一份'角色信息'(虚表槽 0x738),取偏移 0xc 的整数(E-046);"
+                + "我们的角色没有觉醒信息,取对象的 GrowType 属性(默认 0 = 职业的基础类型)", G, c =>
+                {
+                    GameObject o = ObjOrNull(c);
+                    return c.Return(o == null ? -1 : SkillOwner(o).GrowType);
+                });
             Define("sq_GetCastTime", I, "技能的施法时间(毫秒) (角色, 技能, 等级):.skl 的 [casting time] 两个数按等级线性插值(推断)", G, c =>
             {
                 GameObject chr = SkillOwner(c.SelfAs<GameObject>());

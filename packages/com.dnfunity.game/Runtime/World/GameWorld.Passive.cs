@@ -16,7 +16,14 @@ namespace Dnf.Game
     public sealed partial class GameWorld
     {
         // ---------------------------------------------------------------- 二进制发送缓冲
+        // 客户端有两个互不相干的全局发送缓冲(E-046):
+        //   普通缓冲(0x019F2CB8 起):sq_BinaryStartWrite / sq_BinaryWrite*,以及对象成员写法 sq_StartWrite / sq_Write* / sq_binaryData_*,
+        //     创建被动对象、切换技能特效等消息发出时附上它的内容;
+        //   参数缓冲(0x019DFD44 起):sq_BinaryParameterStartWrite / sq_BinaryParameterWrite*,目前只见 sq_CreatePassiveObjectAfterWarning
+        //     从里面读固定的 8 个 Dword。
+        // 两个缓冲发送后都不清空:内容一直保留到下一次 Start(把长度置 0)。
         private readonly List<byte> _writeBuffer = new List<byte>();
+        private readonly List<byte> _parameterBuffer = new List<byte>();
 
         /// <summary>最近一次交给脚本的读取端(sq_BinaryGetReadSize 读它的位置)。</summary>
         internal PacketReader LastReader { get; private set; }
@@ -30,10 +37,7 @@ namespace Dnf.Game
         /// <summary>往发送缓冲末尾写 width 字节(小端)。</summary>
         internal void WriteInt(long value, int width)
         {
-            for (int i = 0; i < width; i++)
-            {
-                _writeBuffer.Add((byte)(value >> (8 * i)));
-            }
+            WriteInt(_writeBuffer, value, width);
         }
 
         internal void WriteFloat(float value)
@@ -41,12 +45,43 @@ namespace Dnf.Game
             _writeBuffer.AddRange(BitConverter.GetBytes(value));
         }
 
-        /// <summary>取走缓冲里写好的数据(发送消息时调用;之后缓冲为空,没写数据的消息收到的是空数据)。</summary>
-        internal byte[] TakeWritten()
+        /// <summary>清空参数缓冲(sq_BinaryParameterStartWrite)。</summary>
+        internal void StartParameterWrite()
         {
-            byte[] data = _writeBuffer.ToArray();
-            _writeBuffer.Clear();
-            return data;
+            _parameterBuffer.Clear();
+        }
+
+        internal void WriteParameterInt(long value, int width)
+        {
+            WriteInt(_parameterBuffer, value, width);
+        }
+
+        internal void WriteParameterFloat(float value)
+        {
+            _parameterBuffer.AddRange(BitConverter.GetBytes(value));
+        }
+
+        private static void WriteInt(List<byte> buffer, long value, int width)
+        {
+            for (int i = 0; i < width; i++)
+            {
+                buffer.Add((byte)(value >> (8 * i)));
+            }
+        }
+
+        /// <summary>
+        /// 发送缓冲里现在的内容(发送消息时调用)。<b>不清空</b>:客户端发送时只读缓冲的长度与地址(0x005ae780 等),
+        /// 不重置长度;没有先 Start 就发送的消息收到的是上一次写的内容。
+        /// </summary>
+        internal byte[] WrittenData()
+        {
+            return _writeBuffer.ToArray();
+        }
+
+        /// <summary>参数缓冲里现在的内容(不清空)。</summary>
+        internal byte[] ParameterData()
+        {
+            return _parameterBuffer.ToArray();
         }
 
         /// <summary>用一份数据创建读取端并交给虚拟机;回调结束后调用 <see cref="ReleaseReader"/>。</summary>

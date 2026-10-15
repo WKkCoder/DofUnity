@@ -36,6 +36,12 @@ namespace Dnf.Game
         /// <summary>职业编号(角色才有;-1 表示不是角色)。</summary>
         public int Job { get; internal set; } = -1;
 
+        /// <summary>
+        /// 成长类型(转职/觉醒方向;编号含义按职业各自定义,见脚本头文件里的 GROW_TYPE_*)。0 是职业的基础类型。
+        /// 客户端把它与职业放在同一份"角色信息"里(sq_getJob 读偏移 0、sq_getGrowType 读偏移 0xc,E-046);这里没有账号数据,由调用方设置。
+        /// </summary>
+        public int GrowType { get; set; }
+
         /// <summary>对象的定义:角色是 .chr,被动对象是 .obj(没有定义的假人等为 null)。</summary>
         public ObjectDef Def { get; internal set; }
 

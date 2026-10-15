@@ -143,13 +143,13 @@ namespace Dnf.Game
         }
 
         // ---------------------------------------------------------------- 状态切换
-        /// <summary>sq_AddSetStatePacket 的落地:把"切换状态"放进对象的队列,在本次回调结束后由 <see cref="DrainPackets"/> 处理。</summary>
-        internal void QueueState(GameObject obj, int state, int priority, bool resetTimer)
-        {
-            QueueState(obj, state, priority, resetTimer, obj.DataVector.Values.ToArray());
-        }
-
-        /// <summary>同上,数据数组由调用方给出(addSetStatePacket、sendStatePacket 等)。</summary>
+        /// <summary>
+        /// "切换状态"请求的落地(sq_AddSetStatePacket、addSetStatePacket、sendStatePacket 等):放进对象的队列,在本次回调结束后由 <see cref="DrainPackets"/> 处理。
+        /// 数据数组由调用方给出(sq_AddSetStatePacket 只在第 3 个参数为真时带上对象的数据数组)。
+        /// 与客户端的差异(E-046):客户端的 setState(0x008779b0)只保留<b>一个</b>待处理的请求,新请求在"没有待处理请求"或
+        /// "新请求优先级不低于待处理请求"时才替换它,并且对象已处于死亡状态(STATE_DIE)时拒绝某些请求;这里先按先进先出逐个执行,
+        /// 优先级只传给状态回调。要不要改成"单槽 + 优先级"取决于客户端'何时取走待处理请求'(未读到)。
+        /// </summary>
         internal void QueueState(GameObject obj, int state, int priority, bool resetTimer, long[] data)
         {
             obj.Packets.Enqueue(new StatePacket

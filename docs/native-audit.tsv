@@ -1,0 +1,521 @@
+name	status	forms	script_calls	note
+get_vector	Verified	Member	519	变量表的整数向量:取第 i 项(越界或为负为 0)(客户端 0x005b7360)
+push_vector	Verified	Member	469	变量表的整数向量:末尾加一项(客户端 0x0042b190 转到向量的追加函数)
+set_vector	Verified	Member	315	变量表的整数向量:设第 i 项;下标越界(含为负)什么也不做,不扩展(客户端 0x005b7390)
+isMyControlObject	Verified	Member	306	是不是本机玩家控制的对象:客户端(0x007f9eb0)看对象的"所有者"(虚表 0x1B0 槽)是不是本机玩家的角色;角色的所有者是它自己,玩家创建的被动对象沿创建者找到所属角色,怪物不是。单机里:玩家角色与它创建的被动对象为真。客户端还有一个全局模式字段(值为 2 时无条件为真),含义没有查明,这里当作不是 2
+getSkillSubState	Verified	Member	198	技能子状态(技能脚本自定义的阶段编号;客户端 0x0042b0f0 读对象里一个受保护的整数,偏移 0x5468)
+readDword	Verified	Member	185	读一个 Dword(有符号 32 位:脚本用它传可为负的坐标);客户端不检查越界,这里越界返回 0(有意的差别)
+clear_vector	Verified	Member	171	变量表的整数向量:清空(客户端 0x0042b180)
+sq_BinaryWriteDword	Verified	Global	171	往普通发送缓冲追加一个 Dword(4 字节,小端;布尔与字节共用同一个实现)
+sq_GetLevelData	Verified	Both	171	技能按等级取值表 [level info] 的第 idx 列:参数 (技能, idx[, 等级]);省略等级时取该技能当前等级;只有一个参数时按当前状态登记的技能取(E-036)。全局写法传入 null 返回 -1,技能不存在返回 0;结果是整数(客户端 0x005ae460 把浮点结果截断成整数;真正取值的函数 0x00911b90 在受保护区域里,没有读,所以是否还叠加了被动技能等加成不明)
+sq_GetIntData	Verified	Both	155	技能静态数据 [static data] 的第 idx 项:参数 (技能, idx[, 等级]),等级忽略(静态数据不分等级);只有一个参数 (idx) 时按当前状态登记的技能取;决斗场模式取 [pvp] 里的(E-036)。全局写法传入 null 返回 -1,技能不存在返回 0(客户端 0x005ae4b0;真正取值的函数 0x00911930 只是跳到受保护区域,没有读)
+getParent	Verified	Member	146	对象的父对象(依附体:被依附的对象);没有则 null(客户端 0x011d5270 读对象里偏移 4 的指针)
+sq_SetCurrentAnimation	Verified	Both	101	按 CUSTOM_ANI_* 下标设置当前动画:下标是角色 .chr 或被动对象 .obj 里 [etc motion] 的下标(E-036);参数是动画对象时改播那个动画。同时清空命中列表
+setInt	Verified	Member	79	变量表:按编号存整数(32 位;与布尔、浮点共用一张表,同一编号只有一项;客户端 0x010dd3a0)
+getInt	Verified	Member	77	变量表:按编号取整数(没存过为 0;读的是存的 32 位值,不管它是用 setBool 还是 setFloat 存的;客户端 0x010dd5f0)
+sq_GetDistancePos	Verified	Both	66	从 x 沿朝向前进 distance (x, 朝向, 距离):朝向是向左(0)就减,其余一律加(包括向上、向下、居中;客户端 0x005adfa0 与 0x00bb1470 只比较是否为 0,E-046)
+sq_RGB	Verified	Global	62	颜色:sq_RGB(r, g, b) 打包成 0xFFBBGGRR(不透明,红在低位)(客户端 0x005adae0,E-046)
+setCurrentAnimation	Verified	Member	56	按 CUSTOM_ANI_* 下标设置当前动画:下标是角色 .chr 或被动对象 .obj 里 [etc motion] 的下标(E-036);参数是动画对象时改播那个动画。同时清空命中列表
+sq_BinaryStartWrite	Verified	Global	55	清空普通发送缓冲(把长度置 0),开始写一段随下一条消息发出的二进制数据(客户端 0x00bb16f0)
+sq_GetVectorData	Verified	Both	54	取整数数组的第 i 项(越界、为负或数组无效为 -1):obj.sq_GetVectorData(数组, i) 与 sq_GetVectorData(数组, i) 等价(客户端 0x005b80a0、0x00bb2c20,E-046)
+readFloat	Verified	Member	51	读一个 Float(单精度);客户端不检查越界,这里越界返回 0(有意的差别)
+sq_SetCurrentAttackInfo	Verified	Both	49	按 CUSTOM_ATTACK_INFO_* 下标设置当前攻击信息:下标是角色 .chr 里 [etc attack info] 的下标(E-036);同时清空命中列表(推断)
+setBool	Verified	Member	44	变量表:按编号存布尔(存 0 或 1;客户端 0x010dd360)
+sq_getIntData	Verified	Both	44	技能静态数据 [static data] 的第 idx 项:参数 (技能, idx[, 等级]),等级忽略(静态数据不分等级);只有一个参数 (idx) 时按当前状态登记的技能取;决斗场模式取 [pvp] 里的(E-036)。全局写法传入 null 返回 -1,技能不存在返回 0(客户端 0x005ae4b0;真正取值的函数 0x00911930 只是跳到受保护区域,没有读)
+size_vector	Verified	Member	38	变量表的整数向量:长度(客户端 0x005abc00)
+sq_GetUniformVelocity	Verified	Global	34	匀速插值 (from, to, t, T):t 不到 1 取 from,t 够了 T 取 to,中间线性插值,单精度计算、向零截断(客户端 0x011b98c0,E-046)
+sq_IsMyControlObject	Verified	Both	32	是不是本机玩家控制的对象:客户端(0x007f9eb0)看对象的"所有者"(虚表 0x1B0 槽)是不是本机玩家的角色;角色的所有者是它自己,玩家创建的被动对象沿创建者找到所属角色,怪物不是。单机里:玩家角色与它创建的被动对象为真。客户端还有一个全局模式字段(值为 2 时无条件为真),含义没有查明,这里当作不是 2
+sq_setCurrentAnimation	Verified	Both	32	按 CUSTOM_ANI_* 下标设置当前动画:下标是角色 .chr 或被动对象 .obj 里 [etc motion] 的下标(E-036);参数是动画对象时改播那个动画。同时清空命中列表
+sq_BinaryWriteWord	Verified	Global	30	往普通发送缓冲追加一个 Word(2 字节,小端;布尔与字节共用同一个实现)
+sq_WriteDword	Verified	Member	30	往普通发送缓冲追加一个 Dword(4 字节,小端;布尔与字节共用同一个实现)
+sq_getRandom	Verified	Global	27	随机整数 [下限, 上限](含上限);上限不大于下限时直接返回下限,不交换(客户端 0x005adba0:下限 + 随机数 % (上限 - 下限 + 1);随机数是客户端自己的线性同余发生器,每次调用前还混入毫秒计时,没有固定序列,这里的序列不同,E-046)
+sq_Abs	Verified	Global	26	绝对值:只处理整数,浮点参数先截断成整数,返回整数(客户端 0x005af5a0 是整数的位运算写法,E-046)
+sq_GetAccel	Verified	Global	25	二次曲线插值 (from, to, t, T, 先快后慢):第 5 个参数为真取先快后慢(from + (to-from)×(2u-u²)),为假取先慢后快(from + (to-from)×u²),u=t/T;跳起上升用真、下落用假。向零截断(客户端 0x011b9a50 与包装 0x011b9ef0,E-046)
+sq_setCurrentAttackInfo	Verified	Both	25	同 sq_SetCurrentAttackInfo
+getBool	Verified	Member	22	变量表:按编号取布尔(存的值恰好为 1 才是真,没存过为假;客户端 0x010dd4a0)
+getSize	Verified	Member	22	读取端的数据总字节数(客户端 0x011a4790 返回对象开头存的长度)
+sq_StartWrite	Verified	Member	20	清空普通发送缓冲(把长度置 0),开始写一段随下一条消息发出的二进制数据(客户端 0x00bb16f0)
+printc	Verified	Global	19	脚本的调试输出:什么也不做(客户端的实现 0x0115a430 只有一条返回指令,E-046)
+sq_BinaryWriteFloat	Verified	Global	19	往普通发送缓冲追加一个 Float(4 字节单精度,小端)
+sq_WriteWord	Verified	Member	19	往普通发送缓冲追加一个 Word(2 字节,小端;布尔与字节共用同一个实现)
+sq_BinaryParameterWriteDword	Verified	Global	16	往参数缓冲追加一个 Dword(4 字节,小端;不是普通发送缓冲)
+sq_getVectorData	Verified	Both	15	同 sq_GetVectorData
+setFloat	Verified	Member	13	变量表:按编号存浮点(存单精度的位模式;客户端 0x010dd3d0)
+sq_ALPHA	Verified	Global	13	透明度:sq_ALPHA(a) 打包成 0xAAFFFFFF,颜色部分是白色;客户端只有 1 个参数(0x005adb00),脚本里有一处写成 4 个参数(po_aticeorbexprickle),多出的参数被忽略(E-046)
+getFloat	Verified	Member	11	变量表:按编号取浮点(没存过为 0;把存的 32 位值当浮点读;客户端 0x010dd4d0)
+sq_WriteFloat	Verified	Member	11	往普通发送缓冲追加一个 Float(4 字节单精度,小端)
+sq_binaryData_writeDword	Verified	Member	9	往普通发送缓冲追加一个 Dword(4 字节,小端;布尔与字节共用同一个实现)
+sq_getLevelData	Verified	Both	9	技能按等级取值表 [level info] 的第 idx 列:参数 (技能, idx[, 等级]);省略等级时取该技能当前等级;只有一个参数时按当前状态登记的技能取(E-036)。全局写法传入 null 返回 -1,技能不存在返回 0;结果是整数(客户端 0x005ae460 把浮点结果截断成整数;真正取值的函数 0x00911b90 在受保护区域里,没有读,所以是否还叠加了被动技能等加成不明)
+isSameObject	Verified	Global	8	两个脚本对象是不是同一个宿主对象:客户端只比较两个指针是否相等(0x005af1d0),所以两个都是 null 时也为真(E-046)
+readByte	Verified	Member	8	读一个 Byte(无符号);客户端不检查越界,这里越界返回 0(有意的差别)
+sq_binaryData_startWrite	Verified	Member	8	清空普通发送缓冲(把长度置 0),开始写一段随下一条消息发出的二进制数据(客户端 0x00bb16f0)
+sq_GetShuttleValue	Verified	Global	7	往返插值 (from, to, 当前毫秒, 单程毫秒):第 4 个参数是单程用的时间,不是整个来回的周期;时间对 2×单程取余,前半程 from 到 to,后半程回来,结果向零截断(客户端 0x011b9960,E-046)
+sq_binaryData_writeWord	Verified	Member	6	往普通发送缓冲追加一个 Word(2 字节,小端;布尔与字节共用同一个实现)
+sq_isMyControlObject	Verified	Member	6	同 isMyControlObject
+sq_BinaryWriteByte	Verified	Global	5	往普通发送缓冲追加一个 Byte(1 字节,小端;布尔与字节共用同一个实现)
+sq_GetDistance	Verified	Global	4	两点距离 (x1, y1, x2, y2, 平面):纵向差先除以缩放再与横向差开方,结果向零截断。最后一个参数为真时纵向不缩放(脚本里的 4 处调用都传真);为假时纵向差除以 0.29(文件里的初值 29 × 0.01,运行时取值未观察)(客户端 0x007fb7c0,E-046)
+sq_BinaryWriteBool	Verified	Global	3	往普通发送缓冲追加一个 Bool(1 字节,小端;布尔与字节共用同一个实现)
+sq_WriteByte	Verified	Member	3	往普通发送缓冲追加一个 Byte(1 字节,小端;布尔与字节共用同一个实现)
+readBool	Verified	Member	2	读一个 Bool(1 字节,非 0 为真);客户端不检查越界,这里越界返回假(有意的差别)
+sq_BinaryParameterStartWrite	Verified	Global	2	清空参数缓冲(客户端 0x005aca00)。这是与普通发送缓冲不同的另一个缓冲,不要混用
+sq_WriteBool	Verified	Member	2	往普通发送缓冲追加一个 Bool(1 字节,小端;布尔与字节共用同一个实现)
+sq_binaryData_writeFloat	Verified	Member	1	往普通发送缓冲追加一个 Float(4 字节单精度,小端)
+sq_BinaryParameterWriteBool	Verified	Global	0	往参数缓冲追加一个 Bool(1 字节,小端;不是普通发送缓冲)
+sq_BinaryParameterWriteByte	Verified	Global	0	往参数缓冲追加一个 Byte(1 字节,小端;不是普通发送缓冲)
+sq_BinaryParameterWriteFloat	Verified	Global	0	往参数缓冲追加一个 Float(4 字节单精度,小端;不是普通发送缓冲)
+sq_BinaryParameterWriteWord	Verified	Global	0	往参数缓冲追加一个 Word(2 字节,小端;不是普通发送缓冲)
+sq_binaryData_writeBool	Verified	Member	0	往普通发送缓冲追加一个 Bool(1 字节,小端;布尔与字节共用同一个实现)
+sq_binaryData_writeByte	Verified	Member	0	往普通发送缓冲追加一个 Byte(1 字节,小端;布尔与字节共用同一个实现)
+getVar	Inferred	Member	1579	对象的变量表:getVar() 取默认的一张,getVar("名字") 取按名字区分的另一张(第一次取时创建);依附体同样可用
+sq_IntVectPush	Inferred	Both	212	往对象的数据数组末尾加一个整数
+sq_LoadSkillEffectAni	Inferred	Member	195	预载一个技能用的特效动画 (技能, 路径):只记录到 PreloadedSkillEffects,脚本里用的时候仍按路径创建
+sq_AddFunctionName	Inferred	Member	189	依附体:登记一个事件的回调函数名 (事件名, 函数名)
+sq_GetSkillLevel	Inferred	Both	167	技能等级(未学为 0);全局写法传入 null 返回 -1。客户端 0x005ae4f0:空则 -1,否则取对象的 getSkillLevel(技能)(虚表槽 0x7d0,E-046)
+getXPos	Inferred	Member	165	对象的 x 坐标;全局写法传入 null 返回 -1(客户端 0x005adf40)
+sq_AddSetStatePacket	Inferred	Both	160	请求对象切换状态 (状态, 优先级, 是否带数据):第 3 个参数为真时随请求发出对象当前的数据数组(sq_IntVectPush 攒的那个),为假时不带数据(onSetState 收到空数组);回调结束后处理。客户端 0x0067cba0:真走 setState(状态, 数据数组, 优先级),假走 setState(状态, 空, 优先级)(E-046)。接口本身只是转交,'请求'与'执行'之间的优先级规则见 QueueState
+sq_PlaySound	Inferred	Both	145	播放声音 (声音键[, 其他]);只发出事件,不播放
+getYPos	Inferred	Member	143	对象的 y(纵深)坐标;全局写法传入 null 返回 -1(客户端 0x005adf60)
+getZPos	Inferred	Member	133	对象的 z(高度)坐标;全局写法传入 null 返回 -1(客户端 0x005adf80)
+sq_IntVectClear	Inferred	Both	130	清空对象的数据数组
+getDirection	Inferred	Member	129	对象的朝向(ENUM_DIRECTION_*);全局写法传入 null 返回 -1(客户端 0x005addb0)
+sq_GetCurrentAttackInfo	Inferred	Both	129	对象当前的攻击信息对象
+GetAnimationMap	Inferred	Member	105	变量表:按名字取(没有则按路径载入)一个独立的动画对象 (名字, 路径);路径从数据根目录算起(例如 Character/Priest/Animation/Awakening4.ani,全库里确有这个文件)
+getState	Inferred	Member	102	对象当前的状态编号;全局写法传入 null 返回 -1(客户端 0x005adc10)
+setValid	Inferred	Member	98	依附体:设置是否有效(设为假会在下一次推进时结束);对象:设为假即销毁
+sq_SendDestroyPacketPassiveObject	Inferred	Global	98	销毁被动对象 (对象):在当前回调结束后销毁,销毁时调用 destroy_po_* 与 onDestroyObject_po_*
+sq_GetGlobalIntVector	Inferred	Global	89	全局共用的整数数组
+sq_SetCurrentAttackBonusRate	Inferred	Both	89	设置攻击倍率(单位依脚本:列注释为 %):参数可以是攻击信息或对象
+sq_IntVectorPush	Inferred	Global	87	往整数数组末尾加一个整数 (数组, 值)
+Get	Inferred	Member	79	计时器:已计时间(毫秒)
+get_ct_vector	Inferred	Member	74	变量表的 ct 向量:取第 i 个计时器(越界为 null)
+sq_GetCurrentAnimation	Inferred	Both	72	对象当前动画的视图(随对象的动画一起变);没有动画为 null
+sq_SendCreatePassiveObjectPacket	Inferred	Both	72	创建被动对象 (编号, 未知 0, x, y, z[, 朝向]):位置相对创建者(x 向前、朝向左时镜像),朝向参数为 NEUTRAL 时偏移不镜像;发送缓冲里写好的数据随消息交给 setCustomData_po_*;返回 0(原版返回的编号含义未知)
+get_obj_vector	Inferred	Member	70	变量表的对象向量:取第 i 个(越界为 null)。向量里已销毁的对象在下一个时刻起被清掉(推断:ChainLightning 靠'向量变空'判断光束全部消失),同一时刻内仍可取到
+getTopCharacter	Inferred	Member	69	沿父对象向上找到最顶层的角色;没有为 null
+sq_IntVectorClear	Inferred	Global	68	清空整数数组 (数组)
+addSetStatePacket	Inferred	Member	66	给对象发'切换状态'消息 (状态, 整数数组, 优先级, 是否重置计时器, 字符串)
+sq_CreateCNRDAnimation	Inferred	Member	62	创建一个独立的动画对象 (路径,相对角色或被动对象的定义文件所在目录)
+getCurrentAnimation	Inferred	Member	61	对象当前动画的视图(随对象的动画一起变);没有动画为 null
+setCurrentPos	Inferred	Member	58	设置对象的 (x, y, z) 坐标;第 4 个参数(若有)忽略;粒子发生器等占位对象忽略
+sq_IsUseSkill	Inferred	Both	58	玩家是否请求了这个技能且条件满足(这里:请求的技能编号与参数相同)
+sq_GetBonusRateWithPassive	Inferred	Both	56	技能第 idx 列的攻击力百分比乘以倍率:参数 (技能, 状态, idx, 倍率);被动技能加成尚未实现,按 1 倍计(列注释为'攻击力(%)')
+getTimer	Inferred	Member	55	对象或依附体自己的计时器
+get_obj_vector_size	Inferred	Member	55	变量表的对象向量:长度(参数忽略;不含已销毁的对象)
+sq_GetYPos	Inferred	Both	54	对象的 y(纵深)坐标;全局写法传入 null 返回 -1(客户端 0x005adf60)
+sq_IsCommandEnable	Inferred	Both	54	这个技能的指令当前是否可用(默认可用;setSkillCommandEnable 可以禁用)
+readWord	Inferred	Member	53	读一个 Word(2 字节);客户端读 2 字节,按有符号还是无符号交给脚本取决于返回值转换,没有读到,这里按无符号;越界返回 0(客户端不检查)
+sq_GetState	Inferred	Both	49	对象当前的状态编号;全局写法传入 null 返回 -1(客户端 0x005adc10)
+sq_GetXPos	Inferred	Both	49	对象的 x 坐标;全局写法传入 null 返回 -1(客户端 0x005adf40)
+sq_GetZPos	Inferred	Both	49	对象的 z(高度)坐标;全局写法传入 null 返回 -1(客户端 0x005adf80)
+sq_addSetStatePacket	Inferred	Both	49	请求对象切换状态 (状态, 优先级, 是否带数据):第 3 个参数为真时随请求发出对象当前的数据数组(sq_IntVectPush 攒的那个),为假时不带数据(onSetState 收到空数组);回调结束后处理。客户端 0x0067cba0:真走 setState(状态, 数据数组, 优先级),假走 setState(状态, 空, 优先级)(E-046)。接口本身只是转交,'请求'与'执行'之间的优先级规则见 QueueState
+Start	Inferred	Member	47	计时器:开始计时(上限, 起点);上限与起点的含义是推断,未验证
+get_timer_vector	Inferred	Member	47	变量表的计时器向量:取第 i 个计时器(越界为 null)
+push_obj_vector	Inferred	Member	47	变量表的对象向量:末尾加一个对象
+CNSquirrelAppendage.sq_AppendAppendage	Inferred	Member	46	给对象挂依附体 (被依附者, 来源, 技能, 标志, 脚本路径, 标志):已有同路径依附体时返回已有的;返回依附体,失败为 null。两个布尔参数含义未知,忽略
+Reset	Inferred	Member	45	计时器:归零并开始计时
+sq_StopMove	Inferred	Both	44	停止静态移动
+sq_GetCurrentTime	Inferred	Both	42	动画已播放的时间(毫秒,按帧延时累计,不含循环回绕) (动画)
+setSkillSubState	Inferred	Member	41	设置技能子状态
+getCustomAnimation	Inferred	Member	40	按 [etc motion] 下标创建一个独立的动画对象(被动对象脚本里 getCustomAnimation(0) 等,与 CUSTOM_ANI_* 同一张表)
+sq_setCurrentAxisPos	Inferred	Both	40	设置对象某个轴的坐标 (轴 0 是 x、1 是 y、2 是 z, 值)
+resetInstant	Inferred	Member	39	计时器:归零,并让周期事件立刻到期一次
+setParameter	Inferred	Member	39	计时器:设置周期事件 (间隔毫秒, 次数;-1 不限)
+GetSquirrelAppendage	Inferred	Member	37	对象身上某个路径的依附体 (脚本路径);没有为 null
+sq_GetCurrentFrameIndex	Inferred	Both	36	动画当前帧号:sq_X(动画或对象) 或 obj.sq_X(动画)
+sq_GetCurrentAni	Inferred	Both	35	对象当前动画的视图(随对象的动画一起变);没有动画为 null
+sq_SetMyShake	Inferred	Both	34	震屏 (强度, 持续毫秒):只发出事件
+push_timer_vector	Inferred	Member	33	变量表的计时器向量:新建一个计时器放到末尾并返回它
+setTimeEvent	Inferred	Member	33	设置计时事件 (编号, 间隔毫秒, 次数, 是否立刻触发):同编号的会被替换;到期时调用 onTimeEvent_后缀(obj, 编号, 第几次),回调返回真则取消该事件
+push_ct_vector	Inferred	Member	32	变量表的 ct 向量:新建一个计时器放到末尾并返回它
+sendStateOnlyPacket	Inferred	Member	31	给对象发'切换状态'消息 (状态),没有数据
+sq_CreateAnimation	Inferred	Global	31	创建一个独立的动画对象 (前缀, 路径):路径从数据根目录算起;前缀在已见的调用里都是空串,忽略
+setCurrentDirection	Inferred	Member	29	设置对象的朝向
+setSkillCommandEnable	Inferred	Member	29	启用或禁用某个技能的指令
+sq_GetCNRDObjectToSQRCharacter	Inferred	Global	29	把对象当成角色用:是角色则返回它,否则 null
+sq_getCurrentAni	Inferred	Both	29	对象当前动画的视图(随对象的动画一起变);没有动画为 null
+sq_GetSkill	Inferred	Global	27	技能对象 (角色, 技能):已学才有,否则 null
+sq_SetCurrentPos	Inferred	Both	27	设置对象的 (x, y, z) 坐标 (对象, x, y, z):成员写法 obj.sq_SetCurrentPos(obj, ……) 与全局写法实参相同;粒子发生器等占位对象忽略
+clear_ct_vector	Inferred	Member	26	变量表的 ct 向量:清空
+clear_obj_vector	Inferred	Member	26	变量表的对象向量:清空
+sq_SetStaticMoveInfo	Inferred	Both	26	静态移动参数 (轴, 速度, 加速度, 标志):轴 0 是 x、1 是 y;速度单位为每秒距离,按速度立即移动(加速度忽略)。第 5、6 个参数(若有)忽略
+isOnEvent	Inferred	Member	25	计时器:当前时间点是否到了周期事件(每个周期只返回一次真)
+getObject	Inferred	Member	23	变量表:按编号取存过的Object引用(没有为 null)
+getObjectManager	Inferred	Member	23	对象管理器(服务对象)
+sq_AnimationProc	Inferred	Both	23	推进一个独立动画一帧(本次世界推进的毫秒数);对象自己的动画不用调用 (动画)
+sq_GetCNRDObjectToActiveObject	Inferred	Global	23	把对象当成主动对象(角色、怪物)用:是则返回它,否则 null
+addParameter	Inferred	Member	22	属性改变依附体:再加一条 (类型, 是否按比例, 数值)
+clear_timer_vector	Inferred	Member	22	变量表的计时器向量:清空
+getDelaySum	Inferred	Member	22	动画总时长(毫秒,原速):getDelaySum(是否按速度折算) 取全部帧;getDelaySum(起, 止) 取 [起, 止) 帧的延时之和。折算参数的含义是推断(脚本里全是 false)
+sq_AddObject	Inferred	Both	22	把创建好的特效对象交给世界 (子对象[, 类型, 标志]):父对象是调用者
+isValid	Inferred	Member	21	对象或依附体是否有效
+sq_GetDirection	Inferred	Both	21	对象的朝向(ENUM_DIRECTION_*);全局写法传入 null 返回 -1(客户端 0x005addb0)
+sq_AddDrawOnlyAniFromParent	Inferred	Global	19	在父对象身上放一个只画不算的动画 (父对象, 动画路径, x, y, z):x 向前、朝左时镜像;返回这个特效对象
+sq_getJob	Inferred	Global	19	角色的职业编号 (角色);传入 null 返回 -1。客户端 0x005aee70:取对象的'角色信息'(虚表槽 0x738)里偏移 0 的整数(E-046)
+sq_stopMove	Inferred	Both	19	停止静态移动
+SetPos	Inferred	Member	18	设置对象的 (x, y, z) 坐标;第 4 个参数(若有)忽略;粒子发生器等占位对象忽略
+sq_BinaryGetReadSize	Inferred	Global	18	最近一次交给脚本的读取端已经读了多少字节
+sq_CreateChangeStatus	Inferred	Global	18	创建属性改变依附体 (类型, 是否按比例, 数值, 有效毫秒):还没有挂到任何对象上
+sq_GetAnimationFrameIndex	Inferred	Both	18	动画当前帧号:sq_X(动画或对象) 或 obj.sq_X(动画)
+sq_GetCastTime	Inferred	Global	18	技能的施法时间(毫秒) (角色, 技能, 等级):.skl 的 [casting time] 两个数按等级线性插值(推断)
+sq_IsEnd	Inferred	Both	18	动画是否已播完 (动画)
+sq_ani_GetCurrentFrameIndex	Inferred	Both	18	动画当前帧号:sq_X(动画或对象) 或 obj.sq_X(动画)
+stopSound	Inferred	Member	18	停止声音:占位(事件里没有停止)
+getSource	Inferred	Member	17	依附体的来源对象(发起者);对象的话取它的来源
+resetHitObjectList	Inferred	Member	17	清空本次攻击已命中的对象列表(允许再次命中)
+CNSquirrelAppendage.sq_RemoveAppendage	Inferred	Member	16	移除对象身上某个路径的依附体 (对象, 脚本路径)
+GetYPos	Inferred	Member	16	对象的 y(纵深)坐标;全局写法传入 null 返回 -1(客户端 0x005adf60)
+IMouse.GetYPos	Inferred	Member	16	鼠标的屏幕 y
+sq_GetCurrentModuleType	Inferred	Global	16	当前游戏模块的类型(MODULE_TYPE_*),默认 3 = 一般地下城
+sq_GetSTATE	Inferred	Both	16	对象当前的状态编号;全局写法传入 null 返回 -1(客户端 0x005adc10)
+CNSquirrelAppendage.sq_Append	Inferred	Member	15	把创建好的属性改变依附体挂到对象上 (依附体, 被依附者, 来源)
+CNSquirrelAppendage.sq_IsAppendAppendage	Inferred	Member	15	对象身上是否有某个路径的依附体 (对象, 脚本路径)
+GetXPos	Inferred	Member	15	对象的 x 坐标;全局写法传入 null 返回 -1(客户端 0x005adf40)
+IMouse.GetXPos	Inferred	Member	15	鼠标的屏幕 x
+sq_Append	Inferred	Member	15	属性改变对象写法:cs.sq_Append(被依附者, 来源[, 依附体编号, 标志, 回调]);等同 CNSquirrelAppendage.sq_Append(cs, 被依附者, 来源)
+sq_setShake	Inferred	Both	15	震屏 (对象, 强度, 持续毫秒):成员写法 obj.sq_setShake(obj, ...) 与全局写法实参相同;只发出事件
+setObject	Inferred	Member	14	变量表:按编号存一个Object引用
+sq_GetObjectHeight	Inferred	Both	14	对象的高度;全局写法传入 null 返回 -1(客户端 0x005ae590)
+sq_SendChangeSkillEffectPacket	Inferred	Global	14	告诉角色某个技能的特效要变 (角色, 技能):在当前回调结束后调用登记了该技能的状态的 onChangeSkillEffect_*,发送缓冲里的数据随消息给出
+sq_setAttackPowerWithPassive	Inferred	Member	14	把技能威力写进当前攻击信息 (技能, 状态, 列, 等级, 倍率):列小于 0 时不改;规则同 sq_GetPowerWithPassive
+GetCurrentFrameIndex	Inferred	Member	13	动画当前帧号
+setCurrentAnimationFromCutomIndex	Inferred	Global	13	按 [etc motion] 的下标设置当前动画 (对象, 下标)(接口名拼写照原样)
+sq_CreatePooledObject	Inferred	Global	13	用动画对象创建特效对象 (动画, 播完是否自动销毁):脚本随后设置位置与朝向,再用 sq_AddObject 交给世界
+sq_GetCustomAttackInfo	Inferred	Global	13	按 [etc attack info] 的下标取一份攻击信息(不改变当前攻击信息) (对象, 下标)
+isMovablePos	Inferred	Member	12	位置 (x, y) 是否可走:没有地图,总是真
+sq_GetOppositeDirection	Inferred	Global	12	相反的朝向:左变右、右变左,其余原样
+sq_GetPowerWithPassive	Inferred	Both	12	技能威力 (技能, 状态, 列, 等级, 倍率):[level info] 第 列 列乘以倍率;等级为 -1 取技能当前等级。被动技能的加成没有实现;第 4 个参数的含义是推断
+sq_GetUniqueId	Inferred	Global	12	对象的唯一编号(世界内不重复)
+sq_IsGrabable	Inferred	Both	12	目标能否被抓取 (自己, 目标):脚本用 sq_SetGrabable 改过就按改的,否则只有怪物能
+sq_IsHoldable	Inferred	Both	12	目标能否被抓住 (自己, 目标):这里只有怪物能
+sq_ObjectToSQRCharacter	Inferred	Global	12	把对象当成角色用:是角色则返回它,否则 null
+sq_SendCreatePassiveObjectPacketPos	Inferred	Global	12	创建被动对象 (创建者, 编号, 未知 0, x, y, z):位置是世界坐标
+sq_getBonusRateWithPassive	Inferred	Both	12	技能第 idx 列的攻击力百分比乘以倍率:参数 (技能, 状态, idx, 倍率);被动技能加成尚未实现,按 1 倍计(列注释为'攻击力(%)')
+sq_GetGroup	Inferred	Global	11	对象所属的'组'(对象种类的编号);与 sq_GetUniqueId、sq_GetObject 配合用来在消息里指代对象
+sq_SetValidTime	Inferred	Both	11	依附体:设置有效时间(毫秒),到时自动结束
+clearParameter	Inferred	Member	10	属性改变依附体:清空参数
+getFieldXPos	Inferred	Member	10	屏幕 x 换算成场地 x (屏幕 x, 图层):没有摄像机,原样返回
+getMyPassiveObject	Inferred	Member	10	这个对象创建的、指定编号的第 index 个有效被动对象 (编号, index);没有为 null
+isDead	Inferred	Member	10	对象是否死亡(生命值不大于 0)
+setCurrentFrameWithChildLayer	Inferred	Member	10	跳到指定帧并从那里继续播放(帧号越界取端点)
+sq_CreateParticle	Inferred	Global	10	创建粒子 (粒子文件, 对象, x, y, z, ……):只发出事件
+sq_IsKeyDown	Inferred	Global	10	某个热键(OPTION_HOTKEY_*)此刻是否按住 (键, 子类型);子类型忽略
+sq_getChangeStatus	Inferred	Member	10	依附体名下按名字挂的属性改变;没有为 null
+getFieldYPos	Inferred	Member	9	屏幕 y 换算成场地纵深 y (屏幕 y, 高度, 图层):没有摄像机,原样返回
+getMainControl	Inferred	Member	9	舞台的主控件(服务对象)
+getObjectHeight	Inferred	Member	9	对象的高度;全局写法传入 null 返回 -1(客户端 0x005ae590)
+setSpeedRate	Inferred	Member	9	播放速度,百分比(100.0 为原速,200.0 为两倍):依据 setSpeedRate(200.0) 一类调用推断
+sq_CreateDrawOnlyObject	Inferred	Global	9	直接创建并加入一个特效对象 (父对象, 动画路径, 绘制层, 播完是否自动销毁):位置与朝向取父对象的;路径从数据根目录算起
+sq_GetFrameStartTime	Inferred	Both	9	第 frame 帧开始的时刻(毫秒,原速) (动画, 帧)
+sq_GetObject	Inferred	Global	9	按 (组, 唯一编号) 找对象 (参照对象, 组, 编号);找不到或已失效为 null
+sq_GetObjectManagerStage	Inferred	Global	9	舞台(服务对象) (对象)
+sq_GetPassiveObject	Inferred	Both	9	同 getMyPassiveObject (编号[, index])
+sq_SetShake	Inferred	Both	9	震屏 (对象, 强度, 持续毫秒):成员写法 obj.sq_setShake(obj, ...) 与全局写法实参相同;只发出事件
+sq_ToRadian	Inferred	Global	9	角度转弧度
+sq_ani_IsEnd	Inferred	Both	9	动画是否已播完 (动画)
+CNSquirrelAppendage.sq_GetAppendage	Inferred	Member	8	取对象身上某个路径的依附体 (对象, 脚本路径),没有为 null
+addLayerAnimation	Inferred	Member	8	把另一个动画叠在这个动画上作图层 (图层编号, 动画, 是否在前):图层随宿主一起推进,宿主换动画时丢掉;图层编号与前后顺序只影响绘制,不记录
+isEnemy	Inferred	Member	8	与另一个对象是不是敌人:角色一方与怪物一方互为敌人(被动对象跟随发起者)
+remove_obj_vector	Inferred	Member	8	变量表的对象向量:移除这个对象
+sq_GetObjectTime	Inferred	Both	8	对象创建后经过的毫秒数
+sq_RemoveParticle	Inferred	Global	8	移除粒子 (粒子文件, 对象):只发出事件
+sq_createCNRDAnimation	Inferred	Member	8	同 sq_CreateCNRDAnimation
+IMouse.IsRBDown	Inferred	Member	7	鼠标右键是否按住
+IsRBDown	Inferred	Member	7	鼠标按键状态(主控件)
+getCollisionObject	Inferred	Member	7	对象管理器:第 i 个碰撞对象(按创建顺序);越界为 null
+getCollisionObjectNumber	Inferred	Member	7	对象管理器:碰撞对象(角色、怪物、被动对象)的个数
+getMyPassiveObjectCount	Inferred	Member	7	这个对象创建的、指定编号的有效被动对象个数 (编号)
+isObjectType	Inferred	Member	7	对象是不是这种类型(OBJECTTYPE_*,层级编码:每一级 4 位)
+setCustomRotate	Inferred	Member	7	设置自定义旋转 (是否生效, 角度):只记录,画面不转;角度单位未确认
+setDirection	Inferred	Member	7	设置对象的朝向
+sq_AddChangeStatus	Inferred	Member	7	依附体写法:按名字加一个属性改变并挂到对象上 (名字, 对象, 来源, 有效毫秒, 类型, 是否按比例, 数值);属性改变对象写法:追加一项 (类型, 是否按比例, 数值)
+sq_AddMessage	Inferred	Global	7	弹出一条界面提示 (提示编号):只记录到 UiMessages
+sq_GetSkillIndex	Inferred	Member	7	依附体对应的技能编号
+sq_IsFixture	Inferred	Global	7	目标是不是固定物 (目标):这里总是否
+sq_SetCurrentAttackPower	Inferred	Both	7	设置攻击力
+sq_createCNRDPooledObject	Inferred	Member	7	同 sq_CreatePooledObject,初始位置取这个对象的 (动画, 播完是否自动销毁)
+getAnimation	Inferred	Member	6	变量表:按编号取存过的Animation引用(没有为 null)
+getHp	Inferred	Member	6	当前生命值
+isCurrentAnimationIndex	Inferred	Member	6	当前动画是不是 [etc motion] 的第 i 个
+isInDamagableState	Inferred	Member	6	能不能被攻击者打到:对象有效且生命值大于 0(其余状态限制没有实现)
+setObjectHeight	Inferred	Member	6	设置对象的高度
+sq_Cos	Inferred	Global	6	余弦(参数是弧度)
+sq_GetObjectId	Inferred	Global	6	对象在世界里的编号 (对象);传入 null 返回 -1(客户端 0x005af660)
+sq_GetParentState	Inferred	Member	6	父对象的当前状态编号;没有父对象为 -1
+sq_IsEnterSkill	Inferred	Member	6	玩家此刻是否在用这个技能的快捷键:是返回快捷键编号(这里 0),否返回 -1(依据 != -1 的用法推断)
+sq_SetCurrentAttackeHitStunTime	Inferred	Both	6	设置受击硬直时间(毫秒;接口名里的 e 是原样拼写)
+sq_SetCustomRotate	Inferred	Global	6	设置自定义旋转并启用 (对象, 角度):只记录
+sq_SetMoveDirection	Inferred	Both	6	静态移动的方向 (x 方向, y 方向),取值 ENUM_DIRECTION_*,NEUTRAL 表示不动
+sq_Sin	Inferred	Global	6	正弦(参数是弧度)
+CNSquirrelAppendage.sq_AppendAppendageID	Inferred	Member	5	同 sq_Append,另带依附体编号和一个标志
+IMouse.IsLBDown	Inferred	Member	5	鼠标左键是否按住
+IsLBDown	Inferred	Member	5	鼠标按键状态(主控件)
+Proc	Inferred	Member	5	推进一个独立动画一帧(同 sq_AnimationProc)
+getAppendageInfo	Inferred	Member	5	依附体信息:就是依附体自己(getValidTime、setValidTime 直接作用在它身上)
+sq_AddSetStatePacketActiveObject	Inferred	Global	5	给主动对象发'切换状态'消息 (对象, 状态, 整数数组, 优先级)
+sq_Atan2	Inferred	Global	5	反正切 (y, x),结果是弧度
+sq_CosTable	Inferred	Global	5	余弦(参数是整数度;同 sq_SinTable,客户端 0x011e4710,E-046)
+sq_GetAttackBonusRate	Inferred	Global	5	技能对象的攻击倍率 (技能对象, 列, 倍率):[level info] 第 列 列在技能当前等级的值乘以倍率;被动加成没有实现(依据 sq_GetAttackBonusRate(skill, 0, 1.0) 的写法推断)
+sq_GetCNRDObjectToCollisionObject	Inferred	Global	5	把对象当成碰撞对象用:角色、怪物、被动对象返回自己,否则 null
+sq_GetCurrentAttackBonusRate	Inferred	Both	5	读取攻击倍率;没设置过为 0
+sq_GetDelaySum	Inferred	Global	5	动画总时长(毫秒,原速) (动画)
+sq_SendHitObjectPacket	Inferred	Both	5	强制让攻击者对目标造成一次命中 (攻击者, 目标, x, y, z):记录命中并调用 onAttack(单机里没有网络延迟)
+sq_SinTable	Inferred	Global	5	正弦(参数是整数度,浮点参数先截断;度数对 360 取非负余数后查 360 项的单精度表,客户端 0x011e46d0,表的内容是运行时填的、没有读到,这里直接计算,E-046)
+sq_p00_sendCreatePassiveObjectPacket	Inferred	Member	5	同 sq_SendCreatePassiveObjectPacket(复仇者模块的写法)
+sq_setStaticMoveInfo	Inferred	Both	5	静态移动参数 (轴, 速度, 加速度, 标志):轴 0 是 x、1 是 y;速度单位为每秒距离,按速度立即移动(加速度忽略)。第 5、6 个参数(若有)忽略
+flushSetStatePacket	Inferred	Member	4	立刻处理对象排队中的状态切换
+getEventTerm	Inferred	Member	4	计时器:周期事件的间隔
+getPassiveObjectIndex	Inferred	Member	4	被动对象自己的编号(.obj 在 .lst 里的编号)
+getTeam	Inferred	Member	4	对象所属的一方:角色 0、怪物 1(被动对象跟随发起者)
+isExcutableState	Inferred	Member	4	技能对象:当前状态是否在 [executable states] 里 (角色;接口名里的拼写照原样)
+sendStatePacket	Inferred	Member	4	给对象发'切换状态'消息 (状态, 参数):数据数组只有这一个参数
+setValidTime	Inferred	Member	4	设置有效时间(毫秒;属性改变依附体或依附体),返回自己以便连着写
+sq_GetCenterZPos	Inferred	Global	4	命中区域的中心 z (区域)
+sq_GetCustomAni	Inferred	Both	4	同 getCustomAnimation (下标)
+sq_GetDistanceObject	Inferred	Global	4	两个对象的水平距离 (甲, 乙, 是否含纵深):只比 x 差,含纵深时按直线距离
+sq_GetObjectByObjectId	Inferred	Global	4	按编号找对象 (参照对象, 编号);已失效或不存在为 null
+sq_GetParentSkillSubState	Inferred	Member	4	父对象的技能子状态;没有父对象为 0
+sq_GetStateTimer	Inferred	Member	4	当前状态已经过的毫秒数(自上次进入状态起)
+sq_GetTeam	Inferred	Both	4	对象所属的一方:角色 0、怪物 1(被动对象跟随发起者)
+sq_SendMessage	Inferred	Global	4	给对象发消息 (对象, 消息类型, 参数 1, 参数 2):只记录最近一次的参数 1(OBJECT_MESSAGE_GHOST 等的效果宿主没有实现)
+sq_SetCurrentAttackInfoFromCustomIndex	Inferred	Global	4	按 [etc attack info] 的下标设置当前攻击信息 (对象, 下标)
+sq_isPVPMode	Inferred	Global	4	是不是决斗场模式
+sq_setCurrentAttackBonusRate	Inferred	Both	4	设置攻击倍率(单位依脚本:列注释为 %):参数可以是攻击信息或对象
+GetFrameStartTime	Inferred	Member	3	同 sq_GetFrameStartTime (帧)
+getAppendage	Inferred	Member	3	变量表:按编号取存过的Appendage引用(没有为 null)
+getHpMax	Inferred	Member	3	生命值上限
+getXDistance	Inferred	Member	3	沿自己朝向到另一个对象的 x 距离:对方在前方为正
+sq_AddChangeStatusAppendageID	Inferred	Member	3	依附体写法:加一个属性改变并挂到对象上 (被依附者, 来源, 有效毫秒, 类型, 是否按比例, 数值, 依附体编号);没有名字,按默认名 changeStatus 登记(推断)
+sq_AddHitObject	Inferred	Global	3	同 addHitObject (攻击者, 目标)
+sq_GetCenterXPos	Inferred	Global	3	命中区域的中心 x (区域)
+sq_GetDefaultAttackInfo	Inferred	Both	3	角色:按 [attack info] 的下标取一份基础攻击信息 (下标);被动对象不带参数:取 .obj 的 [attack info]
+sq_GetInputDirection	Inferred	Both	3	当前方向键输入 (轴):轴 0 横向,返回 ENUM_DIRECTION 的左/右/NEUTRAL;轴 1 纵向,返回上/下/NEUTRAL;左右同按取 NEUTRAL
+sq_GetMap	Inferred	Global	3	地图(服务对象) (对象):没有地图数据
+sq_GetSkillSubState	Inferred	Member	3	对象的技能子状态
+sq_Rewind	Inferred	Both	3	让动画回到第一帧重新播放 (动画或对象)
+sq_SendCreatePassiveObjectPacketFromPassivePos	Inferred	Global	3	被动对象创建被动对象 (创建者, 编号, 未知 0, x, y, z):位置按世界坐标处理(推断:脚本传目标的世界坐标;被注释掉的旧写法也传世界坐标)
+sq_SetAnimationCurrentTimeByFrame	Inferred	Global	3	把动画设到第 frame 帧的起点 (动画, 帧, ……)
+sq_SetAnimationFrameIndex	Inferred	Global	3	跳到指定帧 (动画, 帧)
+sq_SetCurrentDirection	Inferred	Global	3	设置对象的朝向 (对象, 朝向);粒子发生器等占位对象忽略
+sq_findNearLinearMovableXPos	Inferred	Member	3	沿直线找最近的可走 x:没有地图,返回目标 x (x0, y0, x1, y1, 步长)
+sq_getCustomAni	Inferred	Both	3	同 getCustomAnimation (下标)
+sq_getGrowType	Inferred	Global	3	角色的成长类型(转职/觉醒方向,编号含义按职业各自定义:GROW_TYPE_*) (角色);传入 null 返回 -1。客户端 0x005aee50:与 sq_getJob 读同一份'角色信息'(虚表槽 0x738),取偏移 0xc 的整数(E-046);我们的角色没有觉醒信息,取对象的 GrowType 属性(默认 0 = 职业的基础类型)
+sq_getNewAttackInfoPacket	Inferred	Global	3	创建一个空的攻击信息(随后由脚本逐项填字段)
+sq_getStateTimer	Inferred	Member	3	同 sq_GetStateTimer
+sq_setMoveDirection	Inferred	Both	3	静态移动的方向 (x 方向, y 方向),取值 ENUM_DIRECTION_*,NEUTRAL 表示不动
+getCustomRotateAngle	Inferred	Member	2	自定义旋转的角度
+getDelayBySpeedRate	Inferred	Member	2	按当前播放速度折算后的延时 (毫秒)
+getFieldZPos	Inferred	Member	2	屏幕 y 换算成场地高度 z (屏幕 y, 纵深 y, 图层):没有摄像机,原样返回
+getMp	Inferred	Member	2	当前魔法值
+isCurrentCutomAniIndex	Inferred	Member	2	当前动画是不是 [etc motion] 的第 i 个(接口名拼写照原样)
+isEnd	Inferred	Member	2	计时器:是否已到上限;依附体:是否已结束(失效或超过有效时间)
+isOverSkillLevel	Inferred	Member	2	技能等级是否不低于给定值 (技能, 等级):按脚本注释'特定等级以上'推断为 >=
+isSealActiveFunction	Inferred	Member	2	技能对象:主动功能是否被封印
+setAnimation	Inferred	Member	2	变量表:按编号存一个Animation引用
+setAppendage	Inferred	Member	2	变量表:按编号存一个Appendage引用
+sq_GetCNRDObjectToCharacter	Inferred	Global	2	把对象当成角色用:是角色返回自己,否则 null
+sq_GetMyMasterCharacter	Inferred	Global	2	本机玩家的主角色
+sq_GetPassiveObjectByState	Inferred	Global	2	按编号与状态找创建者名下的被动对象 (创建者, 被动对象编号, 状态);没有为 null
+sq_IsDownKey	Inferred	Global	2	某个热键此刻是否按住 (对象, 键, 标志):标志忽略
+sq_IsMyCharacter	Inferred	Both	2	是不是本机玩家的角色
+sq_IsSameAni	Inferred	Global	2	两个动画对象是不是同一个动画(按动画文件)
+sq_IsinMapArea	Inferred	Global	2	目标是否在对象前方的矩形里 (对象, 目标, 前方起点, 前方终点, y 半宽):x 沿对象朝向量,高度不比较;没有地图,不检查可走区域
+sq_PostDelayedMessage	Inferred	Global	2	延时给对象发消息 (对象, 消息类型, 参数 1, 参数 2, 延时毫秒):到点后同 sq_SendMessage
+sq_SetGrabable	Inferred	Both	2	设置对象能否被抓取 (对象, 真假):只记录,sq_IsGrabable 读它(依据:IceMan 的依附体在施放期间设为假、结束时设回真)
+sq_ToDegree	Inferred	Global	2	弧度转角度
+sq_getRandomUnique	Inferred	Global	2	不重复的随机整数 (是否重新开始, 下限, 上限):范围含两端;取尽后重新开始(依据 sq_getRandomUnique(false, 0, i % len) 的用法推断上限含在内)
+stopTimeEvent	Inferred	Member	2	取消一个计时事件
+CNRDObject.getAngleDistanceXPos	Inferred	Member	1	x + cos(角度) * 半径,朝左时取反 (x, 角度, 半径, 朝向)
+CNRDObject.getAngleDistanceYPos	Inferred	Member	1	y + sin(角度) * 半径 (y, 角度, 半径, 标志);标志的含义未知,忽略
+IsLBUp	Inferred	Member	1	鼠标按键状态(主控件)
+addHitObject	Inferred	Member	1	把目标记为本次攻击已命中过(之后不再命中)
+addRapidInput	Inferred	Member	1	连打次数加一
+getCollisionObjectIndex	Inferred	Member	1	对象管理器:对象在碰撞对象列表里的下标;不在为 -1
+getCurrentTime	Inferred	Member	1	同 sq_GetCurrentTime
+getDefaultAnimation	Inferred	Member	1	对象的默认动画(.obj / .chr 的 [basic motion])的独立动画对象;没有为 null
+getDefaultAttackInfo	Inferred	Member	1	角色:按 [attack info] 的下标取一份基础攻击信息 (下标);被动对象不带参数:取 .obj 的 [attack info]
+getMpMax	Inferred	Member	1	魔法值上限
+getRapidInputFrequency	Inferred	Member	1	连打次数
+getValidTime	Inferred	Member	1	读取有效时间(毫秒)
+get_obj_vector_index	Inferred	Member	1	变量表的对象向量:某个对象的下标,不在里面为 -1
+isApplyCustomRotate	Inferred	Member	1	自定义旋转是否生效
+isDownSkillLastKey	Inferred	Member	1	技能的最后一个键是否仍按住(蓄力):没有按键输入时为否
+isExistTimeEvent	Inferred	Member	1	这个编号的计时事件是否还在
+isLoop	Inferred	Member	1	动画是否循环
+isSealFunction	Inferred	Member	1	技能对象:主动功能是否被封印
+is_obj_vector	Inferred	Member	1	变量表的对象向量:是否包含这个对象
+sendDestroyPacket	Inferred	Member	1	销毁对象(单机里在当前回调结束后处理)
+sendSetMpPacket	Inferred	Member	1	设置魔法值 (值):单机里立刻生效
+setEventOnStart	Inferred	Member	1	计时器:周期事件是否在起点就触发一次 (是否)
+setHp	Inferred	Member	1	直接设置生命值(限制在 0 到上限)
+sq_FindFirstTarget	Inferred	Member	1	找前方最近的敌人 (起点 x, 终点 x, y 范围, z 范围):x 相对对象、朝向为正
+sq_FindNextTarget	Inferred	Member	1	在上一个目标附近找下一个敌人 (上一个目标, x 范围, z 范围)
+sq_FindTarget	Inferred	Global	1	找最近的敌人 (对象, 前方偏移, x 范围, y 范围, z 范围):以对象前方 偏移 处为中心,x 在 ±x 范围内、纵深差与高度差不超过范围;没有为 null
+sq_GetAniFrameNumber	Inferred	Global	1	动画的帧数 (动画)
+sq_GetSkillPower	Inferred	Member	1	技能威力 (技能, 列):[level info] 第 列 列在技能当前等级的值
+sq_IsEnterSkillLastKeyUnits	Inferred	Member	1	技能的最后一个键是否仍按住(蓄力):没有按键输入时为否
+sq_IsKeyFrameFlag	Inferred	Member	1	当前帧的关键帧标志是不是这个值
+sq_RemoveChangeStatus	Inferred	Global	1	让属性改变失效:参数是属性改变对象 (属性改变),或 (对象, 依附体编号) 移除对象身上带这个编号的全部
+sq_SendSetHpPacket	Inferred	Member	1	设置生命值 (值):单机里立刻生效
+sq_SetAnimationSpeedRate	Inferred	Both	1	播放速度,百分比 (动画, 速度):同 setSpeedRate
+sq_SetFrameDelayTime	Inferred	Global	1	改写动画某一帧的延时 (动画, 帧, 毫秒):只作用于这个动画对象的播放器
+sq_SetSkillSubState	Inferred	Both	1	设置对象的技能子状态 (对象, 值):成员写法 obj.sq_SetSkillSubState(obj, 值) 与全局写法实参相同
+sq_getPowerWithPassive	Inferred	Member	1	同 sq_GetPowerWithPassive
+sq_isMyCharacter	Inferred	Both	1	是不是本机玩家的角色
+startRapidInput	Inferred	Member	1	开始统计连打次数(清零)
+CNRDObject.getAngle	Inferred	Member	0	从 (x0, y0) 指向 (x1, y1) 的角度,度,0 到 360 (x0, y0, x1, y1, 标志);标志的含义未知,忽略
+IsRBUp	Inferred	Member	0	鼠标按键状态(主控件)
+setCurrentFrame	Inferred	Member	0	跳到指定帧并从那里继续播放(帧号越界取端点)
+sq_AddStateLayerAnimation	Trace	Member	62	给对象的状态层加一层动画 (层, 动画, x, y):只记数,不参与逻辑
+GetparticleCreaterMap	Trace	Member	36	变量表:按名字取(没有则创建)一个粒子发生器;占位对象,方法调用只记数
+Restart	Trace	Member	33	粒子发生器重新开始:占位
+getAttackIndex	Trace	Member	30	角色的投掷属性/普攻段数等运行时状态:没有实现,返回 0
+sq_SetStaticSpeedInfo	Trace	Member	30	设置速度类型的静态速度信息 (类型, 类型, 倍率, 倍率, 倍率, 倍率):只记录,速度系统还没有
+getThrowElement	Trace	Member	29	角色的投掷属性/普攻段数等运行时状态:没有实现,返回 0
+sq_AddObjectParticleCreater	Trace	Both	27	表现类接口:只记数
+sq_flashScreen	Trace	Both	25	闪屏:占位
+sq_SetMoveParticle	Trace	Both	24	表现类接口:只记数
+sq_drawCurrentFrame	Trace	Both	20	表现类接口:只记数
+setImageRateFromOriginal	Trace	Member	19	动画的表现类设置(图像缩放、着色、图层叠加、判定框缩放):只记数,不影响逻辑
+sq_SetAttackBoundingBoxSizeRate	Trace	Global	19	判定框的缩放与增删、特殊的命中发送:只记数
+sq_AddParticleObject	Trace	Both	18	表现类接口:只记数
+sq_EndDrawCastGauge	Trace	Global	18	取消施法条 (对象)
+setImageRate	Trace	Member	17	动画的表现类设置(图像缩放、着色、图层叠加、判定框缩放):只记数,不影响逻辑
+sq_StartDrawCastGauge	Trace	Global	17	显示施法条 (对象, 毫秒, 是否):只记数
+getThrowIndex	Trace	Member	12	角色的投掷属性/普攻段数等运行时状态:没有实现,返回 0
+sq_IsValidActiveStatus	Trace	Global	11	对象是否处于某个主动状态(冰冻、定身等) (对象, 状态):没有主动状态系统,恒为假
+sq_SetChangeStatusIntoAttackInfo	Trace	Global	11	给攻击信息附加属性改变 (信息, 槽, 类型, 概率, 持续, 是否比例, 值):只记录类型与值
+setElement	Trace	Member	10	攻击信息字段:只记录,不参与结算(Element)
+sq_addFlashScreen	Trace	Both	10	表现类接口:只记数
+applyBasicAttackUp	Trace	Member	9	把普通攻击强化套到攻击信息上 (攻击信息, 状态):没有实现
+getWeaponSubType	Trace	Member	9	装备的武器子类型:没有装备系统,返回 -1(与 WEAPON_SUBTYPE_* 都不相等)
+setAttackXAccel	Trace	Member	9	攻击信息字段:只记录,不参与结算(AttackXAccel)
+setAttackXAccelFast	Trace	Member	9	攻击信息字段:只记录,不参与结算(AttackXAccelFast)
+setAttackXVelocity	Trace	Member	9	攻击信息字段:只记录,不参与结算(AttackXVelocity)
+setAttackXVelocityFast	Trace	Member	9	攻击信息字段:只记录,不参与结算(AttackXVelocityFast)
+setEffectLayer	Trace	Member	9	动画的表现类设置(图像缩放、着色、图层叠加、判定框缩放):只记数,不影响逻辑
+sq_DrawSpecificFrameEffect_SIMPLE	Trace	Both	9	表现类接口:只记数
+sq_RGBA	Trace	Global	9	颜色:打包成 (a<<24|r<<16|g<<8|b);格式未验证
+getSkillManager	Trace	Member	8	技能管理器 / 技能树 / 指令检查器(AI 角色用):没有这些系统,返回一个占位对象,对它调用的方法只记数
+isMessage	Trace	Member	8	对象是不是正在显示对话:总是否
+setAppendCauseSkill	Trace	Member	8	记录依附体由哪个技能引起 (种类, 职业, 技能, 等级)
+sq_GetAniRealImageSize	Trace	Global	8	动画图像的实际宽度 (动画, 朝向):读不到图像尺寸,返回固定的 100
+setAutoLayerWorkAnimationAddSizeRate	Trace	Member	7	动画的表现类设置(图像缩放、着色、图层叠加、判定框缩放):只记数,不影响逻辑
+setCommandChecker	Trace	Member	7	AI 角色的指令系统:没有实现,只记数
+setRGBA	Trace	Member	7	动画的表现类设置(图像缩放、着色、图层叠加、判定框缩放):只记数,不影响逻辑
+sq_AddEffectFront	Trace	Member	7	依附体的前景特效:只记数
+sq_RemoveMoveParticle	Trace	Member	7	占位:技能充能、移动粒子、瞄准标记、纵向停止、旋转
+sq_SetApplyConversionSkill	Trace	Both	6	表现类接口:只记数
+sq_SetZVelocity	Trace	Global	6	设置纵向速度 (对象, 速度, 加速度):没有纵向物理,只记录
+sq_moveWithParent	Trace	Global	6	让子对象跟随父对象移动 (子, 父):占位
+sq_setXScrollStop	Trace	Member	6	镜头横向卷动的开始与停止:没有镜头
+isInBattle	Trace	Member	5	对象是否在战斗中:有效就算
+sq_DeleteEffectFront	Trace	Member	5	依附体的前景特效:只记数
+sq_HoldAndDelayDie	Trace	Global	5	让目标被抓住并延迟死亡 (目标, 抓取者, ……):占位,没有改变目标的状态
+sq_SetObjectParticlePos	Trace	Member	5	粒子位置微调:没有粒子系统
+sq_SimpleMoveToNearMovablePos	Trace	Both	5	把对象移到附近可走的位置:没有地图,不动
+startCantUseSkillWarning	Trace	Member	5	界面上闪'不能使用技能'的警告:没有界面
+addAllKeyCommand	Trace	Member	4	AI 角色的指令系统:没有实现,只记数。客户端的注册表里没有这个名字(E-042;可能由 CX 的插件在运行时补充,没有验证),只有 creatormage 的 mousecontrol_lib.nut 用到
+addCustomAnimation	Trace	Member	4	给对象追加一个自定义动画 (动画):只记数
+flushCommandEnable	Trace	Member	4	AI 角色的指令系统:没有实现,只记数
+getCommandChecker	Trace	Member	4	技能管理器 / 技能树 / 指令检查器(AI 角色用):没有这些系统,返回一个占位对象,对它调用的方法只记数
+getCurrentSkillTree	Trace	Member	4	技能管理器 / 技能树 / 指令检查器(AI 角色用):没有这些系统,返回一个占位对象,对它调用的方法只记数
+setAttackBoundingBoxSizeRate	Trace	Member	4	动画的表现类设置(图像缩放、着色、图层叠加、判定框缩放):只记数,不影响逻辑
+setEnd	Trace	Member	4	设置动画的强制结束标志:只记录
+setSealActiveFunction	Trace	Member	4	技能对象:封印/解封主动功能,只记录
+sq_ChangeDrawLayer	Trace	Global	4	绘制层与粒子速度:只记数
+sq_CreateParticleByGlobal	Trace	Both	4	表现类接口:只记数
+sq_EffectLayerAppendage	Trace	Both	4	表现类接口:只记数
+sq_FindShootingTarget	Trace	Global	4	按射击角度找目标:没有实现,总是 null
+sq_GetCNRDObjectToAICharacter	Trace	Global	4	把对象当成 AI 角色用:没有 AI 角色,总是 null
+sq_GetShootingHorizonAngle	Trace	Global	4	自动瞄准的水平角 (对象, y, z, 搜索角, 最大距离):没有实现,返回 0(朝正前方)
+sq_GetShootingVerticalAngle	Trace	Global	4	自动瞄准的垂直角:没有实现,返回 0
+sq_IsEnterCommand	Trace	Global	4	玩家此刻是否输入了第 i 号指令 (对象, 编号):没有指令输入,总是否
+sq_SetKeyxEnable	Trace	Global	4	启用/禁用第 i 号指令键 (对象, 编号, 是否):只记数
+sq_SetVelocity	Trace	Global	4	设置某个轴的速度 (对象, 轴 0/1, 速度):原版的速度单位未知,这里当作每秒的距离记录
+sq_SetfRotateAngle	Trace	Global	4	设置动画的旋转角:只记数
+applyBoundingBoxRate	Trace	Member	3	动画的表现类设置(图像缩放、着色、图层叠加、判定框缩放):只记数,不影响逻辑
+endSkillCoolTime	Trace	Member	3	立刻结束一个技能的冷却 (技能):没有冷却系统,只记数
+setAttractionInfo	Trace	Member	3	光环:吸引范围内的敌人 (速度 x, 速度 y, 范围, ……):只记数
+setCommandEnable	Trace	Member	3	技能对象:启用/禁用指令(同 setSkillCommandEnable 的对象写法)
+sq_AddAuraMaster	Trace	Member	3	在依附体名下挂一个光环 (名字, 对象, 来源, 范围, ……):只返回占位对象
+sq_DeleteAppendages	Trace	Member	3	删除依附体名下挂的属性改变
+sq_GetMyControlObjectSize	Trace	Global	3	本机玩家控制的对象个数。客户端的注册表里没有这个名字(E-042;可能由 CX 的插件在运行时补充,没有验证),只有 creatormage 的 mousecontrol_lib.nut 用到
+sq_IsInBattle	Trace	Both	3	对象是否在战斗中:有效就算
+sq_RemoveSkillLoad	Trace	Member	3	占位:技能充能、移动粒子、瞄准标记、纵向停止、旋转
+sq_SetCurrentAttackeDamageAct	Trace	Both	3	攻击信息字段:只记录,不参与结算(DamageAct)
+sq_SetCustomDamageType	Trace	Global	3	攻击信息:自定义伤害类型 (信息, 类型, 值):只记录
+sq_SetSpeedToMoveParticle	Trace	Global	3	绘制层与粒子速度:只记数
+sq_getAuraMaster	Trace	Member	3	依附体名下按名字挂的光环;没有为 null
+sq_removeAttractAimPointMark	Trace	Member	3	占位:技能充能、移动粒子、瞄准标记、纵向停止、旋转
+clear_ani_vector	Trace	Member	2	变量表的动画向量:清空
+get_ani_vector	Trace	Member	2	变量表的动画向量:取第 i 个(越界为 null)
+isBoss	Trace	Member	2	怪物的类别判断:没有怪物类别数据,总是否
+playSound	Trace	Member	2	播放声音 (名字, 编号, ……):没有音频
+sq_EffectLayerAppendageOnlyBody	Trace	Both	2	表现类接口:只记数
+sq_GetAimPosX	Trace	Member	2	瞄准点的 x (x, y, 标志):没有鼠标瞄准,原样返回 x
+sq_GetCNRDObjectToFlashScreen	Trace	Global	2	把对象当成闪屏对象用:没有,总是 null
+sq_GetMyControlObject	Trace	Global	2	本机玩家控制的角色。客户端的注册表里没有这个名字(E-042;可能由 CX 的插件在运行时补充,没有验证),只有 creatormage 的 mousecontrol_lib.nut 用到
+sq_GetSkillLoad	Trace	Member	2	技能充能层数:没有实现,返回 0
+sq_MoveToAppendageForce	Trace	Global	2	把目标拽向依附体来源 (目标, 对象, 来源, 距离……):没有实现,目标不动
+sq_SendHitObjectPacketByAttackInfo	Trace	Global	2	判定框的缩放与增删、特殊的命中发送:只记数
+sq_SetAimPointMarkPosition	Trace	Both	2	表现类接口:只记数
+sq_SetAttackInfoForceHitStunTime	Trace	Both	2	攻击信息字段:只记录,不参与结算(ForceHitStunTime)
+sq_SetAttackInfoHitDelayRateDamager	Trace	Both	2	攻击信息字段:只记录,不参与结算(HitDelayRateDamager)
+sq_SetChangeStatusIntoAttackInfoWithEtc	Trace	Global	2	给攻击信息附加属性改变 (信息, 槽, 类型, 概率, 持续, 是否比例, 值):只记录类型与值
+sq_SetMaxHitCounterPerObject	Trace	Member	2	限制每个目标被一次攻击命中的次数:只记数
+sq_SetPause	Trace	Global	2	暂停对象 (对象, 类型, 毫秒):没有实现
+sq_ZStop	Trace	Member	2	占位:技能充能、移动粒子、瞄准标记、纵向停止、旋转
+sq_getAttractAimPosX	Trace	Member	2	吸引瞄准点的 x (x, y, 标志):没有实现,原样返回给定的 x
+sq_getAttractAimPosY	Trace	Member	2	吸引瞄准点的 y (x, y, 标志):没有实现,原样返回给定的 y
+sq_getHpMaxUp	Trace	Member	2	依附体名下按名字挂的最大生命提升;没有为 null
+sq_getSquirrelAuraMaster	Trace	Member	2	依附体名下按名字挂的光环;没有为 null
+sq_setFullScreenEffect	Trace	Both	2	表现类接口:只记数
+sq_setXScrollStart	Trace	Member	2	镜头横向卷动的开始与停止:没有镜头
+callBackAllObject	Trace	Member	1	对所有某类对象调用回调 (对象, 事件, 类型):没有实现
+getDustParticleType	Trace	Member	1	角色的投掷属性/普攻段数等运行时状态:没有实现,返回 0
+getLastAlsObject	Trace	Member	1	动画上最后一个自动图层对象:没有图层系统,返回 null
+isChampion	Trace	Member	1	怪物的类别判断:没有怪物类别数据,总是否
+isCommonChampion	Trace	Member	1	怪物的类别判断:没有怪物类别数据,总是否
+isGhostMode	Trace	Member	1	怪物的类别判断:没有怪物类别数据,总是否
+isInCoolTime	Trace	Member	1	技能对象:是否在冷却中(冷却没有实现,总是否)
+isMissileObject	Trace	Member	1	怪物的类别判断:没有怪物类别数据,总是否
+isSuperChampion	Trace	Member	1	怪物的类别判断:没有怪物类别数据,总是否
+push_ani_vector	Trace	Member	1	变量表的动画向量:末尾加一个动画(占位)
+resetCurrentCoolTime	Trace	Member	1	技能对象:重置冷却(冷却没有实现)
+resizeWithChild	Trace	Member	1	动画的表现类设置(图像缩放、着色、图层叠加、判定框缩放):只记数,不影响逻辑
+setAttackType	Trace	Member	1	攻击信息字段:只记录,不参与结算(AttackType)
+setCurrentEffectNoChild	Trace	Member	1	动画的表现类设置(图像缩放、着色、图层叠加、判定框缩放):只记数,不影响逻辑
+setFrameDelay	Trace	Member	1	动画的表现类设置(图像缩放、着色、图层叠加、判定框缩放):只记数,不影响逻辑
+setImageRateFromOriginalOnlyChild	Trace	Member	1	动画的表现类设置(图像缩放、着色、图层叠加、判定框缩放):只记数,不影响逻辑
+setIsApplyAnotherPlayersEffectAlphaRate	Trace	Member	1	动画的表现类设置(图像缩放、着色、图层叠加、判定框缩放):只记数,不影响逻辑
+setNeverApplyAnotherPlayersEffectAlphaRate	Trace	Member	1	动画的表现类设置(图像缩放、着色、图层叠加、判定框缩放):只记数,不影响逻辑
+setState	Trace	Member	1	向依附体发一个状态消息 (标志编号, 整数向量):没有对应的回调约定,只记数
+sq_AddAimPointMark	Trace	Member	1	占位:技能充能、移动粒子、瞄准标记、纵向停止、旋转
+sq_AddAttackBox	Trace	Global	1	判定框的缩放与增删、特殊的命中发送:只记数
+sq_AddHpMaxUp	Trace	Member	1	在依附体名下挂一个最大生命提升 (名字, 对象, 来源, 有效毫秒, 提升值, ……):只返回占位对象,不改最大生命
+sq_AddSkillLoad	Trace	Member	1	占位:技能充能、移动粒子、瞄准标记、纵向停止、旋转
+sq_AddSquirrelAuraMaster	Trace	Member	1	在依附体名下挂一个光环 (名字, 对象, 来源, 范围, ……):只返回占位对象
+sq_ChangeAttackTypeToOpposite	Trace	Global	1	攻击类型取反:只记录
+sq_ClearAttackBox	Trace	Global	1	判定框的缩放与增删、特殊的命中发送:只记数
+sq_GetAbilityConvertRate	Trace	Global	1	能力值换算成属性的比率 (对象, 换算表类型):没有换算表,返回 1.0
+sq_GetAttackInfoHitDelayRateDamager	Trace	Global	1	读取攻击信息字段(HitDelayRateDamager):没设置过为 0
+sq_GetAttackType	Trace	Global	1	读取攻击信息字段(AttackType):没设置过为 0
+sq_GetCurrentAttackeDamageAct	Trace	Global	1	读取攻击信息字段(DamageAct):没设置过为 0
+sq_GetMoveParent	Trace	Global	1	取跟随移动的父对象:没有实现,返回 null
+sq_GetVelocity	Trace	Global	1	读取某个轴的速度 (对象, 轴):没有纵向物理,返回 0
+sq_IsBoss	Trace	Both	1	怪物的类别判断:没有怪物类别数据,总是否
+sq_IsHellMonster	Trace	Both	1	怪物的类别判断:没有怪物类别数据,总是否
+sq_IsNamed	Trace	Both	1	怪物的类别判断:没有怪物类别数据,总是否
+sq_SendHitObjectPacketWithNoStuck	Trace	Global	1	判定框的缩放与增删、特殊的命中发送:只记数
+sq_SetAddWeaponDamage	Trace	Both	1	攻击信息字段:只记录,不参与结算(AddWeaponDamage)
+sq_SetBodyEffect	Trace	Both	1	身体特效:占位
+sq_SetCurrentAttacknBackForce	Trace	Both	1	攻击信息字段:只记录,不参与结算(BackForce)
+sq_SetCurrentAttacknUpForce	Trace	Both	1	攻击信息字段:只记录,不参与结算(UpForce)
+sq_SetEnumDrawLayer	Trace	Global	1	绘制层与粒子速度:只记数
+sq_SetMyControlCharacter	Trace	Global	1	切换本机控制的角色:占位。客户端的注册表里没有这个名字(E-042;可能由 CX 的插件在运行时补充,没有验证),只有 creatormage 的 mousecontrol_lib.nut 用到
+sq_bottomcreateFlash	Trace	Member	1	在底层创建闪屏:没有屏幕特效
+sq_createAttackObjectWithPath	Trace	Both	1	表现类接口:只记数
+sq_setAttackInfoType	Trace	Both	1	攻击信息字段:只记录,不参与结算(InfoType)
+sq_setCustomHitEffectFileName	Trace	Both	1	表现类接口:只记数
+sq_setSuperArmor	Trace	Member	1	设置霸体:只记数
+resize	Trace	Member	0	动画的表现类设置(图像缩放、着色、图层叠加、判定框缩放):只记数,不影响逻辑

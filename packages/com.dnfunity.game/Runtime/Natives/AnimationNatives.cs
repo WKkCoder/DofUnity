@@ -103,7 +103,7 @@ namespace Dnf.Game
                     }
                     return c.Return(a.TotalMs);
                 });
-            foreach (string n in new[] { "GetCurrentFrameIndex", "getCurrentFrameIndex" })
+            foreach (string n in new[] { "GetCurrentFrameIndex" })
             {
                 Define(n, I, "动画当前帧号", M, c => c.Return(c.SelfAs<AnimationObject>().Animator.FrameIndex));
             }

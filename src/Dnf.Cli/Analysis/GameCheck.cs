@@ -251,7 +251,9 @@ internal static class GameCheck
         world.SpawnDummy("dummy", 270, 150, 0, new Aabb(-20, 20, -10, 10, 0, 80));
         if (force)
         {
-            world.ForceState(hero, s.State);
+            // 数据给一个 0(子状态 0):状态脚本都是用 sq_GetVectorData(datas, 0) 取子状态,客户端里越界读到 -1(E-046),
+            // 空数据会让脚本停在"子状态 -1";正常进入技能时脚本自己先压进 0 再发请求
+            world.ForceState(hero, s.State, 0L);
         }
         else
         {
@@ -380,6 +382,10 @@ internal static class GameCheck
             topMissing = missing.OrderByDescending(m => m.Calls).Take(60).Select(m => new { name = m.Name, calls = m.Calls }).ToList(),
             registered = implemented.OrderBy(n => n, StringComparer.Ordinal).ToList(),
             missing = missing.OrderByDescending(m => m.Calls).Select(m => new { name = m.Name, calls = m.Calls }).ToList(),
+            // 每个已登记原生接口的可信程度与依据(审计用:拿它和客户端注册表、实现逐个对照)
+            natives = world.Natives.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                .Select(kv => new { name = kv.Key, status = kv.Value.Status.ToString(), forms = kv.Value.Forms.ToString(), note = kv.Value.Note })
+                .ToList(),
         };
     }
 }

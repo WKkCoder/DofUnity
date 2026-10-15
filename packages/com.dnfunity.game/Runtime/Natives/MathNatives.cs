@@ -26,66 +26,49 @@ namespace Dnf.Game
             const NativeStatus I = NativeStatus.Inferred;
             const NativeStatus V = NativeStatus.Verified;
 
-            DefineFree("sq_Abs", V, "绝对值(参数是浮点时返回浮点)", c =>
-                c.TypeOf(0) == Dnf.Squirrel.SqType.Float ? c.Return(Math.Abs(c.Float(0))) : c.Return(Math.Abs(c.Int(0))));
-            DefineFree("sq_getRandom", I, "随机整数 [下限, 上限](含上限,依据 sq_getRandom(0,1) 用作二选一与 (最小元素, 最大元素) 的用法)", c =>
+            DefineFree("sq_Abs", V, "绝对值:只处理整数,浮点参数先截断成整数,返回整数(客户端 0x005af5a0 是整数的位运算写法,E-046)", c =>
+                c.Return(NativeMath.Abs(c.Int32(0))));
+            DefineFree("sq_getRandom", V,
+                "随机整数 [下限, 上限](含上限);上限不大于下限时直接返回下限,不交换(客户端 0x005adba0:下限 + 随机数 % (上限 - 下限 + 1);随机数是客户端自己的线性同余发生器,每次调用前还混入毫秒计时,没有固定序列,这里的序列不同,E-046)", c =>
             {
-                long lo = c.Int(0);
-                long hi = c.Int(1);
-                if (hi < lo)
+                int lo = c.Int32(0);
+                int hi = c.Int32(1);
+                if (hi <= lo)
                 {
-                    long tmp = lo;
-                    lo = hi;
-                    hi = tmp;
+                    return c.Return(lo);
                 }
-                return c.Return(lo + (long)(_random.NextDouble() * (hi - lo + 1)));
+                return c.Return(lo + (long)(_random.NextDouble() * ((long)hi - lo + 1)));
             });
-            DefineAny("sq_GetDistancePos", I, "从 x 沿朝向前进 distance:向左减、向右加、其余不变 (x, 朝向, 距离)", c =>
+            DefineAny("sq_GetDistancePos", NativeStatus.Verified,
+                "从 x 沿朝向前进 distance (x, 朝向, 距离):朝向是向左(0)就减,其余一律加(包括向上、向下、居中;客户端 0x005adfa0 与 0x00bb1470 只比较是否为 0,E-046)", c =>
             {
                 int x = c.Int32(0);
                 int dir = c.Int32(1);
                 int d = c.Int32(2);
-                return c.Return(dir == Direction.Left ? x - d : dir == Direction.Right ? x + d : x);
+                return c.Return(dir == Direction.Left ? x - d : x + d);
             });
-            DefineFree("sq_GetShuttleValue", I,
-                "在 [from, to] 之间往返的三角波 (from, to, 当前毫秒, 周期毫秒):周期的前半程由 from 到 to,后半程回来。形状是推断,未验证", c =>
-                {
-                    long from = c.Int(0);
-                    long to = c.Int(1);
-                    long t = c.Int(2);
-                    long period = c.Int(3);
-                    if (period <= 0)
-                    {
-                        return c.Return(from);
-                    }
-                    double phase = (double)(((t % period) + period) % period) / period;
-                    double k = phase < 0.5 ? phase * 2 : 2 - phase * 2;
-                    return c.Return((long)Math.Round(from + (to - from) * k));
-                });
-            DefineFree("sq_GetUniformVelocity", I, "匀速插值:从 from 到 to,经过 t / T (from, to, t, T);t 超出范围时取端点", c =>
-            {
-                double k = Ratio(c.Int(2), c.Int(3));
-                return c.Return((long)Math.Round(c.Int(0) + (c.Int(1) - c.Int(0)) * k));
-            });
-            DefineFree("sq_GetAccel", I,
-                "加速插值 (from, to, t, T, 加速):第 5 个参数为真取先慢后快(二次),为假取先快后慢。曲线形状是推断,未验证", c =>
-                {
-                    double k = Ratio(c.Int(2), c.Int(3));
-                    k = c.BoolOr(4, true) ? k * k : 1 - (1 - k) * (1 - k);
-                    return c.Return((long)Math.Round(c.Int(0) + (c.Int(1) - c.Int(0)) * k));
-                });
+            DefineFree("sq_GetShuttleValue", V,
+                "往返插值 (from, to, 当前毫秒, 单程毫秒):第 4 个参数是单程用的时间,不是整个来回的周期;时间对 2×单程取余,前半程 from 到 to,后半程回来,结果向零截断(客户端 0x011b9960,E-046)", c =>
+                c.Return(NativeMath.Shuttle(c.Int32(0), c.Int32(1), c.Int32(2), c.Int32(3))));
+            DefineFree("sq_GetUniformVelocity", V,
+                "匀速插值 (from, to, t, T):t 不到 1 取 from,t 够了 T 取 to,中间线性插值,单精度计算、向零截断(客户端 0x011b98c0,E-046)", c =>
+                c.Return(NativeMath.Uniform(c.Int32(0), c.Int32(1), c.Int32(2), c.Int32(3))));
+            DefineFree("sq_GetAccel", V,
+                "二次曲线插值 (from, to, t, T, 先快后慢):第 5 个参数为真取先快后慢(from + (to-from)×(2u-u²)),为假取先慢后快(from + (to-from)×u²),u=t/T;跳起上升用真、下落用假。向零截断(客户端 0x011b9a50 与包装 0x011b9ef0,E-046)", c =>
+                c.Return(NativeMath.Accel(c.Int32(0), c.Int32(1), c.Int32(2), c.Int32(3), c.BoolOr(4, false))));
             DefineFree("sq_Sin", I, "正弦(参数是弧度)", c => c.Return((float)Math.Sin(c.Float(0))));
             DefineFree("sq_Cos", I, "余弦(参数是弧度)", c => c.Return((float)Math.Cos(c.Float(0))));
-            DefineFree("sq_SinTable", I, "正弦(参数是整数度,查表;这里直接计算)", c => c.Return((float)Math.Sin(c.Int(0) * Math.PI / 180.0)));
-            DefineFree("sq_CosTable", I, "余弦(参数是整数度,查表;这里直接计算)", c => c.Return((float)Math.Cos(c.Int(0) * Math.PI / 180.0)));
+            DefineFree("sq_SinTable", I,
+                "正弦(参数是整数度,浮点参数先截断;度数对 360 取非负余数后查 360 项的单精度表,客户端 0x011e46d0,表的内容是运行时填的、没有读到,这里直接计算,E-046)", c =>
+                c.Return((float)Math.Sin(NativeMath.DegreeIndex(c.Int32(0)) * Math.PI / 180.0)));
+            DefineFree("sq_CosTable", I,
+                "余弦(参数是整数度;同 sq_SinTable,客户端 0x011e4710,E-046)", c =>
+                c.Return((float)Math.Cos(NativeMath.DegreeIndex(c.Int32(0)) * Math.PI / 180.0)));
             DefineFree("sq_Atan2", I, "反正切 (y, x),结果是弧度", c => c.Return((float)Math.Atan2(c.Float(0), c.Float(1))));
             DefineFree("sq_ToDegree", I, "弧度转角度", c => c.Return((float)(c.Float(0) * 180.0 / Math.PI)));
-            DefineFree("sq_GetDistance", I, "两点距离 (x1, y1, x2, y2[, 标志]):直线距离,取整;最后一个标志的含义未知,忽略", c =>
-            {
-                double dx = c.Float(0) - c.Float(2);
-                double dy = c.Float(1) - c.Float(3);
-                return c.Return((int)Math.Sqrt(dx * dx + dy * dy));
-            });
+            DefineFree("sq_GetDistance", V,
+                "两点距离 (x1, y1, x2, y2, 平面):纵向差先除以缩放再与横向差开方,结果向零截断。最后一个参数为真时纵向不缩放(脚本里的 4 处调用都传真);为假时纵向差除以 0.29(文件里的初值 29 × 0.01,运行时取值未观察)(客户端 0x007fb7c0,E-046)", c =>
+                c.Return(NativeMath.Distance(c.Int32(0), c.Int32(1), c.Int32(2), c.Int32(3), c.BoolOr(4, true))));
             DefineFree("sq_getRandomUnique", I,
                 "不重复的随机整数 (是否重新开始, 下限, 上限):范围含两端;取尽后重新开始(依据 sq_getRandomUnique(false, 0, i % len) 的用法推断上限含在内)", c =>
                 {
@@ -109,29 +92,24 @@ namespace Dnf.Game
                     }
                     return c.Return(lo);
                 });
-            DefineFree("sq_RGB", NativeStatus.Trace, "颜色:打包成 (r<<16|g<<8|b);格式未验证,只用来原样传给别的接口", c =>
-                c.Return(((c.Int(0) & 255) << 16) | ((c.Int(1) & 255) << 8) | (c.Int(2) & 255)));
-            DefineFree("sq_ALPHA", NativeStatus.Trace, "颜色的透明度:sq_ALPHA(a) 或 sq_ALPHA(r, g, b, a),格式未验证", c =>
-                c.ArgCount >= 4
-                    ? c.Return(((c.Int(3) & 255) << 24) | ((c.Int(0) & 255) << 16) | ((c.Int(1) & 255) << 8) | (c.Int(2) & 255))
-                    : c.Return((c.Int(0) & 255) << 24));
-            DefineFree("printc", NativeStatus.Trace, "脚本的调试输出:丢弃", c => c.ReturnNothing());
-            DefineFree("isSameObject", I, "两个脚本对象是不是同一个宿主对象", c =>
+            DefineFree("sq_RGB", V,
+                "颜色:sq_RGB(r, g, b) 打包成 0xFFBBGGRR(不透明,红在低位)(客户端 0x005adae0,E-046)", c =>
+                c.Return(NativeMath.Rgb(c.Int32(0), c.Int32(1), c.Int32(2))));
+            DefineFree("sq_ALPHA", V,
+                "透明度:sq_ALPHA(a) 打包成 0xAAFFFFFF,颜色部分是白色;客户端只有 1 个参数(0x005adb00),脚本里有一处写成 4 个参数(po_aticeorbexprickle),多出的参数被忽略(E-046)", c =>
+                c.Return(NativeMath.Alpha(c.Int32(0))));
+            DefineFree("printc", V, "脚本的调试输出:什么也不做(客户端的实现 0x0115a430 只有一条返回指令,E-046)", c => c.ReturnNothing());
+            DefineFree("isSameObject", V,
+                "两个脚本对象是不是同一个宿主对象:客户端只比较两个指针是否相等(0x005af1d0),所以两个都是 null 时也为真(E-046)", c =>
             {
+                if (c.IsNull(0) && c.IsNull(1))
+                {
+                    return c.Return(true);
+                }
                 NativeObject a = c.Arg<NativeObject>(0);
                 NativeObject b = c.Arg<NativeObject>(1);
                 return c.Return(a != null && ReferenceEquals(a, b));
             });
-        }
-
-        private static double Ratio(long t, long total)
-        {
-            if (total <= 0)
-            {
-                return 1;
-            }
-            double k = (double)t / total;
-            return k < 0 ? 0 : k > 1 ? 1 : k;
         }
     }
 }

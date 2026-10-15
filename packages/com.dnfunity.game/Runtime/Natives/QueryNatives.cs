@@ -163,7 +163,7 @@ namespace Dnf.Game
             {
                 Define(n, T, "怪物的类别判断:没有怪物类别数据,总是否", B, c => c.Return(false));
             }
-            foreach (string n in new[] { "sq_IsMyCharacter", "sq_isMyCharacter", "isMyCharacter" })
+            foreach (string n in new[] { "sq_IsMyCharacter", "sq_isMyCharacter" })
             {
                 Define(n, I, "是不是本机玩家的角色", B, c => c.Return(c.Self is GameObject o && o.Kind == ObjectKind.Character && o.IsMyControl));
             }
@@ -311,7 +311,7 @@ namespace Dnf.Game
             });
 
             // ---- 对象的标识与转换
-            DefineFree("sq_GetObjectId", I, "对象在世界里的编号 (对象)", c => c.Return(c.Arg<GameObject>(0)?.Id ?? 0L));
+            DefineFree("sq_GetObjectId", I, "对象在世界里的编号 (对象);传入 null 返回 -1(客户端 0x005af660)", c => c.Return(c.Arg<GameObject>(0)?.Id ?? -1L));
             DefineFree("sq_GetObjectByObjectId", I, "按编号找对象 (参照对象, 编号);已失效或不存在为 null", c =>
             {
                 return c.Return(_byId.TryGetValue(c.Int(1), out NativeObject o) && o is GameObject g && g.Valid ? g : null);
@@ -322,10 +322,10 @@ namespace Dnf.Game
                 c.Return(c.Arg<GameObject>(0) is GameObject o && o.Kind == ObjectKind.Character ? o : null));
             DefineFree("sq_GetCNRDObjectToAICharacter", T, "把对象当成 AI 角色用:没有 AI 角色,总是 null", c => c.ReturnNull());
             DefineFree("sq_GetCNRDObjectToFlashScreen", T, "把对象当成闪屏对象用:没有,总是 null", c => c.ReturnNull());
-            DefineFree("sq_GetMyControlObject", I, "本机玩家控制的角色", c => c.Return(MyControlObject()));
+            DefineFree("sq_GetMyControlObject", T, "本机玩家控制的角色。客户端的注册表里没有这个名字(E-042;可能由 CX 的插件在运行时补充,没有验证),只有 creatormage 的 mousecontrol_lib.nut 用到", c => c.Return(MyControlObject()));
             DefineFree("sq_GetMyMasterCharacter", I, "本机玩家的主角色", c => c.Return(MyControlObject()));
-            DefineFree("sq_GetMyControlObjectSize", I, "本机玩家控制的对象个数", c => c.Return(MyControlObject() == null ? 0 : 1));
-            DefineFree("sq_SetMyControlCharacter", T, "切换本机控制的角色:占位", c => c.ReturnNothing());
+            DefineFree("sq_GetMyControlObjectSize", T, "本机玩家控制的对象个数。客户端的注册表里没有这个名字(E-042;可能由 CX 的插件在运行时补充,没有验证),只有 creatormage 的 mousecontrol_lib.nut 用到", c => c.Return(MyControlObject() == null ? 0 : 1));
+            DefineFree("sq_SetMyControlCharacter", T, "切换本机控制的角色:占位。客户端的注册表里没有这个名字(E-042;可能由 CX 的插件在运行时补充,没有验证),只有 creatormage 的 mousecontrol_lib.nut 用到", c => c.ReturnNothing());
 
             // ---- 目标查找
             DefineFree("sq_FindTarget", I,
@@ -377,7 +377,6 @@ namespace Dnf.Game
                 return c.Return((int)Math.Sqrt(dx * dx + dy * dy));
             });
             DefineFree("sq_GetCenterXPos", I, "命中区域的中心 x (区域)", c => c.Return(c.Arg<BoundingBox>(0) is BoundingBox b ? (b.Box.MinX + b.Box.MaxX) / 2 : 0));
-            DefineFree("sq_GetCenterYPos", I, "命中区域的中心 y (区域)", c => c.Return(c.Arg<BoundingBox>(0) is BoundingBox b ? (b.Box.MinY + b.Box.MaxY) / 2 : 0));
             DefineFree("sq_GetCenterZPos", I, "命中区域的中心 z (区域)", c => c.Return(c.Arg<BoundingBox>(0) is BoundingBox b ? (b.Box.MinZ + b.Box.MaxZ) / 2 : 0));
 
             // ---- 对象管理器、舞台、主控件、鼠标(没有界面与地图,只给最小答案)

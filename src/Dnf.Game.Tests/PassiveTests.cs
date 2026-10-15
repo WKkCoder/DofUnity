@@ -106,6 +106,33 @@ function setCustomData_po_Bar(obj, reciveData)
     }
 
     [Fact]
+    public void ParameterBufferIsSeparateAndSendingDoesNotClearTheSendBuffer()
+    {
+        // 客户端有两个互不相干的发送缓冲(普通缓冲与 Parameter 缓冲),发送消息只读缓冲的长度与内容、不重置长度(E-046)
+        (GameWorld w, _) = Build(@"
+	::R_COUNT <- 0; ::R_SIZE <- 0; ::R_VALUE_SUM <- 0;
+	sq_BinaryStartWrite();
+	sq_BinaryWriteDword(11);
+	sq_BinaryParameterStartWrite();
+	sq_BinaryParameterWriteDword(99);
+	sq_BinaryParameterWriteWord(7);
+	sq_SendCreatePassiveObjectPacket(obj, 24001, 0, 0, 0, 0, ENUM_DIRECTION_RIGHT);
+	sq_SendCreatePassiveObjectPacket(obj, 24001, 0, 0, 0, 0, ENUM_DIRECTION_RIGHT);	// 没有重新开始写:再发一次同样的内容
+", @"
+function setCustomData_po_Bar(obj, reciveData)
+{
+	::R_COUNT += 1;
+	::R_SIZE += reciveData.getSize();
+	::R_VALUE_SUM += reciveData.readDword();
+}
+");
+        Assert.Empty(w.Errors);
+        Assert.Equal(2, Result(w, "R_COUNT"));
+        Assert.Equal(8, Result(w, "R_SIZE"));       // 每条消息 4 字节:参数缓冲里的 6 个字节没有混进来
+        Assert.Equal(22, Result(w, "R_VALUE_SUM")); // 第二条消息还是 11,没有被第一次发送清空
+    }
+
+    [Fact]
     public void LeftFacingCreatorMirrorsTheOffsetButNeutralDirectionDoesNot()
     {
         (GameWorld w, GameObject hero) = Build(@"

@@ -128,44 +128,46 @@ namespace Dnf.Game
                 return c.Return(t);
             });
 
-            // ---- 整数向量(get_vector 等)
-            Define("get_vector", I, "变量表的整数向量:取第 i 项(越界为 0)", M, c => c.Return(c.SelfAs<VarStore>().GetVector(c.Int(0))));
-            Define("set_vector", I, "变量表的整数向量:设第 i 项(必要时扩展)", M, c =>
+            // ---- 整数向量(get_vector 等)。五个接口的客户端实现都已读过(E-046),语义与下面一致。
+            const NativeStatus V = NativeStatus.Verified;
+            Define("get_vector", V, "变量表的整数向量:取第 i 项(越界或为负为 0)(客户端 0x005b7360)", M, c => c.Return(c.SelfAs<VarStore>().GetVector(c.Int(0))));
+            Define("set_vector", V, "变量表的整数向量:设第 i 项;下标越界(含为负)什么也不做,不扩展(客户端 0x005b7390)", M, c =>
             {
                 c.SelfAs<VarStore>().SetVector(c.Int(0), c.Int(1));
                 return c.ReturnNothing();
             });
-            Define("push_vector", I, "变量表的整数向量:末尾加一项", M, c =>
+            Define("push_vector", V, "变量表的整数向量:末尾加一项(客户端 0x0042b190 转到向量的追加函数)", M, c =>
             {
                 c.SelfAs<VarStore>().Vector.Add(c.Int(0));
                 return c.ReturnNothing();
             });
-            Define("clear_vector", I, "变量表的整数向量:清空", M, c =>
+            Define("clear_vector", V, "变量表的整数向量:清空(客户端 0x0042b180)", M, c =>
             {
                 c.SelfAs<VarStore>().Vector.Clear();
                 return c.ReturnNothing();
             });
-            Define("size_vector", I, "变量表的整数向量:长度", M, c => c.Return(c.SelfAs<VarStore>().Vector.Count));
+            Define("size_vector", V, "变量表的整数向量:长度(客户端 0x005abc00)", M, c => c.Return(c.SelfAs<VarStore>().Vector.Count));
 
             // ---- 标量
-            Define("setInt", I, "变量表:按编号存整数", M, c =>
+            // 整数、布尔、浮点共用一张表(一个编号一项:32 位的值加类型标记),读的时候不看标记(客户端 0x010dd280 起的一组函数,E-046)
+            Define("setInt", V, "变量表:按编号存整数(32 位;与布尔、浮点共用一张表,同一编号只有一项;客户端 0x010dd3a0)", M, c =>
             {
-                c.SelfAs<VarStore>().Ints[c.Int(0)] = c.Int(1);
+                c.SelfAs<VarStore>().SetInt(c.Int(0), c.Int32(1));
                 return c.ReturnNothing();
             });
-            Define("getInt", I, "变量表:按编号取整数(没存过为 0)", M, c => c.Return(c.SelfAs<VarStore>().GetInt(c.Int(0))));
-            Define("setBool", I, "变量表:按编号存布尔", M, c =>
+            Define("getInt", V, "变量表:按编号取整数(没存过为 0;读的是存的 32 位值,不管它是用 setBool 还是 setFloat 存的;客户端 0x010dd5f0)", M, c => c.Return(c.SelfAs<VarStore>().GetInt(c.Int(0))));
+            Define("setBool", V, "变量表:按编号存布尔(存 0 或 1;客户端 0x010dd360)", M, c =>
             {
-                c.SelfAs<VarStore>().Bools[c.Int(0)] = c.Bool(1);
+                c.SelfAs<VarStore>().SetBool(c.Int(0), c.Bool(1));
                 return c.ReturnNothing();
             });
-            Define("getBool", I, "变量表:按编号取布尔(没存过为假)", M, c => c.Return(c.SelfAs<VarStore>().GetBool(c.Int(0))));
-            Define("setFloat", I, "变量表:按编号存浮点", M, c =>
+            Define("getBool", V, "变量表:按编号取布尔(存的值恰好为 1 才是真,没存过为假;客户端 0x010dd4a0)", M, c => c.Return(c.SelfAs<VarStore>().GetBool(c.Int(0))));
+            Define("setFloat", V, "变量表:按编号存浮点(存单精度的位模式;客户端 0x010dd3d0)", M, c =>
             {
-                c.SelfAs<VarStore>().Floats[c.Int(0)] = c.Float(1);
+                c.SelfAs<VarStore>().SetFloat(c.Int(0), c.Float(1));
                 return c.ReturnNothing();
             });
-            Define("getFloat", I, "变量表:按编号取浮点(没存过为 0)", M, c => c.Return(c.SelfAs<VarStore>().GetFloat(c.Int(0))));
+            Define("getFloat", V, "变量表:按编号取浮点(没存过为 0;把存的 32 位值当浮点读;客户端 0x010dd4d0)", M, c => c.Return(c.SelfAs<VarStore>().GetFloat(c.Int(0))));
 
             // ---- 对象向量与按编号存的对象槽
             Define("push_obj_vector", I, "变量表的对象向量:末尾加一个对象", M, c =>

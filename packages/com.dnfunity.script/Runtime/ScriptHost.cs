@@ -62,6 +62,11 @@ namespace Dnf.Script
                 return c.ReturnNothing();
             });
             _vm.RegisterGlobal("isDebugMode", c => c.Return(false));
+            // 客户端自己登记给脚本的整数常量(头文件里没有这些名字,取值读自客户端的注册函数,证据 E-045)
+            foreach (KeyValuePair<string, int> kv in EngineConstants.AppendageIds)
+            {
+                _vm.RegisterGlobalInteger(kv.Key, kv.Value);
+            }
             DefineRegistrationTable("CNAvenger", false);
             DefineRegistrationTable("IRDSQRCharacter", true);
             _vm.SetMissingGlobalHandler(name =>
@@ -218,8 +223,9 @@ namespace Dnf.Script
         private readonly List<string> _engineConstants = new List<string>();
 
         /// <summary>
-        /// 脚本用到、但任何脚本头文件里都没有定义的引擎常量(目前是依附体编号 APID_*,观察:头文件里一个也没有)。
-        /// 原版数值未知;这里按首次出现的顺序给每个名字一个互不相同的整数(从 100000 起),
+        /// 脚本用到、但头文件与 <see cref="EngineConstants"/> 都没有的引擎常量(依附体编号 APID_*,观察:头文件里一个也没有)。
+        /// 本机数据里的 10 个 APID_* 名字已全部有真实取值(证据 E-045),所以这张表对用户自备的原版数据是空的;
+        /// 万一别的版本用到了表外的名字,这里按首次出现的顺序给每个名字一个互不相同的整数(从 100000 起),
         /// 脚本只拿它在 sq_AppendAppendageID 与依附体查询之间原样传递,所以只要同名同值就够用。
         /// </summary>
         public IReadOnlyList<string> SyntheticConstants

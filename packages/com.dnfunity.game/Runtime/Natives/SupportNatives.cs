@@ -136,10 +136,11 @@ namespace Dnf.Game
                     return c.Return(service);
                 });
             }
-            foreach (string n in new[] { "setCommandChecker", "addAllKeyCommand", "flushCommandEnable" })
+            foreach (string n in new[] { "setCommandChecker", "flushCommandEnable" })
             {
                 Define(n, T, "AI 角色的指令系统:没有实现,只记数", M, c => c.ReturnNothing());
             }
+            Define("addAllKeyCommand", T, "AI 角色的指令系统:没有实现,只记数。客户端的注册表里没有这个名字(E-042;可能由 CX 的插件在运行时补充,没有验证),只有 creatormage 的 mousecontrol_lib.nut 用到", M, c => c.ReturnNothing());
             Define("endSkillCoolTime", T, "立刻结束一个技能的冷却 (技能):没有冷却系统,只记数", M, c => c.ReturnNothing());
             Define("getLastAlsObject", T, "动画上最后一个自动图层对象:没有图层系统,返回 null", M, c => c.ReturnNull());
             Define("sq_bottomcreateFlash", T, "在底层创建闪屏:没有屏幕特效", M, c => c.ReturnNothing());
@@ -155,7 +156,7 @@ namespace Dnf.Game
             {
                 Define(n, T, "镜头横向卷动的开始与停止:没有镜头", M, c => c.ReturnNothing());
             }
-            Define("sq_isMyControlObject", I, "同 isMyControlObject", M, c => c.Return(c.Self is GameObject o && o.IsMyControl));
+            Define("sq_isMyControlObject", NativeStatus.Verified, "同 isMyControlObject", M, c => c.Return(c.Self is GameObject o && o.IsMyControl));
             Define("getDefaultAnimation", I, "对象的默认动画(.obj / .chr 的 [basic motion])的独立动画对象;没有为 null", M, c =>
             {
                 GameObject o = c.SelfAs<GameObject>();

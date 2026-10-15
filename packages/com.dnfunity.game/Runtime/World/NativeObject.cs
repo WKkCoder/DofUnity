@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Dnf.Game
@@ -35,9 +36,10 @@ namespace Dnf.Game
             Values.AddRange(values);
         }
 
-        public long Get(long index)
+        /// <summary>第 index 项;下标越界(含为负)时返回 outOfRange。</summary>
+        public long Get(long index, long outOfRange = 0)
         {
-            return index >= 0 && index < Values.Count ? Values[(int)index] : 0;
+            return index >= 0 && index < Values.Count ? Values[(int)index] : outOfRange;
         }
     }
 
@@ -48,9 +50,14 @@ namespace Dnf.Game
     /// </summary>
     public sealed class VarStore : NativeObject
     {
-        public Dictionary<long, long> Ints { get; } = new Dictionary<long, long>();
-        public Dictionary<long, bool> Bools { get; } = new Dictionary<long, bool>();
-        public Dictionary<long, float> Floats { get; } = new Dictionary<long, float>();
+        /// <summary>变量表里标量的类型标记:没存过为 0;setBool 为 1、setInt 为 2、setFloat 为 3(客户端 0x010dd360、0x010dd3a0、0x010dd3d0)。</summary>
+        public const int TagNone = 0, TagBool = 1, TagInt = 2, TagFloat = 3;
+
+        // 客户端的整数、布尔、浮点共用同一张表:一个编号只有一项,存 32 位的值和一个类型标记(E-046)。
+        // 所以 setInt(5, 1) 之后 getBool(5) 为真;setFloat 之后用 getInt 读到的是浮点的位模式。
+        // 取值的几个函数(0x010dd4a0、0x010dd5f0、0x010dd4d0)都不看类型标记。
+        private readonly Dictionary<uint, KeyValuePair<uint, int>> _scalars = new Dictionary<uint, KeyValuePair<uint, int>>();
+
         public List<long> Vector { get; } = new List<long>();
         public List<NativeObject> ObjVector { get; } = new List<NativeObject>();
 
@@ -65,19 +72,49 @@ namespace Dnf.Game
 
         public override string TypeName => "VarStore";
 
+        private uint Bits(long index)
+        {
+            return _scalars.TryGetValue(unchecked((uint)index), out KeyValuePair<uint, int> e) ? e.Key : 0u;
+        }
+
+        /// <summary>按编号取整数:存的 32 位值按有符号数读(没存过为 0)。不管那一项是用哪种 set 存的。</summary>
         public long GetInt(long index)
         {
-            return Ints.TryGetValue(index, out long v) ? v : 0;
+            return unchecked((int)Bits(index));
         }
 
+        /// <summary>按编号取布尔:存的值恰好等于 1 才是真(不是"非 0":setInt(5, 2) 之后读到假)。</summary>
         public bool GetBool(long index)
         {
-            return Bools.TryGetValue(index, out bool v) && v;
+            return Bits(index) == 1u;
         }
 
+        /// <summary>按编号取浮点:把存的 32 位值当单精度浮点读(没存过为 0)。</summary>
         public float GetFloat(long index)
         {
-            return Floats.TryGetValue(index, out float v) ? v : 0f;
+            return BitConverter.Int32BitsToSingle(unchecked((int)Bits(index)));
+        }
+
+        /// <summary>这个编号上存的类型标记(<see cref="TagInt"/> 等),没存过为 <see cref="TagNone"/>。</summary>
+        public int TagOf(long index)
+        {
+            return _scalars.TryGetValue(unchecked((uint)index), out KeyValuePair<uint, int> e) ? e.Value : TagNone;
+        }
+
+        /// <summary>存整数:只保留低 32 位。</summary>
+        public void SetInt(long index, long value)
+        {
+            _scalars[unchecked((uint)index)] = new KeyValuePair<uint, int>(unchecked((uint)value), TagInt);
+        }
+
+        public void SetBool(long index, bool value)
+        {
+            _scalars[unchecked((uint)index)] = new KeyValuePair<uint, int>(value ? 1u : 0u, TagBool);
+        }
+
+        public void SetFloat(long index, float value)
+        {
+            _scalars[unchecked((uint)index)] = new KeyValuePair<uint, int>(unchecked((uint)BitConverter.SingleToInt32Bits(value)), TagFloat);
         }
 
         public long GetVector(long index)
@@ -85,17 +122,16 @@ namespace Dnf.Game
             return index >= 0 && index < Vector.Count ? Vector[(int)index] : 0;
         }
 
+        /// <summary>
+        /// 设第 index 项。下标不小于当前长度(或为负数)时什么也不做,<b>不会扩展</b>向量。
+        /// 依据:客户端的实现把下标当无符号数与长度比较,小于才写(0x005b7390,E-046);要加项只能用 push_vector。
+        /// </summary>
         public void SetVector(long index, long value)
         {
-            if (index < 0 || index > 1 << 20)
+            if (index >= 0 && index < Vector.Count)
             {
-                return;
+                Vector[(int)index] = value;
             }
-            while (Vector.Count <= index)
-            {
-                Vector.Add(0);
-            }
-            Vector[(int)index] = value;
         }
     }
 }

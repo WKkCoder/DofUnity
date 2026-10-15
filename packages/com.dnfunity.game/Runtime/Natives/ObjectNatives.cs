@@ -25,6 +25,16 @@ namespace Dnf.Game
             RegisterSupportNatives();
         }
 
+        /// <summary>
+        /// "取值"类接口要操作的对象:全局写法传入 null 时为 null,调用方据此返回 -1;类型不符仍然报错。
+        /// 依据:客户端这类接口(sq_GetXPos、sq_GetState、sq_GetDirection、sq_GetObjectHeight、sq_GetGroup、sq_GetUniqueId、sq_GetObjectId、sq_getJob、
+        /// sq_getGrowType 等 17 个)的实现入口都先判空,为空直接返回 -1,不报错(E-046)。
+        /// </summary>
+        private static GameObject ObjOrNull(NativeCall c)
+        {
+            return c.Self == null ? null : c.SelfAs<GameObject>();
+        }
+
         private void RegisterObjectNatives()
         {
             const NativeForm B = NativeForm.Both;
@@ -32,15 +42,15 @@ namespace Dnf.Game
 
             foreach (string n in new[] { "getXPos", "sq_GetXPos", "GetXPos" })
             {
-                Define(n, I, "对象的 x 坐标", B, c => c.Return(c.SelfAs<GameObject>().X));
+                Define(n, I, "对象的 x 坐标;全局写法传入 null 返回 -1(客户端 0x005adf40)", B, c => c.Return(ObjOrNull(c)?.X ?? -1));
             }
             foreach (string n in new[] { "getYPos", "sq_GetYPos", "GetYPos" })
             {
-                Define(n, I, "对象的 y(纵深)坐标", B, c => c.Return(c.SelfAs<GameObject>().Y));
+                Define(n, I, "对象的 y(纵深)坐标;全局写法传入 null 返回 -1(客户端 0x005adf60)", B, c => c.Return(ObjOrNull(c)?.Y ?? -1));
             }
-            foreach (string n in new[] { "getZPos", "sq_GetZPos", "GetZPos" })
+            foreach (string n in new[] { "getZPos", "sq_GetZPos" })
             {
-                Define(n, I, "对象的 z(高度)坐标", B, c => c.Return(c.SelfAs<GameObject>().Z));
+                Define(n, I, "对象的 z(高度)坐标;全局写法传入 null 返回 -1(客户端 0x005adf80)", B, c => c.Return(ObjOrNull(c)?.Z ?? -1));
             }
             foreach (string n in new[] { "setCurrentPos", "SetPos" })
             {
@@ -96,7 +106,7 @@ namespace Dnf.Game
             });
             foreach (string n in new[] { "getDirection", "sq_GetDirection" })
             {
-                Define(n, I, "对象的朝向(ENUM_DIRECTION_*)", B, c => c.Return(c.SelfAs<GameObject>().Direction));
+                Define(n, I, "对象的朝向(ENUM_DIRECTION_*);全局写法传入 null 返回 -1(客户端 0x005addb0)", B, c => c.Return(ObjOrNull(c)?.Direction ?? -1));
             }
             Define("setCurrentDirection", I, "设置对象的朝向", B, c =>
             {
@@ -115,13 +125,16 @@ namespace Dnf.Game
             });
             foreach (string n in new[] { "getState", "sq_GetState", "sq_GetSTATE" })
             {
-                Define(n, I, "对象当前的状态编号", B, c => c.Return(c.SelfAs<GameObject>().State));
+                Define(n, I, "对象当前的状态编号;全局写法传入 null 返回 -1(客户端 0x005adc10)", B, c => c.Return(ObjOrNull(c)?.State ?? -1));
             }
             foreach (string n in new[] { "isMyControlObject", "sq_IsMyControlObject" })
             {
-                Define(n, I, "是不是本机玩家控制的对象(单机里只有玩家角色为真)", B, c => c.Return(c.Self is GameObject o && o.IsMyControl));
+                Define(n, NativeStatus.Verified,
+                    "是不是本机玩家控制的对象:客户端(0x007f9eb0)看对象的\"所有者\"(虚表 0x1B0 槽)是不是本机玩家的角色;角色的所有者是它自己,"
+                    + "玩家创建的被动对象沿创建者找到所属角色,怪物不是。单机里:玩家角色与它创建的被动对象为真。"
+                    + "客户端还有一个全局模式字段(值为 2 时无条件为真),含义没有查明,这里当作不是 2", B, c => c.Return(c.Self is GameObject o && o.IsMyControl));
             }
-            Define("getParent", I, "对象的父对象(依附体:被依附的对象);没有则 null", B, c =>
+            Define("getParent", NativeStatus.Verified, "对象的父对象(依附体:被依附的对象);没有则 null(客户端 0x011d5270 读对象里偏移 4 的指针)", B, c =>
             {
                 if (c.Self is Appendage a)
                 {
@@ -150,16 +163,16 @@ namespace Dnf.Game
                 }
                 return c.ReturnNothing();
             });
-            foreach (string n in new[] { "isValid", "sq_IsValid" })
+            foreach (string n in new[] { "isValid" })
             {
                 Define(n, I, "对象或依附体是否有效", B, c => c.Return(c.Self is Appendage a ? a.Valid : c.Self is GameObject o && o.Valid));
             }
             foreach (string n in new[] { "getObjectHeight", "sq_GetObjectHeight" })
             {
-                Define(n, I, "对象的高度", B, c => c.Return(c.SelfAs<GameObject>().Height));
+                Define(n, I, "对象的高度;全局写法传入 null 返回 -1(客户端 0x005ae590)", B, c => c.Return(ObjOrNull(c)?.Height ?? -1));
             }
             Define("sq_GetObjectTime", I, "对象创建后经过的毫秒数", B, c => c.Return(c.SelfAs<GameObject>().AgeMs));
-            Define("getSkillSubState", I, "技能子状态(技能脚本自定义的阶段编号)", B, c => c.Return(c.SelfAs<GameObject>().SkillSubState));
+            Define("getSkillSubState", NativeStatus.Verified, "技能子状态(技能脚本自定义的阶段编号;客户端 0x0042b0f0 读对象里一个受保护的整数,偏移 0x5468)", B, c => c.Return(c.SelfAs<GameObject>().SkillSubState));
             Define("setSkillSubState", I, "设置技能子状态", B, c =>
             {
                 c.SelfAs<GameObject>().SkillSubState = c.Int32(0);

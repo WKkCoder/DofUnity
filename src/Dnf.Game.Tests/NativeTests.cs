@@ -61,10 +61,15 @@ function onSetState_Foo(obj, state, datas, isResetTimer)
 	v.setBool(2, true);     ::R_BOOL <- v.getBool(2) ? 1 : 0;
 	::R_BOOL_UNSET <- v.getBool(98) ? 1 : 0;
 	v.setFloat(3, 1.5);     ::R_FLOAT100 <- (v.getFloat(3) * 100).tointeger();
-	v.push_vector(5); v.push_vector(6); v.set_vector(4, 9);
+	v.push_vector(5); v.push_vector(6);
+	v.set_vector(4, 9);     // 下标越界:什么也不做,不扩展(客户端 0x005b7390)
+	v.set_vector(-1, 8);    // 负数下标同样被忽略
 	::R_VECSIZE <- v.size_vector();
 	::R_V0 <- v.get_vector(0);
 	::R_V4 <- v.get_vector(4);
+	::R_V_NEG <- v.get_vector(-1);
+	v.set_vector(1, 7);     // 范围内才写
+	::R_V1 <- v.get_vector(1);
 	::R_V_OUT <- v.get_vector(100);
 	v.clear_vector();
 	::R_VECSIZE_AFTER <- v.size_vector();
@@ -75,11 +80,44 @@ function onSetState_Foo(obj, state, datas, isResetTimer)
         Assert.Equal(1, Result(w, "R_BOOL"));
         Assert.Equal(0, Result(w, "R_BOOL_UNSET"));
         Assert.Equal(150, Result(w, "R_FLOAT100"));
-        Assert.Equal(5, Result(w, "R_VECSIZE"));
+        Assert.Equal(2, Result(w, "R_VECSIZE"));
         Assert.Equal(5, Result(w, "R_V0"));
-        Assert.Equal(9, Result(w, "R_V4"));
+        Assert.Equal(0, Result(w, "R_V4"));
+        Assert.Equal(0, Result(w, "R_V_NEG"));
+        Assert.Equal(7, Result(w, "R_V1"));
         Assert.Equal(0, Result(w, "R_V_OUT"));
         Assert.Equal(0, Result(w, "R_VECSIZE_AFTER"));
+    }
+
+    [Fact]
+    public void VarStoreKeepsOneTypedEntryPerKeyAndReadsIgnoreTheType()
+    {
+        // 客户端的整数、布尔、浮点共用一张表(一个编号一项:32 位值加类型标记),取值函数不看标记(0x010dd280 起的一组函数)
+        (GameWorld w, GameObject hero) = Run(@"
+	local v = obj.getVar();
+	v.setInt(1, 1);           ::R_ONE_AS_BOOL <- v.getBool(1) ? 1 : 0;       // 值恰好为 1 才算真
+	v.setInt(2, 2);           ::R_TWO_AS_BOOL <- v.getBool(2) ? 1 : 0;       // 不是 ""非 0 即真""
+	v.setBool(3, true);       ::R_BOOL_AS_INT <- v.getInt(3);
+	v.setFloat(4, 1.0);       ::R_FLOAT_AS_INT <- v.getInt(4);               // 1.0f 的位模式 0x3F800000
+	v.setInt(5, 1065353216);  ::R_INT_AS_FLOAT <- (v.getFloat(5) * 100).tointeger();
+	v.setInt(6, 5);           v.setBool(6, false);  ::R_OVERWRITE <- v.getInt(6);   // 同一编号只有一项,后写的覆盖
+	v.setInt(7, 4294967295);  ::R_WRAP <- v.getInt(7);                       // 只存 32 位
+	::R_UNSET_FLOAT100 <- (v.getFloat(99) * 100).tointeger();
+");
+        Assert.Empty(w.Errors);
+        Assert.Equal(1, Result(w, "R_ONE_AS_BOOL"));
+        Assert.Equal(0, Result(w, "R_TWO_AS_BOOL"));
+        Assert.Equal(1, Result(w, "R_BOOL_AS_INT"));
+        Assert.Equal(0x3F800000, Result(w, "R_FLOAT_AS_INT"));
+        Assert.Equal(100, Result(w, "R_INT_AS_FLOAT"));
+        Assert.Equal(0, Result(w, "R_OVERWRITE"));
+        Assert.Equal(-1, Result(w, "R_WRAP"));
+        Assert.Equal(0, Result(w, "R_UNSET_FLOAT100"));
+        VarStore store = hero.GetVar(null);
+        Assert.Equal(VarStore.TagInt, store.TagOf(2));
+        Assert.Equal(VarStore.TagBool, store.TagOf(6)); // 被 setBool 覆盖,标记跟着变
+        Assert.Equal(VarStore.TagFloat, store.TagOf(4));
+        Assert.Equal(VarStore.TagNone, store.TagOf(1234));
     }
 
     [Fact]
@@ -248,14 +286,14 @@ function onProc_Foo(obj)
         Assert.Empty(w.Errors);
         Assert.Equal(130, Result(w, "R_FRONT_R"));
         Assert.Equal(70, Result(w, "R_FRONT_L"));
-        Assert.Equal(100, Result(w, "R_FRONT_N"));
+        Assert.Equal(130, Result(w, "R_FRONT_N")); // 只有"向左(0)"减,其余方向都加(客户端 0x005adfa0)
         Assert.Equal(Direction.Right, Result(w, "R_OPP_L"));
         Assert.Equal(Direction.Left, Result(w, "R_OPP_R"));
         Assert.Equal(Direction.Neutral, Result(w, "R_OPP_N"));
         Assert.Equal(0, Result(w, "R_SH0"));
-        Assert.Equal(10, Result(w, "R_SH_MID"));
-        Assert.Equal(5, Result(w, "R_SH_Q"));
-        Assert.Equal(0, Result(w, "R_SH_WRAP"));
+        Assert.Equal(5, Result(w, "R_SH_MID"));   // 第 4 个参数是单程时间:走到一半是 5(客户端 0x011b9960)
+        Assert.Equal(2, Result(w, "R_SH_Q"));     // 10 * 12 / 50 = 2.4,向零截断
+        Assert.Equal(10, Result(w, "R_SH_WRAP")); // 恰好走完单程:在终点,不是回到起点
         Assert.Equal(150, Result(w, "R_UNI"));
         Assert.Equal(200, Result(w, "R_UNI_END"));
         Assert.Equal(7, Result(w, "R_ABS"));
@@ -290,6 +328,75 @@ function onProc_Foo(obj)
         Assert.Equal(1, Result(w, "R_MY"));
         Assert.Equal((11, 22, 33), (hero.X, hero.Y, hero.Z));
         Assert.Equal(Direction.Left, hero.Direction);
+    }
+
+    [Fact]
+    public void GlobalGettersReturnMinusOneForANullObjectInsteadOfFailing()
+    {
+        // 客户端这一类取值接口的实现入口先判空,为空返回 -1,不报错(E-046,17 个接口的反汇编)
+        string[] names = { "R_X", "R_Y", "R_Z", "R_DIR", "R_STATE", "R_JOB", "R_GROW", "R_LEVEL", "R_INTDATA", "R_LEVELDATA", "R_ID", "R_UID", "R_GROUP", "R_HEIGHT" };
+        (GameWorld w, _) = Run(@"
+	::R_X <- sq_GetXPos(null);
+	::R_Y <- sq_GetYPos(null);
+	::R_Z <- sq_GetZPos(null);
+	::R_DIR <- sq_GetDirection(null);
+	::R_STATE <- sq_GetState(null);
+	::R_JOB <- sq_getJob(null);
+	::R_GROW <- sq_getGrowType(null);
+	::R_LEVEL <- sq_GetSkillLevel(null, SKILL_FOO);
+	::R_INTDATA <- sq_GetIntData(null, SKILL_FOO, 0);
+	::R_LEVELDATA <- sq_GetLevelData(null, SKILL_FOO, 0, 1);
+	::R_ID <- sq_GetObjectId(null);
+	::R_UID <- sq_GetUniqueId(null);
+	::R_GROUP <- sq_GetGroup(null);
+	::R_HEIGHT <- sq_GetObjectHeight(null);
+	::R_JOB_OK <- sq_getJob(obj);
+");
+        Assert.Empty(w.Errors);
+        foreach (string n in names)
+        {
+            Assert.Equal(-1, Result(w, n));
+        }
+        Assert.Equal(World.Job, Result(w, "R_JOB_OK"));
+    }
+
+    [Fact]
+    public void GrowTypeComesFromTheCharacterAndDefaultsToTheBaseType()
+    {
+        (GameWorld w, _) = Run("::R_GROW <- sq_getGrowType(obj);");
+        Assert.Empty(w.Errors);
+        Assert.Equal(0, Result(w, "R_GROW"));
+
+        (GameWorld w2, _) = Run("::R_GROW <- sq_getGrowType(obj);", (_, hero) => hero.GrowType = 2);
+        Assert.Empty(w2.Errors);
+        Assert.Equal(2, Result(w2, "R_GROW"));
+    }
+
+    [Fact]
+    public void AddSetStatePacketSendsTheDataArrayOnlyWhenTheThirdArgumentIsTrue()
+    {
+        // 客户端 0x0067cba0:第 3 个参数为真 → setState(状态, 数据数组, 优先级);为假 → setState(状态, 空, 优先级)(E-046)
+        (GameWorld w, GameObject hero) = Run(@"
+	local v = obj.getVar();
+	local n = v.getInt(1);
+	v.setInt(1, n + 1);
+	if (n == 0) {
+		::R_FIRST <- obj.sq_GetVectorData(datas, 0);   // 第一次是技能请求(第 3 个参数为真):带着对象的数据数组 [77]
+		obj.sq_IntVectClear();
+		obj.sq_IntVectPush(55);                         // 数据数组里有东西,但下面的请求第 3 个参数为假
+		obj.sq_AddSetStatePacket(STATE_FOO, STATE_PRIORITY_USER, false);
+	} else if (n == 1) {
+		::R_SECOND <- obj.sq_GetVectorData(datas, 0);   // 不带数据:越界读到 -1(客户端的越界值),不是 55
+		obj.sq_AddSetStatePacket(STATE_FOO, STATE_PRIORITY_USER, true);
+	} else if (n == 2) {
+		::R_THIRD <- obj.sq_GetVectorData(datas, 0);    // 又带数据:55
+	}
+", (_, h) => h.DataVector.Values.Add(77));
+        Assert.Empty(w.Errors);
+        Assert.Equal(77, Result(w, "R_FIRST"));
+        Assert.Equal(-1, Result(w, "R_SECOND"));
+        Assert.Equal(55, Result(w, "R_THIRD"));
+        Assert.Equal(3, hero.GetVar(null).GetInt(1));
     }
 
     [Fact]

@@ -40,18 +40,23 @@ namespace Dnf.Game
 
             foreach (string n in new[] { "sq_GetSkillLevel" })
             {
-                Define(n, I, "技能等级(未学为 0)", B, c =>
+                Define(n, I, "技能等级(未学为 0);全局写法传入 null 返回 -1。客户端 0x005ae4f0:空则 -1,否则取对象的 getSkillLevel(技能)(虚表槽 0x7d0,E-046)", B, c =>
                 {
-                    GameObject owner = SkillOwner(c.SelfAs<GameObject>());
-                    return c.Return(owner.GetSkillLevel(c.Int32(0)));
+                    GameObject o = ObjOrNull(c);
+                    return c.Return(o == null ? -1 : SkillOwner(o).GetSkillLevel(c.Int32(0)));
                 });
             }
             foreach (string n in new[] { "sq_GetIntData", "sq_getIntData" })
             {
                 Define(n, NativeStatus.Verified,
-                    "技能静态数据 [static data] 的第 idx 项:参数 (技能, idx[, 等级]),等级忽略(静态数据不分等级);只有一个参数 (idx) 时按当前状态登记的技能取;决斗场模式取 [pvp] 里的(E-036)", B, c =>
+                    "技能静态数据 [static data] 的第 idx 项:参数 (技能, idx[, 等级]),等级忽略(静态数据不分等级);只有一个参数 (idx) 时按当前状态登记的技能取;决斗场模式取 [pvp] 里的(E-036)。"
+                    + "全局写法传入 null 返回 -1,技能不存在返回 0(客户端 0x005ae4b0;真正取值的函数 0x00911930 只是跳到受保护区域,没有读)", B, c =>
                     {
-                        GameObject o = c.SelfAs<GameObject>();
+                        GameObject o = ObjOrNull(c);
+                        if (o == null)
+                        {
+                            return c.Return(-1);
+                        }
                         if (c.ArgCount == 1)
                         {
                             GameObject owner = SkillOwner(o);
@@ -66,9 +71,15 @@ namespace Dnf.Game
             foreach (string n in new[] { "sq_GetLevelData", "sq_getLevelData" })
             {
                 Define(n, NativeStatus.Verified,
-                    "技能按等级取值表 [level info] 的第 idx 列:参数 (技能, idx[, 等级]);省略等级时取该技能当前等级;只有一个参数时按当前状态登记的技能取(E-036)", B, c =>
+                    "技能按等级取值表 [level info] 的第 idx 列:参数 (技能, idx[, 等级]);省略等级时取该技能当前等级;只有一个参数时按当前状态登记的技能取(E-036)。"
+                    + "全局写法传入 null 返回 -1,技能不存在返回 0;结果是整数(客户端 0x005ae460 把浮点结果截断成整数;真正取值的函数 0x00911b90 在受保护区域里,没有读,"
+                    + "所以是否还叠加了被动技能等加成不明)", B, c =>
                     {
-                        GameObject o = c.SelfAs<GameObject>();
+                        GameObject o = ObjOrNull(c);
+                        if (o == null)
+                        {
+                            return c.Return(-1);
+                        }
                         int skill;
                         int column;
                         int level;
@@ -129,9 +140,15 @@ namespace Dnf.Game
             });
             foreach (string n in new[] { "sq_AddSetStatePacket", "sq_addSetStatePacket" })
             {
-                Define(n, I, "把'切换状态(状态, 优先级, 是否重置计时器)'发给对象;当前数据数组随包发出(回调结束后处理)", B, c =>
+                Define(n, I,
+                    "请求对象切换状态 (状态, 优先级, 是否带数据):第 3 个参数为真时随请求发出对象当前的数据数组(sq_IntVectPush 攒的那个),为假时不带数据(onSetState 收到空数组);回调结束后处理。"
+                    + "客户端 0x0067cba0:真走 setState(状态, 数据数组, 优先级),假走 setState(状态, 空, 优先级)(E-046)。接口本身只是转交,'请求'与'执行'之间的优先级规则见 QueueState", B, c =>
                 {
-                    QueueState(c.SelfAs<GameObject>(), c.Int32(0), c.Int32(1), c.BoolOr(2, false));
+                    GameObject o = c.SelfAs<GameObject>();
+                    bool sendData = c.BoolOr(2, false);
+                    // 状态执行时的 isResetTimer 实参:客户端的执行函数(0x00863020)只是把调用者给的两个标志原样传给脚本回调;
+                    // 它的直接调用点给的都是 1,请求路径上的取值没有读到,暂按 true(推断)
+                    QueueState(o, c.Int32(0), c.Int32(1), true, sendData ? o.DataVector.Values.ToArray() : Array.Empty<long>());
                     return c.ReturnNothing();
                 });
             }
@@ -145,10 +162,12 @@ namespace Dnf.Game
                 c.SelfAs<GameObject>().DataVector.Values.Add(c.Int(0));
                 return c.ReturnNothing();
             });
-            DefineAny("sq_GetVectorData", I, "取整数数组的第 i 项(越界或数组无效为 0):obj.sq_GetVectorData(数组, i) 与 sq_GetVectorData(数组, i) 等价", c =>
-                c.Return(c.Arg<IntVector>(0) is IntVector v ? v.Get(c.Int(1)) : 0));
-            DefineAny("sq_getVectorData", I, "同 sq_GetVectorData", c =>
-                c.Return(c.Arg<IntVector>(0) is IntVector v ? v.Get(c.Int(1)) : 0));
+            // 越界或数组无效时是 -1,不是 0:客户端 0x005b80a0(全局写法)与 0x00bb2c20(成员写法)的实现都是"数组非空且下标小于长度才取值,否则返回 -1"(E-046)
+            DefineAny("sq_GetVectorData", NativeStatus.Verified,
+                "取整数数组的第 i 项(越界、为负或数组无效为 -1):obj.sq_GetVectorData(数组, i) 与 sq_GetVectorData(数组, i) 等价(客户端 0x005b80a0、0x00bb2c20,E-046)", c =>
+                c.Return(c.Arg<IntVector>(0) is IntVector v ? v.Get(c.Int(1), -1) : -1));
+            DefineAny("sq_getVectorData", NativeStatus.Verified, "同 sq_GetVectorData", c =>
+                c.Return(c.Arg<IntVector>(0) is IntVector v ? v.Get(c.Int(1), -1) : -1));
 
             // ---- 攻击信息
             Define("sq_SetCurrentAttackInfo", NativeStatus.Verified,
