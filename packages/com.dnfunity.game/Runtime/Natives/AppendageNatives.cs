@@ -84,9 +84,16 @@ namespace Dnf.Game
                 return c.Return(parent == null ? null : FindAppendage(parent, c.Str(1)));
             });
 
-            Define("sq_AddFunctionName", I, "依附体:登记一个事件的回调函数名 (事件名, 函数名)", NativeForm.Member, c =>
+            Define("sq_AddFunctionName", NativeStatus.Verified,
+                "依附体:登记一个事件的回调函数名 (事件名, 函数名)。每个事件名只登记一次:已经登记过的再登记会被忽略,先登记的有效"
+                + "(客户端 0x009d9e30:先在 this+0x1DC 的名字映射里查找,找不到才插入并赋值,找到了什么也不做;名字的比较区分大小写,E-048)", NativeForm.Member, c =>
             {
-                c.SelfAs<Appendage>().Callbacks[c.Str(0)] = c.Str(1);
+                Appendage a = c.SelfAs<Appendage>();
+                string eventName = c.Str(0);
+                if (!a.Callbacks.ContainsKey(eventName))
+                {
+                    a.Callbacks.Add(eventName, c.Str(1));
+                }
                 return c.ReturnNothing();
             });
             Define("sq_SetValidTime", I, "依附体:设置有效时间(毫秒),到时自动结束", NativeForm.Both, c =>

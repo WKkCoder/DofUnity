@@ -152,12 +152,14 @@ namespace Dnf.Game
                     return c.ReturnNothing();
                 });
             }
-            Define("sq_IntVectClear", I, "清空对象的数据数组", B, c =>
+            Define("sq_IntVectClear", NativeStatus.Verified,
+                "清空对象的数据数组:客户端 0x006844e0 与 0x00BB85B0(两个类)对 this+0x59D8、this+0x6708 处的容器做“从头删到尾”(0x01389550),E-048", B, c =>
             {
                 c.SelfAs<GameObject>().DataVector.Values.Clear();
                 return c.ReturnNothing();
             });
-            Define("sq_IntVectPush", I, "往对象的数据数组末尾加一个整数", B, c =>
+            Define("sq_IntVectPush", I,
+                "往对象的数据数组末尾加一个整数:客户端 0x006844f0 与 0x00BB8CB0 往同一个容器(this+0x59D8、this+0x6708)追加,追加函数 0x00493770 是受保护区的跳板、没有读,所以“追加到末尾”与元素宽度只是按名字和参数形状推断(E-048)", B, c =>
             {
                 c.SelfAs<GameObject>().DataVector.Values.Add(c.Int(0));
                 return c.ReturnNothing();
@@ -183,7 +185,9 @@ namespace Dnf.Game
                 UseAttackInfo(o, c);
                 return c.ReturnNothing();
             });
-            Define("sq_GetCurrentAttackInfo", I, "对象当前的攻击信息对象", B, c => c.Return(c.SelfAs<GameObject>().CurrentAttackInfo));
+            Define("sq_GetCurrentAttackInfo", I,
+                "对象当前的攻击信息对象;对象为 null 时返回 null(客户端 0x005ae8e0:非空才调用对象的第 0x204 号虚函数,空则返回 0;虚函数的内容没读,E-048)", B, c =>
+                c.Return(c.Self is GameObject o ? o.CurrentAttackInfo : null));
             foreach (string n in new[] { "sq_SetCurrentAttackBonusRate", "sq_setCurrentAttackBonusRate" })
             {
                 Define(n, I, "设置攻击倍率(单位依脚本:列注释为 %):参数可以是攻击信息或对象", B, c =>

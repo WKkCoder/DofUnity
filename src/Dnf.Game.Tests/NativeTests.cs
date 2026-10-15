@@ -143,6 +143,155 @@ function onSetState_Foo(obj, state, datas, isResetTimer)
     }
 
     [Fact]
+    public void GetVarWithoutNameIsTheTableNamedDefault()
+    {
+        // 客户端 getVar() 只是用字面量 "default" 调用按名字查找的函数(E-048):两者是同一张表,而空名字是另一张
+        (GameWorld w, GameObject hero) = Run(@"
+	obj.getVar().setInt(1, 10);
+	::R_SAME <- isSameObject(obj.getVar(), obj.getVar(""default"")) ? 1 : 0;
+	::R_VALUE <- obj.getVar(""default"").getInt(1);
+	obj.getVar(""default"").setInt(2, 20);
+	::R_BACK <- obj.getVar().getInt(2);
+	::R_EMPTY_NAME <- isSameObject(obj.getVar(), obj.getVar("""")) ? 1 : 0;
+");
+        Assert.Empty(w.Errors);
+        Assert.Equal(1, Result(w, "R_SAME"));
+        Assert.Equal(10, Result(w, "R_VALUE"));
+        Assert.Equal(20, Result(w, "R_BACK"));
+        Assert.Equal(0, Result(w, "R_EMPTY_NAME"));
+        Assert.Same(hero.GetVar(null), hero.GetVar("default"));
+        Assert.Equal(20, hero.GetVar(null).GetInt(2));
+    }
+
+    [Fact]
+    public void AppendagesKeepSeparateNamedVarStoresAndTheUnnamedOneIsTheEmbeddedSqVar()
+    {
+        // 脚本里 appendage.getVar("mode") 与 appendage.getVar("skl") 是两张表(ap_atmage_tundrasoul 等在用);
+        // 以前宿主不看名字,把它们并成了一张,"mode" 的第 0 项会读到 "skl" 的第 0 项。
+        // 依附体不带名字的 getVar() 是嵌在对象里的一张(即 sq_var,客户端 0x005AC300 返回 this+0xC4),与名字叫 "default" 的不是同一张
+        const string ap = @"
+function sq_AddFunctionName(appendage)
+{
+	appendage.sq_AddFunctionName(""onStart"", ""start_v"");
+}
+function sq_AddEffect(appendage) {}
+function start_v(appendage)
+{
+	appendage.getVar(""mode"").setInt(0, 7);
+	appendage.getVar(""skl"").setInt(0, 9);
+	appendage.getVar().setInt(0, 5);
+	::R_MODE <- appendage.getVar(""mode"").getInt(0);
+	::R_SKL <- appendage.getVar(""skl"").getInt(0);
+	::R_NAMED_DEFAULT <- appendage.getVar(""default"").getInt(0);
+	::R_UNNAMED <- appendage.getVar().getInt(0);
+	::R_SAME <- isSameObject(appendage.getVar(), appendage.sq_var) ? 1 : 0;
+}
+";
+        GameObject dummy = null;
+        (GameWorld w, GameObject hero) = Run(@"
+	local d = obj.getVar().get_obj_vector(0);
+	CNSquirrelAppendage.sq_AppendAppendage(d, obj, SKILL_FOO, false, ""test/ap_v.nut"", true);
+", (world, h) =>
+        {
+            dummy = world.SpawnDummy("dummy", 150, 100, 0, new Aabb(-10, 10, -10, 10, 0, 60));
+            h.GetVar(null).ObjVector.Add(dummy);
+        }, fx =>
+        {
+            fx.Nut("sqr/test/ap_v.nut", ap);
+        });
+        Assert.Empty(w.Errors);
+        Assert.Equal(7, Result(w, "R_MODE"));
+        Assert.Equal(9, Result(w, "R_SKL"));
+        Assert.Equal(0, Result(w, "R_NAMED_DEFAULT"));
+        Assert.Equal(5, Result(w, "R_UNNAMED"));
+        Assert.Equal(1, Result(w, "R_SAME"));
+        Appendage a = Assert.Single(dummy.Appendages);
+        Assert.Equal(7, a.GetVar("mode").GetInt(0));
+        Assert.Equal(9, a.GetVar("skl").GetInt(0));
+        Assert.Equal(5, a.Vars.GetInt(0));
+        Assert.NotSame(a.Vars, a.GetVar("default"));
+    }
+
+    [Fact]
+    public void GlobalNativesGivenANullObjectReturnTheClientsEmptyValues()
+    {
+        // 客户端的全局写法对空对象不报错:sq_GetCurrentAttackInfo(0x005ae8e0)与 sq_GetCurrentAnimation(0x005adc90)返回 0,
+        // sq_SendCreatePassiveObjectPacket(0x005ae780)返回 -1(E-048)
+        (GameWorld w, GameObject hero) = Run(@"
+	::R_ATTACK_INFO <- sq_GetCurrentAttackInfo(null) == null ? 1 : 0;
+	::R_ANIMATION <- sq_GetCurrentAnimation(null) == null ? 1 : 0;
+	::R_CREATE <- sq_SendCreatePassiveObjectPacket(null, 1, 0, 10, 0, 0);
+");
+        Assert.Empty(w.Errors);
+        Assert.Equal(1, Result(w, "R_ATTACK_INFO"));
+        Assert.Equal(1, Result(w, "R_ANIMATION"));
+        Assert.Equal(-1, Result(w, "R_CREATE"));
+    }
+
+    [Fact]
+    public void RegisteringTheSameEventTwiceKeepsTheFirstCallback()
+    {
+        // 客户端 0x009d9e30:名字映射里已经有这个事件就什么也不做,所以先登记的有效(E-048)
+        const string ap = @"
+function sq_AddFunctionName(appendage)
+{
+	appendage.sq_AddFunctionName(""proc"", ""proc_first"");
+	appendage.sq_AddFunctionName(""proc"", ""proc_second"");
+}
+function sq_AddEffect(appendage) {}
+function proc_first(appendage) { appendage.getParent().getVar().push_vector(1); }
+function proc_second(appendage) { appendage.getParent().getVar().push_vector(2); }
+";
+        GameObject dummy = null;
+        (GameWorld w, GameObject hero) = Run(@"
+	local d = obj.getVar().get_obj_vector(0);
+	CNSquirrelAppendage.sq_AppendAppendage(d, obj, SKILL_FOO, false, ""test/ap_twice.nut"", true);
+", (world, h) =>
+        {
+            dummy = world.SpawnDummy("dummy", 150, 100, 0, new Aabb(-10, 10, -10, 10, 0, 60));
+            h.GetVar(null).ObjVector.Add(dummy);
+        }, fx =>
+        {
+            fx.Nut("sqr/test/ap_twice.nut", ap);
+        });
+        Assert.Empty(w.Errors);
+        w.Step(1);
+        long[] pushed = dummy.GetVar(null).Vector.ToArray();
+        Assert.Contains(1L, pushed);
+        Assert.DoesNotContain(2L, pushed);
+        Assert.Equal("proc_first", Assert.Single(dummy.Appendages).Callbacks["proc"]);
+    }
+
+    [Fact]
+    public void RandomUniqueDrawsFromARemainingPoolAndTheUpperBoundIsExclusive()
+    {
+        // 客户端 0x005d71d0(E-048):第一个参数为真先清空;空了才按 [下限, 上限) 补满;取一项并删掉;下限为负返回 -1 且什么也不动
+        (GameWorld w, GameObject hero) = Run(@"
+	local seen = {};
+	local ok = 1;
+	local first = sq_getRandomUnique(true, 0, 5);
+	seen[first] <- 1;
+	if (first < 0 || first > 4) ok = 0;
+	::R_NEG <- sq_getRandomUnique(true, -1, 5);
+	for (local i = 0; i < 4; i++)
+	{
+		local v = sq_getRandomUnique(false, 100, 200);
+		if (v in seen || v < 0 || v > 4) ok = 0;
+		seen[v] <- 1;
+	}
+	::R_OK <- ok;
+	::R_COUNT <- seen.len();
+	local again = sq_getRandomUnique(false, 10, 12);
+	::R_REFILL <- again;
+");
+        Assert.Empty(w.Errors);
+        Assert.Equal(-1, Result(w, "R_NEG"));
+        Assert.Equal(1, Result(w, "R_OK"));
+        Assert.Equal(5, Result(w, "R_COUNT"));
+        Assert.InRange(Result(w, "R_REFILL"), 10, 11);
+    }
+
+    [Fact]
     public void ObjectVectorHoldsTheSameObjectsTheHostPushed()
     {
         GameObject dummy = null;

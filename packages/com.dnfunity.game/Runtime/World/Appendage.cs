@@ -28,11 +28,17 @@ namespace Dnf.Game
         /// <summary>事件名 -> 脚本里的函数名。</summary>
         public Dictionary<string, string> Callbacks { get; } = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        private VarStore _vars;
+        private VarTables _varTables;
         private GameTimer _timer;
 
-        /// <summary>依附体自己的变量表(appendage.getVar() 与 appendage.sq_var)。</summary>
-        public VarStore Vars => _vars ?? (_vars = new VarStore { World = World });
+        /// <summary>依附体上按名字区分的变量表:appendage.getVar("名字");不带名字的是单独的一张(嵌在依附体里,即 sq_var),不是名字叫 "default" 的那张(E-048)。</summary>
+        public VarStore GetVar(string name)
+        {
+            return (_varTables ?? (_varTables = new VarTables(World, false))).Get(name);
+        }
+
+        /// <summary>依附体自己的那张不带名字的变量表(appendage.getVar() 与 appendage.sq_var)。</summary>
+        public VarStore Vars => GetVar(null);
 
         /// <summary>依附体自己的计时器(appendage.getTimer())。</summary>
         public GameTimer Timer => _timer ?? (_timer = new GameTimer(World));

@@ -34,8 +34,12 @@ namespace Dnf.Game
         /// sq_SendCreatePassiveObjectPacket 一族的共同实现。实参(不含对象):编号、一个未知的 0、x、y、z[、朝向];
         /// 没有朝向参数时用创建者的朝向。依据 40 个脚本里的 58 + 14 处调用核对了实参顺序,第二个参数在所有调用里几乎都是 0(含义未知)。
         /// </summary>
-        private int SendCreatePassive(NativeCall c, bool absolute)
+        private int SendCreatePassive(NativeCall c, bool absolute, bool nullIsMinusOne = false)
         {
+            if (nullIsMinusOne && c.Self == null)
+            {
+                return c.Return(-1); // 客户端 0x005ae780:对象为空直接返回 -1,不报错(E-048)
+            }
             GameObject creator = c.SelfAs<GameObject>();
             int id = c.Int32(0);
             int ox = c.Int32(2);
@@ -55,13 +59,15 @@ namespace Dnf.Game
             const NativeStatus I = NativeStatus.Inferred;
 
             // ---- 整数数组
-            DefineFree("sq_GetGlobalIntVector", I, "全局共用的整数数组", c => c.Return(GlobalIntVector));
+            DefineFree("sq_GetGlobalIntVector", NativeStatus.Verified,
+                "全局共用的整数数组:客户端 0x005adb90 返回固定地址 0x01A4DBC4 处的同一个对象(E-048)", c => c.Return(GlobalIntVector));
             DefineFree("sq_IntVectorClear", I, "清空整数数组 (数组)", c =>
             {
                 c.Arg<IntVector>(0)?.Values.Clear();
                 return c.ReturnNothing();
             });
-            DefineFree("sq_IntVectorPush", I, "往整数数组末尾加一个整数 (数组, 值)", c =>
+            DefineFree("sq_IntVectorPush", I,
+                "往整数数组末尾加一个整数 (数组, 值):数组为 null 时什么也不做(客户端 0x005d71b0,与 sq_IntVectPush 共用受保护区里的追加跳板 0x00493770,“追加到末尾”是推断,E-048)", c =>
             {
                 c.Arg<IntVector>(0)?.Values.Add(c.Int(1));
                 return c.ReturnNothing();
@@ -70,7 +76,7 @@ namespace Dnf.Game
             // ---- 创建与销毁被动对象
             Define("sq_SendCreatePassiveObjectPacket", I,
                 "创建被动对象 (编号, 未知 0, x, y, z[, 朝向]):位置相对创建者(x 向前、朝向左时镜像),朝向参数为 NEUTRAL 时偏移不镜像;"
-                + "发送缓冲里写好的数据随消息交给 setCustomData_po_*;返回 0(原版返回的编号含义未知)", B, c => SendCreatePassive(c, false));
+                + "发送缓冲里写好的数据随消息交给 setCustomData_po_*;对象为 null 时返回 -1(客户端 0x005ae780,E-048);其余情况返回 0(客户端返回第 0x340 号虚函数的结果,含义未知)", B, c => SendCreatePassive(c, false, true));
             Define("sq_p00_sendCreatePassiveObjectPacket", I, "同 sq_SendCreatePassiveObjectPacket(复仇者模块的写法)", M, c => SendCreatePassive(c, false));
             Define("sq_SendCreatePassiveObjectPacketPos", I, "创建被动对象 (创建者, 编号, 未知 0, x, y, z):位置是世界坐标", G, c => SendCreatePassive(c, true));
             Define("sq_SendCreatePassiveObjectPacketFromPassivePos", I,

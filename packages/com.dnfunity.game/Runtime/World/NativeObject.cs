@@ -44,7 +44,59 @@ namespace Dnf.Game
     }
 
     /// <summary>
-    /// 对象上的变量表。obj.getVar() 取默认的一张,obj.getVar("名字") 取按名字区分的另一张(第一次取时创建)。
+    /// 一个对象或依附体上"按名字区分"的变量表集合。客户端的做法(E-048):一个以名字(宽字符串,区分大小写的比较)为键的映射,
+    /// 取不到就新建一张空表并放进去。getVar() 不带名字时有两种实现:对象一类(0x0087FDC0、0x00BBD030)只是用字面量 "default" 调用同一个按名字查找函数,
+    /// 所以 getVar() 与 getVar("default") 是同一张表;依附体一类(0x005AC300)直接返回对象里嵌的一张表(this+0xC4,也就是 sq_var),它和按名字的 "default" 不是同一张。
+    /// </summary>
+    internal sealed class VarTables
+    {
+        /// <summary>getVar() 不带名字时用的名字(客户端字符串块 0x015AA464 解出的明文)。</summary>
+        public const string DefaultName = "default";
+
+        private readonly Dictionary<string, VarStore> _tables = new Dictionary<string, VarStore>(StringComparer.Ordinal);
+        private readonly GameWorld _world;
+        private readonly bool _unnamedIsNamedDefault;
+        private VarStore _unnamed;
+
+        /// <param name="unnamedIsNamedDefault">真:不带名字就是名字为 "default" 的那一张(对象);假:不带名字的是单独的一张(依附体)。</param>
+        public VarTables(GameWorld world, bool unnamedIsNamedDefault)
+        {
+            _world = world;
+            _unnamedIsNamedDefault = unnamedIsNamedDefault;
+        }
+
+        /// <summary>按名字取变量表,没有就新建;name 为 null 表示不带名字。</summary>
+        public VarStore Get(string name)
+        {
+            if (name == null && !_unnamedIsNamedDefault)
+            {
+                return _unnamed ?? (_unnamed = new VarStore { World = _world });
+            }
+            string key = name ?? DefaultName;
+            if (!_tables.TryGetValue(key, out VarStore store))
+            {
+                store = new VarStore { World = _world };
+                _tables.Add(key, store);
+            }
+            return store;
+        }
+
+        /// <summary>已创建的全部变量表。</summary>
+        public IEnumerable<VarStore> All()
+        {
+            if (_unnamed != null)
+            {
+                yield return _unnamed;
+            }
+            foreach (VarStore v in _tables.Values)
+            {
+                yield return v;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 对象上的变量表。obj.getVar() 取名字为 "default" 的那一张,obj.getVar("名字") 取按名字区分的另一张(第一次取时创建;见 <see cref="VarTables"/>)。
     /// 每张表里有三组按编号存取的标量(整数、布尔、浮点)和几个向量(整数向量、对象向量等)。
     /// 编号都是脚本里的常量(VAR_xxx);没写过的编号读出来是 0 / false / 0.0。名字、常量与向量的用途由各脚本约定,宿主不解释。
     /// </summary>

@@ -1,16 +1,20 @@
 name	status	forms	script_calls	note
+getVar	Verified	Member	1579	对象或依附体上的变量表,按名字区分。读过客户端三个类的实现(E-048):getVar(名字) 都转到同一个按名字查找的函数 0x0087F9C0(以名字为键的映射,找不到就新建一张;名字区分大小写),映射的位置分别是 0x0087FCC0 里 [this+0x208] 指向的对象、0x009DB490 里的 this+0xAC、0x00BBCF90 里的 this+0x66F4。不带名字的 getVar():对象一类(0x0087FDC0、0x00BBD030)只是用字面量 "default" 调用按名字的函数,所以 getVar() 与 getVar("default") 是同一张表;依附体一类(0x005AC300)返回对象里直接嵌的 this+0xC4 那一张(就是 sq_var),它和名字叫 "default" 的不是同一张
 get_vector	Verified	Member	519	变量表的整数向量:取第 i 项(越界或为负为 0)(客户端 0x005b7360)
 push_vector	Verified	Member	469	变量表的整数向量:末尾加一项(客户端 0x0042b190 转到向量的追加函数)
 set_vector	Verified	Member	315	变量表的整数向量:设第 i 项;下标越界(含为负)什么也不做,不扩展(客户端 0x005b7390)
 isMyControlObject	Verified	Member	306	是不是本机玩家控制的对象:客户端(0x007f9eb0)看对象的"所有者"(虚表 0x1B0 槽)是不是本机玩家的角色;角色的所有者是它自己,玩家创建的被动对象沿创建者找到所属角色,怪物不是。单机里:玩家角色与它创建的被动对象为真。客户端还有一个全局模式字段(值为 2 时无条件为真),含义没有查明,这里当作不是 2
 getSkillSubState	Verified	Member	198	技能子状态(技能脚本自定义的阶段编号;客户端 0x0042b0f0 读对象里一个受保护的整数,偏移 0x5468)
+sq_AddFunctionName	Verified	Member	189	依附体:登记一个事件的回调函数名 (事件名, 函数名)。每个事件名只登记一次:已经登记过的再登记会被忽略,先登记的有效(客户端 0x009d9e30:先在 this+0x1DC 的名字映射里查找,找不到才插入并赋值,找到了什么也不做;名字的比较区分大小写,E-048)
 readDword	Verified	Member	185	读一个 Dword(有符号 32 位:脚本用它传可为负的坐标);客户端不检查越界,这里越界返回 0(有意的差别)
 clear_vector	Verified	Member	171	变量表的整数向量:清空(客户端 0x0042b180)
 sq_BinaryWriteDword	Verified	Global	171	往普通发送缓冲追加一个 Dword(4 字节,小端;布尔与字节共用同一个实现)
 sq_GetLevelData	Verified	Both	171	技能按等级取值表 [level info] 的第 idx 列:参数 (技能, idx[, 等级]);省略等级时取该技能当前等级;只有一个参数时按当前状态登记的技能取(E-036)。全局写法传入 null 返回 -1,技能不存在返回 0;结果是整数(客户端 0x005ae460 把浮点结果截断成整数;真正取值的函数 0x00911b90 在受保护区域里,没有读,所以是否还叠加了被动技能等加成不明)
 sq_GetIntData	Verified	Both	155	技能静态数据 [static data] 的第 idx 项:参数 (技能, idx[, 等级]),等级忽略(静态数据不分等级);只有一个参数 (idx) 时按当前状态登记的技能取;决斗场模式取 [pvp] 里的(E-036)。全局写法传入 null 返回 -1,技能不存在返回 0(客户端 0x005ae4b0;真正取值的函数 0x00911930 只是跳到受保护区域,没有读)
 getParent	Verified	Member	146	对象的父对象(依附体:被依附的对象);没有则 null(客户端 0x011d5270 读对象里偏移 4 的指针)
+sq_IntVectClear	Verified	Both	130	清空对象的数据数组:客户端 0x006844e0 与 0x00BB85B0(两个类)对 this+0x59D8、this+0x6708 处的容器做“从头删到尾”(0x01389550),E-048
 sq_SetCurrentAnimation	Verified	Both	101	按 CUSTOM_ANI_* 下标设置当前动画:下标是角色 .chr 或被动对象 .obj 里 [etc motion] 的下标(E-036);参数是动画对象时改播那个动画。同时清空命中列表
+sq_GetGlobalIntVector	Verified	Global	89	全局共用的整数数组:客户端 0x005adb90 返回固定地址 0x01A4DBC4 处的同一个对象(E-048)
 setInt	Verified	Member	79	变量表:按编号存整数(32 位;与布尔、浮点共用一张表,同一编号只有一项;客户端 0x010dd3a0)
 getInt	Verified	Member	77	变量表:按编号取整数(没存过为 0;读的是存的 32 位值,不管它是用 setBool 还是 setFloat 存的;客户端 0x010dd5f0)
 sq_GetDistancePos	Verified	Both	66	从 x 沿朝向前进 distance (x, 朝向, 距离):朝向是向左(0)就减,其余一律加(包括向上、向下、居中;客户端 0x005adfa0 与 0x00bb1470 只比较是否为 0,E-046)
@@ -59,6 +63,7 @@ sq_WriteByte	Verified	Member	3	往普通发送缓冲追加一个 Byte(1 字节,�
 readBool	Verified	Member	2	读一个 Bool(1 字节,非 0 为真);客户端不检查越界,这里越界返回假(有意的差别)
 sq_BinaryParameterStartWrite	Verified	Global	2	清空参数缓冲(客户端 0x005aca00)。这是与普通发送缓冲不同的另一个缓冲,不要混用
 sq_WriteBool	Verified	Member	2	往普通发送缓冲追加一个 Bool(1 字节,小端;布尔与字节共用同一个实现)
+sq_getRandomUnique	Verified	Global	2	不重复的随机整数 (是否重新开始, 下限, 上限):客户端(0x005d71d0,E-048)有一个全局的“剩余候选”数组:下限为负直接返回 -1(什么也不动);第一个参数为真先清空数组;数组是空的就按 [下限, 上限) 补满(上限不含);再从数组里随机取一项、把它删掉并返回。所以在数组没取空之前,下限和上限都不起作用;数组补满后又为空(下限不小于上限)时客户端会除零崩溃,这里返回 -1。脚本里的用法是 sq_getRandomUnique(true, 0, 个数) 之后连续取下标。随机数本身不重现原版的序列
 sq_binaryData_writeFloat	Verified	Member	1	往普通发送缓冲追加一个 Float(4 字节单精度,小端)
 sq_BinaryParameterWriteBool	Verified	Global	0	往参数缓冲追加一个 Bool(1 字节,小端;不是普通发送缓冲)
 sq_BinaryParameterWriteByte	Verified	Global	0	往参数缓冲追加一个 Byte(1 字节,小端;不是普通发送缓冲)
@@ -66,30 +71,26 @@ sq_BinaryParameterWriteFloat	Verified	Global	0	往参数缓冲追加一个 Float
 sq_BinaryParameterWriteWord	Verified	Global	0	往参数缓冲追加一个 Word(2 字节,小端;不是普通发送缓冲)
 sq_binaryData_writeBool	Verified	Member	0	往普通发送缓冲追加一个 Bool(1 字节,小端;布尔与字节共用同一个实现)
 sq_binaryData_writeByte	Verified	Member	0	往普通发送缓冲追加一个 Byte(1 字节,小端;布尔与字节共用同一个实现)
-getVar	Inferred	Member	1579	对象的变量表:getVar() 取默认的一张,getVar("名字") 取按名字区分的另一张(第一次取时创建);依附体同样可用
-sq_IntVectPush	Inferred	Both	212	往对象的数据数组末尾加一个整数
+sq_IntVectPush	Inferred	Both	212	往对象的数据数组末尾加一个整数:客户端 0x006844f0 与 0x00BB8CB0 往同一个容器(this+0x59D8、this+0x6708)追加,追加函数 0x00493770 是受保护区的跳板、没有读,所以“追加到末尾”与元素宽度只是按名字和参数形状推断(E-048)
 sq_LoadSkillEffectAni	Inferred	Member	195	预载一个技能用的特效动画 (技能, 路径):只记录到 PreloadedSkillEffects,脚本里用的时候仍按路径创建
-sq_AddFunctionName	Inferred	Member	189	依附体:登记一个事件的回调函数名 (事件名, 函数名)
 sq_GetSkillLevel	Inferred	Both	167	技能等级(未学为 0);全局写法传入 null 返回 -1。客户端 0x005ae4f0:空则 -1,否则取对象的 getSkillLevel(技能)(虚表槽 0x7d0,E-046)
 getXPos	Inferred	Member	165	对象的 x 坐标;全局写法传入 null 返回 -1(客户端 0x005adf40)
 sq_AddSetStatePacket	Inferred	Both	160	请求对象切换状态 (状态, 优先级, 是否带数据):第 3 个参数为真时随请求发出对象当前的数据数组(sq_IntVectPush 攒的那个),为假时不带数据(onSetState 收到空数组);回调结束后处理。客户端 0x0067cba0:真走 setState(状态, 数据数组, 优先级),假走 setState(状态, 空, 优先级)(E-046)。接口本身只是转交,'请求'与'执行'之间的优先级规则见 QueueState
 sq_PlaySound	Inferred	Both	145	播放声音 (声音键[, 其他]);只发出事件,不播放
 getYPos	Inferred	Member	143	对象的 y(纵深)坐标;全局写法传入 null 返回 -1(客户端 0x005adf60)
 getZPos	Inferred	Member	133	对象的 z(高度)坐标;全局写法传入 null 返回 -1(客户端 0x005adf80)
-sq_IntVectClear	Inferred	Both	130	清空对象的数据数组
 getDirection	Inferred	Member	129	对象的朝向(ENUM_DIRECTION_*);全局写法传入 null 返回 -1(客户端 0x005addb0)
-sq_GetCurrentAttackInfo	Inferred	Both	129	对象当前的攻击信息对象
+sq_GetCurrentAttackInfo	Inferred	Both	129	对象当前的攻击信息对象;对象为 null 时返回 null(客户端 0x005ae8e0:非空才调用对象的第 0x204 号虚函数,空则返回 0;虚函数的内容没读,E-048)
 GetAnimationMap	Inferred	Member	105	变量表:按名字取(没有则按路径载入)一个独立的动画对象 (名字, 路径);路径从数据根目录算起(例如 Character/Priest/Animation/Awakening4.ani,全库里确有这个文件)
 getState	Inferred	Member	102	对象当前的状态编号;全局写法传入 null 返回 -1(客户端 0x005adc10)
 setValid	Inferred	Member	98	依附体:设置是否有效(设为假会在下一次推进时结束);对象:设为假即销毁
 sq_SendDestroyPacketPassiveObject	Inferred	Global	98	销毁被动对象 (对象):在当前回调结束后销毁,销毁时调用 destroy_po_* 与 onDestroyObject_po_*
-sq_GetGlobalIntVector	Inferred	Global	89	全局共用的整数数组
 sq_SetCurrentAttackBonusRate	Inferred	Both	89	设置攻击倍率(单位依脚本:列注释为 %):参数可以是攻击信息或对象
-sq_IntVectorPush	Inferred	Global	87	往整数数组末尾加一个整数 (数组, 值)
+sq_IntVectorPush	Inferred	Global	87	往整数数组末尾加一个整数 (数组, 值):数组为 null 时什么也不做(客户端 0x005d71b0,与 sq_IntVectPush 共用受保护区里的追加跳板 0x00493770,“追加到末尾”是推断,E-048)
 Get	Inferred	Member	79	计时器:已计时间(毫秒)
 get_ct_vector	Inferred	Member	74	变量表的 ct 向量:取第 i 个计时器(越界为 null)
 sq_GetCurrentAnimation	Inferred	Both	72	对象当前动画的视图(随对象的动画一起变);没有动画为 null
-sq_SendCreatePassiveObjectPacket	Inferred	Both	72	创建被动对象 (编号, 未知 0, x, y, z[, 朝向]):位置相对创建者(x 向前、朝向左时镜像),朝向参数为 NEUTRAL 时偏移不镜像;发送缓冲里写好的数据随消息交给 setCustomData_po_*;返回 0(原版返回的编号含义未知)
+sq_SendCreatePassiveObjectPacket	Inferred	Both	72	创建被动对象 (编号, 未知 0, x, y, z[, 朝向]):位置相对创建者(x 向前、朝向左时镜像),朝向参数为 NEUTRAL 时偏移不镜像;发送缓冲里写好的数据随消息交给 setCustomData_po_*;对象为 null 时返回 -1(客户端 0x005ae780,E-048);其余情况返回 0(客户端返回第 0x340 号虚函数的结果,含义未知)
 get_obj_vector	Inferred	Member	70	变量表的对象向量:取第 i 个(越界为 null)。向量里已销毁的对象在下一个时刻起被清掉(推断:ChainLightning 靠'向量变空'判断光束全部消失),同一时刻内仍可取到
 getTopCharacter	Inferred	Member	69	沿父对象向上找到最顶层的角色;没有为 null
 sq_IntVectorClear	Inferred	Global	68	清空整数数组 (数组)
@@ -322,7 +323,6 @@ sq_IsinMapArea	Inferred	Global	2	目标是否在对象前方的矩形里 (对象
 sq_PostDelayedMessage	Inferred	Global	2	延时给对象发消息 (对象, 消息类型, 参数 1, 参数 2, 延时毫秒):到点后同 sq_SendMessage
 sq_SetGrabable	Inferred	Both	2	设置对象能否被抓取 (对象, 真假):只记录,sq_IsGrabable 读它(依据:IceMan 的依附体在施放期间设为假、结束时设回真)
 sq_ToDegree	Inferred	Global	2	弧度转角度
-sq_getRandomUnique	Inferred	Global	2	不重复的随机整数 (是否重新开始, 下限, 上限):范围含两端;取尽后重新开始(依据 sq_getRandomUnique(false, 0, i % len) 的用法推断上限含在内)
 stopTimeEvent	Inferred	Member	2	取消一个计时事件
 CNRDObject.getAngleDistanceXPos	Inferred	Member	1	x + cos(角度) * 半径,朝左时取反 (x, 角度, 半径, 朝向)
 CNRDObject.getAngleDistanceYPos	Inferred	Member	1	y + sin(角度) * 半径 (y, 角度, 半径, 标志);标志的含义未知,忽略

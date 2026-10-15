@@ -141,8 +141,7 @@ namespace Dnf.Game
         /// <summary>对象自己的计时器(obj.getTimer());切换状态时若 isResetTimer 为真会重置。</summary>
         public GameTimer Timer => _timer ?? (_timer = new GameTimer(World));
 
-        private readonly Dictionary<string, VarStore> _vars = new Dictionary<string, VarStore>(StringComparer.Ordinal);
-        private VarStore _defaultVar;
+        private VarTables _varTables;
 
         internal readonly Queue<StatePacket> Packets = new Queue<StatePacket>();
 
@@ -161,35 +160,15 @@ namespace Dnf.Game
             DataVector.World = world;
         }
 
-        /// <summary>obj.getVar() 与 obj.getVar("名字"):没有则创建。</summary>
+        /// <summary>obj.getVar() 与 obj.getVar("名字"):没有则创建;不带名字(null)就是名字为 "default" 的那一张(E-048)。</summary>
         public VarStore GetVar(string name)
         {
-            if (name == null)
-            {
-                if (_defaultVar == null)
-                {
-                    _defaultVar = new VarStore { World = World };
-                }
-                return _defaultVar;
-            }
-            if (!_vars.TryGetValue(name, out VarStore store))
-            {
-                store = new VarStore { World = World };
-                _vars.Add(name, store);
-            }
-            return store;
+            return (_varTables ?? (_varTables = new VarTables(World, true))).Get(name);
         }
 
         internal IEnumerable<VarStore> AllVarStores()
         {
-            if (_defaultVar != null)
-            {
-                yield return _defaultVar;
-            }
-            foreach (VarStore v in _vars.Values)
-            {
-                yield return v;
-            }
+            return _varTables == null ? new VarStore[0] : _varTables.All();
         }
 
         public int GetSkillLevel(int skillId)

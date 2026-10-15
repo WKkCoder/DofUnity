@@ -27,7 +27,7 @@ namespace Dnf.Game
                 case GameObject o:
                     return o.GetVar(name);
                 case Appendage a:
-                    return a.Vars;
+                    return a.GetVar(name);
                 default:
                     return null;
             }
@@ -108,7 +108,11 @@ namespace Dnf.Game
             const NativeForm M = NativeForm.Member;
             const NativeStatus I = NativeStatus.Inferred;
 
-            Define("getVar", I, "对象的变量表:getVar() 取默认的一张,getVar(\"名字\") 取按名字区分的另一张(第一次取时创建);依附体同样可用", M, c =>
+            Define("getVar", NativeStatus.Verified,
+                "对象或依附体上的变量表,按名字区分。读过客户端三个类的实现(E-048):getVar(名字) 都转到同一个按名字查找的函数 0x0087F9C0(以名字为键的映射,找不到就新建一张;名字区分大小写),"
+                + "映射的位置分别是 0x0087FCC0 里 [this+0x208] 指向的对象、0x009DB490 里的 this+0xAC、0x00BBCF90 里的 this+0x66F4。"
+                + "不带名字的 getVar():对象一类(0x0087FDC0、0x00BBD030)只是用字面量 \"default\" 调用按名字的函数,所以 getVar() 与 getVar(\"default\") 是同一张表;"
+                + "依附体一类(0x005AC300)返回对象里直接嵌的 this+0xC4 那一张(就是 sq_var),它和名字叫 \"default\" 的不是同一张", M, c =>
             {
                 string name = c.Has(0) && !c.IsNull(0) ? c.Str(0) : null;
                 VarStore v = VarOf(c.Self, name);

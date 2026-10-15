@@ -9,16 +9,17 @@ namespace Dnf.Game
         public const int DefaultRandomSeed = 12345;
 
         private Random _random = new Random(DefaultRandomSeed);
-        private readonly System.Collections.Generic.HashSet<int> _uniqueUsed = new System.Collections.Generic.HashSet<int>();
+        /// <summary>sq_getRandomUnique 的"剩余候选"数组(客户端的一个静态整数数组,0x01A4E74C;E-048)。</summary>
+        private readonly System.Collections.Generic.List<int> _uniquePool = new System.Collections.Generic.List<int>();
 
         /// <summary>脚本使用的随机数发生器(种子固定,测试里行为可重复)。</summary>
         public Random ScriptRandom => _random;
 
-        /// <summary>把脚本随机数序列重置到起点(并清空"不重复随机数"的已用记录)。逐技能扫描每个技能开始前调用,结果就不依赖前面跑过哪些技能。</summary>
+        /// <summary>把脚本随机数序列重置到起点(并清空"不重复随机数"的剩余候选)。逐技能扫描每个技能开始前调用,结果就不依赖前面跑过哪些技能。</summary>
         public void ResetScriptRandom(int seed = DefaultRandomSeed)
         {
             _random = new Random(seed);
-            _uniqueUsed.Clear();
+            _uniquePool.Clear();
         }
 
         private void RegisterMathNatives()
@@ -69,28 +70,36 @@ namespace Dnf.Game
             DefineFree("sq_GetDistance", V,
                 "两点距离 (x1, y1, x2, y2, 平面):纵向差先除以缩放再与横向差开方,结果向零截断。最后一个参数为真时纵向不缩放(脚本里的 4 处调用都传真);为假时纵向差除以 0.29(文件里的初值 29 × 0.01,运行时取值未观察)(客户端 0x007fb7c0,E-046)", c =>
                 c.Return(NativeMath.Distance(c.Int32(0), c.Int32(1), c.Int32(2), c.Int32(3), c.BoolOr(4, true))));
-            DefineFree("sq_getRandomUnique", I,
-                "不重复的随机整数 (是否重新开始, 下限, 上限):范围含两端;取尽后重新开始(依据 sq_getRandomUnique(false, 0, i % len) 的用法推断上限含在内)", c =>
+            DefineFree("sq_getRandomUnique", V,
+                "不重复的随机整数 (是否重新开始, 下限, 上限):客户端(0x005d71d0,E-048)有一个全局的“剩余候选”数组:下限为负直接返回 -1(什么也不动);第一个参数为真先清空数组;"
+                + "数组是空的就按 [下限, 上限) 补满(上限不含);再从数组里随机取一项、把它删掉并返回。所以在数组没取空之前,下限和上限都不起作用;"
+                + "数组补满后又为空(下限不小于上限)时客户端会除零崩溃,这里返回 -1。脚本里的用法是 sq_getRandomUnique(true, 0, 个数) 之后连续取下标。随机数本身不重现原版的序列", c =>
                 {
+                    int lo = c.Int32(1);
+                    if (lo < 0)
+                    {
+                        return c.Return(-1);
+                    }
                     if (c.BoolOr(0, false))
                     {
-                        _uniqueUsed.Clear();
+                        _uniquePool.Clear();
                     }
-                    int lo = c.Int32(1);
-                    int hi = Math.Max(lo, c.Int32(2));
-                    if (_uniqueUsed.Count >= hi - lo + 1)
+                    if (_uniquePool.Count == 0)
                     {
-                        _uniqueUsed.Clear();
-                    }
-                    for (int guard = 0; guard < 1000; guard++)
-                    {
-                        int v = lo + _random.Next(hi - lo + 1);
-                        if (_uniqueUsed.Add(v))
+                        int hi = Math.Min(c.Int32(2), lo + (1 << 20));
+                        for (int i = lo; i < hi; i++)
                         {
-                            return c.Return(v);
+                            _uniquePool.Add(i);
                         }
                     }
-                    return c.Return(lo);
+                    if (_uniquePool.Count == 0)
+                    {
+                        return c.Return(-1);
+                    }
+                    int pick = _random.Next(_uniquePool.Count);
+                    int value = _uniquePool[pick];
+                    _uniquePool.RemoveAt(pick);
+                    return c.Return(value);
                 });
             DefineFree("sq_RGB", V,
                 "颜色:sq_RGB(r, g, b) 打包成 0xFFBBGGRR(不透明,红在低位)(客户端 0x005adae0,E-046)", c =>
