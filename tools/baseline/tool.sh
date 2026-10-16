@@ -18,7 +18,7 @@ OUT="$(mktemp "$ROOT/re/baseline/.out.XXXXXX")"
 ERR="$(mktemp "$ROOT/re/baseline/.err.XXXXXX")"
 trap 'rm -f "$OUT" "$ERR"' EXIT
 
-# --out 等相对路径要变成绝对路径,因为应用经 open 启动时工作目录不是当前目录
+# --out / --shot / --out-dir / --index 的相对路径要变成绝对路径,因为应用经 open 启动时工作目录不是当前目录
 args=()
 expect_path=0
 for a in "$@"; do
@@ -27,7 +27,7 @@ for a in "$@"; do
     expect_path=0
   else
     args+=("$a")
-    [[ "$a" == "--out" ]] && expect_path=1
+    case "$a" in --out|--shot|--out-dir|--index) expect_path=1 ;; esac
   fi
 done
 
