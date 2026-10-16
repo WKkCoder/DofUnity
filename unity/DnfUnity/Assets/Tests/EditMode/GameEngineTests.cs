@@ -81,9 +81,11 @@ namespace DnfUnity.Tests
 
         // 三个覆盖了不同引擎语义的技能:FrozenLand(动画循环标记,E-039)、PandemoniumEx(时间事件次数 0)、Awakening(叠加动画与 GetAnimationMap);
         // 期望值是 .NET 里 `dnf game-check --sweep --only <后缀>` 的结果(每个技能开始前重置脚本随机数)。
+        // 2026-10-16 刷新:E-046、E-048 改正了原生接口的几处实现后,.NET 里这两个技能的时长变了(PandemoniumEx 1820 → 1790,
+        // Awakening 3690 → 3250),当时没有重跑 Unity 测试,常数一直是旧的;Unity 与 .NET 的结果现在重新核对为一致。
         [TestCase("FrozenLand", 4340)]
-        [TestCase("PandemoniumEx", 1820)]
-        [TestCase("Awakening", 3690)]
+        [TestCase("PandemoniumEx", 1790)]
+        [TestCase("Awakening", 3250)]
         public void GameWorld_RealData_SweepSkillsFinishAtTheSameTimeAsInDotNet(string suffix, int expectedMs)
         {
             using (PvfArchive pvf = OpenOrIgnore())

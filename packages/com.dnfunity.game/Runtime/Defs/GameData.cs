@@ -16,6 +16,7 @@ namespace Dnf.Game
         public const string CharacterListPath = "character/character.lst";
         public const string SkillListPath = "skill/skilllist.lst";
         public const string PassiveObjectListPath = "passiveobject/passiveobject.lst";
+        public const string MonsterListPath = "monster/monster.lst";
 
         private readonly IScriptSource _source;
         private PvfStringTable _strings;
@@ -250,6 +251,109 @@ namespace Dnf.Game
             }
             _passiveObjects[id] = def;
             return def;
+        }
+
+        /// <summary>怪物编号对应的 .mob 路径(经 monster/monster.lst);找不到返回 null。</summary>
+        public string GetMonsterPath(int id)
+        {
+            Dictionary<int, string> list = ReadList(MonsterListPath);
+            if (list != null && list.TryGetValue(id, out string relative))
+            {
+                return PvfPath.ResolveRelativeTo(MonsterListPath, relative);
+            }
+            return null;
+        }
+
+        /// <summary>monster/monster.lst 里的全部怪物编号(按编号升序);读不到列表时为空。</summary>
+        public int[] MonsterIds()
+        {
+            Dictionary<int, string> list = ReadList(MonsterListPath);
+            if (list == null)
+            {
+                return Array.Empty<int>();
+            }
+            var ids = new List<int>(list.Keys);
+            ids.Sort();
+            return ids.ToArray();
+        }
+
+        private readonly Dictionary<int, MonsterDef> _monsters = new Dictionary<int, MonsterDef>();
+
+        /// <summary>怪物编号对应的 .mob 定义;找不到返回 null。结果会缓存。</summary>
+        public MonsterDef GetMonster(int id)
+        {
+            if (_monsters.TryGetValue(id, out MonsterDef cached))
+            {
+                return cached;
+            }
+            MonsterDef def = null;
+            string path = GetMonsterPath(id);
+            if (path != null)
+            {
+                ScriptLine[] lines = ReadScript(path);
+                if (lines != null)
+                {
+                    def = new MonsterDef(id, path, lines);
+                }
+            }
+            _monsters[id] = def;
+            return def;
+        }
+
+        private MonsterBaseTables _monsterBaseTables;
+        private readonly Dictionary<MonsterDef, MonsterBaseTable> _ownTables = new Dictionary<MonsterDef, MonsterBaseTable>();
+
+        /// <summary>五张公共怪物基础属性表(第一次用到时读取并缓存;缺的表为空表)。</summary>
+        public MonsterBaseTables MonsterBaseTables
+        {
+            get
+            {
+                if (_monsterBaseTables == null)
+                {
+                    _monsterBaseTables = MonsterBaseTables.Load(this);
+                }
+                return _monsterBaseTables;
+            }
+        }
+
+        /// <summary>
+        /// 怪物自带的基础属性表([base table] 指向的 .tbl,路径相对 monster/ 目录)。有多个时按出现顺序加载,
+        /// 后加载的覆盖相同行号的行(服务端每次从行 0 开始写)。没有 [base table] 或一张也读不到时返回 null。
+        /// </summary>
+        public MonsterBaseTable GetMonsterOwnTable(MonsterDef def)
+        {
+            if (def == null)
+            {
+                return null;
+            }
+            if (_ownTables.TryGetValue(def, out MonsterBaseTable cached))
+            {
+                return cached;
+            }
+            var rows = new List<MonsterBaseRow>();
+            foreach (string relative in def.BaseTablePaths)
+            {
+                ScriptLine[] lines = ReadScript(PvfPath.ResolveRelativeTo(MonsterListPath, relative));
+                if (lines == null)
+                {
+                    continue;
+                }
+                MonsterBaseTable table = MonsterBaseTable.Parse(lines);
+                for (int i = 0; i < table.Count; i++)
+                {
+                    if (i < rows.Count)
+                    {
+                        rows[i] = table.Rows[i];
+                    }
+                    else
+                    {
+                        rows.Add(table.Rows[i]);
+                    }
+                }
+            }
+            MonsterBaseTable own = rows.Count > 0 ? new MonsterBaseTable(rows) : null;
+            _ownTables[def] = own;
+            return own;
         }
     }
 }
