@@ -89,4 +89,25 @@ public class ScriptDocumentTests
     {
         Assert.Throws<DnfFormatException>(() => ScriptDocument.Parse(new byte[] { 1, 2, 3 }, Pool()));
     }
+
+    [Fact]
+    public void FirstNumber_TakesTheFirstIntHexOrFloatInOrder()
+    {
+        int f = BitConverter.SingleToInt32Bits(850.0f);
+        byte[] data = TestData.BuildTokenScript(new (byte, int)[]
+        {
+            (Tag, 0), (4, f),                    // 浮点
+            (Tag, 1), (Int, 7), (4, f),          // 整数在前
+            (Tag, 2), (3, 0x1F),                 // 十六进制
+            (Tag, 4), (Str, 3), (4, f),          // 字符串之后的第一个数
+            (Tag, 5),                            // 没有值
+        });
+        ScriptLine[] lines = ScriptDocument.Parse(data, Pool());
+        Assert.Equal(850.0, lines[0].FirstNumber());
+        Assert.Equal(7.0, lines[1].FirstNumber());
+        Assert.Equal(31.0, lines[2].FirstNumber());
+        Assert.Equal(850.0, lines[3].FirstNumber());
+        Assert.Null(lines[4].FirstNumber());
+        Assert.Empty(lines[0].Ints());           // 浮点不在 Ints() 里:这是 FirstNumber 存在的原因
+    }
 }

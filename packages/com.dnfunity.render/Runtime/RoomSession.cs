@@ -10,7 +10,7 @@ namespace Dnf.Render
     /// 主角站在房间的通行表上走动(<see cref="RoomWalkArea"/>);镜头沿用城镇里量到的死区跟随,范围 [0, 房间宽 − 屏宽](证据 E-066、E-068)。
     /// 目前没有怪物、攻击、出口的开关与换房间。
     /// </summary>
-    public sealed class RoomSession : IHeroSession
+    public sealed class RoomSession : IActionSession
     {
         /// <summary>纵向常数,与城镇相同(洛兰第一、第二个房间上量到,证据 E-067)。</summary>
         public const int DefaultGroundY = TownSession.DefaultGroundY;
@@ -44,14 +44,34 @@ namespace Dnf.Render
 
         public void Update(double deltaMs, int dirX, int dirY)
         {
-            Hero.Update(deltaMs, dirX, dirY);
+            Update(deltaMs, dirX, dirY, false);
+        }
+
+        /// <summary>同 <see cref="Update(double, int, int)"/>,多一个攻击键(见 <see cref="TownHero.Update(double, int, int, bool)"/>)。</summary>
+        public void Update(double deltaMs, int dirX, int dirY, bool attackPressed)
+        {
+            Hero.Update(deltaMs, dirX, dirY, attackPressed);
             Camera.Follow(Hero.X);
         }
 
         public List<SceneSprite> Build(long timeMs)
         {
-            List<SceneSprite> hero = HeroVisible ? Hero.Sprites(_assets, Projection) : null;
-            return RoomScene.Build(_assets, Content, Camera.IntX, GroundY, timeMs, hero);
+            return Build(timeMs, null);
+        }
+
+        /// <summary>绘制列表,并把 <paramref name="extra"/>(怪物、血条等外部拼出来的精灵)和主角一起排进深度顺序。</summary>
+        public List<SceneSprite> Build(long timeMs, IReadOnlyList<SceneSprite> extra)
+        {
+            var sprites = new List<SceneSprite>();
+            if (HeroVisible)
+            {
+                sprites.AddRange(Hero.Sprites(_assets, Projection));
+            }
+            if (extra != null)
+            {
+                sprites.AddRange(extra);
+            }
+            return RoomScene.Build(_assets, Content, Camera.IntX, GroundY, timeMs, sprites.Count == 0 ? null : sprites);
         }
     }
 

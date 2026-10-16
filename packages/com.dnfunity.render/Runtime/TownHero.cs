@@ -99,6 +99,9 @@ namespace Dnf.Render
 
         /// <summary>行走([move motion])。</summary>
         Move,
+
+        /// <summary>普通攻击连招里的一击(.chr 的 [attack motion] 第 <see cref="TownHero.AttackStage"/> 项,证据 E-069)。</summary>
+        Attack,
     }
 
     /// <summary>
@@ -177,7 +180,7 @@ namespace Dnf.Render
         /// <summary>
         /// 行走动画的播放倍率(证据 E-066):.ani 里每帧 100 毫秒,但原版连拍里行走一帧只有约 83 毫秒
         /// (在 23 个点上联合拟合起步时间与每帧时长,可行范围 82.4 到 84.3 毫秒,即倍率 1.19 到 1.21);站立动画按 .ani 的原速(倍率 1.0,30 张都对得上)。
-        /// 倍率与角色脚本 [move speed] 850 的关系没有研究,取 1.2。
+        /// 倍率与角色脚本 [move speed] 的关系没有研究,取 1.2。
         /// </summary>
         public const double DefaultMoveAnimationRate = 1.2;
 
@@ -190,6 +193,13 @@ namespace Dnf.Render
         private readonly IReadOnlyList<WorldRect> _area;
         private readonly IWalkArea _walk;
         private double _motionMs;
+        private AniFile[] _attacks = new AniFile[0];
+        private string[] _attackPaths = new string[0];
+        private AniTimeline[] _attackTimelines = new AniTimeline[0];
+        private bool _attackQueued;
+
+        /// <summary>攻击动画的播放倍率。取 1.0(.ani 原速);原版连拍里没有量过攻击一击的时长(证据 E-069),角色脚本的 [attack speed] 与它的关系没有研究。</summary>
+        public const double DefaultAttackAnimationRate = 1.0;
 
         public AvatarOutfit Outfit { get; set; }
 
@@ -206,6 +216,42 @@ namespace Dnf.Render
         public double WalkSpeedX { get; set; } = DefaultWalkSpeedX;
         public double WalkSpeedY { get; set; } = DefaultWalkSpeedY;
         public double MoveAnimationRate { get; set; } = DefaultMoveAnimationRate;
+        public double AttackAnimationRate { get; set; } = DefaultAttackAnimationRate;
+
+        /// <summary>角色脚本 [attack motion] 里的连招段数(没载入攻击动作时为 0)。</summary>
+        public int AttackCount => _attacks.Length;
+
+        /// <summary>
+        /// 角色脚本的 [move speed](没有则 0)。与实测的行走速度 <see cref="WalkSpeedX"/>(像素/秒)的比,用来把怪物脚本的 [move speed] 换算成像素/秒
+        /// (证据 E-069):两者是同一个单位只是假设,原版的换算没有读出来。
+        /// </summary>
+        public int MoveSpeedStat { get; private set; }
+
+        /// <summary>正在挥的是连招第几段(从 0 数);不在攻击时为 0。</summary>
+        public int AttackStage { get; private set; }
+
+        /// <summary>从开始玩起累计挥出的次数(每开始一击加 1)。命中判定用它给"同一击只打中同一目标一次"去重。</summary>
+        public long SwingNumber { get; private set; }
+
+        /// <summary>是否正在挥击。</summary>
+        public bool IsAttacking => Motion == HeroMotion.Attack;
+
+        /// <summary>当前这一击的动画文件名(小写,形如 attack1.ani);不在攻击时为 null。</summary>
+        public string AttackMotionFile
+        {
+            get
+            {
+                if (!IsAttacking || (uint)AttackStage >= (uint)_attackPaths.Length)
+                {
+                    return null;
+                }
+                string path = _attackPaths[AttackStage];
+                return path.Substring(path.LastIndexOf('/') + 1).ToLowerInvariant();
+            }
+        }
+
+        /// <summary>当前这一击已经过去的动画毫秒数(已乘播放倍率)。</summary>
+        public long AttackAnimationMs => (long)(_motionMs * AttackAnimationRate);
 
         /// <summary>当前动作已经播放的毫秒数(状态一变就从 0 重新数)。</summary>
         public long MotionMs => (long)_motionMs;
@@ -253,7 +299,10 @@ namespace Dnf.Render
             double x, double y, bool facingLeft, string restTag = TownRestTag)
         {
             LoadMotions(assets, chrPath, restTag, out string restPath, out string movePath, out AniFile rest, out AniFile move);
-            return new TownHero(outfit, rest, restPath, move, movePath, area, x, y, facingLeft);
+            var hero = new TownHero(outfit, rest, restPath, move, movePath, area, x, y, facingLeft);
+            hero.LoadAttackMotions(assets, chrPath);
+            hero.LoadMoveSpeedStat(assets, chrPath);
+            return hero;
         }
 
         /// <summary>同 <see cref="Create(DnfAssets, string, AvatarOutfit, IReadOnlyList{WorldRect}, double, double, bool, string)"/>,可走区域用一般的 <see cref="IWalkArea"/>(副本房间的瓦片通行表)。</summary>
@@ -261,7 +310,10 @@ namespace Dnf.Render
             double x, double y, bool facingLeft, string restTag = TownRestTag)
         {
             LoadMotions(assets, chrPath, restTag, out string restPath, out string movePath, out AniFile rest, out AniFile move);
-            return new TownHero(outfit, rest, restPath, move, movePath, walk, x, y, facingLeft);
+            var hero = new TownHero(outfit, rest, restPath, move, movePath, walk, x, y, facingLeft);
+            hero.LoadAttackMotions(assets, chrPath);
+            hero.LoadMoveSpeedStat(assets, chrPath);
+            return hero;
         }
 
         private static void LoadMotions(DnfAssets assets, string chrPath, string restTag, out string restPath, out string movePath,
@@ -300,8 +352,91 @@ namespace Dnf.Render
             X = x;
             Y = y;
             FacingLeft = facingLeft;
-            Motion = motion;
+            Motion = motion == HeroMotion.Attack && _attacks.Length == 0 ? HeroMotion.Rest : motion;
             _motionMs = motionMs < 0 ? 0 : motionMs;
+            AttackStage = 0;
+            _attackQueued = false;
+        }
+
+        /// <summary>摆成"正在挥连招第 <paramref name="stage"/> 段、已播放 <paramref name="motionMs"/> 毫秒(按墙钟)"。没载入攻击动作时无效。</summary>
+        public void PlaceAttack(double x, double y, bool facingLeft, int stage, long motionMs)
+        {
+            if (_attacks.Length == 0)
+            {
+                Place(x, y, facingLeft, HeroMotion.Rest, motionMs);
+                return;
+            }
+            X = x;
+            Y = y;
+            FacingLeft = facingLeft;
+            Motion = HeroMotion.Attack;
+            AttackStage = stage < 0 ? 0 : (stage >= _attacks.Length ? _attacks.Length - 1 : stage);
+            _motionMs = motionMs < 0 ? 0 : motionMs;
+            _attackQueued = false;
+        }
+
+        /// <summary>读 .chr 的 [move speed](第一个数,真实脚本里是浮点标记;取整);没有这个标签就是 0。</summary>
+        public void LoadMoveSpeedStat(DnfAssets assets, string chrPath)
+        {
+            ScriptLine[] doc = assets.ReadScript(chrPath);
+            if (doc == null)
+            {
+                throw new DnfFormatException("PVF 里没有角色脚本: " + chrPath);
+            }
+            MoveSpeedStat = 0;
+            foreach (ScriptLine line in doc)
+            {
+                if (line.TagIs("[move speed]"))
+                {
+                    double? n = line.FirstNumber();
+                    MoveSpeedStat = n.HasValue ? (int)Math.Round(n.Value) : 0;
+                    break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 读 .chr 的 [attack motion](相对角色脚本所在目录的一串 .ani),作为连招的各段。读不到就保持没有攻击。
+        /// </summary>
+        public void LoadAttackMotions(DnfAssets assets, string chrPath)
+        {
+            ScriptLine[] doc = assets.ReadScript(chrPath);
+            if (doc == null)
+            {
+                throw new DnfFormatException("PVF 里没有角色脚本: " + chrPath);
+            }
+            var anis = new List<AniFile>();
+            var paths = new List<string>();
+            foreach (ScriptLine line in doc)
+            {
+                if (!line.TagIs("[attack motion]"))
+                {
+                    continue;
+                }
+                foreach (ScriptValue v in line.Values)
+                {
+                    if (v.Kind != ScriptValueKind.String || string.IsNullOrEmpty(v.Text))
+                    {
+                        continue;
+                    }
+                    string path = PvfPath.ResolveRelativeTo(chrPath, v.Text);
+                    AniFile ani = assets.LoadAni(path);
+                    if (ani == null || ani.Frames.Length == 0)
+                    {
+                        continue;
+                    }
+                    anis.Add(ani);
+                    paths.Add(path);
+                }
+                break;
+            }
+            _attacks = anis.ToArray();
+            _attackPaths = paths.ToArray();
+            _attackTimelines = new AniTimeline[_attacks.Length];
+            for (int i = 0; i < _attacks.Length; i++)
+            {
+                _attackTimelines[i] = new AniTimeline(_attacks[i]);
+            }
         }
 
         /// <summary>
@@ -311,12 +446,36 @@ namespace Dnf.Render
         /// </summary>
         public void Update(double deltaMs, int dirX, int dirY)
         {
+            Update(deltaMs, dirX, dirY, false);
+        }
+
+        /// <summary>
+        /// 同 <see cref="Update(double, int, int)"/>,多一个攻击键:站立或行走时按下就起手连招第 0 段(起手那一刻可以转身,之后朝向锁定,不能走动);
+        /// 挥击中再按一次,挥完这一击后接下一段(最后一段之后回到站立)。连按缓冲的时间窗没有样本,按"挥击中任何时刻按下都算"处理(证据 E-069)。
+        /// </summary>
+        public void Update(double deltaMs, int dirX, int dirY, bool attackPressed)
+        {
             if (deltaMs < 0)
             {
                 deltaMs = 0;
             }
             dirX = Math.Sign(dirX);
             dirY = Math.Sign(dirY);
+            if (Motion == HeroMotion.Attack)
+            {
+                AdvanceAttack(deltaMs, attackPressed);
+                return;
+            }
+            if (attackPressed && _attacks.Length > 0)
+            {
+                if (dirX != 0)
+                {
+                    FacingLeft = dirX < 0;
+                }
+                BeginAttack(0, 0.0);
+                AdvanceAttack(deltaMs, false);
+                return;
+            }
             bool moving = dirX != 0 || dirY != 0;
             HeroMotion next = moving ? HeroMotion.Move : HeroMotion.Rest;
             if (dirX != 0)
@@ -335,6 +494,50 @@ namespace Dnf.Render
                 X = MoveAxis(X, dirX * WalkSpeedX * seconds, true);
                 Y = MoveAxis(Y, dirY * WalkSpeedY * seconds, false);
             }
+        }
+
+        private void BeginAttack(int stage, double carryMs)
+        {
+            Motion = HeroMotion.Attack;
+            AttackStage = stage;
+            _motionMs = carryMs;
+            _attackQueued = false;
+            SwingNumber++;
+        }
+
+        /// <summary>这一击的墙钟时长(毫秒):动画总时长除以播放倍率,向上取整。</summary>
+        public double AttackDurationMs(int stage)
+        {
+            if ((uint)stage >= (uint)_attackTimelines.Length)
+            {
+                return 0.0;
+            }
+            double rate = AttackAnimationRate > 0.0 ? AttackAnimationRate : 1.0;
+            return Math.Ceiling(_attackTimelines[stage].TotalMilliseconds / rate);
+        }
+
+        private void AdvanceAttack(double deltaMs, bool attackPressed)
+        {
+            if (attackPressed && AttackStage + 1 < _attacks.Length)
+            {
+                _attackQueued = true;
+            }
+            _motionMs += deltaMs;
+            double duration = AttackDurationMs(AttackStage);
+            if (_motionMs < duration)
+            {
+                return;
+            }
+            double carry = _motionMs - duration;
+            if (_attackQueued && AttackStage + 1 < _attacks.Length)
+            {
+                BeginAttack(AttackStage + 1, carry);
+                return;
+            }
+            Motion = HeroMotion.Rest;
+            AttackStage = 0;
+            _attackQueued = false;
+            _motionMs = 0;
         }
 
         /// <summary>沿一个轴走 <paramref name="delta"/>,每次最多一像素地检查可走区域,走到边界就停在边界上。</summary>
@@ -395,13 +598,15 @@ namespace Dnf.Render
         }
 
         /// <summary>当前动画与帧:站立或行走的 .ani、它的路径、此刻显示的帧号。</summary>
-        public AniFile CurrentAni => Motion == HeroMotion.Move ? _move : _rest;
+        public AniFile CurrentAni => Motion == HeroMotion.Attack ? _attacks[AttackStage] : (Motion == HeroMotion.Move ? _move : _rest);
 
-        public string CurrentAnimationPath => Motion == HeroMotion.Move ? _movePath : _restPath;
+        public string CurrentAnimationPath => Motion == HeroMotion.Attack ? _attackPaths[AttackStage] : (Motion == HeroMotion.Move ? _movePath : _restPath);
 
-        public int CurrentFrame => Motion == HeroMotion.Move
-            ? _moveTimeline.FrameAt((long)(_motionMs * MoveAnimationRate))
-            : _restTimeline.FrameAt(MotionMs);
+        public int CurrentFrame => Motion == HeroMotion.Attack
+            ? _attackTimelines[AttackStage].FrameAt(AttackAnimationMs)
+            : (Motion == HeroMotion.Move
+                ? _moveTimeline.FrameAt((long)(_motionMs * MoveAnimationRate))
+                : _restTimeline.FrameAt(MotionMs));
 
         /// <summary>主角的精灵(按换装图层顺序),位置模型与 NPC 相同。</summary>
         public List<SceneSprite> Sprites(DnfAssets assets, TownProjection projection)
@@ -410,6 +615,12 @@ namespace Dnf.Render
             int wy = (int)Math.Floor(Y);
             return Outfit.SpritesAt(assets, CurrentAni, CurrentAnimationPath, CurrentFrame, projection, wx, wy, 0, FacingLeft, wy, ObjectId);
         }
+    }
+
+    /// <summary>带攻击键的场景游戏:每帧多一个"攻击键刚按下"的输入(副本房间里的战斗,证据 E-069)。</summary>
+    public interface IActionSession : IHeroSession
+    {
+        void Update(double deltaMs, int dirX, int dirY, bool attackPressed);
     }
 
     /// <summary>

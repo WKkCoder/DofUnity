@@ -6,7 +6,8 @@
       "source": "local",
       "dependencies": {
         "com.dnfunity.data": "0.1.0",
-        "com.dnfunity.render": "0.1.0"
+        "com.dnfunity.render": "0.1.0",
+        "com.dnfunity.play": "0.1.0"
       }
     },
     "com.dnfunity.data": {
@@ -23,6 +24,17 @@
         "com.dnfunity.data": "0.1.0",
         "com.dnfunity.squirrel": "0.1.0",
         "com.dnfunity.script": "0.1.0"
+      }
+    },
+    "com.dnfunity.play": {
+      "version": "file:../../../packages/com.dnfunity.play",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.dnfunity.data": "0.1.0",
+        "com.dnfunity.script": "0.1.0",
+        "com.dnfunity.game": "0.1.0",
+        "com.dnfunity.render": "0.1.0"
       }
     },
     "com.dnfunity.render": {

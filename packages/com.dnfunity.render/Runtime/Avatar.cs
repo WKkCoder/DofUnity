@@ -260,10 +260,14 @@ namespace Dnf.Render
         public AvatarClass Class { get; }
         public IReadOnlyList<AvatarLayer> Layers { get; }
 
+        /// <summary>穿上的装备(不含皮肤),按放入顺序。</summary>
+        public IReadOnlyList<AvatarItem> Items { get; }
+
         public AvatarOutfit(AvatarClass cls, int skinNumber, IEnumerable<AvatarItem> items)
         {
             Class = cls ?? throw new ArgumentNullException(nameof(cls));
             var list = new List<AvatarLayer> { new AvatarLayer("skin", SkinKey, cls.BodyImage(skinNumber)) };
+            var kept = new List<AvatarItem>();
             if (items != null)
             {
                 foreach (AvatarItem item in items)
@@ -272,6 +276,7 @@ namespace Dnf.Render
                     {
                         continue;
                     }
+                    kept.Add(item);
                     foreach (AvatarLayer l in item.Layers)
                     {
                         if (l.ImagePath != null)
@@ -298,6 +303,37 @@ namespace Dnf.Render
                 sorted.Add(kv.Value);
             }
             Layers = sorted;
+            Items = kept;
+        }
+
+        /// <summary>
+        /// 武器各图层在某个动作上的动画路径:每个图层有自己的 .ani(与基础动作帧数、延时、帧偏移相同),放在装备脚本所在目录下的 &lt;层名&gt;/ 里,
+        /// 例如 equipment/character/swordman/weapon/katana/katanac/attack1.ani(模板来自 equipment/character/&lt;职业&gt;.lay 的 "%s/Attack1.ani",证据 E-069)。
+        /// 攻击判定框(类型 15)写在这些武器图层的动画里,基础动作的 .ani 只有受击框。<paramref name="motionFile"/> 形如 "attack1.ani"。
+        /// </summary>
+        public List<string> WeaponAnimationPaths(string motionFile)
+        {
+            var result = new List<string>();
+            if (string.IsNullOrEmpty(motionFile))
+            {
+                return result;
+            }
+            string file = motionFile.ToLowerInvariant();
+            foreach (AvatarItem item in Items)
+            {
+                if (!string.Equals(item.EquipmentType, "[weapon]", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                string equ = item.EquPath.Replace('\\', '/').ToLowerInvariant();
+                int cut = equ.LastIndexOf('/');
+                string dir = cut >= 0 ? equ.Substring(0, cut) : string.Empty;
+                foreach (AvatarLayer layer in item.Layers)
+                {
+                    result.Add(dir + "/" + layer.Name.ToLowerInvariant() + "/" + file);
+                }
+            }
+            return result;
         }
 
         /// <summary>

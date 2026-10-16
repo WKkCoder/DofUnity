@@ -79,6 +79,19 @@ namespace Dnf.Cli
         /// <summary>--hero-wait:站立用战斗待机动作 [waiting motion](副本),不带则用城镇的 [rest motion]。</summary>
         public bool HeroWait { get; set; }
 
+        /// <summary>--monsters left|right:房间里按地图 [monster] 在出生位置画出怪物(待机第一帧),朝向统一指定(证据 E-069)。</summary>
+        public string? Monsters { get; set; }
+
+        /// <summary>combat-check --play 秒:动作,…:按时间表替主角按键(动作 = left/right/up/down/none,可用 + 组合,attack 表示在那一刻按一下攻击键)。</summary>
+        public string? Play { get; set; }
+
+        /// <summary>combat-check --seconds N:模拟多少秒(默认 10);--shots-at 秒,秒,…:这些时刻各写一张 PNG(文件名前缀取 --png)。</summary>
+        public double Seconds { get; set; } = 10;
+        public string? ShotsAt { get; set; }
+
+        /// <summary>combat-check --trace:每 0.25 秒打印一次主角与怪物的位置、阶段与血量。</summary>
+        public bool Trace { get; set; }
+
         /// <summary>render-town --scene --room:按副本房间合成(瓦片、视差背景),而不是城镇(证据 E-067)。</summary>
         public bool Room { get; set; }
 
@@ -106,6 +119,13 @@ namespace Dnf.Cli
         // fit-sprite(在截图里搜索某张 IMG 帧的位置)
         public string? Img { get; set; }
         public int Frame { get; set; }
+
+        /// <summary>--frame-to N:fit-sprite 扫描 --frame 到 N 的每一帧,只列出吻合度较高的。</summary>
+        public int FrameTo { get; set; } = -1;
+
+        /// <summary>--scan-min P:扫描时只保留精确吻合率不低于 P% 的帧(默认 30);--scan-top N:按精确像素数列前 N 个(默认 8)。</summary>
+        public int ScanMinPercent { get; set; } = 30;
+        public int ScanTop { get; set; } = 8;
         public string? Pred { get; set; }
     }
 
@@ -127,7 +147,7 @@ namespace Dnf.Cli
             "      --best-frame 在每个 NPC 的全部帧里选精确一致像素最多的帧;--png 带 --shot 时输出 左=我们 中=原版 右=对照 的三联图。\n" +
             "  dnf render-town --scene --shot <截图.png> [--time <毫秒>] [--map <地图>] [--png <输出.png>] [--eval x0,y0,x1,y1 ...]\n" +
             "  dnf render-town --scene --png <输出.png> [--time <毫秒>] [--map <地图>]      (不带截图:只输出 800×600 的 CPU 合成结果)\n" +
-            "      --room [--gate left|right|up|down:编号[:closed|open] …] [--demo-gates]:把地图当副本房间合成(瓦片、视差背景、图层、障碍物、出口,证据 E-067、E-068);--demo-gates 按 Unity 演示里量过的摆法放出口。\n" +
+            "      --room [--gate left|right|up|down:编号[:closed|open] …] [--demo-gates] [--monsters left|right]:把地图当副本房间合成(瓦片、视差背景、图层、障碍物、出口,证据 E-067、E-068);--demo-gates 按 Unity 演示里量过的摆法放出口;--monsters 在地图 [monster] 的位置画出怪物(证据 E-069)。\n" +
             "      --hero x,y,left|right,rest|move,动作毫秒 [--hero-weapon <武器 .equ>] [--hero-wait]:把默认外观的主角(证据 E-065)摆在世界 (x, y) 一起合成;镜头 x 用 --cam-x;--hero-wait 用战斗待机动作(副本)。\n" +
             "      合成整个场景(地图 [animation] 图层 + NPC;加法混合光效与染色 alpha 的帧间插值见证据 E-030),与截图整屏逐像素对照并按格子给出吻合率。\n" +
             "  dnf hero-check --index <index.tsv> --shots <截图目录> --prefix <截图名前缀> --start x,y,left|right [--keys 毫秒:方向,…] [--phase auto|毫秒] [--cam-range 0,96] [--map <地图>]\n" +
@@ -136,6 +156,8 @@ namespace Dnf.Cli
             "      对一组原版连拍,逐张量出副本房间的镜头 x(背景、瓦片、图层动画与门按候选镜头合成,在没有界面的区域数精确一致的像素,取最大;证据 E-067、E-068)。\n" +
             "  dnf fit-map --shot <截图.png> [--map <地图>] [--fit-tol N] [--range-x N] [--range-y N] [--samples N] [--png <输出.png>]\n" +
             "      对地图 [animation] 里每个动画的每一帧,在截图里搜索不透明像素在容差内一致最多的位置,并与位置模型的预测比较(证据 E-030)。\n" +
+            "  dnf combat-check --map <房间地图> [--start x,y,left|right] [--play 秒:动作,…] [--seconds N] [--shots-at 秒,…] [--png 前缀]\n" +
+            "      (副本房间里的战斗模拟:按时间表按键,打印命中与怪物状态,可在指定时刻输出 800×600 画面;证据 E-069)\n" +
             "  dnf fit-sprite --shot <截图.png> --img <NPK 里的 IMG 路径,如 sprite/map/01tile03.img> [--frame N] [--pred x,y] [--fit-tol N] [--range-x N] [--range-y N] [--samples N]\n" +
             "      在截图里搜索某一张 IMG 帧的不透明像素在容差内一致最多的位置(以 --pred 为中心,默认 0,0),打印前几个峰;用来量地面瓦片、远景/中景与门的摆放。\n" +
             "  dnf sq-check [--json <文件>]\n" +
@@ -281,6 +303,22 @@ namespace Dnf.Cli
                     case "--hero-wait":
                         opts.HeroWait = true;
                         break;
+                    case "--monsters":
+                        opts.Monsters = NextValue(args, ref i);
+                        break;
+                    case "--play":
+                        opts.Play = NextValue(args, ref i);
+                        break;
+                    case "--seconds":
+                        opts.Seconds = double.TryParse(NextValue(args, ref i), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double secs) && secs > 0
+                            ? secs : throw new UserError("--seconds 需要正数");
+                        break;
+                    case "--shots-at":
+                        opts.ShotsAt = NextValue(args, ref i);
+                        break;
+                    case "--trace":
+                        opts.Trace = true;
+                        break;
                     case "--hero-weapon":
                         opts.HeroWeapon = NextValue(args, ref i);
                         break;
@@ -332,6 +370,15 @@ namespace Dnf.Cli
                     case "--frame":
                         opts.Frame = int.TryParse(NextValue(args, ref i), out int fr) && fr >= 0 ? fr : throw new UserError("--frame 需要非负整数");
                         break;
+                    case "--scan-min":
+                        opts.ScanMinPercent = int.TryParse(NextValue(args, ref i), out int smin) && smin >= 0 ? smin : throw new UserError("--scan-min 需要非负整数");
+                        break;
+                    case "--scan-top":
+                        opts.ScanTop = int.TryParse(NextValue(args, ref i), out int stop) && stop > 0 ? stop : throw new UserError("--scan-top 需要正整数");
+                        break;
+                    case "--frame-to":
+                        opts.FrameTo = int.TryParse(NextValue(args, ref i), out int frTo) && frTo >= 0 ? frTo : throw new UserError("--frame-to 需要非负整数");
+                        break;
                     case "--pred":
                         opts.Pred = NextValue(args, ref i);
                         break;
@@ -363,6 +410,8 @@ namespace Dnf.Cli
                     return HeroCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "room-check":
                     return RoomCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "combat-check":
+                    return CombatCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "sq-check":
                     return SquirrelCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "game-check":

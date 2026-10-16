@@ -68,6 +68,23 @@ namespace Dnf.Data
             return list;
         }
 
+        /// <summary>第一个数值(整数、十六进制整数或浮点数,按出现顺序);没有则返回 null。(同一个属性在不同脚本里可能写成整数或浮点。)</summary>
+        public double? FirstNumber()
+        {
+            foreach (ScriptValue v in Values)
+            {
+                if (v.IsNumber)
+                {
+                    return v.Int;
+                }
+                if (v.Kind == ScriptValueKind.Float)
+                {
+                    return v.Float;
+                }
+            }
+            return null;
+        }
+
         /// <summary>第一个字符串值(去掉引号后的内容);没有则返回 null。</summary>
         public string FirstString()
         {

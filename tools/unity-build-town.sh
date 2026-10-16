@@ -7,6 +7,8 @@
 #   1b. 同样的对照,但带主角:朝右站立、朝左行走各一帧(-dnfhero 与 --hero 同一写法,证据 E-065);
 #   2. 用 -dnfquitafter 4 实时运行 4 秒,检查日志里没有异常、帧数正常;
 #   3. 用 -dnfautowalk 0.5:left,3:none 替主角按键:向左走到撞上可走区域的左边界(镜头 x = 0),松开后站立,检查日志里的最终状态。
+#   4. 副本房间(E-067、E-068):离屏一帧逐字节对照,实时自动行走;战斗(E-069):按同一份时间表确定地模拟到指定时刻,
+#      离屏渲染的一帧(怪物受击/死亡、血条、伤害数字、连击)与命令行 combat-check 逐字节对照;再实时跑一遍挥击。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -129,6 +131,43 @@ if [ "$platform" = "macos" ]; then
     [ "$rc" -eq 0 ] || exit "$rc"
     grep -q 'DNF_TOWN_DEMO ran .* hero=(0\.0,348\.0) facing=left motion=Rest cameraX=0 .*room=true' "$room_walk_log" \
       || { echo "房间里自动行走后主角不在预期的状态(应在 (0, 348) 取整显示、朝左、站立、镜头 0):$room_walk_log" >&2; exit 1; }
+
+    # 副本房间里的战斗(证据 E-069):时间表是 "0.2 秒起向左走、2.5 秒停下、2.6/3.3/4.0 秒各按一下攻击键"。
+    # 播放器带 -dnfplayat 时按固定 1/60 秒步长确定地模拟到指定时刻,再离屏渲染一帧;命令行 combat-check 用同一份时间表与同一个模拟类,
+    # 在同一时刻写出 PNG。3.6 秒:第一只怪物刚受击(受击帧、血条、伤害数字、连击提示);4.3 秒:一只在死亡、一只受击。
+    fight_play="0.2:left,2.5:none,2.6:attack,3.3:attack,4.0:attack"
+    for at in 3.6 4.3; do
+      tag="room-fight-$at"
+      ms="$(python3 -c "print(int(float('$at')*1000.0))")"
+      rm -f "out/town-demo-$tag.png" "out/town-cpu-room-fight-$at.png"
+      set +e
+      "$app" -batchmode -logFile "$PWD/re/unity-run-town-$tag-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-$tag.png" \
+        -dnftime "$ms" -dnfmap map/lorien/s2.map -dnfautowalk "$fight_play" -dnfplayat "$at"
+      rc=$?
+      set -e
+      echo "播放器退出码(离屏渲染 $tag): $rc"
+      grep -E 'DNF_TOWN_DEMO' "$PWD/re/unity-run-town-$tag-macos.log" || true
+      [ "$rc" -eq 0 ] || exit "$rc"
+      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play "$fight_play" --seconds "$at" \
+        --shots-at "$at" --png "$PWD/out/town-cpu-room-fight" >/dev/null
+      python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-room-fight-$(printf '%.2f' "$at").png" --max-diff 0
+    done
+    # 实时运行同一份时间表 6 秒:帧率不固定,所以不比像素,只检查按键确实进了战斗(至少命中一次)、没有异常
+    fight_log="$PWD/re/unity-run-town-room-fight-macos.log"
+    rm -f "$fight_log"
+    set +e
+    "$app" -batchmode -logFile "$fight_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 6 -dnfautowalk "$fight_play"
+    rc=$?
+    set -e
+    echo "播放器退出码(房间里实时战斗): $rc"
+    grep -E 'DNF_TOWN_DEMO' "$fight_log" || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$fight_log"; then
+      echo "实时战斗的日志里有异常:$fight_log" >&2
+      exit 1
+    fi
+    grep -q -E 'DNF_TOWN_DEMO ran .* room=true monsters=[0-9]+/4 hits=[1-9][0-9]*' "$fight_log" \
+      || { echo "实时战斗里没有命中过怪物(应有 hits>=1):$fight_log" >&2; exit 1; }
   else
     echo "没有设置 DNF_DIR:跳过离屏渲染校验"
   fi

@@ -58,6 +58,32 @@ public class RoomTests
     }
 
     [Fact]
+    public void TheMonsterListIsReadTenValuesAtATimeAndResynchronisesPastStrayValues()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        RoomMap map = ReadMap(assets);
+
+        // 开头游离的 77 被跳过,两个完整的项被读出,末尾只有三个数的残项被丢弃
+        Assert.Equal(2, map.Monsters.Count);
+        RoomMonsterSpawn first = map.Monsters[0];
+        Assert.Equal((1, 0, 1), (first.Code, first.FlagA, first.FlagB));
+        Assert.Equal((300, 200, 0), (first.X, first.Y, first.Z));
+        Assert.Equal((1, 0), (first.Grade, first.FlagC));
+        Assert.Equal(("[fixed]", "[normal]"), (first.Placement, first.Class));
+        Assert.False(first.IsBoss);
+
+        RoomMonsterSpawn boss = map.Monsters[1];
+        Assert.Equal((2, 1, 0), (boss.Code, boss.FlagA, boss.FlagB));
+        Assert.Equal((420, 210, 5), (boss.X, boss.Y, boss.Z));
+        Assert.Equal((2, 1), (boss.Grade, boss.FlagC));
+        Assert.True(boss.IsBoss);
+
+        // 城镇地图与没有 [monster] 的地图:没有怪物
+        Assert.Empty(RoomMap.Read(assets, "map/test/room/town.map").Monsters);
+    }
+
+    [Fact]
     public void TheMaskIsCellsSixteenWideAndTwelveHighStartingAtTheOrigin()
     {
         using var fx = new RoomFixture();

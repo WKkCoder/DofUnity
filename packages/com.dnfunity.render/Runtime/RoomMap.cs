@@ -92,6 +92,40 @@ namespace Dnf.Render
         }
     }
 
+    /// <summary>
+    /// 地图 [monster] 里的一项(证据 E-069)。真实数据里每一项是 10 个值:怪物编号、两个标志(含义未知)、x、y、z、等级档(1 普通,2 首领)、
+    /// 一个标志(含义未知)、摆放方式字符串("[fixed]")、种类字符串("[normal]" 或 "[boss]")。怪物编号查 monster/monster.lst(<see cref="MonsterCatalog"/>)。
+    /// </summary>
+    public readonly struct RoomMonsterSpawn
+    {
+        public int Code { get; }
+        public int FlagA { get; }
+        public int FlagB { get; }
+        public int X { get; }
+        public int Y { get; }
+        public int Z { get; }
+        public int Grade { get; }
+        public int FlagC { get; }
+        public string Placement { get; }
+        public string Class { get; }
+
+        public bool IsBoss => string.Equals(Class, "[boss]", StringComparison.OrdinalIgnoreCase);
+
+        public RoomMonsterSpawn(int code, int flagA, int flagB, int x, int y, int z, int grade, int flagC, string placement, string monsterClass)
+        {
+            Code = code;
+            FlagA = flagA;
+            FlagB = flagB;
+            X = x;
+            Y = y;
+            Z = z;
+            Grade = grade;
+            FlagC = flagC;
+            Placement = placement ?? string.Empty;
+            Class = monsterClass ?? string.Empty;
+        }
+    }
+
     /// <summary>地图 [background animation] 里的一项([ani info] 块):动画、图层与相对位置的写法。</summary>
     public sealed class RoomBackground
     {
@@ -152,6 +186,9 @@ namespace Dnf.Render
         /// <summary>[passive object] 的摆放(编号、x、y、z);粒子光源与障碍物都在这里,按编号查 <see cref="PassiveObjectCatalog"/>。</summary>
         public IReadOnlyList<PassivePlacement> PassiveObjects { get; }
 
+        /// <summary>[monster] 的摆放(进房间时的怪物与位置,证据 E-069)。</summary>
+        public IReadOnlyList<RoomMonsterSpawn> Monsters { get; }
+
         public int Width => Tiles.Count * TileFile.TileWidth;
 
         /// <summary>镜头 x 的最大值(房间宽减屏宽,不小于 0)。</summary>
@@ -159,7 +196,7 @@ namespace Dnf.Render
 
         public RoomMap(string mapPath, string type, IReadOnlyList<TileFile> tiles, int farScroll, int middleScroll, int nearScroll,
             IReadOnlyList<RoomBackground> backgrounds, IReadOnlyList<MapAnimation> animations, IReadOnlyList<int[]> gates, WorldRect? startArea,
-            IReadOnlyList<PassivePlacement> passiveObjects = null)
+            IReadOnlyList<PassivePlacement> passiveObjects = null, IReadOnlyList<RoomMonsterSpawn> monsters = null)
         {
             MapPath = mapPath;
             Type = type ?? string.Empty;
@@ -172,6 +209,7 @@ namespace Dnf.Render
             Gates = gates ?? throw new ArgumentNullException(nameof(gates));
             StartArea = startArea;
             PassiveObjects = passiveObjects ?? new List<PassivePlacement>();
+            Monsters = monsters ?? new List<RoomMonsterSpawn>();
         }
 
         /// <summary>读一张副本房间地图。缺少的瓦片文件按"没有这块瓦片"丢弃(所以宽度会变小),不抛异常。</summary>
@@ -189,6 +227,7 @@ namespace Dnf.Render
             var gates = new List<int[]> { null, null, null, null };
             WorldRect? start = null;
             var passive = new List<PassivePlacement>();
+            var monsters = new List<RoomMonsterSpawn>();
 
             bool inInfo = false;
             string infoFile = null, infoLayer = null, infoOrder = null;
@@ -275,8 +314,37 @@ namespace Dnf.Render
                         passive.Add(new PassivePlacement(n[i], n[i + 1], n[i + 2], n[i + 3]));
                     }
                 }
+                else if (line.TagIs("[monster]"))
+                {
+                    ReadMonsters(line.Values, monsters);
+                }
             }
-            return new RoomMap(mapPath, type, tiles, far, middle, near, backgrounds, MapScript.ReadAnimations(assets, mapPath), gates, start, passive);
+            return new RoomMap(mapPath, type, tiles, far, middle, near, backgrounds, MapScript.ReadAnimations(assets, mapPath), gates, start, passive, monsters);
+        }
+
+        /// <summary>
+        /// [monster] 的值:每项 8 个数加 2 个字符串。数不够 8 个、或后面没有字符串的残项被丢弃(没有这样的数据,是容错)。
+        /// </summary>
+        private static void ReadMonsters(ScriptValue[] v, List<RoomMonsterSpawn> into)
+        {
+            int i = 0;
+            while (i + 9 < v.Length)
+            {
+                bool ok = true;
+                for (int k = 0; k < 8 && ok; k++)
+                {
+                    ok = v[i + k].IsNumber;
+                }
+                ok = ok && v[i + 8].Kind == ScriptValueKind.String && v[i + 9].Kind == ScriptValueKind.String;
+                if (!ok)
+                {
+                    i++;
+                    continue;
+                }
+                into.Add(new RoomMonsterSpawn(v[i].Int, v[i + 1].Int, v[i + 2].Int, v[i + 3].Int, v[i + 4].Int, v[i + 5].Int, v[i + 6].Int, v[i + 7].Int,
+                    v[i + 8].Text, v[i + 9].Text));
+                i += 10;
+            }
         }
 
         private static int FirstInt(ScriptLine line, int fallback)

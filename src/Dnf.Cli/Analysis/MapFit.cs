@@ -113,23 +113,73 @@ internal static class MapFit
         var sw = Stopwatch.StartNew();
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
         Raster shot = PngReader.Load(opts.Screenshot);
-        if (!assets.TryGetFrame(opts.Img, opts.Frame, out SpriteFrame sprite))
+        int last = opts.FrameTo >= opts.Frame ? opts.FrameTo : opts.Frame;
+        var scanHits = new List<(int Exact, string Line)>();
+        for (int frameNo = opts.Frame; frameNo <= last; frameNo++)
         {
-            throw new UserError("找不到 IMG 帧 " + opts.Img + "#" + opts.Frame);
+            if (!assets.TryGetFrame(opts.Img, frameNo, out SpriteFrame sprite))
+            {
+                if (frameNo == opts.Frame)
+                {
+                    throw new UserError("找不到 IMG 帧 " + opts.Img + "#" + frameNo);
+                }
+                break;
+            }
+            if (opts.Mirror == "on")
+            {
+                // --mirror on:把这一帧左右翻转后再找(怪物朝右时画的是翻转的图)
+                var flipped = new byte[sprite.Rgba.Length];
+                for (int y = 0; y < sprite.Height; y++)
+                {
+                    for (int x = 0; x < sprite.Width; x++)
+                    {
+                        Array.Copy(sprite.Rgba, (y * sprite.Width + x) * 4, flipped, (y * sprite.Width + (sprite.Width - 1 - x)) * 4, 4);
+                    }
+                }
+                sprite = new SpriteFrame(sprite.Width, sprite.Height, sprite.OffsetX, sprite.OffsetY, sprite.CanvasWidth, sprite.CanvasHeight, flipped);
+            }
+            bool scan = last > opts.Frame;
+            if (!scan)
+            {
+                Console.WriteLine(opts.Img + "#" + frameNo + " " + sprite.Width + "x" + sprite.Height + " 帧头偏移(" + sprite.OffsetX + "," + sprite.OffsetY
+                    + ")  以(" + predX + "," + predY + ")为中心搜索 ±" + opts.RangeX + "×±" + opts.RangeY + ",容差 " + opts.FitTolerance + ",抽样 " + opts.Samples
+                    + (opts.Mirror == "on" ? ",左右翻转" : string.Empty));
+            }
+            List<Peak> peaks = Search(shot, sprite, predX, predY, opts.RangeX, opts.RangeY, opts.FitTolerance, opts.Samples, out int sampleCount);
+            if (peaks.Count == 0)
+            {
+                if (!scan)
+                {
+                    Console.WriteLine("不透明像素太少(" + sampleCount + "),不搜索");
+                }
+                continue;
+            }
+            foreach (Peak p in peaks)
+            {
+                (int total, int exact, int near) = Count(shot, sprite, p.X, p.Y, opts.FitTolerance);
+                if (scan && (total < 300 || exact * 100 < total * opts.ScanMinPercent))
+                {
+                    continue;
+                }
+                string line = (scan ? "  帧 " + frameNo + " " + sprite.Width + "x" + sprite.Height + " " : string.Empty) + "  峰(" + p.X + "," + p.Y + ") 抽样 " + p.Ok + "/" + p.Inb
+                    + " 全量:屏内不透明 " + total + ",精确 " + exact + " (" + Pct(exact, total) + "),容差内 " + near + " (" + Pct(near, total) + ")";
+                if (scan)
+                {
+                    scanHits.Add((exact, line));
+                }
+                else
+                {
+                    Console.WriteLine(line);
+                }
+            }
         }
-        Console.WriteLine(opts.Img + "#" + opts.Frame + " " + sprite.Width + "x" + sprite.Height + " 帧头偏移(" + sprite.OffsetX + "," + sprite.OffsetY
-            + ")  以(" + predX + "," + predY + ")为中心搜索 ±" + opts.RangeX + "×±" + opts.RangeY + ",容差 " + opts.FitTolerance + ",抽样 " + opts.Samples);
-        List<Peak> peaks = Search(shot, sprite, predX, predY, opts.RangeX, opts.RangeY, opts.FitTolerance, opts.Samples, out int sampleCount);
-        if (peaks.Count == 0)
+        if (last > opts.Frame)
         {
-            Console.WriteLine("不透明像素太少(" + sampleCount + "),不搜索");
-            return 0;
-        }
-        foreach (Peak p in peaks)
-        {
-            (int total, int exact, int near) = Count(shot, sprite, p.X, p.Y, opts.FitTolerance);
-            Console.WriteLine("  峰(" + p.X + "," + p.Y + ") 抽样 " + p.Ok + "/" + p.Inb + " 全量:屏内不透明 " + total + ",精确 " + exact + " (" + Pct(exact, total)
-                + "),容差内 " + near + " (" + Pct(near, total) + ")");
+            scanHits.Sort((a, b) => b.Exact.CompareTo(a.Exact));
+            for (int i = 0; i < scanHits.Count && i < opts.ScanTop; i++)
+            {
+                Console.WriteLine(scanHits[i].Line);
+            }
         }
         Console.Error.WriteLine("用时 " + sw.Elapsed.TotalSeconds.ToString("F1") + "s");
         return 0;

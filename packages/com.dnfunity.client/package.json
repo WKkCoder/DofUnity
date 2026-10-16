@@ -6,7 +6,8 @@
   "unity": "6000.0",
   "dependencies": {
     "com.dnfunity.data": "0.1.0",
-    "com.dnfunity.render": "0.1.0"
+    "com.dnfunity.render": "0.1.0",
+    "com.dnfunity.play": "0.1.0"
   },
   "keywords": [
     "dnf",

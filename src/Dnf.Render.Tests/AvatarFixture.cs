@@ -6,11 +6,16 @@ namespace Dnf.Render.Tests;
 
 /// <summary>
 /// 在临时目录里造一个"迷你职业":一份角色脚本、几件装备脚本、站立与行走两个 .ani、几张 2×2 的 IMG 和一张带可走区域的地图。
-/// 全部由合成数据按规格构造(规格与命名规则见证据 E-065),不含任何原版内容。
+/// 同一份数据里还有三段普攻(.chr 的 [attack motion] 与武器图层里带攻击框的动画)和一种"迷你怪物"(怪物目录、.mob、动作动画与 IMG)。
+/// 全部由合成数据按规格构造(规格与命名规则见证据 E-065、E-069),不含任何原版内容。
 /// </summary>
 internal sealed class AvatarFixture : IDisposable
 {
     public const string ChrPath = "character/test/test.chr";
+    public const string NoAttackChrPath = "character/test/noattack.chr";
+
+    /// <summary>主角脚本里合成的 [move speed](纯属测试用的数)。</summary>
+    public const int MoveSpeedStat = 400;
     public const string JobTag = "[tester]";
     public const string EquipRoot = "equipment/character/test";
     public const string WeaponEqu = "weapon/sword/sw_start.equ";
@@ -20,6 +25,24 @@ internal sealed class AvatarFixture : IDisposable
     public const string RestAni = "character/test/animation/rest.ani";
     public const string MoveAni = "character/test/animation/move.ani";
     public const string WaitAni = "character/test/animation/wait.ani";
+
+    /// <summary>三段普攻的基础动画(各 400、300、400 毫秒);第三段自己带攻击框(帧 1)。</summary>
+    public const string Attack1Ani = "character/test/animation/attack1.ani";
+    public const string Attack2Ani = "character/test/animation/attack2.ani";
+    public const string Attack3Ani = "character/test/animation/attack3.ani";
+
+    /// <summary>武器图层 swordb、swordc 的动作动画所在目录(装备脚本所在目录下的 &lt;层名&gt;/)。</summary>
+    public const string WeaponLayerB = EquipRoot + "/weapon/sword/swordb";
+    public const string WeaponLayerC = EquipRoot + "/weapon/sword/swordc";
+
+    /// <summary>怪物目录、怪物 .mob、怪物动画目录与 IMG。编号 1 是完整的迷你怪物,2 只有待机动作,3 的路径指向不存在的脚本。</summary>
+    public const string MonsterListPath = "monster/monster.lst";
+    public const string BlobMobPath = "monster/blob/blob.mob";
+    public const string BlobAnimationDir = "monster/blob/animation_blob";
+    public const string BlobImage = "sprite/monster/blob/blob.img";
+
+    /// <summary>受击框(类型 14):x 从 −10 起宽 40(故意不对称,朝向才看得出镜像),y 从 −6 起深 12,z 从 0 起高 60。</summary>
+    public static readonly (ushort Type, int[] Values) BlobHurtBox = ((ushort)14, new[] { -10, -6, 0, 40, 12, 60 });
 
     /// <summary>每个 IMG 的第 k 帧,红色通道 = 基色 + k,用来判断精灵取的是哪个 IMG 帧。</summary>
     public static readonly (int R, int G, int B) SkinColor = (200, 10, 10);
@@ -69,6 +92,16 @@ internal sealed class AvatarFixture : IDisposable
             return this;
         }
 
+        /// <summary>浮点标记(真实的 .chr 里 [move speed] 之类的属性就是浮点标记)。</summary>
+        public Script Float(params float[] values)
+        {
+            foreach (float v in values)
+            {
+                _tokens.Add(((byte)TokenType.Float, BitConverter.SingleToInt32Bits(v)));
+            }
+            return this;
+        }
+
         public byte[] Build()
         {
             return TestData.BuildTokenScript(_tokens);
@@ -99,6 +132,14 @@ internal sealed class AvatarFixture : IDisposable
         var scripts = new List<(string Name, byte[] Data)>
         {
             (ChrPath, NewScript()
+                .Tag("[body image path]").Str("Character/Test/Equipment/Avatar/skin/tt_body%04d.img")
+                .Tag("[rest motion]").Str("animation/rest.ani")
+                .Tag("[waiting motion]").Str("animation/wait.ani")
+                .Tag("[move motion]").Str("animation/move.ani")
+                .Tag("[move speed]").Float(MoveSpeedStat)
+                .Tag("[attack motion]").Str("animation/attack1.ani").Str("Animation/Attack2.ani").Str("animation/attack3.ani").Build()),
+            // 没有 [attack motion] 的角色脚本:按攻击键什么也不发生
+            (NoAttackChrPath, NewScript()
                 .Tag("[body image path]").Str("Character/Test/Equipment/Avatar/skin/tt_body%04d.img")
                 .Tag("[rest motion]").Str("animation/rest.ani")
                 .Tag("[waiting motion]").Str("animation/wait.ani")
@@ -145,6 +186,33 @@ internal sealed class AvatarFixture : IDisposable
             (RestAni, BuildAni(new[] { (0, 100), (1, 300) })),
             (MoveAni, BuildAni(new[] { (0, 100), (1, 100), (0, 100) })),
             (WaitAni, BuildAni(new[] { (1, 100), (0, 100) })),
+            // 三段普攻:四帧 × 100、三帧 × 100、两帧 × 200 毫秒;攻击框(类型 15)在武器图层的动画里,第三段的基础动画自己带一个
+            (Attack1Ani, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, null), (1, 100, null))),
+            (Attack2Ani, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, null))),
+            (Attack3Ani, BuildBoxAni((0, 200, null), (1, 200, new[] { ((ushort)15, new[] { 20, -10, 0, 40, 20, 50 }) }))),
+            (WeaponLayerB + "/attack1.ani", BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, new[] { ((ushort)15, new[] { 10, -10, 0, 50, 20, 60 }) }), (1, 100, null))),
+            (WeaponLayerB + "/attack2.ani", BuildBoxAni((0, 100, null), (1, 100, new[] { ((ushort)15, new[] { 10, -10, 0, 50, 20, 60 }) }), (0, 100, null))),
+            (WeaponLayerC + "/attack1.ani", BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, new[] { ((ushort)15, new[] { 10, 30, 0, 10, 10, 10 }) }), (1, 100, null))),
+            // 迷你怪物:目录(编号 3 指向不存在的脚本)、.mob(待机、行走、两种受击、倒地、一个攻击加一条空的攻击信息)与动画
+            (MonsterListPath, NewScript()
+                .Int(1).Str("blob/blob.mob").Int(2).Str("Blob\\Big.mob").Int(3).Str("blob/missing.mob").Build()),
+            (BlobMobPath, NewScript()
+                .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
+                .Tag("[move motion]").Str("Animation_Blob/Move.ani")
+                .Tag("[damage motion 1]").Str("Animation_Blob/Damage1.ani")
+                .Tag("[damage motion 2]").Str("Animation_Blob/Damage2.ani")
+                .Tag("[down motion]").Str("Animation_Blob/Down.ani")
+                .Tag("[attack motion]").Str("Animation_Blob/Attack1.ani")
+                .Tag("[attack info]").Str("AttackInfo/Attack1.atk").Str("").Build()),
+            ("monster/blob/big.mob", NewScript()
+                .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani").Build()),
+            // 受击动画只有一帧、停留 10000 毫秒(原版的受击动画就是这样:停多久由游戏逻辑决定);倒地动画的中间两帧同理
+            (BlobAnimationDir + "/stay.ani", BuildBlobAni(true, (0, 100, BlobHurtBox), (1, 100, BlobHurtBox))),
+            (BlobAnimationDir + "/move.ani", BuildBlobAni(true, (2, 100, BlobHurtBox), (3, 100, BlobHurtBox))),
+            (BlobAnimationDir + "/damage1.ani", BuildBlobAni(false, (4, 10000, BlobHurtBox))),
+            (BlobAnimationDir + "/damage2.ani", BuildBlobAni(false, (5, 10000, BlobHurtBox))),
+            (BlobAnimationDir + "/down.ani", BuildBlobAni(false, (6, 80, BlobHurtBox), (7, 10000, default), (8, 500, default))),
+            (BlobAnimationDir + "/attack1.ani", BuildBlobAni(false, (0, 80, BlobHurtBox), (1, 80, BlobHurtBox), (2, 80, BlobHurtBox))),
             // 可走区域:两个矩形 (10,20,100,50) 与 (100,60,30,40),拼成一个 L 形
             (AreaMap, NewScript().Tag("[virtual movable area]").Int(10, 20, 100, 50, 100, 60, 30, 40).Build()),
             ("npc/npc.lst", NewScript().Build()),
@@ -176,7 +244,74 @@ internal sealed class AvatarFixture : IDisposable
             (WeaponImageRoot + "/blade/sword0002b.img", BuildImg(SwordBColor, -10, -12)),
             (WeaponImageRoot + "/blade/sword0002c.img", BuildImg(SwordCColor, -10, -12)),
             (WeaponImageRoot + "/blade/sword0002b1.img", BuildImg((90, 90, 90), -10, -12)),
+            (BlobImage, BuildBlobImg()),
         }));
+    }
+
+    /// <summary>
+    /// 带判定框的 .ani:每项 (IMG 帧号, 时长毫秒, 判定框);第 0 张图是角色的皮肤 IMG,帧偏移 (-5, -8);不循环。
+    /// 判定框为 null 表示这一帧没有框。
+    /// </summary>
+    private static byte[] BuildBoxAni(params (int FrameIndex, int DelayMs, (ushort Type, int[] Values)[] Boxes)[] frames)
+    {
+        var specs = new List<TestData.AniFrameSpec>();
+        foreach ((int frameIndex, int delay, (ushort Type, int[] Values)[] boxes) in frames)
+        {
+            var f = new TestData.AniFrameSpec { ImageIndex = 0, FrameIndex = frameIndex, X = -5, Y = -8 };
+            f.Props.Add((12, TestData.LE32(delay)));
+            if (boxes != null)
+            {
+                f.Boxes.AddRange(boxes);
+            }
+            specs.Add(f);
+        }
+        return TestData.BuildAni(new[] { "Character/Test/Equipment/Avatar/skin/tt_body0000.img" },
+            new (ushort, byte[])[0], specs);
+    }
+
+    /// <summary>
+    /// 迷你怪物的 .ani:图片是 <see cref="BlobImage"/>,每项 (IMG 帧号, 时长毫秒, 受击框;default 表示没有框),帧偏移 (-10, -20);
+    /// <paramref name="loop"/> 为真时带全局属性 0(循环)。
+    /// </summary>
+    private static byte[] BuildBlobAni(bool loop, params (int FrameIndex, int DelayMs, (ushort Type, int[] Values) Box)[] frames)
+    {
+        var specs = new List<TestData.AniFrameSpec>();
+        foreach ((int frameIndex, int delay, (ushort Type, int[] Values) box) in frames)
+        {
+            var f = new TestData.AniFrameSpec { ImageIndex = 0, FrameIndex = frameIndex, X = -10, Y = -20 };
+            f.Props.Add((12, TestData.LE32(delay)));
+            if (box.Values != null)
+            {
+                f.Boxes.Add(box);
+            }
+            specs.Add(f);
+        }
+        var globals = loop ? new (ushort, byte[])[] { (0, new byte[] { 1 }) } : new (ushort, byte[])[0];
+        return TestData.BuildAni(new[] { "Monster/Blob/Blob.img" }, globals, specs);
+    }
+
+    /// <summary>迷你怪物的 IMG:十帧,每帧 6×8 不透明,帧头偏移 (-3, -8),绿色通道 = 帧号,红色通道 = 100 + 帧号。</summary>
+    private static byte[] BuildBlobImg()
+    {
+        var frames = new List<TestData.ImgFrameSpec>();
+        for (int k = 0; k < 10; k++)
+        {
+            var bgra = new byte[6 * 8 * 4];
+            for (int i = 0; i < 6 * 8; i++)
+            {
+                bgra[i * 4] = 10;
+                bgra[i * 4 + 1] = (byte)k;
+                bgra[i * 4 + 2] = (byte)(100 + k);
+                bgra[i * 4 + 3] = 255;
+            }
+            TestData.ImgFrameSpec f = TestData.ImgFrameSpec.Raw(ImgPixelFormat.Argb8888, 6, 8, bgra);
+            f.X = -3;
+            f.Y = -8;
+            f.FrameWidth = 6;
+            f.FrameHeight = 8;
+            frames.Add(f);
+        }
+        return TestData.BuildImg(frames);
     }
 
     /// <summary>每个 (IMG 帧号, 时长毫秒) 一帧;.ani 帧偏移 (-5, -8);循环。</summary>

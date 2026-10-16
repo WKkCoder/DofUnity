@@ -32,6 +32,30 @@ internal static class SceneCompare
                 TownHero heroInRoom = CreateHero(assets, opts);
                 heroSprites = heroInRoom.Sprites(assets, projection);
             }
+            if (opts.Monsters != null)
+            {
+                heroSprites ??= new List<SceneSprite>();
+                MonsterCatalog catalog = MonsterCatalog.Read(assets);
+                var models = new Dictionary<int, MonsterModel?>();
+                int index = 0;
+                foreach (RoomMonsterSpawn spawn in room.Monsters)
+                {
+                    if (!models.TryGetValue(spawn.Code, out MonsterModel? model))
+                    {
+                        string? mobPath = catalog.PathOf(spawn.Code);
+                        model = mobPath == null ? null : MonsterModel.Read(assets, mobPath);
+                        models[spawn.Code] = model;
+                    }
+                    SceneSprite? sprite = model == null ? null : MonsterSprites.SpriteAt(assets, model.Waiting, model.PathOf(model.Waiting), 0, projection,
+                        spawn.X, spawn.Y, spawn.Z, opts.Monsters == "right", MonsterSprites.ObjectIdBase + index);
+                    Console.WriteLine("怪物 " + spawn.Code + " 在 (" + spawn.X + "," + spawn.Y + "," + spawn.Z + ") " + spawn.Class + (sprite == null ? "  没有画面" : "  左上角(" + sprite.ScreenX + "," + sprite.ScreenY + ")"));
+                    if (sprite != null)
+                    {
+                        heroSprites.Add(sprite);
+                    }
+                    index++;
+                }
+            }
             RoomContent content = RoomContent.Load(assets, room, BuildGates(assets, room, opts));
             Console.WriteLine("被动物件 " + room.PassiveObjects.Count + " 个,其中画出的障碍物 " + content.Objects.Count + " 个");
             sprites = RoomScene.Build(assets, content, opts.CameraX, opts.GroundY, opts.TimeMs, heroSprites);

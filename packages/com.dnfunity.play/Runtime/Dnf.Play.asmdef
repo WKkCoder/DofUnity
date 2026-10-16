@@ -1,0 +1,19 @@
+{
+    "name": "Dnf.Play",
+    "rootNamespace": "Dnf.Play",
+    "references": [
+        "Dnf.Data",
+        "Dnf.Script",
+        "Dnf.Game",
+        "Dnf.Render"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}

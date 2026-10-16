@@ -128,6 +128,9 @@ internal sealed class RoomFixture : IDisposable
                 .Tag("[dungeon start area]").Int(300, 100, 60, 40)
                 .Tag("[animation]").Str("animation/glow.ani", "[normal]").Int(100, 100, 0).Tag("[/animation]")
                 .Tag("[passive object]").Int(TreeId, 200, 40, 0, ParticleId, 150, 150, 0, 999, 10, 10, 0).Tag("[/passive object]")
+                // 怪物摆放:每项 8 个数加 2 个字符串;开头多一个游离的数(要能错位恢复),末尾有一个不完整的残项(要被丢弃)
+                .Tag("[monster]").Int(77).Int(1, 0, 1, 300, 200, 0, 1, 0).Str("[fixed]", "[normal]")
+                .Int(2, 1, 0, 420, 210, 5, 2, 1).Str("[fixed]", "[boss]").Int(3, 0, 0)
                 .Build()),
             // 城镇风格的地图:有 [tile] 与 [virtual movable area],没有 [pathgate pos]
             ("map/test/room/town.map", NewScript()

@@ -3,7 +3,8 @@
     "rootNamespace": "Dnf.Client",
     "references": [
         "Dnf.Data",
-        "Dnf.Render"
+        "Dnf.Render",
+        "Dnf.Play"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.IO;
+using Dnf.Play;
 using Dnf.Render;
 using UnityEngine;
 
@@ -11,7 +12,9 @@ namespace Dnf.Client
     /// (默认网关 map/elvengard/(r)gate.map:地图图层、叠加光效、NPC,以及一个用方向键走动的鬼剑士;没有名牌与界面)。
     /// 主角只在量过出生点与镜头范围的地图上出现(目前是赛丽亚房间,证据 E-065、E-066)。
     /// 地图是副本房间(有 [pathgate pos],例如 -dnfmap map/lorien/s2.map)时改播副本房间:瓦片、视差背景、图层动画、障碍物、出口,
-    /// 以及一个站在房间通行表上走动的主角(<see cref="RoomSession"/>,证据 E-067、E-068);没有怪物与战斗。
+    /// 以及一个站在房间通行表上走动的主角(<see cref="RoomSession"/>,证据 E-067、E-068);
+    /// 实时运行时房间里还有地图 [monster] 摆好的怪物,X 键出普攻(三段连招),命中扣血、受击硬直、死亡消失,屏幕上有血条与伤害数字(<see cref="RoomCombatSession"/>,证据 E-069;
+    /// 伤害是占位值,怪物行为是近似,不会伤害主角)。
     /// 不分发、不复制任何原版内容:数据只在内存里解码。
     ///
     /// 数据目录(里面要有 Script.pvf 与 ImagePacks2)按下面的顺序找:
@@ -20,13 +23,17 @@ namespace Dnf.Client
     /// 都找不到就显示一个输入框。
     ///
     /// 命令行:-dnfdir &lt;目录&gt; -dnfmap &lt;PVF 内地图路径&gt; [-dnfshot &lt;输出.png&gt; [-dnftime &lt;毫秒&gt;]] [-dnfquitafter &lt;秒&gt;]
-    ///         [-dnfnohero] [-dnfhero x,y,left|right,rest|move,毫秒[,镜头x]] [-dnfautowalk 秒:方向,…]
+    ///         [-dnfnohero] [-dnfhero x,y,left|right,rest|move,毫秒[,镜头x]] [-dnfautowalk 秒:动作,…]
+    ///         [-dnfmonsters | -dnfnomonsters] [-dnfplayat &lt;秒&gt;]
     /// 带 -dnfshot 时只离屏渲染一帧写成 PNG 就退出(用来和 CPU 合成器逐字节对照,见 tools/unity-build-town.sh);
     /// 这时默认不画主角,带 -dnfhero 才把主角摆到指定的位置、朝向与动作进度(与 dnf render-town --scene --hero 同一写法)。
     /// 带 -dnfquitafter 时实时运行指定秒数后退出,并在日志里留一行 DNF_TOWN_DEMO ran …(用来在无窗口的环境里检查实时循环)。
-    /// 带 -dnfautowalk 时不读键盘,按"开始运行后第几秒:方向"的时间表替主角按键(方向 left、right、up、down、none,可用 + 组合),
-    /// 用来无人值守地验证走动、撞墙与镜头跟随(例如 -dnfautowalk 0.5:left,3:none)。-dnfnohero 完全不带主角。
-    /// 按键:方向键 走动(按住);空格 暂停/继续;暂停时左右方向键按 50 毫秒步进动画时间;H 显示/隐藏文字;Esc 退出;点击/触摸 暂停/继续。
+    /// 带 -dnfautowalk 时不读键盘,按"开始运行后第几秒:动作"的时间表替主角按键(方向 left、right、up、down、none,可用 + 组合,再加 attack 表示按一下攻击键;
+    /// 见 <see cref="CombatScript"/>),用来无人值守地验证走动、撞墙、镜头跟随与挥击(例如 -dnfautowalk 0.5:left,3:none,3.2:attack)。-dnfnohero 完全不带主角。
+    /// 副本房间默认带怪物(-dnfnomonsters 去掉);离屏渲染一帧时默认不带(与 CPU 合成的参照一致),带 -dnfmonsters 才画。
+    /// 带 -dnfplayat &lt;秒&gt; 与 -dnfshot 时,离屏渲染前先让房间战斗按 -dnfautowalk 的时间表以固定 1/60 秒步长确定地模拟到这一刻(此时自动带怪物与主角),
+    /// 与命令行 combat-check 同一份模拟,用来把战斗中的一帧与 CPU 合成逐字节对照(见 tools/unity-build-town.sh)。
+    /// 按键:方向键 走动(按住);X 普攻(连按接下一段);空格 暂停/继续;暂停时左右方向键按 50 毫秒步进动画时间;H 显示/隐藏文字;Esc 退出;点击/触摸 暂停/继续。
     /// 画面以整数倍放大并居中(留黑边),所以与原版 800×600 像素一一对应、不糊。
     /// </summary>
     public sealed class TownDemo : MonoBehaviour
@@ -46,13 +53,6 @@ namespace Dnf.Client
 
         private static readonly Color StageBackground = new Color32(40, 40, 40, 255);
 
-        private struct AutoKey
-        {
-            public double Seconds;
-            public int DirX;
-            public int DirY;
-        }
-
         private State _state = State.Loading;
         private string _message = "Starting…";
         private string _dirInput = "";
@@ -68,7 +68,9 @@ namespace Dnf.Client
         private bool _noHero;
         private bool _heroInput = true;
         private string _heroSpec;
-        private readonly System.Collections.Generic.List<AutoKey> _autoWalk = new System.Collections.Generic.List<AutoKey>();
+        private bool? _monsters;
+        private double _playAtSeconds = -1.0;
+        private CombatScript _script = new CombatScript();
         private Camera _bars;
         private double _clockMs;          // 本帧显示的动画时间(毫秒)
         private double _originReal;       // t = 0 对应的 Time.realtimeSinceStartupAsDouble;动画时间按墙钟走,所以打开数据时的卡顿不会算进去
@@ -135,7 +137,17 @@ namespace Dnf.Client
                         if (value != null) { _heroSpec = value; i++; }
                         break;
                     case "-dnfautowalk":
-                        if (value != null) { ParseAutoWalk(value); i++; }
+                        if (value != null) { _script = CombatScript.Parse(value); i++; }
+                        break;
+                    case "-dnfmonsters":
+                        _monsters = true;
+                        break;
+                    case "-dnfnomonsters":
+                        _monsters = false;
+                        break;
+                    case "-dnfplayat":
+                        if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out double pa)) { _playAtSeconds = pa; i++; }
                         break;
                     case "-dnfquitafter":
                         if (value != null && float.TryParse(value, System.Globalization.NumberStyles.Float,
@@ -143,35 +155,6 @@ namespace Dnf.Client
                         break;
                 }
             }
-        }
-
-        /// <summary>"0.5:left,3:none" → 按开始运行后的秒数排好的按键时间表。</summary>
-        private void ParseAutoWalk(string text)
-        {
-            _autoWalk.Clear();
-            foreach (string item in text.Split(','))
-            {
-                string[] kv = item.Split(':');
-                if (kv.Length != 2 || !double.TryParse(kv[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double sec))
-                {
-                    throw new FormatException("-dnfautowalk 的每一项形如 秒:方向,例如 0.5:left,3:none");
-                }
-                int dx = 0, dy = 0;
-                foreach (string dir in kv[1].Split('+'))
-                {
-                    switch (dir)
-                    {
-                        case "left": dx = -1; break;
-                        case "right": dx = 1; break;
-                        case "up": dy = -1; break;
-                        case "down": dy = 1; break;
-                        case "none": break;
-                        default: throw new FormatException("-dnfautowalk 里不认识的方向 " + dir);
-                    }
-                }
-                _autoWalk.Add(new AutoKey { Seconds = sec, DirX = dx, DirY = dy });
-            }
-            _autoWalk.Sort((a, b) => a.Seconds.CompareTo(b.Seconds));
         }
 
         private static bool IsDataDirectory(string dir)
@@ -276,13 +259,27 @@ namespace Dnf.Client
         {
             if (DemoRoom.IsRoomMap(_assets, mapPath))
             {
-                RoomSession room = DemoRoom.CreateSession(_assets, mapPath);
-                room.HeroVisible = !_noHero && (_heroSpec != null || string.IsNullOrEmpty(_shotPath));
+                bool shot = !string.IsNullOrEmpty(_shotPath);
+                bool simulate = shot && _playAtSeconds >= 0.0;
+                // 实时运行默认带怪物;离屏渲染一帧默认不带(与 CPU 合成的参照一致),要么带 -dnfmonsters,要么用 -dnfplayat 模拟一段战斗
+                bool combat = _monsters ?? (!shot || simulate);
+                RoomCombatSession fight = combat ? DemoCombat.CreateSession(_assets, mapPath) : null;
+                RoomSession room = fight != null ? fight.Room : DemoRoom.CreateSession(_assets, mapPath);
+                room.HeroVisible = !_noHero && (_heroSpec != null || simulate || !shot);
                 if (_heroSpec != null)
                 {
                     ApplyHeroSpec(room, _heroSpec);
                 }
                 _heroInput = !_noHero;
+                if (fight != null && simulate)
+                {
+                    // 与 dnf combat-check 同一份模拟:固定 1/60 秒步长,按时间表替主角按键,一直推进到不早于指定时刻的第一步
+                    _script.RunUntil(fight, _playAtSeconds * 1000.0);
+                }
+                if (fight != null)
+                {
+                    return fight;
+                }
                 return room;
             }
             _heroInput = true;
@@ -350,7 +347,17 @@ namespace Dnf.Client
             }
             return " hero=(" + h.X.ToString("F1", inv) + "," + h.Y.ToString("F1", inv) + ") facing=" + (h.FacingLeft ? "left" : "right")
                 + " motion=" + h.Motion + " cameraX=" + _session.Camera.IntX + " leftEdge=" + (h.Area.Count > 0 && h.X <= minX)
-                + (_session is RoomSession ? " room=true" : "");
+                + (IsRoomSession ? " room=true" : "")
+                + (_session is RoomCombatSession fight
+                    ? " monsters=" + fight.AliveCount + "/" + fight.Monsters.Count + " hits=" + fight.Hits + " kills=" + fight.Kills + " combo=" + fight.Combo
+                        + " stage=" + (h.IsAttacking ? h.AttackStage + 1 : 0)
+                    : string.Empty);
+        }
+
+        /// <summary>副本房间(无论带不带怪物)。</summary>
+        private bool IsRoomSession
+        {
+            get { return _session is RoomSession || _session is RoomCombatSession; }
         }
 
         private void SaveShotAndQuit()
@@ -406,12 +413,21 @@ namespace Dnf.Client
                 if (_session != null && !_paused)
                 {
                     int dirX = 0, dirY = 0;
+                    bool attack = false;
                     if (_heroInput)
                     {
-                        ReadHeroInput(out dirX, out dirY);
+                        attack = ReadHeroInput(out dirX, out dirY);
                     }
                     // 一帧最多推进 100 毫秒:窗口被拖动、打开数据等卡顿之后主角不会一步冲出去
-                    _session.Update(Math.Min(Time.unscaledDeltaTime * 1000.0, 100.0), dirX, dirY);
+                    double deltaMs = Math.Min(Time.unscaledDeltaTime * 1000.0, 100.0);
+                    if (_session is IActionSession action)
+                    {
+                        action.Update(deltaMs, dirX, dirY, attack);
+                    }
+                    else
+                    {
+                        _session.Update(deltaMs, dirX, dirY);
+                    }
                 }
                 _spriteCount = _view.ShowAt((long)_clockMs).Count;
                 _frames++;
@@ -431,28 +447,22 @@ namespace Dnf.Client
             }
         }
 
-        /// <summary>方向键(或 -dnfautowalk 的时间表)当前的状态:-1/0/1。</summary>
-        private void ReadHeroInput(out int dirX, out int dirY)
+        /// <summary>
+        /// 方向键(或 -dnfautowalk 的时间表)当前的状态:-1/0/1;返回这一帧有没有"刚按下攻击键"(X 键,或时间表里到点的 attack)。
+        /// </summary>
+        private bool ReadHeroInput(out int dirX, out int dirY)
         {
+            if (!_script.IsEmpty)
+            {
+                return _script.Poll((Time.realtimeSinceStartup - _runningSince) * 1000.0, out dirX, out dirY);
+            }
             dirX = 0;
             dirY = 0;
-            if (_autoWalk.Count > 0)
-            {
-                double t = Time.realtimeSinceStartup - _runningSince;
-                foreach (AutoKey k in _autoWalk)
-                {
-                    if (k.Seconds <= t)
-                    {
-                        dirX = k.DirX;
-                        dirY = k.DirY;
-                    }
-                }
-                return;
-            }
             if (Input.GetKey(KeyCode.LeftArrow)) { dirX -= 1; }
             if (Input.GetKey(KeyCode.RightArrow)) { dirX += 1; }
             if (Input.GetKey(KeyCode.UpArrow)) { dirY -= 1; }
             if (Input.GetKey(KeyCode.DownArrow)) { dirY += 1; }
+            return Input.GetKeyDown(KeyCode.X);
         }
 
         private double NowMs()
@@ -607,14 +617,22 @@ namespace Dnf.Client
             {
                 TownHero h = _session.Hero;
                 hero = "hero (" + ((int)h.X) + ", " + ((int)h.Y) + ")  " + (h.FacingLeft ? "facing left" : "facing right") + "  " + h.Motion
+                    + (h.IsAttacking ? " stage " + (h.AttackStage + 1) : string.Empty)
                     + "  camera x " + _session.Camera.IntX + "\n";
-                help = "Arrow keys: walk   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (no UI, no combat yet)";
+                if (_session is RoomCombatSession fight)
+                {
+                    hero += "monsters alive " + fight.AliveCount + "/" + fight.Monsters.Count + "  hits " + fight.Hits + "  kills " + fight.Kills
+                        + "  combo " + fight.Combo + "  damage " + fight.TotalDamage + "\n";
+                }
+                help = _session is RoomCombatSession
+                    ? "Arrow keys: walk   X: attack (press again to chain)   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (placeholder damage; monsters do not hurt you)"
+                    : "Arrow keys: walk   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (no UI, no combat)";
             }
             else
             {
                 help = "Space: pause   Left/Right: step 50 ms   H: hide text   Esc: quit   (no player character on this map)";
             }
-            string text = (_session is RoomSession ? "DNF dungeon room demo (Unity)   map: " : "DNF town demo (Unity)   map: ") + mapPath + "\n"
+            string text = (IsRoomSession ? "DNF dungeon room demo (Unity)   map: " : "DNF town demo (Unity)   map: ") + mapPath + "\n"
                 + "t = " + ((long)_clockMs) + " ms" + (_paused ? " (paused)" : "") + "    " + _fps.ToString("F0") + " FPS    sprites: " + _spriteCount
                 + "    NPCs: " + _view.NpcCount + "    map layers: " + _view.LayerCount + "\n"
                 + hero + help;

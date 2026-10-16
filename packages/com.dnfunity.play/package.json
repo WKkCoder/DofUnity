@@ -1,0 +1,18 @@
+{
+  "name": "com.dnfunity.play",
+  "version": "0.1.0",
+  "displayName": "DNF Play",
+  "description": "把房间场景、怪物与战斗规则接成一场能玩的副本房间:怪物摆放与简易行为、主角普攻的命中判定、血量与伤害数字。不含任何原版内容;运行时读取用户自备的数据。",
+  "unity": "6000.0",
+  "dependencies": {
+    "com.dnfunity.data": "0.1.0",
+    "com.dnfunity.script": "0.1.0",
+    "com.dnfunity.game": "0.1.0",
+    "com.dnfunity.render": "0.1.0"
+  },
+  "keywords": [
+    "dnf",
+    "combat",
+    "dungeon"
+  ]
+}
