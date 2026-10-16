@@ -20,13 +20,29 @@ internal static class SceneCompare
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
         Raster? shotOrNull = opts.Screenshot == null ? null : PngReader.Load(opts.Screenshot);
         var projection = new TownProjection(opts.CameraX, opts.GroundY);
-        List<SceneSprite> sprites = TownScene.BuildScene(assets, opts.MapPath, projection, opts.TimeMs);
+        List<SceneSprite> sprites;
+        if (opts.Hero == null)
+        {
+            sprites = TownScene.BuildScene(assets, opts.MapPath, projection, opts.TimeMs);
+        }
+        else
+        {
+            TownHero hero = CreateHero(assets, opts);
+            Console.WriteLine("主角:世界 (" + hero.X + "," + hero.Y + "),朝" + (hero.FacingLeft ? "左" : "右") + "," + hero.Motion + " 已播放 " + hero.MotionMs
+                + " ms → " + hero.CurrentAnimationPath + " 第 " + hero.CurrentFrame + " 帧;换装图层 " + hero.Outfit.Layers.Count + " 个");
+            foreach (AvatarLayer layer in hero.Outfit.Layers)
+            {
+                Console.WriteLine("    图层键 " + layer.Key.ToString().PadLeft(5) + "  " + layer.Name.PadRight(12) + layer.ImagePath);
+            }
+            sprites = TownScene.BuildResolvedScene(assets, TownScene.ResolveLayers(assets, opts.MapPath),
+                TownScene.Resolve(assets, TownScene.ReadMapNpcs(assets, opts.MapPath)), projection, opts.TimeMs, hero.Sprites(assets, projection));
+        }
         Console.WriteLine("地图 " + opts.MapPath + ",时间 " + opts.TimeMs + " ms:绘制列表 " + sprites.Count + " 个精灵");
         foreach (SceneSprite s in sprites)
         {
-            string who = s.NpcId >= 0 ? "NPC " + s.NpcId : "图层";
+            string who = s.NpcId == TownHero.ObjectId ? "主角" : s.NpcId >= 0 ? "NPC " + s.NpcId : "图层";
             Console.WriteLine("  [" + s.LayerRank + "] " + who.PadRight(8) + s.AnimationPath.PadRight(46) + "帧 " + s.AniFrame + "  "
-                + (s.Blend == SpriteBlend.Additive ? "加法 A=" + s.TintAlpha : "普通").PadRight(12) + " 左上角(" + s.ScreenX + "," + s.ScreenY + ")");
+                + (s.Blend == SpriteBlend.Additive ? "加法 A=" + s.TintAlpha : "普通").PadRight(12) + " 左上角(" + s.ScreenX + "," + s.ScreenY + ")  " + s.Frame.Width + "×" + s.Frame.Height);
         }
 
         var canvas = new RgbaCanvas(800, 600);
@@ -94,6 +110,11 @@ internal static class SceneCompare
             Console.WriteLine();
         }
 
+        if (opts.Hero != null)
+        {
+            ReportHeroOnly(assets, opts, projection, shot);
+        }
+
         foreach ((int x0, int y0, int x1, int y1) in opts.EvalRects)
         {
             int n = 0, e = 0, nr = 0;
@@ -144,5 +165,36 @@ internal static class SceneCompare
         }
         Console.Error.WriteLine("用时 " + sw.Elapsed.TotalSeconds.ToString("F1") + "s");
         return 0;
+    }
+
+    /// <summary>只统计主角自己的像素的吻合率(方法见 <see cref="HeroMatcher"/>)。</summary>
+    private static void ReportHeroOnly(DnfAssets assets, Options opts, TownProjection projection, Raster shot)
+    {
+        TownHero hero = CreateHero(assets, opts);
+        (int opaque, int exact, int near) = new HeroMatcher().Measure(hero.Sprites(assets, projection), shot);
+        Console.WriteLine();
+        Console.WriteLine("主角不透明像素 " + opaque + " 个:与截图精确一致 " + exact + " (" + (100.0 * exact / Math.Max(1, opaque)).ToString("F1")
+            + "%),差 ≤2 的 " + near + " (" + (100.0 * near / Math.Max(1, opaque)).ToString("F1") + "%)");
+    }
+
+    /// <summary>解析 --hero x,y,left|right,rest|move,动作毫秒,按默认外观(游戏数据自带的 *_default 装备加一件武器)造出主角。</summary>
+    private static TownHero CreateHero(DnfAssets assets, Options opts)
+    {
+        string[] parts = opts.Hero!.Split(',');
+        if (parts.Length != 5 || !double.TryParse(parts[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double x)
+            || !double.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double y)
+            || parts[2] is not ("left" or "right") || parts[3] is not ("rest" or "move") || !long.TryParse(parts[4], out long ms) || ms < 0)
+        {
+            throw new UserError("--hero 需要 x,y,left|right,rest|move,动作毫秒(例如 615,234,right,rest,600)");
+        }
+        TownHero hero = BuildDefaultHero(assets, opts.MapPath, opts.HeroWeapon, x, y, parts[2] == "left");
+        hero.Place(x, y, parts[2] == "left", parts[3] == "move" ? HeroMotion.Move : HeroMotion.Rest, ms);
+        return hero;
+    }
+
+    /// <summary>默认外观的主角(游戏数据自带的 *_default 装备加一件武器),可走区域取自地图的 [virtual movable area]。</summary>
+    internal static TownHero BuildDefaultHero(DnfAssets assets, string mapPath, string weaponEqu, double x, double y, bool facingLeft)
+    {
+        return DemoHero.CreateSwordman(assets, mapPath, x, y, facingLeft, weaponEqu);
     }
 }

@@ -8,7 +8,8 @@ namespace Dnf.Client
 {
     /// <summary>
     /// 城镇演示:运行时读取用户自备的 Script.pvf 与 ImagePacks2,用 <see cref="TownView"/> 实时播放一张城镇地图
-    /// (默认网关 map/elvengard/(r)gate.map:地图图层、叠加光效、NPC;没有主角、名牌与界面)。
+    /// (默认网关 map/elvengard/(r)gate.map:地图图层、叠加光效、NPC,以及一个用方向键走动的鬼剑士;没有名牌与界面)。
+    /// 主角只在量过出生点与镜头范围的地图上出现(目前是赛丽亚房间,证据 E-065、E-066)。
     /// 不分发、不复制任何原版内容:数据只在内存里解码。
     ///
     /// 数据目录(里面要有 Script.pvf 与 ImagePacks2)按下面的顺序找:
@@ -17,9 +18,13 @@ namespace Dnf.Client
     /// 都找不到就显示一个输入框。
     ///
     /// 命令行:-dnfdir &lt;目录&gt; -dnfmap &lt;PVF 内地图路径&gt; [-dnfshot &lt;输出.png&gt; [-dnftime &lt;毫秒&gt;]] [-dnfquitafter &lt;秒&gt;]
-    /// 带 -dnfshot 时只离屏渲染一帧写成 PNG 就退出(用来和 CPU 合成器逐字节对照,见 tools/unity-build-town.sh)。
+    ///         [-dnfnohero] [-dnfhero x,y,left|right,rest|move,毫秒[,镜头x]] [-dnfautowalk 秒:方向,…]
+    /// 带 -dnfshot 时只离屏渲染一帧写成 PNG 就退出(用来和 CPU 合成器逐字节对照,见 tools/unity-build-town.sh);
+    /// 这时默认不画主角,带 -dnfhero 才把主角摆到指定的位置、朝向与动作进度(与 dnf render-town --scene --hero 同一写法)。
     /// 带 -dnfquitafter 时实时运行指定秒数后退出,并在日志里留一行 DNF_TOWN_DEMO ran …(用来在无窗口的环境里检查实时循环)。
-    /// 按键:空格 暂停/继续;左右方向键 暂停时按 50 毫秒步进;H 显示/隐藏文字;Esc 退出;点击/触摸 暂停/继续。
+    /// 带 -dnfautowalk 时不读键盘,按"开始运行后第几秒:方向"的时间表替主角按键(方向 left、right、up、down、none,可用 + 组合),
+    /// 用来无人值守地验证走动、撞墙与镜头跟随(例如 -dnfautowalk 0.5:left,3:none)。-dnfnohero 完全不带主角。
+    /// 按键:方向键 走动(按住);空格 暂停/继续;暂停时左右方向键按 50 毫秒步进动画时间;H 显示/隐藏文字;Esc 退出;点击/触摸 暂停/继续。
     /// 画面以整数倍放大并居中(留黑边),所以与原版 800×600 像素一一对应、不糊。
     /// </summary>
     public sealed class TownDemo : MonoBehaviour
@@ -39,6 +44,13 @@ namespace Dnf.Client
 
         private static readonly Color StageBackground = new Color32(40, 40, 40, 255);
 
+        private struct AutoKey
+        {
+            public double Seconds;
+            public int DirX;
+            public int DirY;
+        }
+
         private State _state = State.Loading;
         private string _message = "Starting…";
         private string _dirInput = "";
@@ -50,6 +62,10 @@ namespace Dnf.Client
         private float _runningSince = -1f;
         private DnfAssets _assets;
         private TownView _view;
+        private TownSession _session;
+        private bool _noHero;
+        private string _heroSpec;
+        private readonly System.Collections.Generic.List<AutoKey> _autoWalk = new System.Collections.Generic.List<AutoKey>();
         private Camera _bars;
         private double _clockMs;          // 本帧显示的动画时间(毫秒)
         private double _originReal;       // t = 0 对应的 Time.realtimeSinceStartupAsDouble;动画时间按墙钟走,所以打开数据时的卡顿不会算进去
@@ -109,12 +125,50 @@ namespace Dnf.Client
                     case "-dnftime":
                         if (value != null && long.TryParse(value, out long t)) { _shotTimeMs = t; i++; }
                         break;
+                    case "-dnfnohero":
+                        _noHero = true;
+                        break;
+                    case "-dnfhero":
+                        if (value != null) { _heroSpec = value; i++; }
+                        break;
+                    case "-dnfautowalk":
+                        if (value != null) { ParseAutoWalk(value); i++; }
+                        break;
                     case "-dnfquitafter":
                         if (value != null && float.TryParse(value, System.Globalization.NumberStyles.Float,
                                 System.Globalization.CultureInfo.InvariantCulture, out float q)) { _quitAfterSeconds = q; i++; }
                         break;
                 }
             }
+        }
+
+        /// <summary>"0.5:left,3:none" → 按开始运行后的秒数排好的按键时间表。</summary>
+        private void ParseAutoWalk(string text)
+        {
+            _autoWalk.Clear();
+            foreach (string item in text.Split(','))
+            {
+                string[] kv = item.Split(':');
+                if (kv.Length != 2 || !double.TryParse(kv[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double sec))
+                {
+                    throw new FormatException("-dnfautowalk 的每一项形如 秒:方向,例如 0.5:left,3:none");
+                }
+                int dx = 0, dy = 0;
+                foreach (string dir in kv[1].Split('+'))
+                {
+                    switch (dir)
+                    {
+                        case "left": dx = -1; break;
+                        case "right": dx = 1; break;
+                        case "up": dy = -1; break;
+                        case "down": dy = 1; break;
+                        case "none": break;
+                        default: throw new FormatException("-dnfautowalk 里不认识的方向 " + dir);
+                    }
+                }
+                _autoWalk.Add(new AutoKey { Seconds = sec, DirX = dx, DirY = dy });
+            }
+            _autoWalk.Sort((a, b) => a.Seconds.CompareTo(b.Seconds));
         }
 
         private static bool IsDataDirectory(string dir)
@@ -181,7 +235,10 @@ namespace Dnf.Client
             {
                 DisposeView();
                 _assets = DnfAssets.Open(dir);
-                _view = new TownView(_assets, mapPath, TownProjection.FromE024, StageBackground);
+                _session = TryCreateSession();
+                _view = _session != null
+                    ? new TownView(_assets, _session, StageBackground)
+                    : new TownView(_assets, mapPath, TownProjection.FromE024, StageBackground);
             }
             catch (Exception e)
             {
@@ -204,7 +261,79 @@ namespace Dnf.Client
             _originReal = Time.realtimeSinceStartupAsDouble;
             _state = State.Running;
             _runningSince = Time.realtimeSinceStartup;
-            Debug.Log("DNF_TOWN_DEMO running map=" + mapPath + " npcs=" + _view.NpcCount + " layers=" + _view.LayerCount);
+            Debug.Log("DNF_TOWN_DEMO running map=" + mapPath + " npcs=" + _view.NpcCount + " layers=" + _view.LayerCount + HeroLog());
+        }
+
+        /// <summary>
+        /// 要不要带主角:-dnfnohero 不带;离屏渲染一帧时默认不带(与 CPU 合成的参照一致),带 -dnfhero 才画;
+        /// 其余情况只在量过出生点与镜头范围的地图上带。
+        /// </summary>
+        private TownSession TryCreateSession()
+        {
+            if (_noHero)
+            {
+                return null;
+            }
+            bool known = DemoHero.TryGetSlice(mapPath, out TownSlice slice);
+            if (_heroSpec == null && (!known || !string.IsNullOrEmpty(_shotPath)))
+            {
+                return null;
+            }
+            if (!known)
+            {
+                slice = DemoHero.SeriaRoom; // 只借用镜头范围;位置由 -dnfhero 指定
+            }
+            TownSession session = DemoHero.CreateSession(_assets, mapPath, slice);
+            if (_heroSpec != null)
+            {
+                ApplyHeroSpec(session, _heroSpec);
+            }
+            return session;
+        }
+
+        /// <summary>x,y,left|right,rest|move,毫秒[,镜头x]:不带镜头 x 时镜头取"主角居中再夹住"。</summary>
+        private static void ApplyHeroSpec(TownSession session, string spec)
+        {
+            string[] p = spec.Split(',');
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            if ((p.Length != 5 && p.Length != 6)
+                || !double.TryParse(p[0], System.Globalization.NumberStyles.Float, inv, out double x)
+                || !double.TryParse(p[1], System.Globalization.NumberStyles.Float, inv, out double y)
+                || (p[2] != "left" && p[2] != "right") || (p[3] != "rest" && p[3] != "move")
+                || !long.TryParse(p[4], out long ms) || ms < 0)
+            {
+                throw new FormatException("-dnfhero 需要 x,y,left|right,rest|move,毫秒[,镜头x]");
+            }
+            session.Hero.Place(x, y, p[2] == "left", p[3] == "move" ? HeroMotion.Move : HeroMotion.Rest, ms);
+            if (p.Length == 6)
+            {
+                if (!double.TryParse(p[5], System.Globalization.NumberStyles.Float, inv, out double cam))
+                {
+                    throw new FormatException("-dnfhero 的镜头 x 不是数字");
+                }
+                session.Camera.Place(cam);
+            }
+            else
+            {
+                session.Camera.Place(x - TownCamera.DefaultCenterX);
+            }
+        }
+
+        private string HeroLog()
+        {
+            if (_session == null)
+            {
+                return " hero=none";
+            }
+            TownHero h = _session.Hero;
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            double minX = double.MaxValue;
+            foreach (WorldRect r in h.Area)
+            {
+                minX = Math.Min(minX, r.X);
+            }
+            return " hero=(" + h.X.ToString("F1", inv) + "," + h.Y.ToString("F1", inv) + ") facing=" + (h.FacingLeft ? "left" : "right")
+                + " motion=" + h.Motion + " cameraX=" + _session.Camera.IntX + " leftEdge=" + (h.Area.Count > 0 && h.X <= minX);
         }
 
         private void SaveShotAndQuit()
@@ -215,7 +344,7 @@ namespace Dnf.Client
                 byte[] rgba = _view.Stage.Capture();
                 WritePng(rgba, _shotPath);
                 Debug.Log("DNF_TOWN_DEMO shot=" + _shotPath + " t=" + _shotTimeMs + " npcs=" + _view.NpcCount + " layers=" + _view.LayerCount
-                    + " sprites=" + sprites.Count);
+                    + " sprites=" + sprites.Count + HeroLog());
                 Application.Quit(0);
             }
             catch (Exception e)
@@ -242,6 +371,7 @@ namespace Dnf.Client
         {
             _view?.Dispose();
             _view = null;
+            _session = null;
             _assets?.Dispose();
             _assets = null;
         }
@@ -256,6 +386,12 @@ namespace Dnf.Client
             _clockMs = NowMs();
             try
             {
+                if (_session != null && !_paused)
+                {
+                    ReadHeroInput(out int dirX, out int dirY);
+                    // 一帧最多推进 100 毫秒:窗口被拖动、打开数据等卡顿之后主角不会一步冲出去
+                    _session.Update(Math.Min(Time.unscaledDeltaTime * 1000.0, 100.0), dirX, dirY);
+                }
                 _spriteCount = _view.ShowAt((long)_clockMs).Count;
                 _frames++;
             }
@@ -268,10 +404,34 @@ namespace Dnf.Client
             {
                 float seconds = Time.realtimeSinceStartup - _runningSince;
                 Debug.Log("DNF_TOWN_DEMO ran frames=" + _frames + " seconds=" + seconds.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)
-                    + " clockMs=" + (long)_clockMs + " sprites=" + _spriteCount);
+                    + " clockMs=" + (long)_clockMs + " sprites=" + _spriteCount + HeroLog());
                 _quitAfterSeconds = -1f;
                 Application.Quit(0);
             }
+        }
+
+        /// <summary>方向键(或 -dnfautowalk 的时间表)当前的状态:-1/0/1。</summary>
+        private void ReadHeroInput(out int dirX, out int dirY)
+        {
+            dirX = 0;
+            dirY = 0;
+            if (_autoWalk.Count > 0)
+            {
+                double t = Time.realtimeSinceStartup - _runningSince;
+                foreach (AutoKey k in _autoWalk)
+                {
+                    if (k.Seconds <= t)
+                    {
+                        dirX = k.DirX;
+                        dirY = k.DirY;
+                    }
+                }
+                return;
+            }
+            if (Input.GetKey(KeyCode.LeftArrow)) { dirX -= 1; }
+            if (Input.GetKey(KeyCode.RightArrow)) { dirX += 1; }
+            if (Input.GetKey(KeyCode.UpArrow)) { dirY -= 1; }
+            if (Input.GetKey(KeyCode.DownArrow)) { dirY += 1; }
         }
 
         private double NowMs()
@@ -392,10 +552,16 @@ namespace Dnf.Client
                         TogglePause();
                         break;
                     case KeyCode.LeftArrow:
-                        Step(-50.0);
+                        if (_paused || _session == null)
+                        {
+                            Step(-50.0);
+                        }
                         break;
                     case KeyCode.RightArrow:
-                        Step(50.0);
+                        if (_paused || _session == null)
+                        {
+                            Step(50.0);
+                        }
                         break;
                     case KeyCode.H:
                         _hud = !_hud;
@@ -414,10 +580,23 @@ namespace Dnf.Client
         private void DrawHud()
         {
             float pad = 12f;
+            string hero = "";
+            string help;
+            if (_session != null)
+            {
+                TownHero h = _session.Hero;
+                hero = "hero (" + ((int)h.X) + ", " + ((int)h.Y) + ")  " + (h.FacingLeft ? "facing left" : "facing right") + "  " + h.Motion
+                    + "  camera x " + _session.Camera.IntX + "\n";
+                help = "Arrow keys: walk   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (no UI, no combat yet)";
+            }
+            else
+            {
+                help = "Space: pause   Left/Right: step 50 ms   H: hide text   Esc: quit   (no player character on this map)";
+            }
             string text = "DNF town demo (Unity)   map: " + mapPath + "\n"
                 + "t = " + ((long)_clockMs) + " ms" + (_paused ? " (paused)" : "") + "    " + _fps.ToString("F0") + " FPS    sprites: " + _spriteCount
                 + "    NPCs: " + _view.NpcCount + "    map layers: " + _view.LayerCount + "\n"
-                + "Space: pause   Left/Right: step 50 ms   H: hide text   Esc: quit   (no player character, no UI yet)";
+                + hero + help;
             DrawShadowed(new Rect(pad, pad, Screen.width - 2 * pad, Screen.height * 0.25f), text);
         }
 

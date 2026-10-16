@@ -41,6 +41,34 @@ namespace Dnf.Render
         };
 
         /// <summary>
+        /// 读地图脚本的 [virtual movable area]:每 4 个整数是一个矩形 (x, y, 宽, 高),主角能走的区域是这些矩形的并集。
+        /// 赛丽亚房间里主角向左走会停在第一个矩形的左边界上,与原版连拍一致(证据 E-066);竖直方向的边界在城镇里没有样本核对。
+        /// 没有这个标签时返回空列表(此时调用方不应限制移动)。
+        /// </summary>
+        public static List<WorldRect> ReadVirtualMovableArea(DnfAssets assets, string mapPath)
+        {
+            ScriptLine[] doc = assets.ReadScript(mapPath);
+            if (doc == null)
+            {
+                throw new DnfFormatException("PVF 里没有地图脚本: " + mapPath);
+            }
+            var rects = new List<WorldRect>();
+            foreach (ScriptLine line in doc)
+            {
+                if (!line.TagIs("[virtual movable area]"))
+                {
+                    continue;
+                }
+                List<int> v = line.Ints();
+                for (int i = 0; i + 3 < v.Count; i += 4)
+                {
+                    rects.Add(new WorldRect(v[i], v[i + 1], v[i + 2], v[i + 3]));
+                }
+            }
+            return rects;
+        }
+
+        /// <summary>
         /// 读地图脚本的 [animation] 行。每一组是 5 个值:动画路径(字符串)、图层(字符串)、x、y、z;
         /// 全库 2,693 条 [animation] 都能按这个形状整齐地切开。路径相对 .map 所在目录解析,找不到文件时仍然返回这一项(路径照解析后的写)。
         /// </summary>

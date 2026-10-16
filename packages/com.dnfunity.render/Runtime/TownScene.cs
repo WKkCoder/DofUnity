@@ -347,7 +347,17 @@ namespace Dnf.Render
         public static List<SceneSprite> BuildResolvedScene(DnfAssets assets, IReadOnlyList<ResolvedLayer> layers, IReadOnlyList<ResolvedNpc> npcs,
             TownProjection projection, long timeMs)
         {
-            var sprites = new List<SceneSprite>(layers.Count + npcs.Count);
+            return BuildResolvedScene(assets, layers, npcs, projection, timeMs, null);
+        }
+
+        /// <summary>
+        /// 同上,并把 <paramref name="extra"/>(例如主角的精灵,已经按各自的图层顺序排好)放进 normal 大类一起按世界 y 排序;
+        /// 放在 NPC 之后,所以同一个 y 上主角压在 NPC 前面(同 y 时原版怎么排没有样本)。
+        /// </summary>
+        public static List<SceneSprite> BuildResolvedScene(DnfAssets assets, IReadOnlyList<ResolvedLayer> layers, IReadOnlyList<ResolvedNpc> npcs,
+            TownProjection projection, long timeMs, IReadOnlyList<SceneSprite> extra)
+        {
+            var sprites = new List<SceneSprite>(layers.Count + npcs.Count + (extra == null ? 0 : extra.Count));
             foreach (ResolvedLayer layer in layers)
             {
                 SceneSprite s = LayerSpriteAt(assets, layer, timeMs, projection);
@@ -363,6 +373,10 @@ namespace Dnf.Render
                 {
                     sprites.Add(s);
                 }
+            }
+            if (extra != null)
+            {
+                sprites.AddRange(extra);
             }
             return StableSortByDepth(sprites);
         }

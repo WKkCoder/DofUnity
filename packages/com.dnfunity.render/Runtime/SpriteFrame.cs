@@ -19,6 +19,33 @@ namespace Dnf.Render
         /// <summary>RGBA8888,行优先,不填充,长度 = Width * Height * 4。</summary>
         public byte[] Rgba { get; }
 
+        private int _blank = -1;
+
+        /// <summary>
+        /// 所有像素都完全透明。换装的某一层在某些帧上没有东西(例如拿剑的后层),IMG 里用一个 1×1 的透明帧占位,
+        /// 它带着一个很远的偏移,画出来什么也看不见,所以合成时可以直接跳过。
+        /// </summary>
+        public bool IsBlank
+        {
+            get
+            {
+                if (_blank < 0)
+                {
+                    bool blank = true;
+                    for (int i = 3; i < Rgba.Length; i += 4)
+                    {
+                        if (Rgba[i] != 0)
+                        {
+                            blank = false;
+                            break;
+                        }
+                    }
+                    _blank = blank ? 1 : 0;
+                }
+                return _blank == 1;
+            }
+        }
+
         public SpriteFrame(int width, int height, int offsetX, int offsetY, int canvasWidth, int canvasHeight, byte[] rgba)
         {
             if (width < 0 || height < 0)

@@ -53,6 +53,29 @@ namespace Dnf.Cli
         /// <summary>render-town --scene:合成整个场景(地图图层 + NPC)而不只是 NPC,与截图整屏对照。</summary>
         public bool Scene { get; set; }
 
+        /// <summary>render-town --scene --hero x,y,left|right,rest|move,动作毫秒:把默认外观的主角摆在世界 (x, y),朝向、动作与动作已播放的毫秒数照给的值。</summary>
+        public string? Hero { get; set; }
+
+        /// <summary>hero-check:原版连拍的 index.tsv、截图目录、要用的截图名前缀。</summary>
+        public string? IndexFile { get; set; }
+        public string? ShotsDir { get; set; }
+        public string? Prefix { get; set; }
+
+        /// <summary>hero-check --start x,y,left|right:第一张截图时主角的世界位置与朝向(站立)。</summary>
+        public string? Start { get; set; }
+
+        /// <summary>hero-check --keys 毫秒:方向,…:相对第一张截图时刻的按键时间表。</summary>
+        public string? Keys { get; set; }
+
+        /// <summary>hero-check --phase auto|毫秒:第一张截图时站立动画已播放的毫秒数。</summary>
+        public string? Phase { get; set; }
+
+        /// <summary>hero-check --cam-range 最小,最大:镜头 x 的范围(赛丽亚房间是 0,96)。</summary>
+        public string? CamRange { get; set; }
+
+        /// <summary>render-town --scene --hero 的武器装备脚本(相对 equipment/character/swordman/;默认起始武器 weapon/katana/kat_damaged.equ)。</summary>
+        public string HeroWeapon { get; set; } = "weapon/katana/kat_damaged.equ";
+
         /// <summary>game-check --sweep:对每个已登记的技能状态各跑一遍,列出错误与缺的接口。</summary>
         public bool Sweep { get; set; }
 
@@ -87,7 +110,10 @@ namespace Dnf.Cli
             "      --best-frame 在每个 NPC 的全部帧里选精确一致像素最多的帧;--png 带 --shot 时输出 左=我们 中=原版 右=对照 的三联图。\n" +
             "  dnf render-town --scene --shot <截图.png> [--time <毫秒>] [--map <地图>] [--png <输出.png>] [--eval x0,y0,x1,y1 ...]\n" +
             "  dnf render-town --scene --png <输出.png> [--time <毫秒>] [--map <地图>]      (不带截图:只输出 800×600 的 CPU 合成结果)\n" +
+            "      --hero x,y,left|right,rest|move,动作毫秒 [--hero-weapon <武器 .equ>]:把默认外观的主角(证据 E-065)摆在世界 (x, y) 一起合成;镜头 x 用 --cam-x。\n" +
             "      合成整个场景(地图 [animation] 图层 + NPC;加法混合光效与染色 alpha 的帧间插值见证据 E-030),与截图整屏逐像素对照并按格子给出吻合率。\n" +
+            "  dnf hero-check --index <index.tsv> --shots <截图目录> --prefix <截图名前缀> --start x,y,left|right [--keys 毫秒:方向,…] [--phase auto|毫秒] [--cam-range 0,96] [--map <地图>]\n" +
+            "      按\"起始状态 + 按键时间表\"模拟主角与镜头,在每张连拍截图的时刻合成主角,逐张给出主角像素的吻合率与 ±3 像素内的最佳偏移(证据 E-065、E-066;截图只在本机,不入库)。\n" +
             "  dnf fit-map --shot <截图.png> [--map <地图>] [--fit-tol N] [--range-x N] [--range-y N] [--samples N] [--png <输出.png>]\n" +
             "      对地图 [animation] 里每个动画的每一帧,在截图里搜索不透明像素在容差内一致最多的位置,并与位置模型的预测比较(证据 E-030)。\n" +
             "  dnf sq-check [--json <文件>]\n" +
@@ -218,6 +244,33 @@ namespace Dnf.Cli
                     case "--scene":
                         opts.Scene = true;
                         break;
+                    case "--hero":
+                        opts.Hero = NextValue(args, ref i);
+                        break;
+                    case "--hero-weapon":
+                        opts.HeroWeapon = NextValue(args, ref i);
+                        break;
+                    case "--index":
+                        opts.IndexFile = NextValue(args, ref i);
+                        break;
+                    case "--shots":
+                        opts.ShotsDir = NextValue(args, ref i);
+                        break;
+                    case "--prefix":
+                        opts.Prefix = NextValue(args, ref i);
+                        break;
+                    case "--start":
+                        opts.Start = NextValue(args, ref i);
+                        break;
+                    case "--keys":
+                        opts.Keys = NextValue(args, ref i);
+                        break;
+                    case "--phase":
+                        opts.Phase = NextValue(args, ref i);
+                        break;
+                    case "--cam-range":
+                        opts.CamRange = NextValue(args, ref i);
+                        break;
                     case "--eval":
                         opts.EvalRects.Add(ParseRect(NextValue(args, ref i)));
                         break;
@@ -261,6 +314,8 @@ namespace Dnf.Cli
                         : TownRender.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "fit-map":
                     return MapFit.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "hero-check":
+                    return HeroCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "sq-check":
                     return SquirrelCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "game-check":
