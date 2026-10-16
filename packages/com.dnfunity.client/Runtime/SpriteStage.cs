@@ -65,17 +65,9 @@ namespace Dnf.Client
                 // flipX 以枢轴(左上角)为轴翻转,翻转后的精灵占 [x - 宽, x];要让它占 [ScreenX, ScreenX + 宽],位置就得右移一个宽度
                 r.flipX = s.Mirrored;
                 r.transform.position = PixelScreen.ToWorld(s.Mirrored ? s.ScreenX + s.Frame.Width : s.ScreenX, s.ScreenY);
-                if (s.Blend == SpriteBlend.Additive)
-                {
-                    r.sharedMaterial = AdditiveMaterial();
-                    r.color = new Color(1f, 1f, 1f, Mathf.Clamp01(s.TintAlpha / 255f));
-                }
-                else
-                {
-                    // 普通混合忽略染色 alpha(与 CPU 合成器一致;它怎样生效没有核对过)
-                    r.sharedMaterial = NormalMaterial();
-                    r.color = Color.white;
-                }
+                // 两种混合都把染色 alpha 当作整张精灵的透明度(普通混合的取整见 RgbaCanvas;证据 E-071)
+                r.sharedMaterial = s.Blend == SpriteBlend.Additive ? AdditiveMaterial() : NormalMaterial();
+                r.color = new Color(1f, 1f, 1f, Mathf.Clamp01(s.TintAlpha / 255f));
                 r.gameObject.SetActive(true);
                 used++;
             }

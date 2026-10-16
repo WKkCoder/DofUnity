@@ -286,16 +286,65 @@ public class AdditiveBlendTests
     }
 
     [Fact]
-    public void NormalBlendIgnoresTheTintAlpha()
+    public void NormalBlendScalesTheTextureAlphaByTheTintAlpha()
     {
-        // 普通混合下染色 alpha 怎样生效没有核对过,所以明确不处理:传 1 与传 255 结果相同
-        var a = new RgbaCanvas(1, 1);
-        var b = new RgbaCanvas(1, 1);
-        a.Clear(100, 100, 100, 255);
-        b.Clear(100, 100, 100, 255);
-        a.Draw(Sprite(1, 1, 200, 0, 0, 128), 0, 0, false, SpriteBlend.Normal, 1);
-        b.Draw(Sprite(1, 1, 200, 0, 0, 128), 0, 0, false, SpriteBlend.Normal, 255);
-        Assert.Equal(b.Pixels, a.Pixels);
+        // 权重 w = 贴图 alpha × 染色 alpha;out = (src*w + dst*(65025-w) + 32512) / 65025,只在最后取整一次
+        var c = new RgbaCanvas(2, 1);
+        c.Clear(100, 100, 100, 255);
+        // 不透明像素、染色 128:w = 255*128 = 32640 → R: (200*32640 + 100*32385 + 32512)/65025 = 150.2 → 150
+        c.Draw(Sprite(2, 1, 200, 0, 0, 255, 200, 0, 0, 128), 0, 0, false, SpriteBlend.Normal, 128);
+        // 第二个像素:w = 128*128 = 16384 → R: (200*16384 + 100*48641 + 32512)/65025 = 125.2 → 125;G、B: 100*(48641)+0 → 74.8 → 75
+        Assert.Equal(new byte[] { 150, 50, 50, 255, 125, 75, 75, 255 }, c.Pixels);
+    }
+
+    [Fact]
+    public void TintingAnOpaquePixelEqualsGivingItThatTextureAlpha()
+    {
+        // 不透明像素配染色 t,与"贴图 alpha = t、不染色"逐位相同:两条取整路径(除以 65025 与除以 255)在整数上给出同一个值
+        byte[][] colours = { new byte[] { 255, 3, 90 }, new byte[] { 12, 200, 7 }, new byte[] { 0, 0, 0 }, new byte[] { 250, 251, 252 } };
+        byte[][] backgrounds = { new byte[] { 37, 91, 203 }, new byte[] { 0, 255, 128 }, new byte[] { 255, 255, 255 } };
+        foreach (byte[] src in colours)
+        {
+            foreach (byte[] dst in backgrounds)
+            {
+                for (int t = 1; t <= 254; t++)
+                {
+                    var tinted = new RgbaCanvas(1, 1);
+                    var textured = new RgbaCanvas(1, 1);
+                    tinted.Clear(dst[0], dst[1], dst[2], 255);
+                    textured.Clear(dst[0], dst[1], dst[2], 255);
+                    tinted.Draw(Sprite(1, 1, src[0], src[1], src[2], 255), 0, 0, false, SpriteBlend.Normal, t);
+                    textured.Draw(Sprite(1, 1, src[0], src[1], src[2], (byte)t), 0, 0, false, SpriteBlend.Normal, 255);
+                    Assert.Equal(textured.Pixels, tinted.Pixels);
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void NormalBlendWithZeroTintDrawsNothing()
+    {
+        var c = new RgbaCanvas(1, 1);
+        c.Clear(100, 100, 100, 255);
+        c.Draw(Sprite(1, 1, 200, 0, 0, 255), 0, 0, false, SpriteBlend.Normal, 0);
+        Assert.Equal(new byte[] { 100, 100, 100, 255 }, c.Pixels);
+    }
+
+    [Fact]
+    public void NormalBlendTintStaysBetweenTheBackgroundAndTheSourceAndIsMonotonic()
+    {
+        // 染色 alpha 从 0 升到 255,R 通道应当单调地从背景值走到源值(门上的铁栅栏淡出就是靠这个)
+        int previous = 100;
+        for (int tint = 1; tint <= 255; tint++)
+        {
+            var c = new RgbaCanvas(1, 1);
+            c.Clear(100, 100, 100, 255);
+            c.Draw(Sprite(1, 1, 220, 100, 100, 255), 0, 0, false, SpriteBlend.Normal, tint);
+            int r = c.Pixels[0];
+            Assert.InRange(r, previous, 220);
+            previous = r;
+        }
+        Assert.Equal(220, previous);
     }
 }
 
