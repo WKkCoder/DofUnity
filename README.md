@@ -87,7 +87,7 @@ open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf
 
    不带参数启动时窗口里有输入框,路径会记在 PlayerPrefs 里。按键:方向键 让赛丽亚房间里的鬼剑士走动(按住)、空格 暂停/继续(暂停时左右方向键按 50 毫秒步进动画时间)、H 隐藏文字、Esc 退出;画面按整数倍放大并居中。`windows`、`android` 也能构建(没有运行过);Android 把数据放在应用的持久数据目录下的 `DNF/` 文件夹。目前只有赛丽亚房间(`map/elvengard/(r)gate.map`)有主角,没有名牌与界面。
    无人值守的开关:`-dnfautowalk 0.5:left,3:none`(按"秒:方向"的时间表替主角按键)、`-dnfhero x,y,left|right,rest|move,毫秒`(离屏渲染一帧时摆放主角)、`-dnfnohero`。
-   副本房间与整座副本(证据 E-067 到 E-070):`-dnfmap map/lorien/s2.map` 播单个房间(X 键普攻);`-dnfdungeon dungeon/act1/lorien.dgn` 玩整座洛兰:方向键走、X 键普攻,怪物清完出口打开,走进打开的出口换到相邻房间,右上角是占位小地图,首领房清空后出 CLEAR。`-dnfexplore`(逛遍所有房间再打首领)或 `-dnfbot`(直奔首领)让自动机替你打,`-dnfseed <整数>` 与 `-dnfrandomlayout` 指定战斗种子与随机选房。伤害是占位值,怪物不会伤害主角,没有结算界面。
+   副本房间与整座副本(证据 E-067 到 E-070):`-dnfmap map/lorien/s2.map` 播单个房间(X 键普攻);`-dnfdungeon dungeon/act1/lorien.dgn` 玩整座洛兰(构建好之后直接运行 `tools/play-dungeon.sh [explore|bot]` 就行):方向键走、X 键普攻,怪物清完出口打开,走进打开的出口换到相邻房间,右上角是占位小地图,首领房清空后出 CLEAR。`-dnfexplore`(逛遍所有房间再打首领)或 `-dnfbot`(直奔首领)让自动机替你打,`-dnfseed <整数>` 与 `-dnfrandomlayout` 指定战斗种子与随机选房。伤害是占位值,怪物不会伤害主角,没有结算界面。
 
 10. 检查脚本引擎(需要 DNF_DIR;预编译的 macOS 与 Android 插件已在 `packages/com.dnfunity.squirrel/Plugins/`,别的平台或改了 `native/` 后用 `tools/build-squirrel.sh` 重建):
 
