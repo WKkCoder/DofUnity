@@ -27,6 +27,71 @@ namespace Dnf.Render
         }
     }
 
+    /// <summary>主角能站的地方。城镇用矩形的并集([virtual movable area]),副本房间用瓦片通行表(<see cref="RoomMap"/>)。</summary>
+    public interface IWalkArea
+    {
+        /// <summary>为 true 时不限制移动(例如地图没有写可走区域)。</summary>
+        bool IsUnrestricted { get; }
+
+        bool Contains(double x, double y);
+    }
+
+    /// <summary>矩形并集(闭区间)构成的可走区域;没有矩形时不限制。</summary>
+    public sealed class RectUnionArea : IWalkArea
+    {
+        private readonly IReadOnlyList<WorldRect> _rects;
+
+        public RectUnionArea(IReadOnlyList<WorldRect> rects)
+        {
+            _rects = rects ?? new List<WorldRect>();
+        }
+
+        public bool IsUnrestricted => _rects.Count == 0;
+
+        public bool Contains(double x, double y)
+        {
+            foreach (WorldRect r in _rects)
+            {
+                if (r.Contains(x, y))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    /// <summary>副本房间的可走区域:房间所有瓦片的通行表(证据 E-067),再扣掉不可穿过的障碍物的占地(证据 E-068,占地的取法是假设)。</summary>
+    public sealed class RoomWalkArea : IWalkArea
+    {
+        private readonly RoomMap _map;
+        private readonly IReadOnlyList<RoomObject> _obstacles;
+
+        public RoomWalkArea(RoomMap map, IReadOnlyList<RoomObject> obstacles = null)
+        {
+            _map = map ?? throw new ArgumentNullException(nameof(map));
+            _obstacles = obstacles ?? new List<RoomObject>();
+        }
+
+        public bool IsUnrestricted => false;
+
+        public bool Contains(double x, double y)
+        {
+            if (!_map.CanWalk(x, y))
+            {
+                return false;
+            }
+            foreach (RoomObject o in _obstacles)
+            {
+                if (o.Blocks(x, y))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
     public enum HeroMotion
     {
         /// <summary>站立(城镇里用 [rest motion],不是战斗用的 [waiting motion],证据 E-065)。</summary>
@@ -123,12 +188,16 @@ namespace Dnf.Render
         private readonly AniTimeline _restTimeline;
         private readonly AniTimeline _moveTimeline;
         private readonly IReadOnlyList<WorldRect> _area;
+        private readonly IWalkArea _walk;
         private double _motionMs;
 
         public AvatarOutfit Outfit { get; set; }
 
-        /// <summary>可走区域(矩形的并集);空表示不限制。</summary>
+        /// <summary>可走区域(矩形的并集);空表示不限制。用 <see cref="Walk"/> 取一般意义上的可走区域(副本房间不是矩形)。</summary>
         public IReadOnlyList<WorldRect> Area => _area;
+
+        /// <summary>一般意义上的可走区域。</summary>
+        public IWalkArea Walk => _walk;
 
         public double X { get; private set; }
         public double Y { get; private set; }
@@ -143,6 +212,18 @@ namespace Dnf.Render
 
         public TownHero(AvatarOutfit outfit, AniFile rest, string restPath, AniFile move, string movePath,
             IReadOnlyList<WorldRect> area, double x, double y, bool facingLeft)
+            : this(outfit, rest, restPath, move, movePath, area ?? new List<WorldRect>(), null, x, y, facingLeft)
+        {
+        }
+
+        public TownHero(AvatarOutfit outfit, AniFile rest, string restPath, AniFile move, string movePath,
+            IWalkArea walk, double x, double y, bool facingLeft)
+            : this(outfit, rest, restPath, move, movePath, new List<WorldRect>(), walk ?? throw new ArgumentNullException(nameof(walk)), x, y, facingLeft)
+        {
+        }
+
+        private TownHero(AvatarOutfit outfit, AniFile rest, string restPath, AniFile move, string movePath,
+            IReadOnlyList<WorldRect> area, IWalkArea walk, double x, double y, bool facingLeft)
         {
             Outfit = outfit ?? throw new ArgumentNullException(nameof(outfit));
             _rest = rest ?? throw new ArgumentNullException(nameof(rest));
@@ -151,18 +232,40 @@ namespace Dnf.Render
             _movePath = movePath;
             _restTimeline = new AniTimeline(rest);
             _moveTimeline = new AniTimeline(move);
-            _area = area ?? new List<WorldRect>();
+            _area = area;
+            _walk = walk ?? new RectUnionArea(area);
             X = x;
             Y = y;
             FacingLeft = facingLeft;
             Motion = HeroMotion.Rest;
         }
 
+        /// <summary>城镇里站立用的角色脚本标签(证据 E-065)。</summary>
+        public const string TownRestTag = "[rest motion]";
+
+        /// <summary>副本里站立用的标签:战斗待机动作(证据 E-067)。</summary>
+        public const string DungeonRestTag = "[waiting motion]";
+
         /// <summary>
-        /// 按角色脚本的 [rest motion] 与 [move motion] 取站立与行走动画(路径相对角色脚本所在目录),并创建主角。
+        /// 按角色脚本的 <paramref name="restTag"/>(默认 [rest motion])与 [move motion] 取站立与行走动画(路径相对角色脚本所在目录),并创建主角。
         /// </summary>
         public static TownHero Create(DnfAssets assets, string chrPath, AvatarOutfit outfit, IReadOnlyList<WorldRect> area,
-            double x, double y, bool facingLeft)
+            double x, double y, bool facingLeft, string restTag = TownRestTag)
+        {
+            LoadMotions(assets, chrPath, restTag, out string restPath, out string movePath, out AniFile rest, out AniFile move);
+            return new TownHero(outfit, rest, restPath, move, movePath, area, x, y, facingLeft);
+        }
+
+        /// <summary>同 <see cref="Create(DnfAssets, string, AvatarOutfit, IReadOnlyList{WorldRect}, double, double, bool, string)"/>,可走区域用一般的 <see cref="IWalkArea"/>(副本房间的瓦片通行表)。</summary>
+        public static TownHero Create(DnfAssets assets, string chrPath, AvatarOutfit outfit, IWalkArea walk,
+            double x, double y, bool facingLeft, string restTag = TownRestTag)
+        {
+            LoadMotions(assets, chrPath, restTag, out string restPath, out string movePath, out AniFile rest, out AniFile move);
+            return new TownHero(outfit, rest, restPath, move, movePath, walk, x, y, facingLeft);
+        }
+
+        private static void LoadMotions(DnfAssets assets, string chrPath, string restTag, out string restPath, out string movePath,
+            out AniFile rest, out AniFile move)
         {
             ScriptLine[] doc = assets.ReadScript(chrPath);
             if (doc == null)
@@ -172,7 +275,7 @@ namespace Dnf.Render
             string restRel = null, moveRel = null;
             foreach (ScriptLine line in doc)
             {
-                if (restRel == null && line.TagIs("[rest motion]"))
+                if (restRel == null && line.TagIs(restTag))
                 {
                     restRel = line.FirstString();
                 }
@@ -183,13 +286,12 @@ namespace Dnf.Render
             }
             if (restRel == null || moveRel == null)
             {
-                throw new DnfFormatException("角色脚本缺少 [rest motion] 或 [move motion]: " + chrPath);
+                throw new DnfFormatException("角色脚本缺少 " + restTag + " 或 [move motion]: " + chrPath);
             }
-            string restPath = PvfPath.ResolveRelativeTo(chrPath, restRel);
-            string movePath = PvfPath.ResolveRelativeTo(chrPath, moveRel);
-            AniFile rest = assets.LoadAni(restPath) ?? throw new DnfFormatException("缺少站立动画: " + restPath);
-            AniFile move = assets.LoadAni(movePath) ?? throw new DnfFormatException("缺少行走动画: " + movePath);
-            return new TownHero(outfit, rest, restPath, move, movePath, area, x, y, facingLeft);
+            restPath = PvfPath.ResolveRelativeTo(chrPath, restRel);
+            movePath = PvfPath.ResolveRelativeTo(chrPath, moveRel);
+            rest = assets.LoadAni(restPath) ?? throw new DnfFormatException("缺少站立动画: " + restPath);
+            move = assets.LoadAni(movePath) ?? throw new DnfFormatException("缺少行走动画: " + movePath);
         }
 
         /// <summary>把主角直接摆到指定的位置、朝向与动作进度(用来与原版截图逐帧对照,以及读档式的初始化)。</summary>
@@ -238,7 +340,7 @@ namespace Dnf.Render
         /// <summary>沿一个轴走 <paramref name="delta"/>,每次最多一像素地检查可走区域,走到边界就停在边界上。</summary>
         private double MoveAxis(double from, double delta, bool horizontal)
         {
-            if (delta == 0 || _area.Count == 0)
+            if (delta == 0 || _walk.IsUnrestricted)
             {
                 return from + delta;
             }
@@ -261,24 +363,35 @@ namespace Dnf.Render
                     {
                         pos = edge;
                     }
+                    else
+                    {
+                        // 整数边界本身不在区域内(瓦片通行格是半开区间):二分到边界,停在区域内的一侧
+                        double inside = pos, outside = candidate;
+                        for (int i = 0; i < 24; i++)
+                        {
+                            double mid = (inside + outside) * 0.5;
+                            if (InArea(horizontal ? mid : X, horizontal ? Y : mid))
+                            {
+                                inside = mid;
+                            }
+                            else
+                            {
+                                outside = mid;
+                            }
+                        }
+                        pos = inside;
+                    }
                     break;
                 }
                 pos = candidate;
                 remaining -= step;
             }
-            return pos;
+            return pos + 0.0; // 把 -0.0 变成 0.0(碰到 x = 0 的边界时会出现)
         }
 
         private bool InArea(double x, double y)
         {
-            foreach (WorldRect r in _area)
-            {
-                if (r.Contains(x, y))
-                {
-                    return true;
-                }
-            }
-            return false;
+            return _walk.Contains(x, y);
         }
 
         /// <summary>当前动画与帧:站立或行走的 .ani、它的路径、此刻显示的帧号。</summary>
@@ -300,10 +413,25 @@ namespace Dnf.Render
     }
 
     /// <summary>
+    /// 带一个可操作主角与跟随镜头的场景游戏(城镇或副本房间)。视图层(Unity 的 TownView)只依赖这个接口:
+    /// 每帧 <see cref="Update"/> 推进主角与镜头,再用 <see cref="Build"/> 取绘制列表。
+    /// </summary>
+    public interface IHeroSession
+    {
+        string MapPath { get; }
+        TownHero Hero { get; }
+        TownCamera Camera { get; }
+        int LayerCount { get; }
+        int NpcCount { get; }
+        void Update(double deltaMs, int dirX, int dirY);
+        List<SceneSprite> Build(long timeMs);
+    }
+
+    /// <summary>
     /// 一场城镇游戏:地图图层、NPC、主角与镜头。每帧先 <see cref="Update"/> 推进主角,再 <see cref="Build"/> 取绘制列表
     /// (地图图层与 NPC 的动画按墙钟时间 <c>timeMs</c> 播放,主角按自己的状态计时)。
     /// </summary>
-    public sealed class TownSession
+    public sealed class TownSession : IHeroSession
     {
         /// <summary>纵向常数,E-024 在网关地图上拟合出的 200。</summary>
         public const int DefaultGroundY = 200;
@@ -395,11 +523,12 @@ namespace Dnf.Render
         }
 
         /// <summary>造一个默认外观的鬼剑士,可走区域取自地图的 [virtual movable area]。</summary>
-        public static TownHero CreateSwordman(DnfAssets assets, string mapPath, double x, double y, bool facingLeft, string weaponEqu = StarterWeapon)
+        public static TownHero CreateSwordman(DnfAssets assets, string mapPath, double x, double y, bool facingLeft, string weaponEqu = StarterWeapon,
+            string restTag = TownHero.TownRestTag)
         {
             AvatarClass cls = AvatarClass.FromChr(assets, SwordmanChrPath, SwordmanJobTag);
             AvatarOutfit outfit = AvatarOutfit.CreateDefault(assets, cls, SwordmanEquipRoot, weaponEqu);
-            return TownHero.Create(assets, SwordmanChrPath, outfit, MapScript.ReadVirtualMovableArea(assets, mapPath), x, y, facingLeft);
+            return TownHero.Create(assets, SwordmanChrPath, outfit, MapScript.ReadVirtualMovableArea(assets, mapPath), x, y, facingLeft, restTag);
         }
 
         /// <summary>造出地图上的主角与镜头并组成一场城镇游戏(出生点与镜头范围取自 <paramref name="slice"/>)。</summary>

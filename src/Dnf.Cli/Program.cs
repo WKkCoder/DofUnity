@@ -76,6 +76,18 @@ namespace Dnf.Cli
         /// <summary>render-town --scene --hero 的武器装备脚本(相对 equipment/character/swordman/;默认起始武器 weapon/katana/kat_damaged.equ)。</summary>
         public string HeroWeapon { get; set; } = "weapon/katana/kat_damaged.equ";
 
+        /// <summary>--hero-wait:站立用战斗待机动作 [waiting motion](副本),不带则用城镇的 [rest motion]。</summary>
+        public bool HeroWait { get; set; }
+
+        /// <summary>render-town --scene --room:按副本房间合成(瓦片、视差背景),而不是城镇(证据 E-067)。</summary>
+        public bool Room { get; set; }
+
+        /// <summary>--gate 左|右|上|下 对应 left|right|up|down 加编号,如 right:364:closed(可重复):把这个出口按地图 [pathgate pos] 的位置画出来。</summary>
+        public List<string> Gates { get; } = new();
+
+        /// <summary>--demo-gates:按 <see cref="DemoRoom"/> 里量过的摆法放出口(与 Unity 演示一致)。</summary>
+        public bool DemoGates { get; set; }
+
         /// <summary>game-check --sweep:对每个已登记的技能状态各跑一遍,列出错误与缺的接口。</summary>
         public bool Sweep { get; set; }
 
@@ -90,6 +102,11 @@ namespace Dnf.Cli
         public int RangeX { get; set; } = 400;
         public int RangeY { get; set; } = 250;
         public int Samples { get; set; } = 2000;
+
+        // fit-sprite(在截图里搜索某张 IMG 帧的位置)
+        public string? Img { get; set; }
+        public int Frame { get; set; }
+        public string? Pred { get; set; }
     }
 
     internal static class CommandLine
@@ -110,12 +127,17 @@ namespace Dnf.Cli
             "      --best-frame 在每个 NPC 的全部帧里选精确一致像素最多的帧;--png 带 --shot 时输出 左=我们 中=原版 右=对照 的三联图。\n" +
             "  dnf render-town --scene --shot <截图.png> [--time <毫秒>] [--map <地图>] [--png <输出.png>] [--eval x0,y0,x1,y1 ...]\n" +
             "  dnf render-town --scene --png <输出.png> [--time <毫秒>] [--map <地图>]      (不带截图:只输出 800×600 的 CPU 合成结果)\n" +
-            "      --hero x,y,left|right,rest|move,动作毫秒 [--hero-weapon <武器 .equ>]:把默认外观的主角(证据 E-065)摆在世界 (x, y) 一起合成;镜头 x 用 --cam-x。\n" +
+            "      --room [--gate left|right|up|down:编号[:closed|open] …] [--demo-gates]:把地图当副本房间合成(瓦片、视差背景、图层、障碍物、出口,证据 E-067、E-068);--demo-gates 按 Unity 演示里量过的摆法放出口。\n" +
+            "      --hero x,y,left|right,rest|move,动作毫秒 [--hero-weapon <武器 .equ>] [--hero-wait]:把默认外观的主角(证据 E-065)摆在世界 (x, y) 一起合成;镜头 x 用 --cam-x;--hero-wait 用战斗待机动作(副本)。\n" +
             "      合成整个场景(地图 [animation] 图层 + NPC;加法混合光效与染色 alpha 的帧间插值见证据 E-030),与截图整屏逐像素对照并按格子给出吻合率。\n" +
             "  dnf hero-check --index <index.tsv> --shots <截图目录> --prefix <截图名前缀> --start x,y,left|right [--keys 毫秒:方向,…] [--phase auto|毫秒] [--cam-range 0,96] [--map <地图>]\n" +
             "      按\"起始状态 + 按键时间表\"模拟主角与镜头,在每张连拍截图的时刻合成主角,逐张给出主角像素的吻合率与 ±3 像素内的最佳偏移(证据 E-065、E-066;截图只在本机,不入库)。\n" +
+            "  dnf room-check --shots <截图目录> --prefix <截图名前缀> [--index <index.tsv>] --map <房间地图> [--gate right:364:closed …]\n" +
+            "      对一组原版连拍,逐张量出副本房间的镜头 x(背景、瓦片、图层动画与门按候选镜头合成,在没有界面的区域数精确一致的像素,取最大;证据 E-067、E-068)。\n" +
             "  dnf fit-map --shot <截图.png> [--map <地图>] [--fit-tol N] [--range-x N] [--range-y N] [--samples N] [--png <输出.png>]\n" +
             "      对地图 [animation] 里每个动画的每一帧,在截图里搜索不透明像素在容差内一致最多的位置,并与位置模型的预测比较(证据 E-030)。\n" +
+            "  dnf fit-sprite --shot <截图.png> --img <NPK 里的 IMG 路径,如 sprite/map/01tile03.img> [--frame N] [--pred x,y] [--fit-tol N] [--range-x N] [--range-y N] [--samples N]\n" +
+            "      在截图里搜索某一张 IMG 帧的不透明像素在容差内一致最多的位置(以 --pred 为中心,默认 0,0),打印前几个峰;用来量地面瓦片、远景/中景与门的摆放。\n" +
             "  dnf sq-check [--json <文件>]\n" +
             "      用 Squirrel 3.2 检查 PVF 里全部明文 .nut:逐个编译;再模拟引擎加载入口脚本 sqr/loadstate.nut,统计登记的状态、回调前缀与缺少的接口(证据 E-033、E-034)。\n" +
             "  dnf game-check [--sweep] [--json <文件>]\n" +
@@ -247,6 +269,18 @@ namespace Dnf.Cli
                     case "--hero":
                         opts.Hero = NextValue(args, ref i);
                         break;
+                    case "--gate":
+                        opts.Gates.Add(NextValue(args, ref i));
+                        break;
+                    case "--demo-gates":
+                        opts.DemoGates = true;
+                        break;
+                    case "--room":
+                        opts.Room = true;
+                        break;
+                    case "--hero-wait":
+                        opts.HeroWait = true;
+                        break;
                     case "--hero-weapon":
                         opts.HeroWeapon = NextValue(args, ref i);
                         break;
@@ -292,6 +326,15 @@ namespace Dnf.Cli
                     case "--samples":
                         opts.Samples = int.TryParse(NextValue(args, ref i), out int sm) && sm >= 100 && sm <= 100000 ? sm : throw new UserError("--samples 需要 100 到 100000 的整数");
                         break;
+                    case "--img":
+                        opts.Img = NextValue(args, ref i);
+                        break;
+                    case "--frame":
+                        opts.Frame = int.TryParse(NextValue(args, ref i), out int fr) && fr >= 0 ? fr : throw new UserError("--frame 需要非负整数");
+                        break;
+                    case "--pred":
+                        opts.Pred = NextValue(args, ref i);
+                        break;
                     default:
                         if (args[i].StartsWith("--", StringComparison.Ordinal))
                         {
@@ -314,8 +357,12 @@ namespace Dnf.Cli
                         : TownRender.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "fit-map":
                     return MapFit.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "fit-sprite":
+                    return MapFit.RunSprite(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "hero-check":
                     return HeroCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "room-check":
+                    return RoomCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "sq-check":
                     return SquirrelCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "game-check":

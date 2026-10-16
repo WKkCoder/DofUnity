@@ -21,7 +21,22 @@ internal static class SceneCompare
         Raster? shotOrNull = opts.Screenshot == null ? null : PngReader.Load(opts.Screenshot);
         var projection = new TownProjection(opts.CameraX, opts.GroundY);
         List<SceneSprite> sprites;
-        if (opts.Hero == null)
+        if (opts.Room)
+        {
+            RoomMap room = RoomMap.Read(assets, opts.MapPath);
+            Console.WriteLine("房间 " + opts.MapPath + ":类型 " + room.Type + ",瓦片 " + room.Tiles.Count + " 块(宽 " + room.Width + "),视差 远/中/近 "
+                + room.FarScroll + "/" + room.MiddleScroll + "/" + room.NearScroll + ",背景动画 " + room.Backgrounds.Count + " 个,图层动画 " + room.Animations.Count + " 个");
+            List<SceneSprite>? heroSprites = null;
+            if (opts.Hero != null)
+            {
+                TownHero heroInRoom = CreateHero(assets, opts);
+                heroSprites = heroInRoom.Sprites(assets, projection);
+            }
+            RoomContent content = RoomContent.Load(assets, room, BuildGates(assets, room, opts));
+            Console.WriteLine("被动物件 " + room.PassiveObjects.Count + " 个,其中画出的障碍物 " + content.Objects.Count + " 个");
+            sprites = RoomScene.Build(assets, content, opts.CameraX, opts.GroundY, opts.TimeMs, heroSprites);
+        }
+        else if (opts.Hero == null)
         {
             sprites = TownScene.BuildScene(assets, opts.MapPath, projection, opts.TimeMs);
         }
@@ -167,6 +182,51 @@ internal static class SceneCompare
         return 0;
     }
 
+    /// <summary>按 --gate 的描述(left|right|up|down:编号[:closed|open])造出房间的出口,位置取自地图的 [pathgate pos]。</summary>
+    internal static List<RoomGate> BuildGates(DnfAssets assets, RoomMap room, Options opts)
+    {
+        var gates = new List<RoomGate>();
+        if (opts.DemoGates)
+        {
+            if (!DemoRoom.TryGetSlice(opts.MapPath, out RoomSlice slice))
+            {
+                throw new UserError("--demo-gates:地图 " + opts.MapPath + " 没有量过的出口摆法");
+            }
+            gates.AddRange(DemoRoom.BuildGates(assets, room, slice));
+            foreach (RoomGate g in gates)
+            {
+                Console.WriteLine("门(演示摆法) " + g.Side + " 编号 " + g.Object.ObjectId + " 位置(" + g.X + "," + g.Y + ")");
+            }
+        }
+        if (opts.Gates.Count == 0)
+        {
+            return gates;
+        }
+        PassiveObjectCatalog catalog = PassiveObjectCatalog.Read(assets);
+        foreach (string spec in opts.Gates)
+        {
+            string[] g = spec.Split(':');
+            if (g.Length < 2 || !Enum.TryParse(g[0], true, out GateSide side) || !int.TryParse(g[1], out int objectId))
+            {
+                throw new UserError("--gate 需要 left|right|up|down:编号[:closed|open],例如 right:364:closed");
+            }
+            int[]? pos = room.Gates[(int)side];
+            if (pos == null)
+            {
+                throw new UserError("地图 " + opts.MapPath + " 的 [pathgate pos] 没有 " + side + " 的位置");
+            }
+            GateObject obj = GateObject.Read(assets, catalog, objectId) ?? throw new UserError("找不到门物件 " + objectId);
+            var gate = new RoomGate(assets, obj, side, pos[0], pos[1]);
+            if (g.Length >= 3 && g[2] == "open")
+            {
+                gate.Open(0);
+            }
+            gates.Add(gate);
+            Console.WriteLine("门 " + side + " 编号 " + objectId + " " + obj.ScriptPath + " 位置(" + pos[0] + "," + pos[1] + ") 图层 " + obj.Layer + " 动画段 " + obj.Parts.Count);
+        }
+        return gates;
+    }
+
     /// <summary>只统计主角自己的像素的吻合率(方法见 <see cref="HeroMatcher"/>)。</summary>
     private static void ReportHeroOnly(DnfAssets assets, Options opts, TownProjection projection, Raster shot)
     {
@@ -187,14 +247,14 @@ internal static class SceneCompare
         {
             throw new UserError("--hero 需要 x,y,left|right,rest|move,动作毫秒(例如 615,234,right,rest,600)");
         }
-        TownHero hero = BuildDefaultHero(assets, opts.MapPath, opts.HeroWeapon, x, y, parts[2] == "left");
+        TownHero hero = BuildDefaultHero(assets, opts.MapPath, opts.HeroWeapon, x, y, parts[2] == "left", opts.HeroWait);
         hero.Place(x, y, parts[2] == "left", parts[3] == "move" ? HeroMotion.Move : HeroMotion.Rest, ms);
         return hero;
     }
 
     /// <summary>默认外观的主角(游戏数据自带的 *_default 装备加一件武器),可走区域取自地图的 [virtual movable area]。</summary>
-    internal static TownHero BuildDefaultHero(DnfAssets assets, string mapPath, string weaponEqu, double x, double y, bool facingLeft)
+    internal static TownHero BuildDefaultHero(DnfAssets assets, string mapPath, string weaponEqu, double x, double y, bool facingLeft, bool wait = false)
     {
-        return DemoHero.CreateSwordman(assets, mapPath, x, y, facingLeft, weaponEqu);
+        return DemoHero.CreateSwordman(assets, mapPath, x, y, facingLeft, weaponEqu, wait ? TownHero.DungeonRestTag : TownHero.TownRestTag);
     }
 }

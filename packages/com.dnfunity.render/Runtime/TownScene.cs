@@ -404,6 +404,12 @@ namespace Dnf.Render
             return StableSortByDepth(sprites);
         }
 
+        /// <summary>按画家算法排序:图层大类升序,normal 大类内按世界 y,其余保持列表顺序(稳定排序)。房间场景等外部拼出来的绘制列表用它排序。</summary>
+        public static List<SceneSprite> SortByDepth(List<SceneSprite> sprites)
+        {
+            return StableSortByDepth(sprites);
+        }
+
         private static List<SceneSprite> StableSortByDepth(List<SceneSprite> sprites)
         {
             var order = new List<KeyValuePair<int, SceneSprite>>(sprites.Count);

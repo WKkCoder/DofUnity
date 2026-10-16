@@ -91,6 +91,50 @@ internal static class MapFit
         return 0;
     }
 
+    /// <summary>
+    /// fit-sprite:在截图里搜索某一张 IMG 帧的位置(与 fit-map 同一套搜索,只是不经过地图脚本)。
+    /// 用来量地面瓦片、远景/中景和门这些不在 [animation] 里的东西;只用不透明像素,至少 500 个。
+    /// </summary>
+    public static int RunSprite(DnfLocation loc, Options opts)
+    {
+        if (opts.Screenshot == null || opts.Img == null)
+        {
+            throw new UserError("fit-sprite 需要 --shot <截图.png> 和 --img <IMG 路径>");
+        }
+        int predX = 0, predY = 0;
+        if (opts.Pred != null)
+        {
+            string[] parts = opts.Pred.Split(',');
+            if (parts.Length != 2 || !int.TryParse(parts[0], out predX) || !int.TryParse(parts[1], out predY))
+            {
+                throw new UserError("--pred 需要 x,y 两个整数");
+            }
+        }
+        var sw = Stopwatch.StartNew();
+        using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
+        Raster shot = PngReader.Load(opts.Screenshot);
+        if (!assets.TryGetFrame(opts.Img, opts.Frame, out SpriteFrame sprite))
+        {
+            throw new UserError("找不到 IMG 帧 " + opts.Img + "#" + opts.Frame);
+        }
+        Console.WriteLine(opts.Img + "#" + opts.Frame + " " + sprite.Width + "x" + sprite.Height + " 帧头偏移(" + sprite.OffsetX + "," + sprite.OffsetY
+            + ")  以(" + predX + "," + predY + ")为中心搜索 ±" + opts.RangeX + "×±" + opts.RangeY + ",容差 " + opts.FitTolerance + ",抽样 " + opts.Samples);
+        List<Peak> peaks = Search(shot, sprite, predX, predY, opts.RangeX, opts.RangeY, opts.FitTolerance, opts.Samples, out int sampleCount);
+        if (peaks.Count == 0)
+        {
+            Console.WriteLine("不透明像素太少(" + sampleCount + "),不搜索");
+            return 0;
+        }
+        foreach (Peak p in peaks)
+        {
+            (int total, int exact, int near) = Count(shot, sprite, p.X, p.Y, opts.FitTolerance);
+            Console.WriteLine("  峰(" + p.X + "," + p.Y + ") 抽样 " + p.Ok + "/" + p.Inb + " 全量:屏内不透明 " + total + ",精确 " + exact + " (" + Pct(exact, total)
+                + "),容差内 " + near + " (" + Pct(near, total) + ")");
+        }
+        Console.Error.WriteLine("用时 " + sw.Elapsed.TotalSeconds.ToString("F1") + "s");
+        return 0;
+    }
+
     private static string Pct(int a, int b) => b == 0 ? "-" : (100.0 * a / b).ToString("F1") + "%";
 
     private static bool Close(uint shotPixel, byte r, byte g, byte b, int tol)

@@ -19,6 +19,7 @@ internal sealed class AvatarFixture : IDisposable
     public const string AreaMap = "map/test/area.map";
     public const string RestAni = "character/test/animation/rest.ani";
     public const string MoveAni = "character/test/animation/move.ani";
+    public const string WaitAni = "character/test/animation/wait.ani";
 
     /// <summary>每个 IMG 的第 k 帧,红色通道 = 基色 + k,用来判断精灵取的是哪个 IMG 帧。</summary>
     public static readonly (int R, int G, int B) SkinColor = (200, 10, 10);
@@ -100,6 +101,7 @@ internal sealed class AvatarFixture : IDisposable
             (ChrPath, NewScript()
                 .Tag("[body image path]").Str("Character/Test/Equipment/Avatar/skin/tt_body%04d.img")
                 .Tag("[rest motion]").Str("animation/rest.ani")
+                .Tag("[waiting motion]").Str("animation/wait.ani")
                 .Tag("[move motion]").Str("animation/move.ani").Build()),
             (EquipRoot + "/avatar/skin/askin_default.equ", NewScript()
                 .Tag("[equipment type]").Str("[skin avatar]")
@@ -142,6 +144,7 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[layer variation]").Int(2150).Str("cap_a").Build()),
             (RestAni, BuildAni(new[] { (0, 100), (1, 300) })),
             (MoveAni, BuildAni(new[] { (0, 100), (1, 100), (0, 100) })),
+            (WaitAni, BuildAni(new[] { (1, 100), (0, 100) })),
             // 可走区域:两个矩形 (10,20,100,50) 与 (100,60,30,40),拼成一个 L 形
             (AreaMap, NewScript().Tag("[virtual movable area]").Int(10, 20, 100, 50, 100, 60, 30, 40).Build()),
             ("npc/npc.lst", NewScript().Build()),

@@ -6,7 +6,7 @@ namespace Dnf.Cli.Analysis;
 
 /// <summary>
 /// hero-check:拿一组原版连拍(<c>re/baseline/runs/…/index.tsv</c> 里带时间戳的一串截图),按"起始状态 + 按键时间表"模拟我们的主角与镜头,
-/// 在每张截图的时刻把主角合成出来,逐张统计主角自己的像素与截图的吻合率,并在 ±3 像素范围内搜索最佳偏移。
+/// 在每张截图的时刻把主角合成出来,逐张统计主角自己的像素与截图的吻合率,并在 ±3 像素(--radius 可改,最大 16)范围内搜索最佳偏移。
 /// 用来验证朝向镜像、站立/行走动画的帧与计时、行走速度和镜头规则(证据 E-065、E-066)。
 /// 起始的站立动画相位未知,先用第一张截图在 0 到 1050 毫秒里扫一遍挑最好的(--phase auto)。
 /// 截图与 index.tsv 是用户机器上的录像,只留在本机,不入库。
@@ -52,7 +52,7 @@ internal static class HeroCheck
         (int camMin, int camMax) = ParseCamRange(opts.CamRange);
 
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
-        TownHero hero = SceneCompare.BuildDefaultHero(assets, opts.MapPath, opts.HeroWeapon, startX, startY, startLeft);
+        TownHero hero = SceneCompare.BuildDefaultHero(assets, opts.MapPath, opts.HeroWeapon, startX, startY, startLeft, opts.HeroWait);
         var matcher = new HeroMatcher();
         var rasters = new Raster[shots.Count];
         for (int i = 0; i < shots.Count; i++)
@@ -121,9 +121,9 @@ internal static class HeroCheck
             double zero = Score(assets, hero, matcher, p, opts.GroundY, rasters[i], 0, 0);
             double best = zero;
             int bdx = 0, bdy = 0;
-            for (int dy = -3; dy <= 3; dy++)
+            for (int dy = -opts.Radius; dy <= opts.Radius; dy++)
             {
-                for (int dx = -3; dx <= 3; dx++)
+                for (int dx = -opts.Radius; dx <= opts.Radius; dx++)
                 {
                     if (dx == 0 && dy == 0)
                     {

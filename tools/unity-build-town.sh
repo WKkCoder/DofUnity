@@ -95,6 +95,40 @@ if [ "$platform" = "macos" ]; then
     [ "$rc" -eq 0 ] || exit "$rc"
     grep -q 'DNF_TOWN_DEMO ran .* facing=left motion=Rest cameraX=0 leftEdge=True' "$walk_log" \
       || { echo "自动行走后主角不在预期的状态(应停在可走区域左边界上、朝左、站立、镜头 0):$walk_log" >&2; exit 1; }
+
+    # 副本房间(证据 E-067、E-068):洛兰第一、第二个房间。离屏渲染一帧与 CPU 合成逐字节对照(出口按演示摆法,房间里的障碍物都在)
+    #   s2 带主角:出生点 (876,342) 朝右站立(战斗待机动作),镜头 320;s3 不带主角:镜头 320
+    for spec in "map/lorien/s2.map:876,342,right,rest,0:320:room-s2-hero" "map/lorien/s3.map::320:room-s3"; do
+      rmap="${spec%%:*}"; rest="${spec#*:}"; hero="${rest%%:*}"; rest="${rest#*:}"; cam="${rest%%:*}"; tag="${rest#*:}"
+      rm -f "out/town-demo-$tag.png" "out/town-cpu-$tag.png"
+      app_args=(-batchmode -logFile "$PWD/re/unity-run-town-$tag-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-$tag.png" -dnftime 545 -dnfmap "$rmap")
+      cpu_args=(render-town --scene --room --map "$rmap" --demo-gates --png "$PWD/out/town-cpu-$tag.png" --time 545 --cam-x "$cam")
+      if [ -n "$hero" ]; then
+        app_args+=(-dnfhero "$hero,$cam")
+        cpu_args+=(--hero "$hero" --hero-wait)
+      fi
+      set +e
+      "$app" "${app_args[@]}"
+      rc=$?
+      set -e
+      echo "播放器退出码(离屏渲染 $tag): $rc"
+      grep -E 'DNF_TOWN_DEMO' "$PWD/re/unity-run-town-$tag-macos.log" || true
+      [ "$rc" -eq 0 ] || exit "$rc"
+      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll "${cpu_args[@]}" >/dev/null
+      python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-$tag.png" --max-diff 0
+    done
+    # 房间里实时运行并自动走:向左走到房间左边(x 到 0,镜头 0),再向下走到通行带的下沿(y 停在 348 之前,取整显示 348.0)
+    room_walk_log="$PWD/re/unity-run-town-room-walk-macos.log"
+    rm -f "$room_walk_log"
+    set +e
+    "$app" -batchmode -logFile "$room_walk_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 7 -dnfautowalk 0.5:left,5:down,6.5:none
+    rc=$?
+    set -e
+    echo "播放器退出码(房间里自动行走): $rc"
+    grep -E 'DNF_TOWN_DEMO' "$room_walk_log" || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    grep -q 'DNF_TOWN_DEMO ran .* hero=(0\.0,348\.0) facing=left motion=Rest cameraX=0 .*room=true' "$room_walk_log" \
+      || { echo "房间里自动行走后主角不在预期的状态(应在 (0, 348) 取整显示、朝左、站立、镜头 0):$room_walk_log" >&2; exit 1; }
   else
     echo "没有设置 DNF_DIR:跳过离屏渲染校验"
   fi

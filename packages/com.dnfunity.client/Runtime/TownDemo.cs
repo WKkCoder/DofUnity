@@ -10,6 +10,8 @@ namespace Dnf.Client
     /// 城镇演示:运行时读取用户自备的 Script.pvf 与 ImagePacks2,用 <see cref="TownView"/> 实时播放一张城镇地图
     /// (默认网关 map/elvengard/(r)gate.map:地图图层、叠加光效、NPC,以及一个用方向键走动的鬼剑士;没有名牌与界面)。
     /// 主角只在量过出生点与镜头范围的地图上出现(目前是赛丽亚房间,证据 E-065、E-066)。
+    /// 地图是副本房间(有 [pathgate pos],例如 -dnfmap map/lorien/s2.map)时改播副本房间:瓦片、视差背景、图层动画、障碍物、出口,
+    /// 以及一个站在房间通行表上走动的主角(<see cref="RoomSession"/>,证据 E-067、E-068);没有怪物与战斗。
     /// 不分发、不复制任何原版内容:数据只在内存里解码。
     ///
     /// 数据目录(里面要有 Script.pvf 与 ImagePacks2)按下面的顺序找:
@@ -62,8 +64,9 @@ namespace Dnf.Client
         private float _runningSince = -1f;
         private DnfAssets _assets;
         private TownView _view;
-        private TownSession _session;
+        private IHeroSession _session;
         private bool _noHero;
+        private bool _heroInput = true;
         private string _heroSpec;
         private readonly System.Collections.Generic.List<AutoKey> _autoWalk = new System.Collections.Generic.List<AutoKey>();
         private Camera _bars;
@@ -266,10 +269,23 @@ namespace Dnf.Client
 
         /// <summary>
         /// 要不要带主角:-dnfnohero 不带;离屏渲染一帧时默认不带(与 CPU 合成的参照一致),带 -dnfhero 才画;
-        /// 其余情况只在量过出生点与镜头范围的地图上带。
+        /// 其余情况只在量过出生点与镜头范围的地图上带。副本房间(地图里有 [tile])总是造一场房间游戏,
+        /// 不带主角时只是不画主角、不读键盘(镜头停在出生点的位置,或 -dnfhero 指定的镜头 x)。
         /// </summary>
-        private TownSession TryCreateSession()
+        private IHeroSession TryCreateSession()
         {
+            if (DemoRoom.IsRoomMap(_assets, mapPath))
+            {
+                RoomSession room = DemoRoom.CreateSession(_assets, mapPath);
+                room.HeroVisible = !_noHero && (_heroSpec != null || string.IsNullOrEmpty(_shotPath));
+                if (_heroSpec != null)
+                {
+                    ApplyHeroSpec(room, _heroSpec);
+                }
+                _heroInput = !_noHero;
+                return room;
+            }
+            _heroInput = true;
             if (_noHero)
             {
                 return null;
@@ -292,7 +308,7 @@ namespace Dnf.Client
         }
 
         /// <summary>x,y,left|right,rest|move,毫秒[,镜头x]:不带镜头 x 时镜头取"主角居中再夹住"。</summary>
-        private static void ApplyHeroSpec(TownSession session, string spec)
+        private static void ApplyHeroSpec(IHeroSession session, string spec)
         {
             string[] p = spec.Split(',');
             var inv = System.Globalization.CultureInfo.InvariantCulture;
@@ -333,7 +349,8 @@ namespace Dnf.Client
                 minX = Math.Min(minX, r.X);
             }
             return " hero=(" + h.X.ToString("F1", inv) + "," + h.Y.ToString("F1", inv) + ") facing=" + (h.FacingLeft ? "left" : "right")
-                + " motion=" + h.Motion + " cameraX=" + _session.Camera.IntX + " leftEdge=" + (h.Area.Count > 0 && h.X <= minX);
+                + " motion=" + h.Motion + " cameraX=" + _session.Camera.IntX + " leftEdge=" + (h.Area.Count > 0 && h.X <= minX)
+                + (_session is RoomSession ? " room=true" : "");
         }
 
         private void SaveShotAndQuit()
@@ -388,7 +405,11 @@ namespace Dnf.Client
             {
                 if (_session != null && !_paused)
                 {
-                    ReadHeroInput(out int dirX, out int dirY);
+                    int dirX = 0, dirY = 0;
+                    if (_heroInput)
+                    {
+                        ReadHeroInput(out dirX, out dirY);
+                    }
                     // 一帧最多推进 100 毫秒:窗口被拖动、打开数据等卡顿之后主角不会一步冲出去
                     _session.Update(Math.Min(Time.unscaledDeltaTime * 1000.0, 100.0), dirX, dirY);
                 }
@@ -593,7 +614,7 @@ namespace Dnf.Client
             {
                 help = "Space: pause   Left/Right: step 50 ms   H: hide text   Esc: quit   (no player character on this map)";
             }
-            string text = "DNF town demo (Unity)   map: " + mapPath + "\n"
+            string text = (_session is RoomSession ? "DNF dungeon room demo (Unity)   map: " : "DNF town demo (Unity)   map: ") + mapPath + "\n"
                 + "t = " + ((long)_clockMs) + " ms" + (_paused ? " (paused)" : "") + "    " + _fps.ToString("F0") + " FPS    sprites: " + _spriteCount
                 + "    NPCs: " + _view.NpcCount + "    map layers: " + _view.LayerCount + "\n"
                 + hero + help;
