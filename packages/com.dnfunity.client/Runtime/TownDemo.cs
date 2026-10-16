@@ -15,6 +15,9 @@ namespace Dnf.Client
     /// 以及一个站在房间通行表上走动的主角(<see cref="RoomSession"/>,证据 E-067、E-068);
     /// 实时运行时房间里还有地图 [monster] 摆好的怪物,X 键出普攻(三段连招),命中扣血、受击硬直、死亡消失,屏幕上有血条与伤害数字(<see cref="RoomCombatSession"/>,证据 E-069;
     /// 伤害是占位值,怪物行为是近似,不会伤害主角)。
+    /// 带 -dnfdungeon &lt;副本定义路径&gt;(例如 dungeon/act1/lorien.dgn)时玩一整座副本:迷宫里的一格一格房间,怪物清完出口打开,走进出口换到相邻的房间,
+    /// 屏幕右上角有占位小地图,首领房清空后出 CLEAR(<see cref="DungeonSession"/>,证据 E-070)。-dnfbot 让自动机替你打(-dnfexplore 先逛遍所有房间),
+    /// -dnfseed 与 -dnfrandomlayout 指定战斗种子与随机选房。
     /// 不分发、不复制任何原版内容:数据只在内存里解码。
     ///
     /// 数据目录(里面要有 Script.pvf 与 ImagePacks2)按下面的顺序找:
@@ -25,6 +28,7 @@ namespace Dnf.Client
     /// 命令行:-dnfdir &lt;目录&gt; -dnfmap &lt;PVF 内地图路径&gt; [-dnfshot &lt;输出.png&gt; [-dnftime &lt;毫秒&gt;]] [-dnfquitafter &lt;秒&gt;]
     ///         [-dnfnohero] [-dnfhero x,y,left|right,rest|move,毫秒[,镜头x]] [-dnfautowalk 秒:动作,…]
     ///         [-dnfmonsters | -dnfnomonsters] [-dnfplayat &lt;秒&gt;]
+    ///         [-dnfdungeon &lt;副本定义路径&gt; [-dnfbot | -dnfexplore] [-dnfseed &lt;整数&gt;] [-dnfrandomlayout]]
     /// 带 -dnfshot 时只离屏渲染一帧写成 PNG 就退出(用来和 CPU 合成器逐字节对照,见 tools/unity-build-town.sh);
     /// 这时默认不画主角,带 -dnfhero 才把主角摆到指定的位置、朝向与动作进度(与 dnf render-town --scene --hero 同一写法)。
     /// 带 -dnfquitafter 时实时运行指定秒数后退出,并在日志里留一行 DNF_TOWN_DEMO ran …(用来在无窗口的环境里检查实时循环)。
@@ -33,6 +37,7 @@ namespace Dnf.Client
     /// 副本房间默认带怪物(-dnfnomonsters 去掉);离屏渲染一帧时默认不带(与 CPU 合成的参照一致),带 -dnfmonsters 才画。
     /// 带 -dnfplayat &lt;秒&gt; 与 -dnfshot 时,离屏渲染前先让房间战斗按 -dnfautowalk 的时间表以固定 1/60 秒步长确定地模拟到这一刻(此时自动带怪物与主角),
     /// 与命令行 combat-check 同一份模拟,用来把战斗中的一帧与 CPU 合成逐字节对照(见 tools/unity-build-town.sh)。
+    /// 副本同理:-dnfdungeon -dnfbot -dnfplayat &lt;秒&gt; -dnfshot 先让自动机按固定 1/60 秒步长打到这一刻,与命令行 dungeon-check --bot --shots-at 对照。
     /// 按键:方向键 走动(按住);X 普攻(连按接下一段);空格 暂停/继续;暂停时左右方向键按 50 毫秒步进动画时间;H 显示/隐藏文字;Esc 退出;点击/触摸 暂停/继续。
     /// 画面以整数倍放大并居中(留黑边),所以与原版 800×600 像素一一对应、不糊。
     /// </summary>
@@ -70,6 +75,12 @@ namespace Dnf.Client
         private string _heroSpec;
         private bool? _monsters;
         private double _playAtSeconds = -1.0;
+        private string _dungeonPath;
+        private DungeonBot _bot;
+        private bool _botExplore;
+        private bool _useBot;
+        private int _seed = 1;
+        private bool _randomLayout;
         private CombatScript _script = new CombatScript();
         private Camera _bars;
         private double _clockMs;          // 本帧显示的动画时间(毫秒)
@@ -148,6 +159,23 @@ namespace Dnf.Client
                     case "-dnfplayat":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
                                 System.Globalization.CultureInfo.InvariantCulture, out double pa)) { _playAtSeconds = pa; i++; }
+                        break;
+                    case "-dnfdungeon":
+                        if (value != null) { _dungeonPath = value; i++; }
+                        break;
+                    case "-dnfbot":
+                        _useBot = true;
+                        break;
+                    case "-dnfexplore":
+                        _useBot = true;
+                        _botExplore = true;
+                        break;
+                    case "-dnfseed":
+                        if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                                System.Globalization.CultureInfo.InvariantCulture, out int seed)) { _seed = seed; i++; }
+                        break;
+                    case "-dnfrandomlayout":
+                        _randomLayout = true;
                         break;
                     case "-dnfquitafter":
                         if (value != null && float.TryParse(value, System.Globalization.NumberStyles.Float,
@@ -247,7 +275,7 @@ namespace Dnf.Client
             _originReal = Time.realtimeSinceStartupAsDouble;
             _state = State.Running;
             _runningSince = Time.realtimeSinceStartup;
-            Debug.Log("DNF_TOWN_DEMO running map=" + mapPath + " npcs=" + _view.NpcCount + " layers=" + _view.LayerCount + HeroLog());
+            Debug.Log("DNF_TOWN_DEMO running map=" + (_session != null ? _session.MapPath : mapPath) + " npcs=" + _view.NpcCount + " layers=" + _view.LayerCount + HeroLog());
         }
 
         /// <summary>
@@ -257,6 +285,29 @@ namespace Dnf.Client
         /// </summary>
         private IHeroSession TryCreateSession()
         {
+            if (!string.IsNullOrEmpty(_dungeonPath))
+            {
+                // 整座副本:自动机(或 -dnfautowalk 的时间表)在离屏渲染前先按固定 1/60 秒步长确定地打到指定时刻,与命令行 dungeon-check 同一局
+                bool shot = !string.IsNullOrEmpty(_shotPath);
+                DungeonSession dungeon = DungeonSession.Create(_assets, _dungeonPath, _seed, _randomLayout);
+                _heroInput = true;
+                if (_useBot)
+                {
+                    _bot = new DungeonBot(_botExplore);
+                }
+                if (shot && _playAtSeconds >= 0.0)
+                {
+                    if (_bot != null)
+                    {
+                        _bot.RunUntil(dungeon, _playAtSeconds * 1000.0);
+                    }
+                    else
+                    {
+                        _script.RunUntil(dungeon, _playAtSeconds * 1000.0);
+                    }
+                }
+                return dungeon;
+            }
             if (DemoRoom.IsRoomMap(_assets, mapPath))
             {
                 bool shot = !string.IsNullOrEmpty(_shotPath);
@@ -351,13 +402,18 @@ namespace Dnf.Client
                 + (_session is RoomCombatSession fight
                     ? " monsters=" + fight.AliveCount + "/" + fight.Monsters.Count + " hits=" + fight.Hits + " kills=" + fight.Kills + " combo=" + fight.Combo
                         + " stage=" + (h.IsAttacking ? h.AttackStage + 1 : 0)
+                    : string.Empty)
+                + (_session is DungeonSession d
+                    ? " dungeon=" + _dungeonPath + " cell=(" + d.CellX + "," + d.CellY + ") map=" + d.MapPath + " entered=" + d.RoomsEntered + " cleared=" + d.RoomsCleared
+                        + " transitions=" + d.Transitions + " bossCleared=" + d.BossCleared + " exitReached=" + d.ExitReached
+                        + " monsters=" + d.Current.AliveCount + "/" + d.Current.Monsters.Count + " hits=" + d.Hits + " kills=" + d.Kills + " damage=" + d.TotalDamage
                     : string.Empty);
         }
 
         /// <summary>副本房间(无论带不带怪物)。</summary>
         private bool IsRoomSession
         {
-            get { return _session is RoomSession || _session is RoomCombatSession; }
+            get { return _session is RoomSession || _session is RoomCombatSession || _session is DungeonSession; }
         }
 
         private void SaveShotAndQuit()
@@ -452,6 +508,10 @@ namespace Dnf.Client
         /// </summary>
         private bool ReadHeroInput(out int dirX, out int dirY)
         {
+            if (_bot != null && _session is DungeonSession dungeon)
+            {
+                return _bot.Next(dungeon, out dirX, out dirY);
+            }
             if (!_script.IsEmpty)
             {
                 return _script.Poll((Time.realtimeSinceStartup - _runningSince) * 1000.0, out dirX, out dirY);
@@ -619,20 +679,36 @@ namespace Dnf.Client
                 hero = "hero (" + ((int)h.X) + ", " + ((int)h.Y) + ")  " + (h.FacingLeft ? "facing left" : "facing right") + "  " + h.Motion
                     + (h.IsAttacking ? " stage " + (h.AttackStage + 1) : string.Empty)
                     + "  camera x " + _session.Camera.IntX + "\n";
-                if (_session is RoomCombatSession fight)
+                if (_session is DungeonSession dungeon)
+                {
+                    hero += "cell (" + dungeon.CellX + ", " + dungeon.CellY + ")   rooms entered " + dungeon.RoomsEntered + "  cleared " + dungeon.RoomsCleared
+                        + "/" + (dungeon.Maze.Cols * dungeon.Maze.Rows) + "  moves " + dungeon.Transitions + (dungeon.BossCleared ? "   BOSS ROOM CLEARED" : "") + "\n"
+                        + "monsters alive " + dungeon.Current.AliveCount + "/" + dungeon.Current.Monsters.Count + "  hits " + dungeon.Hits + "  kills " + dungeon.Kills
+                        + "  damage " + dungeon.TotalDamage + "\n";
+                }
+                else if (_session is RoomCombatSession fight)
                 {
                     hero += "monsters alive " + fight.AliveCount + "/" + fight.Monsters.Count + "  hits " + fight.Hits + "  kills " + fight.Kills
                         + "  combo " + fight.Combo + "  damage " + fight.TotalDamage + "\n";
                 }
-                help = _session is RoomCombatSession
-                    ? "Arrow keys: walk   X: attack (press again to chain)   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (placeholder damage; monsters do not hurt you)"
-                    : "Arrow keys: walk   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (no UI, no combat)";
+                if (_session is DungeonSession)
+                {
+                    help = (_bot != null ? "Auto-play bot is driving (bot input only)   " : "Arrow keys: walk   X: attack (press again to chain)   ")
+                        + "Space: pause   H: hide text   Esc: quit   (clear a room to open its gates, then walk into a gate; placeholder damage; monsters do not hurt you)";
+                }
+                else
+                {
+                    help = _session is RoomCombatSession
+                        ? "Arrow keys: walk   X: attack (press again to chain)   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (placeholder damage; monsters do not hurt you)"
+                        : "Arrow keys: walk   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (no UI, no combat)";
+                }
             }
             else
             {
                 help = "Space: pause   Left/Right: step 50 ms   H: hide text   Esc: quit   (no player character on this map)";
             }
-            string text = (IsRoomSession ? "DNF dungeon room demo (Unity)   map: " : "DNF town demo (Unity)   map: ") + mapPath + "\n"
+            string shownMap = _session != null ? _session.MapPath : mapPath;
+            string text = (_session is DungeonSession ? "DNF dungeon demo (Unity)   room: " : IsRoomSession ? "DNF dungeon room demo (Unity)   map: " : "DNF town demo (Unity)   map: ") + shownMap + "\n"
                 + "t = " + ((long)_clockMs) + " ms" + (_paused ? " (paused)" : "") + "    " + _fps.ToString("F0") + " FPS    sprites: " + _spriteCount
                 + "    NPCs: " + _view.NpcCount + "    map layers: " + _view.LayerCount + "\n"
                 + hero + help;

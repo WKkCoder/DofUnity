@@ -73,6 +73,10 @@ namespace Dnf.Cli
         /// <summary>hero-check --cam-range 最小,最大:镜头 x 的范围(赛丽亚房间是 0,96)。</summary>
         public string? CamRange { get; set; }
 
+        /// <summary>hero-find --motion rest|move:主角的动作(默认 rest);--search N:以 --start 为中心搜索的半径(像素,默认 24,最大 80)。</summary>
+        public string Motion { get; set; } = "rest";
+        public int Search { get; set; } = 24;
+
         /// <summary>render-town --scene --hero 的武器装备脚本(相对 equipment/character/swordman/;默认起始武器 weapon/katana/kat_damaged.equ)。</summary>
         public string HeroWeapon { get; set; } = "weapon/katana/kat_damaged.equ";
 
@@ -87,10 +91,26 @@ namespace Dnf.Cli
 
         /// <summary>combat-check --seconds N:模拟多少秒(默认 10);--shots-at 秒,秒,…:这些时刻各写一张 PNG(文件名前缀取 --png)。</summary>
         public double Seconds { get; set; } = 10;
+
+        /// <summary>命令行里明确给了 --seconds(dungeon-check 没给时默认跑 900 秒,够打完一座副本)。</summary>
+        public bool SecondsGiven { get; set; }
         public string? ShotsAt { get; set; }
 
         /// <summary>combat-check --trace:每 0.25 秒打印一次主角与怪物的位置、阶段与血量。</summary>
         public bool Trace { get; set; }
+
+        /// <summary>dungeon-check --dungeon:副本定义的 PVF 路径(默认洛兰);--bot:让 <see cref="Dnf.Play.DungeonBot"/> 自动打(否则按 --play 的时间表);--seed:战斗与随机选图的种子;--random-layout:按种子随机选每格的房间。</summary>
+        public string Dungeon { get; set; } = "dungeon/act1/lorien.dgn";
+        public bool Bot { get; set; }
+
+        /// <summary>dungeon-check --explore:自动机先把首领格以外的每一格都走一遍,再去首领格(默认直接走最短路)。</summary>
+        public bool Explore { get; set; }
+
+        public int Seed { get; set; } = 1;
+        public bool RandomLayout { get; set; }
+
+        /// <summary>dungeon-check --layout-only:只打印迷宫与每格选中的房间,不模拟。</summary>
+        public bool LayoutOnly { get; set; }
 
         /// <summary>render-town --scene --room:按副本房间合成(瓦片、视差背景),而不是城镇(证据 E-067)。</summary>
         public bool Room { get; set; }
@@ -152,12 +172,16 @@ namespace Dnf.Cli
             "      合成整个场景(地图 [animation] 图层 + NPC;加法混合光效与染色 alpha 的帧间插值见证据 E-030),与截图整屏逐像素对照并按格子给出吻合率。\n" +
             "  dnf hero-check --index <index.tsv> --shots <截图目录> --prefix <截图名前缀> --start x,y,left|right [--keys 毫秒:方向,…] [--phase auto|毫秒] [--cam-range 0,96] [--map <地图>]\n" +
             "      按\"起始状态 + 按键时间表\"模拟主角与镜头,在每张连拍截图的时刻合成主角,逐张给出主角像素的吻合率与 ±3 像素内的最佳偏移(证据 E-065、E-066;截图只在本机,不入库)。\n" +
+            "  dnf hero-find --shot <截图.png> --start x,y,left|right [--map <房间地图>] [--cam-x N] [--hero-wait] [--motion rest|move] [--search N]\n" +
+            "      在一张截图里找主角:以 --start 为中心搜 ±N 像素(默认 24)、同时试遍站立/行走的每个动画帧,列出主角不透明像素精确一致率最高的位置(证据 E-070)。\n" +
             "  dnf room-check --shots <截图目录> --prefix <截图名前缀> [--index <index.tsv>] --map <房间地图> [--gate right:364:closed …]\n" +
             "      对一组原版连拍,逐张量出副本房间的镜头 x(背景、瓦片、图层动画与门按候选镜头合成,在没有界面的区域数精确一致的像素,取最大;证据 E-067、E-068)。\n" +
             "  dnf fit-map --shot <截图.png> [--map <地图>] [--fit-tol N] [--range-x N] [--range-y N] [--samples N] [--png <输出.png>]\n" +
             "      对地图 [animation] 里每个动画的每一帧,在截图里搜索不透明像素在容差内一致最多的位置,并与位置模型的预测比较(证据 E-030)。\n" +
             "  dnf combat-check --map <房间地图> [--start x,y,left|right] [--play 秒:动作,…] [--seconds N] [--shots-at 秒,…] [--png 前缀]\n" +
             "      (副本房间里的战斗模拟:按时间表按键,打印命中与怪物状态,可在指定时刻输出 800×600 画面;证据 E-069)\n" +
+            "  dnf dungeon-check [--dungeon <副本定义>] [--seed N] [--random-layout] [--bot [--explore] | --play 秒:动作,…] [--seconds N(默认 900)] [--shots-at 秒,…] [--png 前缀] [--layout-only]\n" +
+            "      (整座副本:读迷宫、选每格的房间、打印布局;--bot 让自动机从起点打到首领清空,逐个房间打印进出与清房时刻;--shots-at 在指定时刻输出画面;证据 E-070)\n" +
             "  dnf fit-sprite --shot <截图.png> --img <NPK 里的 IMG 路径,如 sprite/map/01tile03.img> [--frame N] [--pred x,y] [--fit-tol N] [--range-x N] [--range-y N] [--samples N]\n" +
             "      在截图里搜索某一张 IMG 帧的不透明像素在容差内一致最多的位置(以 --pred 为中心,默认 0,0),打印前几个峰;用来量地面瓦片、远景/中景与门的摆放。\n" +
             "  dnf sq-check [--json <文件>]\n" +
@@ -312,12 +336,32 @@ namespace Dnf.Cli
                     case "--seconds":
                         opts.Seconds = double.TryParse(NextValue(args, ref i), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double secs) && secs > 0
                             ? secs : throw new UserError("--seconds 需要正数");
+                        opts.SecondsGiven = true;
                         break;
                     case "--shots-at":
                         opts.ShotsAt = NextValue(args, ref i);
                         break;
                     case "--trace":
                         opts.Trace = true;
+                        break;
+                    case "--dungeon":
+                        opts.Dungeon = NextValue(args, ref i);
+                        break;
+                    case "--bot":
+                        opts.Bot = true;
+                        break;
+                    case "--random-layout":
+                        opts.RandomLayout = true;
+                        break;
+                    case "--layout-only":
+                        opts.LayoutOnly = true;
+                        break;
+                    case "--explore":
+                        opts.Explore = true;
+                        opts.Bot = true;
+                        break;
+                    case "--seed":
+                        opts.Seed = int.TryParse(NextValue(args, ref i), out int seedValue) ? seedValue : throw new UserError("--seed 需要整数");
                         break;
                     case "--hero-weapon":
                         opts.HeroWeapon = NextValue(args, ref i);
@@ -342,6 +386,12 @@ namespace Dnf.Cli
                         break;
                     case "--cam-range":
                         opts.CamRange = NextValue(args, ref i);
+                        break;
+                    case "--motion":
+                        opts.Motion = NextValue(args, ref i) is var mo2 && (mo2 is "rest" or "move") ? mo2 : throw new UserError("--motion 需要 rest 或 move");
+                        break;
+                    case "--search":
+                        opts.Search = int.TryParse(NextValue(args, ref i), out int sr) && sr >= 0 && sr <= 80 ? sr : throw new UserError("--search 需要 0 到 80 的整数");
                         break;
                     case "--eval":
                         opts.EvalRects.Add(ParseRect(NextValue(args, ref i)));
@@ -408,10 +458,14 @@ namespace Dnf.Cli
                     return MapFit.RunSprite(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "hero-check":
                     return HeroCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "hero-find":
+                    return HeroFind.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "room-check":
                     return RoomCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "combat-check":
                     return CombatCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "dungeon-check":
+                    return DungeonCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "sq-check":
                     return SquirrelCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "game-check":

@@ -220,6 +220,16 @@ namespace Dnf.Play
             }
             _boxes = new HeroStrikeBoxes(assets);
             _random = new Random(seed);
+            SyncStance();
+        }
+
+        /// <summary>
+        /// 房间里还有活着的怪物就站战斗待机动作,杀光之后站普通待机(证据 E-070,基线整局观察:有怪时主角站的是 [waiting motion],清完怪之后是 [rest motion])。
+        /// 换姿态发生在最后一只怪物被打死的那一刻(死亡动画开始时);原版是在那一刻还是在怪物消失(0.5 秒后)切换没有量过。
+        /// </summary>
+        private void SyncStance()
+        {
+            _room.Hero.BattleStance = AliveCount > 0;
         }
 
         /// <summary>
@@ -317,6 +327,7 @@ namespace Dnf.Play
                 m.Update(deltaMs, hero.X, hero.Y, true, hero.Walk);
             }
             ResolveHits();
+            SyncStance();
             for (int i = _popups.Count - 1; i >= 0; i--)
             {
                 _popups[i].AgeMs += deltaMs;
@@ -418,8 +429,14 @@ namespace Dnf.Play
 
         public List<SceneSprite> Build(long timeMs)
         {
+            return Build(timeMs, null);
+        }
+
+        /// <summary>同 <see cref="Build(long)"/>,另外把 <paramref name="hud"/>(副本的小地图等外部拼好的屏幕空间精灵)叠在最上层。</summary>
+        public List<SceneSprite> Build(long timeMs, IReadOnlyList<SceneSprite> hud)
+        {
             TownProjection projection = _room.Projection;
-            var extra = new List<SceneSprite>(_monsters.Count + 8);
+            var extra = new List<SceneSprite>(_monsters.Count + 8 + (hud == null ? 0 : hud.Count));
             foreach (MonsterActor m in _monsters)
             {
                 SceneSprite s = m.Sprite(_assets, projection);
@@ -429,6 +446,10 @@ namespace Dnf.Play
                 }
             }
             AddOverlay(extra, projection);
+            if (hud != null)
+            {
+                extra.AddRange(hud);
+            }
             return _room.Build(timeMs, extra);
         }
 

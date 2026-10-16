@@ -4,8 +4,33 @@ using Dnf.Render;
 
 namespace Dnf.Play
 {
+    /// <summary>小地图上一个迷宫格的显示状态:看不见、只看见入口、进过但没清、清掉了、当前所在。</summary>
+    public enum MiniMapState : byte
+    {
+        Hidden = 0,
+        Seen = 1,
+        Visited = 2,
+        Cleared = 3,
+        Current = 4,
+    }
+
+    /// <summary>小地图上的一格:出口组合(<see cref="ExitBits"/>)、显示状态、是不是首领格。</summary>
+    public readonly struct MiniMapCell
+    {
+        public int Exits { get; }
+        public MiniMapState State { get; }
+        public bool Boss { get; }
+
+        public MiniMapCell(int exits, MiniMapState state, bool boss)
+        {
+            Exits = exits;
+            State = state;
+            Boss = boss;
+        }
+    }
+
     /// <summary>
-    /// 战斗画面上的文字与血条的像素。字库是自带的 5×7 点阵(我们自己画的,不是原版的字体、数字图与界面),
+    /// 战斗画面上的文字、血条与副本小地图的像素。字库是自带的 5×7 点阵(我们自己画的,不是原版的字体、数字图与界面),
     /// 血条也是纯色块;这样叠加层和别的精灵一样走同一条绘制管线(CPU 合成与 GPU 逐字节一致),不依赖任何原版素材。
     /// 帧按内容缓存,所以每一帧反复取同一个文字或血条拿到的是同一个 <see cref="SpriteFrame"/> 对象(GPU 端按对象缓存纹理)。
     /// </summary>
@@ -40,6 +65,14 @@ namespace Dnf.Play
             ['I'] = new[] { ".###.", "..#..", "..#..", "..#..", "..#..", "..#..", ".###." },
             ['T'] = new[] { "#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.." },
             ['x'] = new[] { ".....", ".....", "#...#", ".#.#.", "..#..", ".#.#.", "#...#" },
+            ['A'] = new[] { ".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#" },
+            ['B'] = new[] { "####.", "#...#", "#...#", "####.", "#...#", "#...#", "####." },
+            ['C'] = new[] { ".###.", "#...#", "#....", "#....", "#....", "#...#", ".###." },
+            ['E'] = new[] { "#####", "#....", "#....", "####.", "#....", "#....", "#####" },
+            ['M'] = new[] { "#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#" },
+            ['O'] = new[] { ".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###." },
+            ['R'] = new[] { "####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#" },
+            ['S'] = new[] { ".####", "#....", "#....", ".###.", "....#", "....#", "####." },
             ['.'] = new[] { ".....", ".....", ".....", ".....", ".....", ".##..", ".##.." },
             ['!'] = new[] { "..#..", "..#..", "..#..", "..#..", "..#..", ".....", "..#.." },
             ['/'] = new[] { "....#", "....#", "...#.", "..#..", ".#...", "#....", "#...." },
@@ -48,6 +81,7 @@ namespace Dnf.Play
 
         private readonly Dictionary<string, SpriteFrame> _texts = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
         private readonly Dictionary<long, SpriteFrame> _bars = new Dictionary<long, SpriteFrame>();
+        private readonly Dictionary<string, SpriteFrame> _maps = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
 
         /// <summary>字库里有没有这个字符(没有的字符画成空格)。</summary>
         public static bool HasGlyph(char c)
@@ -180,6 +214,116 @@ namespace Dnf.Play
             var frame = new SpriteFrame(width, height, 0, 0, width, height, rgba);
             _bars[key] = frame;
             return frame;
+        }
+
+        public const int MiniCellWidth = 12;
+        public const int MiniCellHeight = 9;
+        public const int MiniGap = 4;
+        public const int MiniPad = 3;
+
+        public static int MiniMapWidth(int cols)
+        {
+            return cols * MiniCellWidth + (cols - 1) * MiniGap + MiniPad * 2;
+        }
+
+        public static int MiniMapHeight(int rows)
+        {
+            return rows * MiniCellHeight + (rows - 1) * MiniGap + MiniPad * 2;
+        }
+
+        /// <summary>
+        /// 副本小地图(占位的界面,不是原版的样子):半透明底,每个看得见的迷宫格一个色块(灰 = 只看见入口、橙 = 进过没清、绿 = 清掉了、黄 = 当前所在),
+        /// 首领格带红框,相邻两格有出口的地方画一段连线。<paramref name="cells"/> 按行优先,个数要等于 列 × 行。
+        /// </summary>
+        public SpriteFrame MiniMap(int cols, int rows, IReadOnlyList<MiniMapCell> cells)
+        {
+            if (cols < 1 || rows < 1 || cells == null || cells.Count != cols * rows)
+            {
+                throw new ArgumentException("小地图需要 列 × 行 个格子", nameof(cells));
+            }
+            var key = new System.Text.StringBuilder();
+            key.Append(cols).Append('x').Append(rows).Append(':');
+            foreach (MiniMapCell c in cells)
+            {
+                key.Append((int)c.State).Append(',').Append(c.Exits).Append(',').Append(c.Boss ? 'b' : 'n').Append(';');
+            }
+            string k = key.ToString();
+            if (_maps.TryGetValue(k, out SpriteFrame cached))
+            {
+                return cached;
+            }
+            int w = MiniMapWidth(cols);
+            int h = MiniMapHeight(rows);
+            var rgba = new byte[w * h * 4];
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    bool edge = x == 0 || y == 0 || x == w - 1 || y == h - 1;
+                    PutAlpha(rgba, w, h, x, y, edge ? 0x606060u : 0x101010u, edge ? (byte)220 : (byte)150);
+                }
+            }
+            for (int cy = 0; cy < rows; cy++)
+            {
+                for (int cx = 0; cx < cols; cx++)
+                {
+                    MiniMapCell cell = cells[cy * cols + cx];
+                    if (cell.State == MiniMapState.Hidden)
+                    {
+                        continue;
+                    }
+                    int ox = MiniPad + cx * (MiniCellWidth + MiniGap);
+                    int oy = MiniPad + cy * (MiniCellHeight + MiniGap);
+                    uint fill = cell.State == MiniMapState.Current ? 0xFFE23Cu
+                        : cell.State == MiniMapState.Cleared ? 0x3CA03Cu
+                        : cell.State == MiniMapState.Visited ? 0xC87820u
+                        : 0x585858u;
+                    for (int y = 0; y < MiniCellHeight; y++)
+                    {
+                        for (int x = 0; x < MiniCellWidth; x++)
+                        {
+                            bool border = x == 0 || y == 0 || x == MiniCellWidth - 1 || y == MiniCellHeight - 1;
+                            uint color = border ? (cell.Boss ? 0xE02020u : 0x181818u) : fill;
+                            Put(rgba, w, h, ox + x, oy + y, color);
+                        }
+                    }
+                    if ((cell.Exits & ExitBits.Right) != 0 && cx + 1 < cols && cells[cy * cols + cx + 1].State != MiniMapState.Hidden)
+                    {
+                        FillRect(rgba, w, h, ox + MiniCellWidth, oy + MiniCellHeight / 2 - 1, MiniGap, 3, 0x909090u);
+                    }
+                    if ((cell.Exits & ExitBits.Down) != 0 && cy + 1 < rows && cells[(cy + 1) * cols + cx].State != MiniMapState.Hidden)
+                    {
+                        FillRect(rgba, w, h, ox + MiniCellWidth / 2 - 1, oy + MiniCellHeight, 3, MiniGap, 0x909090u);
+                    }
+                }
+            }
+            var frame = new SpriteFrame(w, h, 0, 0, w, h, rgba);
+            _maps[k] = frame;
+            return frame;
+        }
+
+        private static void FillRect(byte[] rgba, int w, int h, int x0, int y0, int rw, int rh, uint rgb)
+        {
+            for (int y = 0; y < rh; y++)
+            {
+                for (int x = 0; x < rw; x++)
+                {
+                    Put(rgba, w, h, x0 + x, y0 + y, rgb);
+                }
+            }
+        }
+
+        private static void PutAlpha(byte[] rgba, int w, int h, int x, int y, uint rgb, byte alpha)
+        {
+            if ((uint)x >= (uint)w || (uint)y >= (uint)h)
+            {
+                return;
+            }
+            int o = (y * w + x) * 4;
+            rgba[o] = (byte)((rgb >> 16) & 0xFF);
+            rgba[o + 1] = (byte)((rgb >> 8) & 0xFF);
+            rgba[o + 2] = (byte)(rgb & 0xFF);
+            rgba[o + 3] = alpha;
         }
 
         /// <summary>叠加层精灵:屏幕左上角为 (<paramref name="x"/>, <paramref name="y"/>),大类 <see cref="UiRank"/>。</summary>

@@ -197,6 +197,10 @@ namespace Dnf.Render
         private string[] _attackPaths = new string[0];
         private AniTimeline[] _attackTimelines = new AniTimeline[0];
         private bool _attackQueued;
+        private AniFile _battleRest;
+        private string _battleRestPath;
+        private AniTimeline _battleRestTimeline;
+        private bool _battleStance;
 
         /// <summary>攻击动画的播放倍率。取 1.0(.ani 原速);原版连拍里没有量过攻击一击的时长(证据 E-069),角色脚本的 [attack speed] 与它的关系没有研究。</summary>
         public const double DefaultAttackAnimationRate = 1.0;
@@ -373,6 +377,59 @@ namespace Dnf.Render
             AttackStage = stage < 0 ? 0 : (stage >= _attacks.Length ? _attacks.Length - 1 : stage);
             _motionMs = motionMs < 0 ? 0 : motionMs;
             _attackQueued = false;
+        }
+
+        /// <summary>
+        /// 载入战斗站立动作 [waiting motion] 作为"战斗姿态"的站立动画(<see cref="BattleStance"/> 为真时用它,否则用创建时的站立动画)。
+        /// 缺这个标签或动画时返回 false,姿态保持不变。证据 E-070:房间里还有活着的怪物时主角站的是 [waiting motion],怪物都死光之后站的是 [rest motion]。
+        /// </summary>
+        public bool LoadBattleRest(DnfAssets assets, string chrPath)
+        {
+            ScriptLine[] doc = assets.ReadScript(chrPath);
+            if (doc == null)
+            {
+                throw new DnfFormatException("PVF 里没有角色脚本: " + chrPath);
+            }
+            foreach (ScriptLine line in doc)
+            {
+                if (!line.TagIs(DungeonRestTag))
+                {
+                    continue;
+                }
+                string rel = line.FirstString();
+                string path = rel == null ? null : PvfPath.ResolveRelativeTo(chrPath, rel);
+                AniFile ani = path == null ? null : assets.LoadAni(path);
+                if (ani == null || ani.Frames.Length == 0)
+                {
+                    return false;
+                }
+                _battleRest = ani;
+                _battleRestPath = path;
+                _battleRestTimeline = new AniTimeline(ani);
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 战斗姿态:为真时站立用 <see cref="LoadBattleRest"/> 载入的动作。没载入时恒为假。
+        /// 站着的时候切换姿态,站立动作从头播放。
+        /// </summary>
+        public bool BattleStance
+        {
+            get => _battleStance;
+            set
+            {
+                bool next = value && _battleRest != null;
+                if (next != _battleStance)
+                {
+                    _battleStance = next;
+                    if (Motion == HeroMotion.Rest)
+                    {
+                        _motionMs = 0;
+                    }
+                }
+            }
         }
 
         /// <summary>读 .chr 的 [move speed](第一个数,真实脚本里是浮点标记;取整);没有这个标签就是 0。</summary>
@@ -598,15 +655,15 @@ namespace Dnf.Render
         }
 
         /// <summary>当前动画与帧:站立或行走的 .ani、它的路径、此刻显示的帧号。</summary>
-        public AniFile CurrentAni => Motion == HeroMotion.Attack ? _attacks[AttackStage] : (Motion == HeroMotion.Move ? _move : _rest);
+        public AniFile CurrentAni => Motion == HeroMotion.Attack ? _attacks[AttackStage] : (Motion == HeroMotion.Move ? _move : (_battleStance ? _battleRest : _rest));
 
-        public string CurrentAnimationPath => Motion == HeroMotion.Attack ? _attackPaths[AttackStage] : (Motion == HeroMotion.Move ? _movePath : _restPath);
+        public string CurrentAnimationPath => Motion == HeroMotion.Attack ? _attackPaths[AttackStage] : (Motion == HeroMotion.Move ? _movePath : (_battleStance ? _battleRestPath : _restPath));
 
         public int CurrentFrame => Motion == HeroMotion.Attack
             ? _attackTimelines[AttackStage].FrameAt(AttackAnimationMs)
             : (Motion == HeroMotion.Move
                 ? _moveTimeline.FrameAt((long)(_motionMs * MoveAnimationRate))
-                : _restTimeline.FrameAt(MotionMs));
+                : (_battleStance ? _battleRestTimeline : _restTimeline).FrameAt(MotionMs));
 
         /// <summary>主角的精灵(按换装图层顺序),位置模型与 NPC 相同。</summary>
         public List<SceneSprite> Sprites(DnfAssets assets, TownProjection projection)

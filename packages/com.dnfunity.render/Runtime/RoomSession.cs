@@ -133,11 +133,12 @@ namespace Dnf.Render
             GateKind.Wall, GateKind.Normal, GateKind.None, GateKind.Normal);
 
         /// <summary>
-        /// 洛兰第二个房间:左边通向普通房间(原版截图核对)、右边是墙(原版截图核对)、下边通向普通房间(没有核对)、上边没有。
+        /// 洛兰第二个房间:左边通向普通房间(原版截图核对)、右边是墙(原版截图核对)、上边与下边没有出口。
         /// 出生点没有量过(原版是从左边的门进来的)。
+        /// (出口的取法后来由迷宫给出:这个房间的迷宫格只有左出口,证据 E-070;之前把下边猜成了普通出口,已更正。)
         /// </summary>
         public static readonly RoomSlice LorienSecond = new RoomSlice(false, 0, 0, false, LorienDungeon,
-            GateKind.Normal, GateKind.Wall, GateKind.None, GateKind.Normal);
+            GateKind.Normal, GateKind.Wall, GateKind.None, GateKind.None);
 
         /// <summary>地图是否有量过的摆法。</summary>
         public static bool TryGetSlice(string mapPath, out RoomSlice slice)
@@ -201,8 +202,17 @@ namespace Dnf.Render
         /// <summary>按摆法造出口:每个方向 + 种类取 <see cref="PathGateSet"/> 里的物件编号,位置取地图的 [pathgate pos]。找不到物件或位置的方向跳过。</summary>
         public static List<RoomGate> BuildGates(DnfAssets assets, RoomMap map, RoomSlice slice)
         {
-            var gates = new List<RoomGate>();
             PathGateSet set = slice.DungeonPath == null ? null : PathGateSet.Read(assets, slice.DungeonPath);
+            return BuildGates(assets, map, set, slice.KindOf);
+        }
+
+        /// <summary>
+        /// 按出口物件编号 <paramref name="set"/> 与"每个方向画什么"造出口;<paramref name="kindOf"/> 给每个方向的种类。
+        /// 没有出口物件编号时返回空列表。
+        /// </summary>
+        public static List<RoomGate> BuildGates(DnfAssets assets, RoomMap map, PathGateSet set, Func<GateSide, GateKind> kindOf)
+        {
+            var gates = new List<RoomGate>();
             if (set == null)
             {
                 return gates;
@@ -210,7 +220,7 @@ namespace Dnf.Render
             PassiveObjectCatalog catalog = PassiveObjectCatalog.Read(assets);
             foreach (GateSide side in new[] { GateSide.Left, GateSide.Right, GateSide.Up, GateSide.Down })
             {
-                int id = set.IdFor(side, slice.KindOf(side));
+                int id = set.IdFor(side, kindOf(side));
                 int[] pos = map.Gates[(int)side];
                 if (id < 0 || pos == null)
                 {
@@ -225,6 +235,30 @@ namespace Dnf.Render
             return gates;
         }
 
+        /// <summary>演示用主角的默认外观(默认鬼剑士 + 武器)。</summary>
+        public static AvatarOutfit DefaultOutfit(DnfAssets assets, string weaponEqu = DemoHero.StarterWeapon)
+        {
+            AvatarClass cls = AvatarClass.FromChr(assets, DemoHero.SwordmanChrPath, DemoHero.SwordmanJobTag);
+            return AvatarOutfit.CreateDefault(assets, cls, DemoHero.SwordmanEquipRoot, weaponEqu);
+        }
+
+        /// <summary>
+        /// 通用的房间构造:把 <paramref name="outfit"/> 外观的鬼剑士放在 (x, y)、<paramref name="facingLeft"/> 朝向;
+        /// 站立动作是 [rest motion],另外载入战斗站立动作 [waiting motion] 并先进入战斗姿态(证据 E-070;之后由战斗会话按怪物死活切换)。
+        /// 镜头先居中再夹在 [0, 房间宽 − 屏宽] 之内。
+        /// </summary>
+        public static RoomSession CreateRoom(DnfAssets assets, RoomMap map, IReadOnlyList<RoomGate> gates, AvatarOutfit outfit,
+            double x, double y, bool facingLeft)
+        {
+            RoomContent content = RoomContent.Load(assets, map, gates);
+            TownHero hero = TownHero.Create(assets, DemoHero.SwordmanChrPath, outfit, new RoomWalkArea(map, content.Objects), x, y, facingLeft,
+                TownHero.TownRestTag);
+            hero.LoadBattleRest(assets, DemoHero.SwordmanChrPath);
+            hero.BattleStance = true;
+            var camera = new TownCamera(0, map.MaxCameraX, hero.X);
+            return new RoomSession(assets, content, hero, camera);
+        }
+
         /// <summary>
         /// 造出一个房间里的游戏:读地图,按摆法(<see cref="TryGetSlice"/>)摆出口,把默认外观的鬼剑士放在出生点。
         /// 没有摆法的房间没有出口,出生点取 <see cref="DefaultSpawn"/>。
@@ -233,7 +267,7 @@ namespace Dnf.Render
         {
             RoomMap map = RoomMap.Read(assets, mapPath);
             bool hasSlice = TryGetSlice(mapPath, out RoomSlice slice);
-            RoomContent content = RoomContent.Load(assets, map, hasSlice ? BuildGates(assets, map, slice) : null);
+            List<RoomGate> gates = hasSlice ? BuildGates(assets, map, slice) : null;
 
             double x, y;
             bool facingLeft = false;
@@ -247,13 +281,7 @@ namespace Dnf.Render
             {
                 DefaultSpawn(map, out x, out y);
             }
-
-            AvatarClass cls = AvatarClass.FromChr(assets, DemoHero.SwordmanChrPath, DemoHero.SwordmanJobTag);
-            AvatarOutfit outfit = AvatarOutfit.CreateDefault(assets, cls, DemoHero.SwordmanEquipRoot, weaponEqu);
-            TownHero hero = TownHero.Create(assets, DemoHero.SwordmanChrPath, outfit, new RoomWalkArea(map, content.Objects), x, y, facingLeft,
-                TownHero.DungeonRestTag);
-            var camera = new TownCamera(0, map.MaxCameraX, hero.X);
-            return new RoomSession(assets, content, hero, camera);
+            return CreateRoom(assets, map, gates, DefaultOutfit(assets, weaponEqu), x, y, facingLeft);
         }
     }
 }

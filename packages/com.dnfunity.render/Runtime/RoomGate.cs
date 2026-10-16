@@ -198,6 +198,16 @@ namespace Dnf.Render
             }
         }
 
+        /// <summary>开门动画当作早已播完的"开着"状态的起算时刻(一小时前):进房间时本来就没有怪物的出口、与回到已经清空的房间时用。</summary>
+        public const long SettledOpenedAtMs = -3600000;
+
+        /// <summary>直接变成开着,不播开门的淡出(淡出 0.5 秒是一次性的,光的脉动照常循环)。</summary>
+        public void OpenSettled()
+        {
+            State = GateState.Open;
+            OpenedAtMs = SettledOpenedAtMs;
+        }
+
         public void Close()
         {
             State = GateState.Closed;

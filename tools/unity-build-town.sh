@@ -9,6 +9,8 @@
 #   3. 用 -dnfautowalk 0.5:left,3:none 替主角按键:向左走到撞上可走区域的左边界(镜头 x = 0),松开后站立,检查日志里的最终状态。
 #   4. 副本房间(E-067、E-068):离屏一帧逐字节对照,实时自动行走;战斗(E-069):按同一份时间表确定地模拟到指定时刻,
 #      离屏渲染的一帧(怪物受击/死亡、血条、伤害数字、连击)与命令行 combat-check 逐字节对照;再实时跑一遍挥击。
+#   5. 整座副本(E-070):自动机按固定步长打到指定时刻(逛遍所有房间的 6.8/21.0/48.0/59.7 秒与直奔首领的 14.0 秒),离屏渲染的一帧(出口淡出、换房间、小地图、CLEAR)
+#      与命令行 dungeon-check --bot 逐字节对照;再实时让自动机逛遍并打完整座副本,检查走完(进过 6 个房间、首领清空)。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -168,6 +170,48 @@ if [ "$platform" = "macos" ]; then
     fi
     grep -q -E 'DNF_TOWN_DEMO ran .* room=true monsters=[0-9]+/4 hits=[1-9][0-9]*' "$fight_log" \
       || { echo "实时战斗里没有命中过怪物(应有 hits>=1):$fight_log" >&2; exit 1; }
+
+    # 整座副本(证据 E-070):洛兰的迷宫,自动机(DungeonBot)打副本。
+    # 播放器带 -dnfdungeon -dnfexplore(或 -dnfbot)-dnfplayat 时按固定 1/60 秒步长确定地打到指定时刻,再离屏渲染一帧;
+    # 命令行 dungeon-check --bot(--explore)是同一局、同一时刻写 PNG,逐字节对照。
+    # 逛遍所有房间的路线:6.8 秒(第一间房刚清空,出口淡出到一半,小地图)、21.0 秒(已来回换过房间)、48.0 秒(刚进首领房)、59.7 秒(首领房清空:CLEAR 横幅与完整小地图);
+    # 直奔首领的最短路线:14.0 秒(刚进首领房)。
+    dungeon=dungeon/act1/lorien.dgn
+    for spec in "explore:6.8" "explore:21.0" "explore:48.0" "explore:59.7" "bot:14.0"; do
+      mode="${spec%%:*}"; at="${spec#*:}"
+      tag="dungeon-$mode-$at"
+      ms="$(python3 -c "print(int(float('$at')*1000.0))")"
+      rm -f "out/town-demo-$tag.png" "out/town-cpu-dungeon-$mode-$(printf '%.2f' "$at").png"
+      cli_args=(--dungeon "$dungeon" --bot --seconds "$at" --shots-at "$at" --png "$PWD/out/town-cpu-dungeon-$mode")
+      [ "$mode" = "explore" ] && cli_args+=(--explore)
+      set +e
+      "$app" -batchmode -logFile "$PWD/re/unity-run-town-$tag-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-$tag.png" \
+        -dnftime "$ms" -dnfdungeon "$dungeon" "-dnf$mode" -dnfplayat "$at"
+      rc=$?
+      set -e
+      echo "播放器退出码(离屏渲染 $tag): $rc"
+      grep -E 'DNF_TOWN_DEMO' "$PWD/re/unity-run-town-$tag-macos.log" || true
+      [ "$rc" -eq 0 ] || exit "$rc"
+      # 退出码 2 = 到点时副本还没走完(这里是预期的:只要到点的那一帧)
+      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll dungeon-check "${cli_args[@]}" >/dev/null || [ $? -eq 2 ]
+      python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-dungeon-$mode-$(printf '%.2f' "$at").png" --max-diff 0
+    done
+    # 实时运行:自动机逛遍整座副本再打首领。帧率不固定,所以不比像素,只检查走完了(进过 6 个房间、全清、首领清空)、没有异常
+    dungeon_log="$PWD/re/unity-run-town-dungeon-explore-macos.log"
+    rm -f "$dungeon_log"
+    set +e
+    "$app" -batchmode -logFile "$dungeon_log" -dnfdir "$DNF_DIR" -dnfdungeon "$dungeon" -dnfexplore -dnfquitafter 90
+    rc=$?
+    set -e
+    echo "播放器退出码(实时自动打副本): $rc"
+    grep -E 'DNF_TOWN_DEMO' "$dungeon_log" || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$dungeon_log"; then
+      echo "实时打副本的日志里有异常:$dungeon_log" >&2
+      exit 1
+    fi
+    grep -q -E 'DNF_TOWN_DEMO ran .* dungeon=.* entered=6 cleared=6 .* bossCleared=True' "$dungeon_log" \
+      || { echo "实时打副本没有走完(应进过 6 个房间、清空 6 个、首领清空):$dungeon_log" >&2; exit 1; }
   else
     echo "没有设置 DNF_DIR:跳过离屏渲染校验"
   fi

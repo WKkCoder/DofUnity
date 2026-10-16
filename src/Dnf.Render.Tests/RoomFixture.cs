@@ -116,6 +116,7 @@ internal sealed class RoomFixture : IDisposable
         {
             (MapPath, NewScript()
                 .Tag("[type]").Str("[normal]")
+                .Tag("[greed]").Str("JJ BB")
                 .Tag("[tile]").Str("tile/t0.til", "tile/t1.til")
                 .Tag("[far sight scroll]").Int(50)
                 .Tag("[middle sight scroll]").Int(80)
@@ -167,7 +168,14 @@ internal sealed class RoomFixture : IDisposable
             ("passiveobject/mapobject/pathgate/test/animation/frame.ani", BuildAni("Map/Test/Gate%d%d.img", 0, 0, 0)),
             ("passiveobject/mapobject/pathgate/test/animation/door.ani", BuildAni("Map/Test/Gate%d%d.img", 1, 0, 0)),
             ("passiveobject/mapobject/pathgate/test/animation/open.ani", BuildAni("Map/Test/Gate%d%d.img", 2, 0, 0)),
-            (DungeonPath, NewScript().Tag("[pathgate object]").Int(801, 802, 803, 804, 805, 806, 807, 808, 809, 810).Build()),
+            (DungeonPath, NewScript()
+                .Tag("[pathgate object]").Int(801, 802, 803, 804, 805, 806, 807, 808, 809, 810)
+                // 迷宫:一格,出口码 J(右 + 下);起点格是它自己,没有首领格
+                .Tag("[maze info]").Tag("[size]").Int(1, 1).Tag("[greed]").Str("JJ")
+                .Tag("[start map]").Int(0, 0, 0, 0).Tag("[/start map]").Tag("[boss map]").Tag("[/boss map]").Tag("[/maze info]")
+                .Build()),
+            // 房间地图目录:带 [greed] 的 a.map 是候选;没有 [greed] 的城镇图被跳过;另一个目录的图不读
+            ("map/map.lst", NewScript().Int(1).Str("Test/Room/a.map").Int(2).Str("Test/Room/town.map").Int(3).Str("Other/x.map").Build()),
         };
 
         var files = new List<TestData.PvfFileSpec>();
