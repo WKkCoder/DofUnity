@@ -140,12 +140,18 @@ namespace Dnf.Render
         public int VariationB { get; }
         public IReadOnlyList<AvatarLayer> Layers { get; }
 
+        /// <summary>
+        /// [sub type]:武器装备的种类下标(没写是 0),用来在角色 .chr 的 [weapon hit info] 里找这件武器的命中默认值(证据 E-077)。
+        /// 这个标签写在各职业的 [animation job] 块之后。
+        /// </summary>
+        public int SubType { get; }
+
         public bool IsSkin => string.Equals(EquipmentType, "[skin avatar]", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>皮肤装备的 IMG 编号(A×100+B)。</summary>
         public int AvatarNumber => VariationA * 100 + VariationB;
 
-        private AvatarItem(string equPath, string equipmentType, bool hasVariation, int a, int b, IReadOnlyList<AvatarLayer> layers)
+        private AvatarItem(string equPath, string equipmentType, bool hasVariation, int a, int b, IReadOnlyList<AvatarLayer> layers, int subType)
         {
             EquPath = equPath;
             EquipmentType = equipmentType;
@@ -153,6 +159,7 @@ namespace Dnf.Render
             VariationA = a;
             VariationB = b;
             Layers = layers;
+            SubType = subType;
         }
 
         /// <summary>读一件装备;脚本不存在时返回 null。该职业没有 [animation job] 块时没有图层(皮肤以外的装备据此穿不上)。</summary>
@@ -165,23 +172,42 @@ namespace Dnf.Render
             }
             string equipmentType = null;
             bool inJob = false;
+            bool jobDone = false;
             bool hasVariation = false;
+            bool hasSubType = false;
+            int subType = 0;
             int a = 0, b = 0;
             var raw = new List<KeyValuePair<int, string>>();
             foreach (ScriptLine line in doc)
             {
                 if (line.TagIs("[equipment type]"))
                 {
-                    equipmentType = line.FirstString();
+                    if (equipmentType == null)
+                    {
+                        equipmentType = line.FirstString();
+                    }
+                    continue;
+                }
+                if (line.TagIs("[sub type]"))
+                {
+                    List<int> sub = line.Ints();
+                    if (!hasSubType && sub.Count > 0)
+                    {
+                        subType = sub[0];
+                        hasSubType = true;
+                    }
                     continue;
                 }
                 if (line.TagIs("[animation job]"))
                 {
                     if (inJob)
                     {
-                        break; // 本职业的块到此为止
+                        // 本职业的块到此为止;后面的职业块都不读(但还要读到文件尾,[sub type] 在最后面)
+                        jobDone = true;
+                        inJob = false;
+                        continue;
                     }
-                    inJob = string.Equals(line.FirstString(), cls.JobTag, StringComparison.OrdinalIgnoreCase);
+                    inJob = !jobDone && string.Equals(line.FirstString(), cls.JobTag, StringComparison.OrdinalIgnoreCase);
                     continue;
                 }
                 if (!inJob)
@@ -219,7 +245,7 @@ namespace Dnf.Render
                     layers.Add(new AvatarLayer(r.Value, r.Key, ImagePathFor(cls, r.Value, a, b)));
                 }
             }
-            return new AvatarItem(equPath, equipmentType, hasVariation, a, b, layers);
+            return new AvatarItem(equPath, equipmentType, hasVariation, a, b, layers, subType);
         }
 
         private static string ImagePathFor(AvatarClass cls, string layerName, int a, int b)

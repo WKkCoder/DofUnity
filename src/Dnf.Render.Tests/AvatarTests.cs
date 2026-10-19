@@ -88,6 +88,21 @@ public class AvatarTests
     }
 
     [Fact]
+    public void TheSubTypeIsReadEvenThoughItComesAfterTheJobBlocksAndDefaultsToZero()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        AvatarClass cls = Class(assets);
+        AvatarItem sword = AvatarItem.Read(assets, cls, AvatarFixture.EquipRoot + "/" + AvatarFixture.WeaponEqu);
+        Assert.Equal(AvatarFixture.WeaponSubType, sword.SubType);
+        Assert.Equal(new[] { "swordb", "swordc", "swordd" }, sword.Layers.Select(l => l.Name).ToArray());   // 别的职业块里的 swordz 与 8 8 仍不能混进来
+        Assert.Equal((3, 2), (sword.VariationA, sword.VariationB));
+
+        Assert.Equal(0, AvatarItem.Read(assets, cls, AvatarFixture.EquipRoot + "/weapon/sword/sw_digit.equ").SubType);
+        Assert.Equal(0, AvatarItem.Read(assets, cls, AvatarFixture.EquipRoot + "/avatar/coat/acoat_default.equ").SubType);
+    }
+
+    [Fact]
     public void ATrailingDigitInAWeaponLayerNameStaysAfterTheLetter()
     {
         using var fx = new AvatarFixture();

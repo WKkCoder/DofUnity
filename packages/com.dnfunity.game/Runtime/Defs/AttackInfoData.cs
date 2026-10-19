@@ -195,13 +195,16 @@ namespace Dnf.Game
         /// <summary>[hit info] 的第二个关键字:[blood] 为 true,[no blood] 为 false;默认 false。</summary>
         public bool HitBlood { get; internal set; }
 
-        /// <summary>[hit info] 的整数项,默认 -1(样本里常见 50 一类的数,含义待确认)。</summary>
+        /// <summary>
+        /// [hit info] 的整数项,默认 -1:命中停顿的毫秒数(客户端把它存进攻击信息的 +0x108,攻击方与受击方各冻结这么久);
+        /// -1 或没有 [hit info] 时取角色 .chr 的 [weapon hit info](证据 E-077,静态读码,没有运行时验证)。
+        /// </summary>
         public int HitValue { get; internal set; } = -1;
 
-        /// <summary>[hit info] 的浮点项,默认 -1(样本里常见 1 一类,含义待确认)。</summary>
+        /// <summary>[hit info] 的浮点项,默认 -1:命中延迟倍率(攻击信息的 +0x114);-1 同样取武器表。受击一侧怎么用它还没读(E-077)。</summary>
         public float HitScale { get; internal set; } = -1f;
 
-        /// <summary>[is use weapon hit delay rate]:默认 false。</summary>
+        /// <summary>[is use weapon hit delay rate]:默认 false。为真时命中停顿 = 武器表的停顿 × 本文件 [hit info] 的整数(浮点同理),不是取代(E-077)。</summary>
         public bool UseWeaponHitDelayRate { get; internal set; }
 
         public HitDirection HitSide { get; internal set; } = HitDirection.Auto;

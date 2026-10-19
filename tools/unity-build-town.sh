@@ -22,6 +22,11 @@ platform="${1:?用法: $0 <macos|windows|android>}"
 UNITY="${UNITY_EDITOR:-/Applications/Unity/Hub/Editor/6000.3.26f1/Unity.app/Contents/MacOS/Unity}"
 [ -x "$UNITY" ] || { echo "找不到 Unity 编辑器: $UNITY" >&2; exit 2; }
 
+# 离屏对拍的 CPU 参照是命令行 dnf:先按当前源码重新构建一遍,免得拿旧二进制对新播放器(源码改过但没重建时会出现整屏不同)
+if [ "$platform" = "macos" ]; then
+  dotnet build src/Dnf.Cli -c Release -nologo -v q >/dev/null
+fi
+
 case "$platform" in
   macos)   method="DnfUnity.Editor.BuildTownDemo.BuildMacOS";   target="StandaloneOSX" ;;
   windows) method="DnfUnity.Editor.BuildTownDemo.BuildWindows"; target="StandaloneWindows64" ;;
@@ -198,10 +203,11 @@ if [ "$platform" = "macos" ]; then
     done
 
     # 技能 A S D(证据 E-076):时间表是 "0.2 秒向左走、2.5 秒停下、3.0 秒向右点一下转身、3.3 秒按 A(鬼斩)、5.0 秒按 S(上挑)、6.0 秒按 D(后跳)"。
-    # 3.55 秒:鬼斩挥击中,两只怪物受击倒下、斩击光影两层叠在前面;3.7 秒:光影收尾;5.2 秒:上挑(连招第三段的挥击);6.2 秒:后跳腾空。
+    # 3.5 秒:鬼斩在 3.47 秒命中,主角与两只怪物正处在命中停顿里(E-077);3.55 秒:紧接着的一帧,斩击光影两层叠在前面;
+    # 3.7 秒:光影收尾;5.2 秒:上挑(连招第三段的挥击);6.2 秒:后跳腾空。
     # 播放器与命令行 combat-check 同一份时间表、同一个模拟类,逐字节对照;再实时跑一遍,检查三个技能都放出来了。
     skill_play="0.2:left,2.5:none,3.0:right,3.1:none,3.3:a,5.0:s,6.0:d,7.0:none"
-    for at in 3.55 3.7 5.2 6.2; do
+    for at in 3.5 3.55 3.7 5.2 6.2; do
       tag="room-skill-$at"
       ms="$(python3 -c "print(int(float('$at')*1000.0))")"
       rm -f "out/town-demo-$tag.png" "out/town-cpu-room-skill-$at.png"

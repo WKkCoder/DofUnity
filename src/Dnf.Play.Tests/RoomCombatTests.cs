@@ -36,7 +36,7 @@ public class RoomCombatTests
         /// <param name="withSkills">为真时按合成的角色脚本([skill] 初始技能表)排出技能快捷槽(要用带跳跃的 <see cref="AvatarFixture.ActionChrPath"/>)。</param>
         public Arena(IReadOnlyList<(int X, int Y)> monsters, HeroStrikeInfo[] strikes = null, bool facingLeft = false, int hp = 100,
             bool frozen = false, int seed = 1, string chr = null, HeroStrikeInfo dash = default, HeroStrikeInfo jump = default, double monsterSpeed = 222.5,
-            bool withSkills = false)
+            bool withSkills = false, int weaponStun = 0)
         {
             Assets = DnfAssets.Open(_fx.Root);
             var tiles = new List<TileFile>();
@@ -66,7 +66,7 @@ public class RoomCombatTests
                 var data = new GameData(new PvfScriptSource(Assets.Pvf));
                 skills = HeroSkills.Create(data, data.GetCharacter(0), 0);
             }
-            Session = new RoomCombatSession(Assets, room, actors, strikes ?? Plain(), seed, dash, jump, skills);
+            Session = new RoomCombatSession(Assets, room, actors, strikes ?? Plain(), seed, dash, jump, skills, weaponStun);
         }
 
         /// <summary>每 10 毫秒一步推进:前 <paramref name="steps"/> 步按 (dirX, dirY) 走,攻击键与跳跃键在 <paramref name="attackAt"/>、<paramref name="jumpAt"/> 那一步按下(从 0 数)。</summary>
@@ -116,6 +116,173 @@ public class RoomCombatTests
         Assert.Equal(100 - (int)s.TotalDamage, m.Hp);
         Assert.Same(m, s.Target);
         Assert.Equal(1, s.AliveCount);
+    }
+
+    // ------------------------------------------------------------------ 命中停顿(证据 E-077)
+
+    private static HeroStrikeInfo[] Stunning(int firstStageMs)
+    {
+        return new[] { new HeroStrikeInfo(0, 0, false, hitValue: firstStageMs), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false) };
+    }
+
+    /// <summary>按下攻击键后每 10 毫秒一步,推到第一次命中的那一步为止。</summary>
+    private static void RunToFirstHit(RoomCombatSession s, int hits = 1)
+    {
+        s.Update(10, 0, 0, true);
+        for (int i = 0; i < 200 && s.Hits < hits; i++)
+        {
+            s.Update(10, 0, 0, false);
+        }
+        Assert.Equal(hits, s.Hits);
+    }
+
+    [Fact]
+    public void AHitFreezesTheHeroAndTheMonsterForTheStunTimeThenBothResume()
+    {
+        using var arena = new Arena(new[] { (340, 100) }, Stunning(100));
+        RoomCombatSession s = arena.Session;
+        RunToFirstHit(s);
+        MonsterActor m = s.Monsters[0];
+        Assert.Equal(100.0, s.HeroPauseMs, 9);
+        Assert.Equal(100.0, m.PauseMs, 9);
+        long motion = s.Hero.MotionMs;
+        long phase = m.PhaseMs;
+        int frame = s.Hero.CurrentFrame;
+        for (int i = 0; i < 10; i++)
+        {
+            s.Update(10, 0, 0, false);
+            Assert.Equal(motion, s.Hero.MotionMs);                       // 主角的动作时间不走
+            Assert.Equal(frame, s.Hero.CurrentFrame);
+            Assert.Equal(phase, m.PhaseMs);                              // 怪物的硬直计时也不走
+        }
+        Assert.Equal(0.0, s.HeroPauseMs, 9);
+        Assert.Equal(0.0, m.PauseMs, 9);
+        s.Update(10, 0, 0, false);
+        Assert.Equal(motion + 10, s.Hero.MotionMs);
+        Assert.Equal(phase + 10, m.PhaseMs);
+        Assert.Equal(1, s.Hits);                                          // 停顿不会让同一击再命中一次
+    }
+
+    [Fact]
+    public void AHitMakesTheSwingTakeExactlyTheStunTimeLongerAndPopupsKeepTheirOwnClock()
+    {
+        // 第 0 段整段 400 毫秒;不停顿时 400 毫秒挥完,停 100 毫秒时 500 毫秒挥完
+        using var plain = new Arena(new[] { (340, 100) });
+        using var stunned = new Arena(new[] { (340, 100) }, Stunning(100));
+        long plainEnd = EndOfFirstSwing(plain.Session);
+        long stunnedEnd = EndOfFirstSwing(stunned.Session);
+        Assert.InRange(stunnedEnd - plainEnd, 100, 110);
+
+        // 伤害数字走自己的墙钟:命中后 100 毫秒的停顿里它照样上飘与计时
+        using var arena = new Arena(new[] { (340, 100) }, Stunning(100));
+        RunToFirstHit(arena.Session);
+        double age0 = arena.Session.Popups[0].AgeMs;
+        for (int i = 0; i < 5; i++)
+        {
+            arena.Session.Update(10, 0, 0, false);
+        }
+        Assert.Equal(age0 + 50, arena.Session.Popups[0].AgeMs, 9);
+    }
+
+    private static long EndOfFirstSwing(RoomCombatSession s)
+    {
+        s.Update(10, 0, 0, true);
+        long t = 10;
+        while (s.Hero.IsAttacking && t < 3000)
+        {
+            s.Update(10, 0, 0, false);
+            t += 10;
+        }
+        Assert.False(s.Hero.IsAttacking);
+        return t;
+    }
+
+    [Fact]
+    public void TwoMonstersHitByTheSameSwingStillFreezeTheHeroOnlyOnceAsLong()
+    {
+        using var arena = new Arena(new[] { (340, 100), (345, 100) }, Stunning(100));
+        RoomCombatSession s = arena.Session;
+        RunToFirstHit(s, hits: 2);
+        Assert.Equal(100.0, s.HeroPauseMs, 9);                           // 不叠加成 200
+        Assert.All(s.Monsters, m => Assert.Equal(100.0, m.PauseMs, 9));
+    }
+
+    [Fact]
+    public void AnAttackThatSaysMinusOneUsesTheWeaponStunAndAnExplicitNumberOverridesIt()
+    {
+        // 第 0 段没写命中停顿(-1):取武器的 44;第 0 段写了 25:用 25(不管武器)
+        using var weapon = new Arena(new[] { (340, 100) }, weaponStun: 44);
+        RunToFirstHit(weapon.Session);
+        Assert.Equal(44.0, weapon.Session.HeroPauseMs, 9);
+        Assert.Equal(44, weapon.Session.WeaponStunMs);
+
+        using var explicitOverride = new Arena(new[] { (340, 100) }, Stunning(25), weaponStun: 44);
+        RunToFirstHit(explicitOverride.Session);
+        Assert.Equal(25.0, explicitOverride.Session.HeroPauseMs, 9);
+
+        // 没有武器表(0)、也没写命中停顿:不停
+        using var none = new Arena(new[] { (340, 100) });
+        RunToFirstHit(none.Session);
+        Assert.Equal(0.0, none.Session.HeroPauseMs, 9);
+        Assert.Equal(0.0, none.Session.Monsters[0].PauseMs, 9);
+
+        // 写了 0:不停,也不回落到武器表(只有 -1 才回落)
+        using var zero = new Arena(new[] { (340, 100) }, Stunning(0), weaponStun: 44);
+        RunToFirstHit(zero.Session);
+        Assert.Equal(0.0, zero.Session.HeroPauseMs, 9);
+    }
+
+    [Fact]
+    public void KeysPressedWhileTheHeroIsFrozenTakeEffectWhenTheStopEnds()
+    {
+        using var arena = new Arena(new[] { (340, 100) }, Stunning(100));
+        RoomCombatSession s = arena.Session;
+        RunToFirstHit(s);
+        long swing = s.Hero.SwingNumber;
+        // 停顿开始后 20 毫秒按一下攻击键(排队第二段):停顿里不起效,主角还在第 0 段的同一帧
+        s.Update(10, 0, 0, false);
+        s.Update(10, 0, 0, true);
+        Assert.Equal(swing, s.Hero.SwingNumber);
+        Assert.Equal(0, s.Hero.AttackStage);
+        for (int i = 0; i < 40; i++)                                      // 80 毫秒停顿 + 剩下 200 毫秒挥完第 0 段,再多走一点
+        {
+            s.Update(10, 0, 0, false);
+        }
+        // 第 0 段挥完后,排队的这一击接上第 1 段(没有被停顿吞掉)
+        Assert.Equal(swing + 1, s.Hero.SwingNumber);
+        Assert.Equal(1, s.Hero.AttackStage);
+    }
+
+    [Fact]
+    public void ASkillEffectFreezesWithTheHeroDuringTheStopWhileTheCooldownKeepsRunning()
+    {
+        // 鬼斩的两层特效属于主角:主角被定住时它们的播放时间也不走(推断:客户端的暂停会逐个冻结子动画);技能冷却是墙钟,照常走。
+        // 夹具里鬼斩的攻击信息没有 [hit info],所以停顿取武器的 80
+        using var arena = new Arena(new[] { (340, 100) }, hp: 1000, frozen: true, chr: AvatarFixture.ActionChrPath, withSkills: true, weaponStun: 80);
+        RoomCombatSession s = arena.Session;
+        HeroSkillSlot hard = s.Skills.SlotOf(SkillKeys.A);
+        s.Update(10, 0, 0, false, false, SkillKeys.A);
+        for (int i = 0; i < 100 && s.Hits == 0; i++)
+        {
+            s.Update(10, 0, 0, false, false, SkillKeys.None);
+        }
+        Assert.Equal(1, s.Hits);
+        Assert.Equal(80.0, s.HeroPauseMs, 9);
+        Assert.Equal(2, s.Effects.Count);
+
+        double[] ages = s.Effects.Select(e => e.AgeMs).ToArray();
+        double cooldown = hard.CooldownLeftMs;
+        long motion = s.Hero.MotionMs;
+        for (int i = 0; i < 8; i++)
+        {
+            s.Update(10, 0, 0, false, false, SkillKeys.None);
+            Assert.Equal(ages, s.Effects.Select(e => e.AgeMs).ToArray());
+            Assert.Equal(motion, s.Hero.MotionMs);
+            Assert.Equal(cooldown - 10 * (i + 1), hard.CooldownLeftMs, 6);
+        }
+        s.Update(10, 0, 0, false, false, SkillKeys.None);
+        Assert.Equal(ages.Select(a => a + 10).ToArray(), s.Effects.Select(e => e.AgeMs).ToArray());
+        Assert.Equal(motion + 10, s.Hero.MotionMs);
     }
 
     [Fact]

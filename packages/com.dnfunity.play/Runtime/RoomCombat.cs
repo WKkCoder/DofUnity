@@ -30,13 +30,25 @@ namespace Dnf.Play
         /// <summary>伤害按技能的两个数算(<see cref="SkillRatePercent"/>、<see cref="SkillFixed"/>)。</summary>
         public bool IsSkillDamage => SkillRatePercent != 0 || SkillFixed != 0;
 
-        public HeroStrikeInfo(int damageBonus, int pushAside, bool knockDown, int skillRatePercent = 0, int skillFixed = 0)
+        // 内部存"值 + 1":default(HeroStrikeInfo) 里整数是 0,正好对应"没写"(-1)
+        private readonly int _hitValuePlusOne;
+
+        /// <summary>[hit info] 的整数(命中停顿毫秒,证据 E-077);没写是 -1,表示取武器表。</summary>
+        public int HitValue => _hitValuePlusOne - 1;
+
+        /// <summary>[is use weapon hit delay rate]:为真时停顿 = 武器的停顿 × <see cref="HitValue"/>。</summary>
+        public bool UseWeaponHitDelayRate { get; }
+
+        public HeroStrikeInfo(int damageBonus, int pushAside, bool knockDown, int skillRatePercent = 0, int skillFixed = 0,
+            int hitValue = -1, bool useWeaponHitDelayRate = false)
         {
             DamageBonus = damageBonus;
             PushAside = pushAside;
             KnockDown = knockDown;
             SkillRatePercent = skillRatePercent;
             SkillFixed = skillFixed;
+            _hitValuePlusOne = unchecked(hitValue + 1);
+            UseWeaponHitDelayRate = useWeaponHitDelayRate;
         }
 
         /// <summary>读一份 .atk 里命中要用的字段;路径为 null、读不到时全是默认值。</summary>
@@ -45,13 +57,13 @@ namespace Dnf.Play
             AttackInfoData info = atkPath == null || data == null ? null : data.GetAttackInfo(atkPath)?.Data;
             return info == null
                 ? new HeroStrikeInfo(0, 0, false)
-                : new HeroStrikeInfo(info.DamageBonus, info.PushAside, info.Reaction == DamageReaction.Down);
+                : new HeroStrikeInfo(info.DamageBonus, info.PushAside, info.Reaction == DamageReaction.Down, 0, 0, info.HitValue, info.UseWeaponHitDelayRate);
         }
 
         /// <summary>同一份攻击信息,换上技能伤害的两个数。</summary>
         public HeroStrikeInfo WithSkillDamage(int ratePercent, int fixedDamage)
         {
-            return new HeroStrikeInfo(DamageBonus, PushAside, KnockDown, ratePercent, fixedDamage);
+            return new HeroStrikeInfo(DamageBonus, PushAside, KnockDown, ratePercent, fixedDamage, HitValue, UseWeaponHitDelayRate);
         }
     }
 
@@ -225,6 +237,10 @@ namespace Dnf.Play
         private int _evalFrame = -1;
         private double _targetMs = double.MaxValue;
         private double _comboMs = double.MaxValue;
+        private double _heroPauseMs;
+        private bool _bufferedAttack;
+        private bool _bufferedJump;
+        private SkillKeys _bufferedSkills;
 
         public RoomSession Room => _room;
         public IReadOnlyList<MonsterActor> Monsters => _monsters;
@@ -270,10 +286,20 @@ namespace Dnf.Play
         /// <summary>A、S、D 三个技能快捷槽与冷却(证据 E-076);构造时没给就是空的(按技能键没有反应)。</summary>
         public HeroSkills Skills { get; }
 
+        /// <summary>
+        /// 主角手上这件武器的命中停顿毫秒数(角色 .chr [weapon hit info] 里按装备 [sub type] 取的那一项,证据 E-077)。
+        /// 攻击信息的 [hit info] 整数是 -1 或没写时用它;0 表示没有这张表(那就不停顿)。
+        /// </summary>
+        public int WeaponStunMs { get; }
+
+        /// <summary>主角还要定住多少毫秒(命中停顿,证据 E-077);0 表示没在停顿。</summary>
+        public double HeroPauseMs => _heroPauseMs;
+
         public RoomCombatSession(DnfAssets assets, RoomSession room, IReadOnlyList<MonsterActor> monsters, IReadOnlyList<HeroStrikeInfo> strikes, int seed = 1,
-            HeroStrikeInfo dashStrike = default, HeroStrikeInfo jumpStrike = default, HeroSkills skills = null)
+            HeroStrikeInfo dashStrike = default, HeroStrikeInfo jumpStrike = default, HeroSkills skills = null, int weaponStunMs = 0)
         {
             Skills = skills ?? new HeroSkills(new HeroSkillSlot[0]);
+            WeaponStunMs = weaponStunMs;
             _assets = assets ?? throw new ArgumentNullException(nameof(assets));
             _room = room ?? throw new ArgumentNullException(nameof(room));
             _monsters = new List<MonsterActor>(monsters ?? new List<MonsterActor>());
@@ -340,7 +366,24 @@ namespace Dnf.Play
                     def.Tags.IntOr("[attack delay]", 0), def.Tags.IntOr("[attack speed]", 0));
                 actors.Add(actor);
             }
-            return new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, HeroSkills.Create(data, chr, 0));
+            return new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, HeroSkills.Create(data, chr, 0), WeaponStunOf(chr, room.Hero));
+        }
+
+        /// <summary>主角穿的武器([equipment type] 为 [weapon] 的那件)的 [sub type] 在 .chr 的 [weapon hit info] 里对应的命中停顿;取不到是 0。</summary>
+        public static int WeaponStunOf(CharacterDef chr, TownHero hero)
+        {
+            if (chr == null || hero?.Outfit == null)
+            {
+                return 0;
+            }
+            foreach (AvatarItem item in hero.Outfit.Items)
+            {
+                if (string.Equals(item.EquipmentType, "[weapon]", StringComparison.OrdinalIgnoreCase) && chr.TryGetWeaponHitInfo(item.SubType, out WeaponHitInfo info))
+                {
+                    return info.StunMs;
+                }
+            }
+            return 0;
         }
 
         /// <summary>
@@ -401,15 +444,42 @@ namespace Dnf.Play
         private void Step(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed, SkillKeys skillsPressed)
         {
             Skills.Advance(deltaMs);
-            HeroSkillSlot cast = skillsPressed == SkillKeys.None ? null : Skills.TryCast(skillsPressed, _room.Hero);
-            if (cast != null)
+
+            // 命中停顿(证据 E-077):主角被定住时,他自己、他的技能特效的时间都不走;冷却、伤害数字、连击计时是墙钟,照常走。
+            // 这一小步里停顿结束的话,剩下的时间照常推进。定住期间按下的键存起来,停顿一结束就生效(假设,原版的输入缓冲没读)。
+            double heroDelta = deltaMs;
+            bool heroFrozen = false;
+            if (_heroPauseMs > 0)
             {
-                attackPressed = false;
-                jumpPressed = false;
-                SkillCasts++;
-                SpawnEffects(cast);
+                double used = Math.Min(_heroPauseMs, deltaMs);
+                _heroPauseMs -= used;
+                heroDelta = deltaMs - used;
+                heroFrozen = heroDelta <= 0;
             }
-            _room.Update(deltaMs, dirX, dirY, attackPressed, jumpPressed);
+            if (heroFrozen)
+            {
+                _bufferedAttack |= attackPressed;
+                _bufferedJump |= jumpPressed;
+                _bufferedSkills |= skillsPressed;
+            }
+            else
+            {
+                attackPressed |= _bufferedAttack;
+                jumpPressed |= _bufferedJump;
+                skillsPressed |= _bufferedSkills;
+                _bufferedAttack = false;
+                _bufferedJump = false;
+                _bufferedSkills = SkillKeys.None;
+                HeroSkillSlot cast = skillsPressed == SkillKeys.None ? null : Skills.TryCast(skillsPressed, _room.Hero);
+                if (cast != null)
+                {
+                    attackPressed = false;
+                    jumpPressed = false;
+                    SkillCasts++;
+                    SpawnEffects(cast);
+                }
+                _room.Update(heroDelta, dirX, dirY, attackPressed, jumpPressed);
+            }
             TownHero hero = _room.Hero;
             foreach (MonsterActor m in _monsters)
             {
@@ -427,7 +497,7 @@ namespace Dnf.Play
             }
             for (int i = _effects.Count - 1; i >= 0; i--)
             {
-                _effects[i].Advance(deltaMs);
+                _effects[i].Advance(heroDelta);
                 if (_effects[i].Finished)
                 {
                     _effects.RemoveAt(i);
@@ -549,6 +619,16 @@ namespace Dnf.Play
                 ? PlaceholderDamage.RollSkill(info.SkillRatePercent, info.SkillFixed, _random)
                 : PlaceholderDamage.Roll(info.DamageBonus, _random);
             bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, hero.FacingLeft);
+            int stun = HitStop.StunMs(info.HitValue, info.UseWeaponHitDelayRate, WeaponStunMs);
+            if (stun > 0)
+            {
+                // 攻击方与受击方定住同样久,已经在停顿的取剩余更长的那个(E-077)
+                monster.Pause(stun);
+                if (stun > _heroPauseMs)
+                {
+                    _heroPauseMs = stun;
+                }
+            }
             Hits++;
             Combo++;
             _comboMs = 0;

@@ -46,7 +46,7 @@ internal static class CombatCheck
 
         Console.WriteLine("房间 " + opts.MapPath + ":怪物 " + session.Monsters.Count + " 个,主角连招 " + session.Hero.AttackCount + " 段,出生 ("
             + F(session.Hero.X) + "," + F(session.Hero.Y) + ") 朝" + (session.Hero.FacingLeft ? "左" : "右") + ",镜头 x " + session.Camera.IntX
-            + ",主角脚本 [move speed] " + session.Hero.MoveSpeedStat);
+            + ",主角脚本 [move speed] " + session.Hero.MoveSpeedStat + ",武器命中停顿 " + session.WeaponStunMs + " 毫秒(E-077)");
         foreach (MonsterActor m in session.Monsters)
         {
             Console.WriteLine("  怪物 " + m.Index + ":编号 " + m.Code + (m.IsBoss ? "(首领)" : string.Empty) + " 等级 " + m.Level + " 生命 " + m.HpMax
@@ -67,7 +67,8 @@ internal static class CombatCheck
             {
                 var sb = new StringBuilder();
                 sb.Append("  t=" + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s  命中 +" + (session.Hits - lastHits) + "  累计 " + session.Hits
-                    + " 击杀 " + session.Kills + " 连击 " + session.Combo + "  第 " + (session.Hero.AttackStage + 1) + " 段");
+                    + " 击杀 " + session.Kills + " 连击 " + session.Combo + "  第 " + (session.Hero.AttackStage + 1) + " 段"
+                    + (session.HeroPauseMs > 0 ? "  定住 " + F(session.HeroPauseMs) + " 毫秒" : string.Empty));
                 foreach (MonsterActor m in session.Monsters)
                 {
                     if (m.Phase is MonsterPhase.Hurt or MonsterPhase.Dying)

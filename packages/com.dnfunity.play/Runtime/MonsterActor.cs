@@ -59,10 +59,12 @@ namespace Dnf.Play
         public const double HoldFrameThresholdMs = 3000;
 
         /// <summary>
-        /// 普通受击硬直的时长。量法:基线连拍 S07 里两只一级地精各挨一下,受击帧分别连续出现 4 次与 3 次(间隔 100 毫秒),之后恢复站立,
-        /// 所以硬直在 300 到 500 毫秒之间,取 400。只有两个样本,没有算上 [hit recovery] 与攻击信息里的 [force hit stun time]。
+        /// 普通受击硬直的时长(命中停顿之后才开始计,见 <see cref="MonsterActor.Pause"/>)。量法:基线连拍 S07 里两只一级地精各挨一下,
+        /// 受击帧分别连续出现 4 次与 3 次(间隔 100 毫秒),之后恢复站立,所以受击姿势在画面上的总时长在 300 到 500 毫秒之间(分辨率 100 毫秒);
+        /// 这个总时长里已经含着主角武器的那一次命中停顿(E-077),所以这里取区间偏下的 350,停顿在它之前另外计。
+        /// 只有两个样本,没有算上 [hit recovery] 与攻击信息里的 [force hit stun time];换武器时停顿不同,总时长会跟着变(原版的硬直怎么算还没读)。
         /// </summary>
-        public const double HurtHoldMs = 400;
+        public const double HurtHoldMs = 350;
 
         /// <summary>被打倒(.atk 的 [damage reaction] 是倒地)时在地上停的时长(未量,取个看得过去的数)。</summary>
         public const double KnockDownHoldMs = 900;
@@ -120,6 +122,9 @@ namespace Dnf.Play
 
         /// <summary>这一次受击硬直的总时长(毫秒);不在受击中时是上一次的值。</summary>
         public double HurtSpanMs => _hurtSpanMs;
+
+        /// <summary>命中停顿还剩多少毫秒(证据 E-077):停顿期间动画、行走、出招、击退、冷却的时间都不走。</summary>
+        public double PauseMs { get; private set; }
 
         public bool IsAlive => Hp > 0;
         public bool IsGone => Phase == MonsterPhase.Gone;
@@ -221,6 +226,17 @@ namespace Dnf.Play
             if (deltaMs < 0)
             {
                 deltaMs = 0;
+            }
+            if (PauseMs > 0)
+            {
+                // 定住的时间先用掉;这一小步里停顿结束的话,剩下的时间照常推进
+                double used = Math.Min(PauseMs, deltaMs);
+                PauseMs -= used;
+                deltaMs -= used;
+                if (deltaMs <= 0)
+                {
+                    return;
+                }
             }
             _phaseMs += deltaMs;
             if (_cooldownMs > 0)
@@ -389,6 +405,15 @@ namespace Dnf.Play
             _hurtSpanMs = HurtSpan(ani, knockDown);
             EnterPhase(MonsterPhase.Hurt);
             return false;
+        }
+
+        /// <summary>挨打时被定住 <paramref name="ms"/> 毫秒;已经在停顿的取剩余更长的那个(长者胜,不叠加,E-077)。</summary>
+        public void Pause(double ms)
+        {
+            if (ms > PauseMs)
+            {
+                PauseMs = ms;
+            }
         }
 
         /// <summary>当前帧的受击框(世界坐标)。死亡后的怪物没有受击框。</summary>

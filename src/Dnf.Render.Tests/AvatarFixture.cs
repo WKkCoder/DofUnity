@@ -74,6 +74,9 @@ internal sealed class AvatarFixture : IDisposable
     public const string JobTag = "[tester]";
     public const string EquipRoot = "equipment/character/test";
     public const string WeaponEqu = "weapon/sword/sw_start.equ";
+
+    /// <summary>夹具武器的 [sub type](写在各职业的 [animation job] 块之后,证据 E-077)。</summary>
+    public const int WeaponSubType = 4;
     public const string AvatarImageRoot = "sprite/character/test/equipment/avatar";
     public const string WeaponImageRoot = "sprite/character/test/equipment/weapon";
     public const string AreaMap = "map/test/area.map";
@@ -261,12 +264,16 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[animation job]").Str(JobTag)
                 .Tag("[variation]").Int(1, 5)
                 .Tag("[layer variation]").Int(1111).Str("coat_a").Int(700).Str("coat_b").Build()),
-            // 武器:变体两个数里只有第二个(B = 2)进文件名;swordd 的图片不存在
+            // 武器:变体两个数里只有第二个(B = 2)进文件名;swordd 的图片不存在。别的职业的块之后才写 [sub type](与原版装备脚本同序)
             (EquipRoot + "/" + WeaponEqu, NewScript()
                 .Tag("[equipment type]").Str("[weapon]")
                 .Tag("[animation job]").Str(JobTag)
                 .Tag("[variation]").Int(3, 2)
-                .Tag("[layer variation]").Int(650).Str("swordb").Int(2999).Str("swordc").Int(3000).Str("swordd").Build()),
+                .Tag("[layer variation]").Int(650).Str("swordb").Int(2999).Str("swordc").Int(3000).Str("swordd")
+                .Tag("[animation job]").Str("[other]")
+                .Tag("[variation]").Int(8, 8)
+                .Tag("[layer variation]").Int(1).Str("swordz")
+                .Tag("[sub type]").Int(WeaponSubType).Build()),
             (EquipRoot + "/weapon/sword/sw_digit.equ", NewScript()
                 .Tag("[equipment type]").Str("[weapon]")
                 .Tag("[animation job]").Str(JobTag)

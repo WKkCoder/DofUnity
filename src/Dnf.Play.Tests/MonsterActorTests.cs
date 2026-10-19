@@ -174,11 +174,11 @@ public class MonsterActorTests
         Assert.Equal(30, m.Hp);
         Assert.Equal(MonsterPhase.Hurt, m.Phase);
         Assert.Equal(Damage1, m.CurrentAnimationPath);
-        // 受击动画只有一帧停 10000 毫秒:硬直取量到的 400 毫秒,不能跟着动画停 10 秒
+        // 受击动画只有一帧停 10000 毫秒:硬直取量到的时长(命中停顿之外的部分),不能跟着动画停 10 秒
         Assert.Equal(MonsterTuning.HurtHoldMs, m.HurtSpanMs);
-        Assert.Equal(400.0, m.HurtSpanMs);
+        double hold = MonsterTuning.HurtHoldMs;
 
-        Run(m, 399, 5000, 100, heroPresent: false);
+        Run(m, hold - 1, 5000, 100, heroPresent: false);
         Assert.Equal(MonsterPhase.Hurt, m.Phase);
         Run(m, 1, 5000, 100, heroPresent: false);
         Assert.Equal(MonsterPhase.Wait, m.Phase);
@@ -190,8 +190,8 @@ public class MonsterActorTests
         m.ApplyHit(1, false, 0, true);
         Assert.Equal(Damage1, m.CurrentAnimationPath);
         Assert.Equal(0L, m.PhaseMs);
-        Run(m, 399, 5000, 100, heroPresent: false);
-        Assert.Equal(MonsterPhase.Hurt, m.Phase);                         // 距离第二下才 399 毫秒:仍在硬直
+        Run(m, hold - 1, 5000, 100, heroPresent: false);
+        Assert.Equal(MonsterPhase.Hurt, m.Phase);                         // 距离第二下还差 1 毫秒:仍在硬直
 
         // 被击倒:放倒地动画,在地上停得更久
         m.ApplyHit(1, true, 0, true);
@@ -318,5 +318,58 @@ public class MonsterActorTests
         SceneSprite right = m.Sprite(assets, projection);
         Assert.False(right.Mirrored);
         Assert.Equal((int)Math.Floor(m.X) - 10 - 10 - 3, right.ScreenX);
+    }
+    [Fact]
+    public void AMonsterThatIsPausedHoldsEveryClockUntilThePauseRunsOut()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = Blob(assets, 340, 100);
+        Run(m, 100, 100, 100);                                            // 主角在远处左边:追过去,先走一小段
+        double x0 = m.X;
+        long phase0 = m.PhaseMs;
+        Assert.Equal(MonsterPhase.Walk, m.Phase);
+        m.Pause(60);
+        Assert.Equal(60.0, m.PauseMs, 9);
+        Run(m, 50, 100, 100);                                             // 停顿里:位置、阶段计时都不动
+        Assert.Equal((x0, phase0), (m.X, m.PhaseMs));
+        Assert.Equal(10.0, m.PauseMs, 9);
+        m.Update(30, 100, 100, true, Free);                               // 这一步里停顿结束:剩下的 20 毫秒照常走
+        Assert.Equal(0.0, m.PauseMs, 9);
+        Assert.Equal(phase0 + 20, m.PhaseMs);
+        Assert.True(m.X < x0);                                            // 继续往主角走(主角在左边)
+    }
+
+    [Fact]
+    public void PausesDoNotStackAndTheLongerRemainderWins()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = Blob(assets, 340, 100);
+        m.Pause(100);
+        m.Pause(40);                                                      // 更短的不改
+        Assert.Equal(100.0, m.PauseMs, 9);
+        m.Update(35, 700, 100, true, Free);
+        Assert.Equal(65.0, m.PauseMs, 9);
+        m.Pause(80);                                                      // 剩余 65 < 80:换成 80,不是 145
+        Assert.Equal(80.0, m.PauseMs, 9);
+        m.Pause(0);
+        m.Pause(-5);
+        Assert.Equal(80.0, m.PauseMs, 9);
+    }
+
+    [Fact]
+    public void AHitMonsterIsPausedBeforeItsHurtReactionRuns()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = Blob(assets, 340, 100);
+        m.ApplyHit(10, false, 30, false);
+        m.Pause(90);
+        Run(m, 90, 300, 100);
+        Assert.Equal((MonsterPhase.Hurt, 0L), (m.Phase, m.PhaseMs));      // 受击动画停在第一帧,硬直计时还没开始
+        Run(m, 100, 300, 100);
+        Assert.Equal(100L, m.PhaseMs);
+        Assert.True(m.X > 340);                                           // 击退在停顿结束后才开始推
     }
 }

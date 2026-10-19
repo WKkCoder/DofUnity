@@ -17,6 +17,9 @@ namespace Dnf.Game
         public string[] AttackMotions { get; }
         public string[] AttackInfos { get; }
 
+        /// <summary>[weapon hit info]:每种武器一项,下标是装备脚本的 [sub type](证据 E-077)。没有这个标签是空数组。</summary>
+        public WeaponHitInfo[] WeaponHitInfos { get; }
+
         public CharacterDef(int job, string path, ScriptLine[] lines)
             : base(path, lines)
         {
@@ -24,6 +27,19 @@ namespace Dnf.Game
             JobTag = Tags.FirstString("[job]");
             AttackMotions = Tags.Strings("[attack motion]");
             AttackInfos = Tags.Strings("[attack info]");
+            WeaponHitInfos = WeaponHitInfo.ParseAll(Tags);
+        }
+
+        /// <summary>某种武器([sub type] = <paramref name="subType"/>)的命中默认值;下标越界返回 false。</summary>
+        public bool TryGetWeaponHitInfo(int subType, out WeaponHitInfo info)
+        {
+            if ((uint)subType < (uint)WeaponHitInfos.Length)
+            {
+                info = WeaponHitInfos[subType];
+                return true;
+            }
+            info = default;
+            return false;
         }
 
         public string AttackMotionPath(int index)
