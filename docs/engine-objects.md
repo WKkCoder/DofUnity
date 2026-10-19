@@ -88,6 +88,19 @@
 
 - 实现在 `packages/com.dnfunity.render/Runtime/{GateArrival,RoomGrid,RoomArrival}.cs`,诊断工具是 `dnf arrival-check`;公式与未知项见 `docs/evidence/ledger.md` 的 E-074。
 
+## 鬼剑士一族的技能入口(证据 E-075)
+
+鬼剑士一族(我们起的名字,E-073)的技能不在 Squirrel 脚本里,而在客户端内置的状态处理里。地址是 `DNF.exe` 里的函数入口,名字是自拟的(**不是**原名),函数文本只在本机 `re/notes/`,不入库:
+
+| 地址 | 自拟名称 | 作用 |
+|---|---|---|
+| `0x01706a24` | 鬼剑士一族的虚表 | 构造函数 `0x00d14710` 写入它(E-073) |
+| `0x00ccd2a0` | 鬼剑士一族的状态进入(槽 `+0x29c`) | 很大的函数,196 处文字引用,是各技能的特效动画路径与特效名;鬼斩、刀魂之卡赞、上挑的特效名都在里面。`Character` 基类的同一槽是 `0x00863020` |
+| `0x00cb9980` | 鬼剑士一族的每帧处理(槽 `+0x1f0`) | `Character` 基类的同一槽是 `0x008680c0` |
+
+- 技能与脚本的对应(按显示名在 `skill/skill.kor.str` 里对):鬼斩 = `skill/swordman/hardattack.skl`,刀魂之卡赞 = `skill/swordman/khazan.skl`,上挑 = `skill/swordman/upperslash.skl`。`.skl` 只有元数据,没有动作与动画路径。
+- 每个技能的状态号与分支(两个函数里按状态号分派)还没读。
+
 ## 没读出来的
 
 - 类的真名。名字抹掉了,只能靠用途起名;上表里"我们的名字"是读代码后的命名,**不是**原名。
