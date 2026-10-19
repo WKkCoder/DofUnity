@@ -190,19 +190,58 @@ namespace Dnf.Render
 
     /// <summary>
     /// 城镇里可以用键盘操作的主角:状态(站立/行走/奔跑/跳跃/挥击、朝向)、位置、在可走区域里的移动,以及按状态选 .ani 帧并用换装合成成精灵。
-    /// 行走速度是在原版连拍上标定的(水平约 222.5 像素/秒、竖直约 90 像素/秒,证据 E-066);竖直速度只有一个房间里的两段样本,
-    /// 斜着走时两个方向各按各的速度(是否归一化没有样本)。奔跑速度 242.5 像素/秒取自原版连拍里镜头的速度(证据 E-072);
-    /// 跳跃的初速度与奔跑的双击时间窗、奔跑动画倍率、空中速度都是假设(见各常量),等原版录像量过再改。
+    /// 移动与跳跃的规则来自对客户端代码的静态读取(证据 E-073):各状态的速度表(行走 / 奔跑 / 空中 × 直走 / 斜走)、
+    /// 起跳初速度与重力的公式、起跳前的蹲姿、落地帧、双击奔跑的时间窗、奔跑的延续与退出条件、每次跳跃只能出一次空中攻击。
+    /// 速度表是引擎里的常量,实际速度还要乘一个按轴的速度系数(角色的移动速度属性、装备与增益);
+    /// 这个系数目前没有来源,用原版连拍里量到的行走速度标定(水平 222.5、竖直 90 像素/秒,证据 E-066),标定的两个系数见 <see cref="DefaultSpeedFactorX"/>、
+    /// <see cref="DefaultSpeedFactorY"/>。竖直方向的标定值只有引擎常量预测的一半,原因没有查到(E-073 的未知项),所以两个轴各用各的系数。
+    /// 连按方向键的时间窗(300 毫秒)、起跳公式、重力、空中速度、落地帧时长都是代码读出来的,没有用原版录像逐帧核对。
     /// </summary>
     public sealed class TownHero
     {
         public const int ObjectId = -2;
 
-        /// <summary>水平行走速度(像素/秒)。在赛丽亚房间向左走的 11 个点上线性回归得到 222.5。</summary>
+        /// <summary>行走速度表(像素/秒,引擎常量,证据 E-073):直走的水平速度。</summary>
+        public const double EngineWalkX = 143.0;
+
+        /// <summary>斜着走(水平与竖直方向同时有输入)时的水平速度。</summary>
+        public const double EngineWalkDiagonalX = 119.0;
+
+        /// <summary>直走的竖直速度。</summary>
+        public const double EngineWalkY = 114.0;
+
+        /// <summary>斜着走时的竖直速度。</summary>
+        public const double EngineWalkDiagonalY = 95.0;
+
+        /// <summary>奔跑速度表:直跑的水平速度。</summary>
+        public const double EngineDashX = 286.0;
+
+        /// <summary>斜着跑时的水平速度。</summary>
+        public const double EngineDashDiagonalX = 238.0;
+
+        /// <summary>奔跑时的竖直速度。</summary>
+        public const double EngineDashY = 136.0;
+
+        /// <summary>斜着跑时的竖直速度。</summary>
+        public const double EngineDashDiagonalY = 114.0;
+
+        /// <summary>空中的竖直(深度)速度:地面行走值的一半(整数除),直走。水平方向空中速度与地面行走相同。</summary>
+        public const double EngineAirY = 57.0;
+
+        /// <summary>空中斜着动时的竖直速度(95 / 2,整数除)。</summary>
+        public const double EngineAirDiagonalY = 47.0;
+
+        /// <summary>水平行走速度(像素/秒),标定值。在赛丽亚房间向左走的 11 个点上线性回归得到 222.5。</summary>
         public const double DefaultWalkSpeedX = 222.5;
 
-        /// <summary>竖直行走速度(像素/秒)。在副本领主房里向下走的 4 个点回归得 92.7,向上走的 2 点得 87.4,取 90。</summary>
+        /// <summary>竖直行走速度(像素/秒),标定值。在副本领主房里向下走的 4 个点回归得 92.7,向上走的 2 点得 87.4,取 90。</summary>
         public const double DefaultWalkSpeedY = 90.0;
+
+        /// <summary>水平速度系数的标定值 = 标定的行走速度 / 引擎的直走水平速度。</summary>
+        public const double DefaultSpeedFactorX = DefaultWalkSpeedX / EngineWalkX;
+
+        /// <summary>竖直速度系数的标定值 = 标定的行走速度 / 引擎的直走竖直速度。</summary>
+        public const double DefaultSpeedFactorY = DefaultWalkSpeedY / EngineWalkY;
 
         /// <summary>
         /// 行走动画的播放倍率(证据 E-066):.ani 里每帧 100 毫秒,但原版连拍里行走一帧只有约 83 毫秒
@@ -211,26 +250,38 @@ namespace Dnf.Render
         /// </summary>
         public const double DefaultMoveAnimationRate = 1.2;
 
-        /// <summary>奔跑的水平速度(像素/秒):原版连拍里主角冲出画面死区时镜头的速度(多个镜头位置回归得 242.5,证据 E-072);只有这一个数,比行走快 9%。</summary>
-        public const double DefaultDashSpeedX = 242.5;
+        /// <summary>直跑的水平速度(像素/秒),按标定的水平速度系数折算(引擎表的 286 × <see cref="DefaultSpeedFactorX"/>)。</summary>
+        public const double DefaultDashSpeedX = EngineDashX * DefaultSpeedFactorX;
 
-        /// <summary>奔跑时的竖直速度(像素/秒):没有量过,取与行走相同(假设)。</summary>
-        public const double DefaultDashSpeedY = 90.0;
+        /// <summary>奔跑时的竖直速度(像素/秒),按标定的竖直速度系数折算(引擎表的 136 × <see cref="DefaultSpeedFactorY"/>)。</summary>
+        public const double DefaultDashSpeedY = EngineDashY * DefaultSpeedFactorY;
 
         /// <summary>
-        /// 双击方向键算"奔跑"的时间窗(毫秒,从上一次按下到这一次按下;假设)。
-        /// 原版基线里自动化脚本的"点一下再按住"能触发奔跑,说明窗口至少有几十到一百多毫秒;上限没有量过,取 300。
+        /// 双击方向键算"奔跑"的时间窗(毫秒,从第一次按下到第二次按下):客户端的按键序列定义里,
+        /// 左或右的"按下、松开、再按下"三步之间最大间隔 300 毫秒、最小间隔 0(证据 E-073,静态读出)。
         /// </summary>
         public const double DoubleTapWindowMs = 300.0;
 
-        /// <summary>跳跃重力(像素/秒²;假设,原版没有量过)。角色脚本的 [jump power] 当作初速度(像素/秒),配上它得到的是升到最高约一百像素、腾空不到一秒的一跳。</summary>
-        public const double DefaultJumpGravity = 925.0;
+        /// <summary>地面物体的重力基数(引擎常量,单位 1/100 像素每秒²,证据 E-073):实际重力 = 跳跃速度属性 × 这个数 / 100。</summary>
+        public const double EngineGroundGravity = 1500.0;
 
-        /// <summary>角色脚本缺 [jump power] 时的默认初速度(像素/秒;随手取的同量级整数,不是原版的数值)。</summary>
+        /// <summary>起跳初速度公式的两个常数(证据 E-073):分母 = (重量×100 / 跳跃速度 − 10000) × 0.0121 + 2100,分子 = 跳跃力 × 4000。</summary>
+        public const double EngineTakeoffK1 = 0.0121;
+
+        /// <summary>见 <see cref="EngineTakeoffK1"/>。</summary>
+        public const double EngineTakeoffK2 = 2100.0;
+
+        /// <summary>角色脚本缺 [jump power] 时的默认跳跃力(随手取的同量级整数,不是原版的数值)。</summary>
         public const double DefaultJumpPower = 400.0;
 
-        /// <summary>落地帧的锁定时长(毫秒;假设):落地这一帧显示期间不接受操作。</summary>
-        public const double LandingMs = 50.0;
+        /// <summary>角色脚本缺 [weight] 时的默认重量(随手取的同量级整数,不是原版的数值)。</summary>
+        public const int DefaultWeight = 60000;
+
+        /// <summary>角色脚本缺 [jump speed] 时的默认跳跃速度属性(随手取的同量级整数,不是原版的数值)。</summary>
+        public const int DefaultJumpSpeedStat = 100;
+
+        /// <summary>落地帧时长的兜底(毫秒):跳跃动画没有可识别的落地段时用它(假设)。</summary>
+        public const double FallbackLandingMs = 50.0;
 
         /// <summary>延时不短于它的帧是"停留帧"(跳跃动画里最高点与落地前各有一个延时极长的帧,由游戏逻辑决定什么时候往下走)。</summary>
         public const int HoldDelayMs = 5000;
@@ -269,21 +320,24 @@ namespace Dnf.Render
         private string _jumpAttackPath;
         private AniTimeline _jumpAttackTimeline;
 
-        // 双击检测:上一帧的水平方向、最近一次按下的方向与距今的时间
+        // 双击检测:上一帧的水平方向、最近一次按下的方向与距今的时间;本次更新里刚好完成了一次双击(只在这一次更新里有效)
         private int _prevDirX;
         private int _tapDir;
         private double _sinceTapMs = double.MaxValue;
-        private bool _running;
+        private bool _dashTrigger;
 
-        // 跳跃:竖直速度(像素/秒)、腾空时间、下降段时间、落地帧计时(负数表示没在落地)
+        // 最近一次地面移动的水平速度(像素/秒,带符号):奔跑攻击以它的大小为滑行初速;奔跑攻击起手时的滑行初速
+        private double _groundVx;
+        private double _dashAttackV0;
+
+        // 跳跃:起跳前蹲姿的计时(负数表示不在蹲姿)、竖直速度(像素/秒)、腾空时间、下降段时间、落地帧计时(负数表示没在落地)
+        private double _prepMs = -1;
         private double _vz;
         private double _airMs;
         private double _descendMs;
         private bool _descending;
         private double _landingMs = -1;
         private bool _airAttackUsed;
-        private double _airSpeedX;
-        private double _airSpeedY;
 
         /// <summary>攻击动画的播放倍率。取 1.0(.ani 原速);原版连拍里没有量过攻击一击的时长(证据 E-069),角色脚本的 [attack speed] 与它的关系没有研究。</summary>
         public const double DefaultAttackAnimationRate = 1.0;
@@ -300,24 +354,91 @@ namespace Dnf.Render
         public double Y { get; private set; }
         public bool FacingLeft { get; private set; }
         public HeroMotion Motion { get; private set; }
-        public double WalkSpeedX { get; set; } = DefaultWalkSpeedX;
-        public double WalkSpeedY { get; set; } = DefaultWalkSpeedY;
-        public double DashSpeedX { get; set; } = DefaultDashSpeedX;
-        public double DashSpeedY { get; set; } = DefaultDashSpeedY;
+        /// <summary>水平速度系数(速度表的水平数值乘它才是像素/秒)。默认是用原版连拍标定的 <see cref="DefaultSpeedFactorX"/>;角色的移动速度属性、装备与增益都折在这里。</summary>
+        public double SpeedFactorX { get; set; } = DefaultSpeedFactorX;
+
+        /// <summary>竖直速度系数,同上,默认 <see cref="DefaultSpeedFactorY"/>。</summary>
+        public double SpeedFactorY { get; set; } = DefaultSpeedFactorY;
+
+        /// <summary>直走的水平行走速度(像素/秒)= 引擎表 × <see cref="SpeedFactorX"/>。</summary>
+        public double WalkSpeedX => EngineWalkX * SpeedFactorX;
+
+        /// <summary>直走的竖直行走速度(像素/秒)。</summary>
+        public double WalkSpeedY => EngineWalkY * SpeedFactorY;
+
+        /// <summary>直跑的水平速度(像素/秒)。</summary>
+        public double DashSpeedX => EngineDashX * SpeedFactorX;
+
+        /// <summary>奔跑时直跑的竖直速度(像素/秒)。</summary>
+        public double DashSpeedY => EngineDashY * SpeedFactorY;
+
         public double MoveAnimationRate { get; set; } = DefaultMoveAnimationRate;
         public double AttackAnimationRate { get; set; } = DefaultAttackAnimationRate;
 
         /// <summary>离地高度(像素;0 在地面上)。画面上的位置往上抬这么多,深度排序仍按 <see cref="Y"/>。</summary>
         public double Z { get; private set; }
 
-        /// <summary>跳跃的初速度(像素/秒),取自 [jump power];没写时 <see cref="DefaultJumpPower"/>。</summary>
+        /// <summary>角色脚本的 [jump power](跳跃力,起跳初速度公式的分子);没写时 <see cref="DefaultJumpPower"/>。</summary>
         public double JumpPower { get; set; } = DefaultJumpPower;
 
-        /// <summary>跳跃的重力(像素/秒²);假设值,见 <see cref="DefaultJumpGravity"/>。</summary>
-        public double JumpGravity { get; set; } = DefaultJumpGravity;
+        /// <summary>角色脚本的 [weight](重量,起跳初速度公式里的分母项);没写时 <see cref="DefaultWeight"/>。</summary>
+        public int WeightStat { get; set; } = DefaultWeight;
 
-        /// <summary>[jump speed](百分数,空中水平与深度速度占地面行走速度的比;把它当百分比是假设,没写时 100)。</summary>
-        public int JumpSpeedPercent { get; set; } = 100;
+        /// <summary>
+        /// 角色脚本的 [jump speed](跳跃速度属性):不是百分比,也不影响空中的水平速度;它参与起跳初速度公式,并且乘以重力基数决定重力
+        /// (证据 E-073)。没写时 <see cref="DefaultJumpSpeedStat"/>。
+        /// </summary>
+        public int JumpSpeedStat { get; set; } = DefaultJumpSpeedStat;
+
+        /// <summary>
+        /// 地图附加的重力修正,加在(负的)重力基数 −1500 上(客户端里这一项来自地图数据;证据 E-073 的未知项:有没有非零的地图没查过,取 0)。
+        /// 正数让重力变小。
+        /// </summary>
+        public double MapGravityAdjust { get; set; }
+
+        /// <summary>起跳初速度(像素/秒),用 <see cref="TakeoffSpeed"/> 由跳跃力、重量与跳跃速度属性算出。</summary>
+        public double JumpTakeoffSpeed => TakeoffSpeed(JumpPower, WeightStat, JumpSpeedStat);
+
+        /// <summary>重力加速度的大小(像素/秒²)= 跳跃速度属性 × (重力基数 + 地图修正) / 100。</summary>
+        public double JumpGravity => JumpSpeedStat * (EngineGroundGravity - MapGravityAdjust) / 100.0;
+
+        /// <summary>跳起到落回地面的腾空时间(毫秒,不含起跳前的蹲姿与落地帧)。</summary>
+        public double JumpAirtimeMs => JumpGravity > 0 ? 2.0 * JumpTakeoffSpeed / JumpGravity * 1000.0 : 0.0;
+
+        /// <summary>一跳能升到的最大高度(像素)。</summary>
+        public double JumpApexHeight => JumpGravity > 0 ? JumpTakeoffSpeed * JumpTakeoffSpeed / (2.0 * JumpGravity) : 0.0;
+
+        /// <summary>
+        /// 起跳初速度(像素/秒)= 跳跃力 × 4000 / (((重量 × 100) / 跳跃速度 − 10000) × 0.0121 + 2100),其中"(重量 × 100) / 跳跃速度"是整数除法
+        /// (客户端 0x008327c0,证据 E-073)。跳跃速度属性不是正数时按 1 处理(原版会除零)。
+        /// </summary>
+        public static double TakeoffSpeed(double jumpPower, int weight, int jumpSpeed)
+        {
+            int js = jumpSpeed > 0 ? jumpSpeed : 1;
+            int ratio = (int)((long)weight * 100 / js);
+            double denominator = (ratio - 10000) * EngineTakeoffK1 + EngineTakeoffK2;
+            return denominator > 0 ? jumpPower * 4000.0 / denominator : 0.0;
+        }
+
+        /// <summary>起跳前的蹲姿时长(毫秒):跳跃动画从第 0 帧播到"起跳帧"(第 1 帧)所需的时间;没有可识别的相位时为 0。</summary>
+        public double JumpPrepareMs => PhasedJump ? _jumpTimeline.StartMs(JumpLiftoffFrame) : 0.0;
+
+        /// <summary>落地段时长(毫秒):从落地帧播到动画结束;没有可识别的落地段时为 <see cref="FallbackLandingMs"/>。</summary>
+        public double JumpLandingMs => PhasedJump ? Math.Max(0.0, _jumpTimeline.TotalMilliseconds - _jumpTimeline.StartMs(JumpLandFrame)) : FallbackLandingMs;
+
+        /// <summary>
+        /// 起跳帧:蹲姿结束后从这一帧起播升空的动画。客户端里各职业的跳跃帧三元组(起跳帧、下落帧、落地帧)第一项都是 1(证据 E-073)。
+        /// </summary>
+        public int JumpLiftoffFrame => 1;
+
+        /// <summary>下落帧:过了最高点从这一帧起播下落动画。取第一个停留帧的下一帧(与客户端里三个职业的三元组对得上,证据 E-073)。没有两个停留帧时为 -1。</summary>
+        public int JumpFallFrame => _jumpHold1 >= 0 ? _jumpHold1 + 1 : -1;
+
+        /// <summary>落地帧:落地之后从这一帧播到动画结束。取第二个停留帧的下一帧。没有两个停留帧时为 -1。</summary>
+        public int JumpLandFrame => _jumpHold2 >= 0 ? _jumpHold2 + 1 : -1;
+
+        /// <summary>跳跃动画有两个停留帧,且停留帧的位置允许分出起跳、下落、落地三个相位。</summary>
+        private bool PhasedJump => _jumpTimeline != null && _jumpHold1 >= 1 && _jumpHold2 > _jumpHold1 + 1 && _jumpHold2 + 1 < _jumpTimeline.FrameCount;
 
         /// <summary>有奔跑动作([dash motion])。</summary>
         public bool CanDash => _dash != null;
@@ -331,8 +452,8 @@ namespace Dnf.Render
         /// <summary>有跳跃攻击动作([jumpattack motion])。</summary>
         public bool CanJumpAttack => _jumpAttack != null;
 
-        /// <summary>双击方向键进入奔跑之后、松开方向键之前为真(不论当前动作是不是奔跑,例如挥击中)。</summary>
-        public bool RunArmed => _running;
+        /// <summary>处在奔跑或奔跑攻击里(双击方向键进入,按客户端的规则延续与退出)。</summary>
+        public bool RunArmed => Motion == HeroMotion.Dash || Motion == HeroMotion.DashAttack;
 
         /// <summary>腾空中(跳跃或空中挥击)。</summary>
         public bool IsAirborne => Motion == HeroMotion.Jump || Motion == HeroMotion.JumpAttack;
@@ -526,8 +647,8 @@ namespace Dnf.Render
             _motionMs = motionMs < 0 ? 0 : motionMs;
             AttackStage = 0;
             _attackQueued = false;
-            _running = Motion == HeroMotion.Dash || Motion == HeroMotion.DashAttack;
-            if (_running)
+            _dashTrigger = false;
+            if (RunArmed)
             {
                 // 摆成奔跑:把"上一帧按着的方向"也摆成朝向,这样紧接着的更新里同方向的按住不算新的一次按下
                 _prevDirX = FacingLeft ? -1 : 1;
@@ -542,6 +663,7 @@ namespace Dnf.Render
         private void ResetAir()
         {
             Z = 0;
+            _prepMs = -1;
             _vz = 0;
             _airMs = 0;
             _descendMs = 0;
@@ -565,7 +687,6 @@ namespace Dnf.Render
             AttackStage = stage < 0 ? 0 : (stage >= _attacks.Length ? _attacks.Length - 1 : stage);
             _motionMs = motionMs < 0 ? 0 : motionMs;
             _attackQueued = false;
-            _running = false;
             ResetAir();
         }
 
@@ -695,8 +816,10 @@ namespace Dnf.Render
         }
 
         /// <summary>
-        /// 读 .chr 的 [jump motion]、[jumpattack motion]、[jump power](初速度)与 [jump speed](空中速度的百分比)。
-        /// 跳跃动画里延时 ≥ <see cref="HoldDelayMs"/> 的"停留帧"标出最高点与落地前的两个相位(原版的跳跃动画就是这样做的,证据 E-072)。
+        /// 读 .chr 的 [jump motion]、[jumpattack motion]、[jump power](跳跃力)、[weight](重量)与 [jump speed](跳跃速度属性);
+        /// 后三个进起跳初速度与重力的公式(证据 E-073)。
+        /// 跳跃动画里延时 ≥ <see cref="HoldDelayMs"/> 的"停留帧"标出最高点与落地前的两个相位:第一个停留帧的下一帧是下落帧,第二个停留帧的下一帧是落地帧
+        /// (原版的跳跃动画就是这样做的,证据 E-072;客户端里职业的跳跃帧三元组与之对得上,证据 E-073)。
         /// </summary>
         public void LoadJumpMotions(DnfAssets assets, string chrPath)
         {
@@ -704,7 +827,8 @@ namespace Dnf.Render
             LoadMotion(assets, chrPath, doc, "[jump motion]", out _jump, out _jumpPath, out _jumpTimeline);
             LoadMotion(assets, chrPath, doc, "[jumpattack motion]", out _jumpAttack, out _jumpAttackPath, out _jumpAttackTimeline);
             JumpPower = DefaultJumpPower;
-            JumpSpeedPercent = 100;
+            WeightStat = DefaultWeight;
+            JumpSpeedStat = DefaultJumpSpeedStat;
             foreach (ScriptLine line in doc)
             {
                 if (line.TagIs("[jump power]"))
@@ -715,12 +839,20 @@ namespace Dnf.Render
                         JumpPower = n.Value;
                     }
                 }
+                else if (line.TagIs("[weight]"))
+                {
+                    double? n = line.FirstNumber();
+                    if (n.HasValue && n.Value > 0)
+                    {
+                        WeightStat = (int)Math.Round(n.Value);
+                    }
+                }
                 else if (line.TagIs("[jump speed]"))
                 {
                     double? n = line.FirstNumber();
                     if (n.HasValue && n.Value > 0)
                     {
-                        JumpSpeedPercent = (int)Math.Round(n.Value);
+                        JumpSpeedStat = (int)Math.Round(n.Value);
                     }
                 }
             }
@@ -803,8 +935,9 @@ namespace Dnf.Render
         /// <summary>
         /// 同 <see cref="Update(double, int, int, bool)"/>,多一个跳跃键(刚按下的边沿):在地面上站立、行走或奔跑时按下就起跳;
         /// 在地面奔跑时按攻击键出奔跑攻击;在空中按攻击键出空中攻击(每次跳跃一击)。
-        /// 奔跑:地面上双击左或右(两次按下相隔不超过 <see cref="DoubleTapWindowMs"/>)就进入,按住保持(上下可以同时按),松开或反向就停;
-        /// 角色脚本没有 [dash motion] 时没有奔跑。跳跃时按着的水平方向决定朝向,腾空中可以继续改变水平与深度方向与朝向(挥击中不能)。
+        /// 奔跑:地面上双击左或右(两次按下相隔不超过 <see cref="DoubleTapWindowMs"/>)就进入;方向全松开、或水平方向按了与朝向相反的键才退出
+        /// (只留着上下方向键时奔跑继续,水平速度为 0)。角色脚本没有 [dash motion] 时没有奔跑。
+        /// 跳跃:先蹲姿(<see cref="JumpPrepareMs"/>)再离地;离地时按着的水平方向决定朝向,腾空中可以继续改变水平与深度方向与朝向(挥击中不能)。
         /// </summary>
         public void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed)
         {
@@ -864,37 +997,47 @@ namespace Dnf.Render
         }
 
         /// <summary>
-        /// 双击检测:记下水平方向的按下与松开。一次"按下"= 水平方向从无变成有(或直接换了方向);
-        /// 与上一次按下同方向、中间松开过、间隔不超过时间窗,就是双击,进入奔跑;松开或换方向结束奔跑。
+        /// 双击检测:记下水平方向的按下。一次"按下"= 水平方向从无变成有(或直接换了方向);
+        /// 与上一次按下同方向、中间松开过、间隔不超过时间窗,这次更新里就完成了一次双击(<see cref="_dashTrigger"/>),
+        /// 能不能进入奔跑由当时的状态决定(只有站立或行走时,而且有奔跑动作)。
         /// </summary>
         private void TrackTap(double deltaMs, int dirX)
         {
+            _dashTrigger = false;
             if (_sinceTapMs < 1e12)
             {
                 _sinceTapMs += deltaMs;
             }
-            if (dirX != _prevDirX)
+            if (dirX != _prevDirX && dirX != 0)
             {
-                if (dirX == 0)
-                {
-                    _running = false;
-                }
-                else
-                {
-                    _running = _prevDirX == 0 && dirX == _tapDir && _sinceTapMs <= DoubleTapWindowMs;
-                    _tapDir = dirX;
-                    _sinceTapMs = 0;
-                }
+                _dashTrigger = _prevDirX == 0 && dirX == _tapDir && _sinceTapMs <= DoubleTapWindowMs;
+                _tapDir = dirX;
+                _sinceTapMs = 0;
             }
             _prevDirX = dirX;
         }
 
-        /// <summary>地面上的站立、行走与奔跑。</summary>
+        /// <summary>
+        /// 地面上的站立、行走与奔跑。速度表按"直走 / 斜走(水平与竖直方向同时有输入)"取值,再乘按轴的速度系数。
+        /// 奔跑由双击进入;奔跑中方向全空、或水平方向按了与朝向相反的键就退出,只按着上下时奔跑继续(此时水平速度为 0),证据 E-073。
+        /// </summary>
         private void GroundMove(double deltaMs, int dirX, int dirY)
         {
+            bool dashing = Motion == HeroMotion.Dash;
+            if (dashing)
+            {
+                bool opposite = dirX != 0 && (dirX < 0) != FacingLeft;
+                if ((dirX == 0 && dirY == 0) || opposite)
+                {
+                    dashing = false;
+                }
+            }
+            else if (_dashTrigger && _dash != null && dirX != 0)
+            {
+                dashing = true;
+            }
             bool moving = dirX != 0 || dirY != 0;
-            bool running = _running && dirX != 0 && _dash != null;
-            HeroMotion next = !moving ? HeroMotion.Rest : (running ? HeroMotion.Dash : HeroMotion.Move);
+            HeroMotion next = !moving ? HeroMotion.Rest : (dashing ? HeroMotion.Dash : HeroMotion.Move);
             if (dirX != 0)
             {
                 FacingLeft = dirX < 0;
@@ -905,12 +1048,21 @@ namespace Dnf.Render
                 _motionMs = 0;
             }
             _motionMs += deltaMs;
+            bool diagonal = dirX != 0 && dirY != 0;
+            double vx = 0, vy = 0;
             if (moving)
             {
+                double straightX = dashing ? EngineDashX : EngineWalkX;
+                double diagonalX = dashing ? EngineDashDiagonalX : EngineWalkDiagonalX;
+                double straightY = dashing ? EngineDashY : EngineWalkY;
+                double diagonalY = dashing ? EngineDashDiagonalY : EngineWalkDiagonalY;
+                vx = dirX * (diagonal ? diagonalX : straightX) * SpeedFactorX;
+                vy = dirY * (diagonal ? diagonalY : straightY) * SpeedFactorY;
                 double seconds = deltaMs / 1000.0;
-                X = MoveAxis(X, dirX * (running ? DashSpeedX : WalkSpeedX) * seconds, true);
-                Y = MoveAxis(Y, dirY * (running ? DashSpeedY : WalkSpeedY) * seconds, false);
+                X = MoveAxis(X, vx * seconds, true);
+                Y = MoveAxis(Y, vy * seconds, false);
             }
+            _groundVx = vx;
         }
 
         private void BeginAttack(int stage, double carryMs)
@@ -928,6 +1080,7 @@ namespace Dnf.Render
             AttackStage = 0;
             _motionMs = 0;
             _attackQueued = false;
+            _dashAttackV0 = Math.Abs(_groundVx);   // 滑行的初速 = 起手时的水平速度(竖直方向单独按着奔跑时它是 0)
             SwingNumber++;
         }
 
@@ -946,8 +1099,8 @@ namespace Dnf.Render
         }
 
         /// <summary>
-        /// 奔跑攻击:动画播放期间沿朝向向前滑,速度从奔跑速度线性减到 0(假设:原版有 sq_getDashAttackSlideStopFrame 一类的"滑行停止帧"设定,
-        /// 具体曲线没有量过),滑行受可走区域与障碍限制;播完回到站立,奔跑状态结束(要再双击才能继续跑)。
+        /// 奔跑攻击:动画播放期间沿朝向向前滑,速度从起手时的水平速度线性减到 0(证据 E-073:客户端把加速度设成 −1000 × 初速 / 动画毫秒数),
+        /// 滑行受可走区域与障碍限制;播完回到站立,奔跑状态结束(要再双击才能继续跑)。
         /// </summary>
         private void AdvanceDashAttack(double deltaMs)
         {
@@ -960,8 +1113,8 @@ namespace Dnf.Render
                 double t1 = Math.Min(_motionMs, duration);
                 if (t1 > t0)
                 {
-                    double v0 = DashSpeedX * (1.0 - t0 / duration);
-                    double v1 = DashSpeedX * (1.0 - t1 / duration);
+                    double v0 = _dashAttackV0 * (1.0 - t0 / duration);
+                    double v1 = _dashAttackV0 * (1.0 - t1 / duration);
                     double distance = (v0 + v1) * 0.5 * (t1 - t0) / 1000.0;
                     X = MoveAxis(X, (FacingLeft ? -1.0 : 1.0) * distance, true);
                 }
@@ -970,44 +1123,64 @@ namespace Dnf.Render
             {
                 Motion = HeroMotion.Rest;
                 AttackStage = 0;
-                _running = false;
                 _motionMs = 0;
             }
         }
 
+        /// <summary>
+        /// 起跳:先进入起跳前的蹲姿(水平与深度速度为 0,动画播第 0 帧,时长见 <see cref="JumpPrepareMs"/>),蹲姿结束才离地(证据 E-073)。
+        /// 奔跑中起跳与站立起跳用同一套空中速度(客户端的输入跳跃两种来源都发同一条跳跃指令)。
+        /// </summary>
         private void BeginJump()
         {
-            bool wasRunning = Motion == HeroMotion.Dash;
             Motion = HeroMotion.Jump;
             _motionMs = 0;
+            _prepMs = 0;
             _airMs = 0;
             _descendMs = 0;
             _descending = false;
             _landingMs = -1;
             _airAttackUsed = false;
-            _vz = JumpPower;
+            _vz = 0;
             Z = 0;
-            double factor = JumpSpeedPercent > 0 ? JumpSpeedPercent / 100.0 : 1.0;
-            _airSpeedX = (wasRunning ? DashSpeedX : WalkSpeedX) * factor;
-            _airSpeedY = (wasRunning ? DashSpeedY : WalkSpeedY) * factor;
+        }
+
+        /// <summary>落地段播完:回到站立。</summary>
+        private void FinishLandingIfDone()
+        {
+            if (_landingMs >= JumpLandingMs)
+            {
+                Motion = HeroMotion.Rest;
+                _motionMs = 0;
+                _landingMs = -1;
+            }
         }
 
         /// <summary>
-        /// 腾空的一步:竖直方向按初速度与重力走(最高点之后进入下降段),水平与深度按按住的方向以 <see cref="JumpSpeedPercent"/> 折算的速度走;
-        /// 落到地面就进入落地帧,落地帧播完回到站立。空中攻击的动画播完回到跳跃动作;落地时还在挥就被打断。
+        /// 腾空的一步。三个相位(证据 E-073):蹲姿(不动)→ 离地(竖直方向按起跳初速度与重力走,最高点之后进入下降段;
+        /// 水平速度与地面行走相同、深度速度减半,方向可以随时改,按住的水平方向决定朝向,挥击中不能转身)→ 落地(速度归零,播落地段,播完回到站立)。
+        /// 空中攻击的动画播完回到跳跃动作;落地时还在挥就被打断。落地与最高点的时刻按步内精确时间折算,与帧长无关。
         /// </summary>
         private void AdvanceAir(double deltaMs, int dirX, int dirY, bool attackPressed)
         {
             if (_landingMs >= 0)
             {
                 _landingMs += deltaMs;
-                if (_landingMs >= LandingMs)
-                {
-                    Motion = HeroMotion.Rest;
-                    _motionMs = 0;
-                    _landingMs = -1;
-                }
+                FinishLandingIfDone();
                 return;
+            }
+            if (_prepMs >= 0)
+            {
+                double prepare = JumpPrepareMs;
+                double elapsed = _prepMs + deltaMs;
+                if (elapsed < prepare)
+                {
+                    _prepMs = elapsed;
+                    return;
+                }
+                deltaMs = elapsed - prepare;   // 蹲姿结束:多出来的时间算在空中
+                _prepMs = -1;
+                _vz = JumpTakeoffSpeed;
             }
             if (attackPressed && Motion == HeroMotion.Jump && !_airAttackUsed && _jumpAttack != null)
             {
@@ -1031,23 +1204,36 @@ namespace Dnf.Render
             {
                 FacingLeft = dirX < 0;
             }
-            X = MoveAxis(X, dirX * _airSpeedX * seconds, true);
-            Y = MoveAxis(Y, dirY * _airSpeedY * seconds, false);
-            Z += _vz * seconds - 0.5 * JumpGravity * seconds * seconds;
-            _vz -= JumpGravity * seconds;
+            bool diagonal = dirX != 0 && dirY != 0;
+            double vx = dirX * (diagonal ? EngineWalkDiagonalX : EngineWalkX) * SpeedFactorX;
+            double vy = dirY * (diagonal ? EngineAirDiagonalY : EngineAirY) * SpeedFactorY;
+            X = MoveAxis(X, vx * seconds, true);
+            Y = MoveAxis(Y, vy * seconds, false);
+            double g = JumpGravity;
+            double z0 = Z, v0 = _vz;
+            Z += v0 * seconds - 0.5 * g * seconds * seconds;
+            _vz -= g * seconds;
             if (!_descending && _vz <= 0)
             {
                 _descending = true;
-                _descendMs = 0;
+                _descendMs = g > 0 ? -_vz / g * 1000.0 : 0.0;   // 最高点之后已经过去的时间
             }
             if (Z <= 0 && _vz < 0)
             {
+                // 步内精确的触地时刻:z0 + v0 t − g t² / 2 = 0 的正根;之后的时间算在落地段里
+                double leftover = 0.0;
+                if (g > 0)
+                {
+                    double touch = (v0 + Math.Sqrt(v0 * v0 + 2.0 * g * Math.Max(z0, 0.0))) / g;
+                    leftover = Math.Max(0.0, seconds - touch) * 1000.0;
+                }
                 Z = 0;
                 _vz = 0;
                 _descending = false;
-                _landingMs = 0;
+                _landingMs = leftover;
                 Motion = HeroMotion.Jump;
                 AttackStage = 0;
+                FinishLandingIfDone();
                 return;
             }
             if (Motion == HeroMotion.JumpAttack && _motionMs >= JumpAttackDurationMs)
@@ -1272,26 +1458,33 @@ namespace Dnf.Render
         }
 
         /// <summary>
-        /// 跳跃动画的帧:动画里有两个停留帧时(最高点与落地前),上升段按腾空时间播、到第一个停留帧停住,
-        /// 最高点之后从第一个停留帧之后的帧起按下降时间播、到第二个停留帧停住,落地换最后的落地帧;没有停留帧的动画就按腾空时间一路播。
+        /// 跳跃动画的帧(证据 E-073 读出的相位切换):蹲姿只播第 0 帧;离地后从起跳帧(第 1 帧)起按腾空时间播,到第一个停留帧停住;
+        /// 过了最高点就跳到下落帧(第一个停留帧的下一帧),在下落帧到第二个停留帧之前循环播(客户端在播到落地帧的前一帧时折回下落帧);
+        /// 落地时跳到落地帧,播到动画结束。动画没有可识别的相位时(没有两个停留帧)按腾空时间一路播。
         /// </summary>
         private int JumpFrame()
         {
             AniTimeline t = _jumpTimeline;
-            if (_jumpHold1 < 0 || _jumpHold2 < 0)
+            if (!PhasedJump)
             {
                 return t.FrameAt(_landingMs >= 0 ? t.TotalMilliseconds : (long)_airMs);
             }
+            if (_prepMs >= 0)
+            {
+                return t.FrameAt((long)_prepMs);
+            }
             if (_landingMs >= 0)
             {
-                return Math.Min(_jumpHold2 + 1, t.FrameCount - 1);
+                return t.FrameAt(t.StartMs(JumpLandFrame) + (long)_landingMs);
             }
             if (!_descending)
             {
-                return t.FrameAt(Math.Min((long)_airMs, t.StartMs(_jumpHold1)));
+                return t.FrameAt(Math.Min(t.StartMs(JumpLiftoffFrame) + (long)_airMs, t.StartMs(_jumpHold1)));
             }
-            long from = t.StartMs(_jumpHold1 + 1);
-            return t.FrameAt(Math.Min(from + (long)_descendMs, t.StartMs(_jumpHold2)));
+            long loopStart = t.StartMs(JumpFallFrame);
+            long loopLength = t.StartMs(_jumpHold2) - loopStart;
+            long into = loopLength > 0 ? (long)_descendMs % loopLength : 0;
+            return t.FrameAt(loopStart + into);
         }
 
         /// <summary>主角的精灵(按换装图层顺序),位置模型与 NPC 相同;腾空时整体往上抬 <see cref="Z"/> 像素,深度排序仍按脚下的 <see cref="Y"/>。</summary>

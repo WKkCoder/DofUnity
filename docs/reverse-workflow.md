@@ -38,9 +38,15 @@ GHIDRA_HEADLESS_MAXMEM=8G nice -n 10 ~/Applications/ghidra_12.1.4_PUBLIC/support
 | `AsmRange.java` | 导出一段地址范围的反汇编,标出每条指令所属函数 |
 | `StringCalls.java` | 列出字符串访问函数的所有调用点与数据块地址(E-041) |
 | `FuncCoverage.java` | 统计函数覆盖与函数之间的空隙(E-044) |
+| `ListFunctions.java`、`ListFunctionRefs.java` | 列出地址范围内的函数;前者只往标准输出列 `FUNC` 行并标出受保护范围,后者写 TSV 并带被引用次数——C++ 类的方法在内存里挨在一起,知道一个方法的地址后看它前后的函数,能圈出同一个类的其余方法(E-073) |
+| `FindOffsetUses.java`、`FindVirtualCalls.java` | 找字段偏移被哪些指令读写、哪些调用点经过某个虚表槽(命中里要靠上下文排除别的类的同位移字段) |
+| `FindImmUses.java`、`FindStateCalls.java` | 找指令里直接带某个 32 位常量的地方(例如虚表地址 → 写它的构造函数,E-073);找"切换状态"的调用点并标出压栈的状态号(状态机的入口) |
+| `CreateFunctions.java` | 在没有函数的地址上建立函数(**不带 `-readOnly`**,只改 `dnffix` 工程副本;原生接口的实现常常只被函数指针引用) |
 | `FixSwitches.java` | 补全没解出的跳转表(`apply` 才写入;只在 `dnffix` 上用) |
 | `RefsIntoRegions.java`、`SampleUndefinedRefs.java`、`RefsFrom.java` | 看引用落在哪里、取样没反汇编的字节 |
 | `Peek.java`、`Xrefs.java`、`TagRefs.java`、`P6Survey.java` | 早先的小工具 |
+
+配套的 Python 小工具(都在 `tools/py/`,只读):`loader_stores.py` 把一个脚本加载函数的汇编清单按标签切段,列出每个标签的处理段写了对象的哪些字段(例如 `.chr` 的 `[jump power]` 落在角色对象的哪个位移,E-073);`vslots.py` 从磁盘读六个核心类的虚表槽;`read_va.py` 按虚拟地址读磁盘字节(读受保护区域要 `DNF_ALLOW_PROTECTED=1`)。
 
 ## CPU 模拟器(E-060、E-061)
 

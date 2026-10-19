@@ -350,14 +350,37 @@ public class TownHeroTests
     }
 
     [Fact]
-    public void DiagonalMovementAppliesEachAxisAtItsOwnSpeed()
+    public void DiagonalMovementUsesTheDiagonalRowOfTheSpeedTableOnBothAxes()
     {
         using var fx = new AvatarFixture();
         using DnfAssets assets = DnfAssets.Open(fx.Root);
         TownHero hero = Hero(assets, Wide, 500, 500);
         hero.Update(1000, -1, 1);
-        Assert.Equal(500 - TownHero.DefaultWalkSpeedX, hero.X, 6);
-        Assert.Equal(500 + TownHero.DefaultWalkSpeedY, hero.Y, 6);
+        // 水平与竖直方向同时有输入:两个轴都改用"斜走"那一列(客户端的速度表,证据 E-073),不是各按直走速度
+        Assert.Equal(500 - TownHero.EngineWalkDiagonalX * hero.SpeedFactorX, hero.X, 6);
+        Assert.Equal(500 + TownHero.EngineWalkDiagonalY * hero.SpeedFactorY, hero.Y, 6);
+        Assert.True(hero.X > 500 - TownHero.DefaultWalkSpeedX);          // 斜走的水平速度比直走慢
+        Assert.True(hero.Y < 500 + TownHero.DefaultWalkSpeedY);
+    }
+
+    [Fact]
+    public void TheSpeedFactorsAreCalibratedToTheMeasuredWalkingSpeedsAndScaleTheWholeTable()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TownHero hero = Hero(assets, Wide, 500, 500);
+        Assert.Equal(TownHero.DefaultWalkSpeedX, hero.WalkSpeedX, 9);
+        Assert.Equal(TownHero.DefaultWalkSpeedY, hero.WalkSpeedY, 9);
+        Assert.Equal(TownHero.EngineDashX / TownHero.EngineWalkX * hero.WalkSpeedX, hero.DashSpeedX, 9);   // 奔跑的水平速度是行走的两倍(表里 286 对 143)
+        Assert.Equal(2.0, hero.DashSpeedX / hero.WalkSpeedX, 9);
+
+        hero.SpeedFactorX = 1.0;                                        // 系数是整张表共用的倍数(比如换成不带装备的角色)
+        hero.SpeedFactorY = 0.5;
+        Assert.Equal((143.0, 57.0, 286.0, 68.0), (hero.WalkSpeedX, hero.WalkSpeedY, hero.DashSpeedX, hero.DashSpeedY));
+        hero.Update(1000, 1, 0);
+        Assert.Equal(500 + 143.0, hero.X, 6);
+        hero.Update(1000, 0, 1);
+        Assert.Equal(500 + 57.0, hero.Y, 6);
     }
 
     [Fact]
@@ -437,9 +460,9 @@ public class TownHeroTests
         using DnfAssets assets = DnfAssets.Open(fx.Root);
         var area = new[] { new WorldRect(10, 20, 100, 50) };
         TownHero hero = Hero(assets, area, 10, 30);
-        hero.Update(100, -1, 1);               // 向左被挡住,向下照走 9 像素
+        hero.Update(100, -1, 1);               // 向左被挡住,向下照走(斜向那一行的竖直速度 × 0.1 秒)
         Assert.Equal(10, hero.X, 6);
-        Assert.Equal(39, hero.Y, 6);
+        Assert.Equal(30 + TownHero.EngineWalkDiagonalY * hero.SpeedFactorY * 0.1, hero.Y, 6);
         hero.Update(1000, 0, 1);
         Assert.Equal(70, hero.Y, 6);           // 下边界 20 + 50
     }
@@ -469,8 +492,8 @@ public class TownHeroTests
         using DnfAssets assets = DnfAssets.Open(fx.Root);
         TownHero hero = Hero(assets, new List<WorldRect>(), 0, 0);
         hero.Update(1000, -1, -1);
-        Assert.Equal(-TownHero.DefaultWalkSpeedX, hero.X, 6);
-        Assert.Equal(-TownHero.DefaultWalkSpeedY, hero.Y, 6);
+        Assert.Equal(-TownHero.EngineWalkDiagonalX * hero.SpeedFactorX, hero.X, 6);
+        Assert.Equal(-TownHero.EngineWalkDiagonalY * hero.SpeedFactorY, hero.Y, 6);
     }
 
     [Fact]

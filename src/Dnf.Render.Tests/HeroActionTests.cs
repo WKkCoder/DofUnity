@@ -43,15 +43,48 @@ public class HeroActionTests
         using DnfAssets assets = DnfAssets.Open(fx.Root);
         TownHero hero = NewHero(assets);
         Assert.Equal((true, true, true, true), (hero.CanDash, hero.CanDashAttack, hero.CanJump, hero.CanJumpAttack));
-        Assert.Equal((430.0, 95), (hero.JumpPower, hero.JumpSpeedPercent));
+        Assert.Equal(((double)AvatarFixture.JumpPowerStat, AvatarFixture.WeightStat, AvatarFixture.JumpSpeedStat), (hero.JumpPower, hero.WeightStat, hero.JumpSpeedStat));
         Assert.Equal(300.0, hero.DashAttackDurationMs);                  // 三帧 × 100 毫秒
         Assert.Equal(200.0, hero.JumpAttackDurationMs);                  // 100 + 50 + 50 毫秒
 
-        // 没写这些标签的角色脚本:全部不可用,跳跃初速度取默认值
+        // 跳跃动画的相位:停留帧在 3 与 6,所以下落帧是 4、落地帧是 7;蹲姿 = 第 0 帧(100 毫秒),落地段 = 最后一帧(50 毫秒)
+        Assert.Equal((1, 4, 7), (hero.JumpLiftoffFrame, hero.JumpFallFrame, hero.JumpLandFrame));
+        Assert.Equal((100.0, 50.0), (hero.JumpPrepareMs, hero.JumpLandingMs));
+
+        // 没写这些标签的角色脚本:全部不可用,跳跃的三个属性取默认值
         TownHero plain = NewHero(assets, AvatarFixture.ChrPath);
         Assert.Equal((false, false, false, false), (plain.CanDash, plain.CanDashAttack, plain.CanJump, plain.CanJumpAttack));
-        Assert.Equal((TownHero.DefaultJumpPower, 100), (plain.JumpPower, plain.JumpSpeedPercent));
+        Assert.Equal((TownHero.DefaultJumpPower, TownHero.DefaultWeight, TownHero.DefaultJumpSpeedStat), (plain.JumpPower, plain.WeightStat, plain.JumpSpeedStat));
         Assert.Equal((0.0, 0.0), (plain.DashAttackDurationMs, plain.JumpAttackDurationMs));
+        Assert.Equal((-1, -1, 0.0, TownHero.FallbackLandingMs), (plain.JumpFallFrame, plain.JumpLandFrame, plain.JumpPrepareMs, plain.JumpLandingMs));
+    }
+
+    [Fact]
+    public void TheTakeoffSpeedAndTheGravityFollowTheClientFormulas()
+    {
+        // 起跳初速度 = 跳跃力 × 4000 / (((重量 × 100) / 跳跃速度 − 10000) × 0.0121 + 2100),除法取整(这里的数是合成的)
+        // 400 × 4000 / ((6000000 / 90 = 66666 − 10000) × 0.0121 + 2100)
+        double expected = 400 * 4000.0 / ((66666 - 10000) * 0.0121 + 2100.0);
+        Assert.Equal(expected, TownHero.TakeoffSpeed(400, 60000, 90), 9);
+        Assert.InRange(expected, 574.0, 575.0);
+        // 跳跃速度属性是 100 时整数除法正好整除
+        Assert.Equal(400 * 4000.0 / ((60000 - 10000) * 0.0121 + 2100.0), TownHero.TakeoffSpeed(400, 60000, 100), 9);
+        // 跳跃力成正比;越重越低;跳跃速度属性越大越高
+        Assert.Equal(2 * TownHero.TakeoffSpeed(300, 60000, 90), TownHero.TakeoffSpeed(600, 60000, 90), 9);
+        Assert.True(TownHero.TakeoffSpeed(400, 90000, 90) < TownHero.TakeoffSpeed(400, 60000, 90));
+        Assert.True(TownHero.TakeoffSpeed(400, 60000, 120) > TownHero.TakeoffSpeed(400, 60000, 90));
+        Assert.Equal(0.0, TownHero.TakeoffSpeed(0, 60000, 90), 9);
+        Assert.True(TownHero.TakeoffSpeed(400, 60000, 0) > 0);          // 跳跃速度 0 按 1 处理,不除零
+
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TownHero hero = NewHero(assets);
+        Assert.Equal(expected, hero.JumpTakeoffSpeed, 9);
+        Assert.Equal(90 * 1500 / 100.0, hero.JumpGravity, 9);            // 重力 = 跳跃速度 × 重力基数 / 100
+        Assert.Equal(2 * expected / hero.JumpGravity * 1000, hero.JumpAirtimeMs, 6);
+        Assert.Equal(expected * expected / (2 * hero.JumpGravity), hero.JumpApexHeight, 6);
+        hero.MapGravityAdjust = 150;                                    // 修正项加在(负的)重力基数 −1500 上:+150 让重力变小
+        Assert.Equal(90 * 1350 / 100.0, hero.JumpGravity, 9);
     }
 
     [Fact]
@@ -140,7 +173,7 @@ public class HeroActionTests
     }
 
     [Fact]
-    public void ReleasingOrReversingEndsTheRunAndUpDownAloneNeverRuns()
+    public void ReleasingEverythingOrReversingEndsTheRunButHoldingOnlyAVerticalKeyKeepsItRunning()
     {
         using var fx = new AvatarFixture();
         using DnfAssets assets = DnfAssets.Open(fx.Root);
@@ -148,30 +181,55 @@ public class HeroActionTests
 
         DoubleTapRight(hero);
         Assert.Equal(HeroMotion.Dash, hero.Motion);
-        hero.Update(10, 0, 0);                                           // 松开:站住
+        hero.Update(10, 0, 0);                                           // 方向全松开:站住
         Assert.Equal((HeroMotion.Rest, false), (hero.Motion, hero.RunArmed));
 
         DoubleTapRight(hero);
         hero.Update(10, -1, 0);                                          // 反向:走(朝左)
         Assert.Equal((HeroMotion.Move, false, true), (hero.Motion, hero.RunArmed, hero.FacingLeft));
 
+        // 松开左右、只留着下:奔跑继续(客户端的退出条件是"方向全空"或"水平方向与朝向相反"),水平不动,竖直按奔跑的竖直速度
         DoubleTapRight(hero);
-        hero.Update(10, 0, 1);                                           // 只按下:放开了左右就停止奔跑,往下走是普通行走
+        double x0 = hero.X, y0 = hero.Y;
+        hero.Update(100, 0, 1);
+        Assert.Equal((HeroMotion.Dash, true, false), (hero.Motion, hero.RunArmed, hero.FacingLeft));
+        Assert.Equal(x0, hero.X, 9);
+        Assert.Equal(y0 + TownHero.EngineDashY * hero.SpeedFactorY * 0.1, hero.Y, 6);
+        hero.Update(100, 1, 1);                                          // 再按回朝向的那一侧:斜着跑
+        Assert.Equal(HeroMotion.Dash, hero.Motion);
+        hero.Update(100, 0, 0);                                          // 全松开才停
+        Assert.Equal((HeroMotion.Rest, false), (hero.Motion, hero.RunArmed));
+    }
+
+    [Fact]
+    public void UpAndDownAloneNeverStartARun()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TownHero hero = NewHero(assets);
+        hero.Update(50, 0, 1);
+        hero.Update(50, 0, 0);
+        hero.Update(50, 0, 1);                                           // 对上下方向双击没有奔跑
         Assert.Equal((HeroMotion.Move, false), (hero.Motion, hero.RunArmed));
     }
 
     [Fact]
-    public void RunningAcceptsTheVerticalKeysAtTheDashVerticalSpeed()
+    public void RunningUsesTheDashRowOfTheSpeedTableAndItsDiagonalColumnWhenBothAxesAreHeld()
     {
         using var fx = new AvatarFixture();
         using DnfAssets assets = DnfAssets.Open(fx.Root);
         TownHero hero = NewHero(assets);
         DoubleTapRight(hero);
         double x0 = hero.X, y0 = hero.Y;
-        hero.Update(100, 1, 1);
-        Assert.Equal(HeroMotion.Dash, hero.Motion);
+        hero.Update(100, 1, 0);                                          // 直跑:水平按奔跑速度,竖直不动
         Assert.Equal(x0 + TownHero.DefaultDashSpeedX * 0.1, hero.X, 6);
-        Assert.Equal(y0 + TownHero.DefaultDashSpeedY * 0.1, hero.Y, 6);
+        Assert.Equal(y0, hero.Y, 9);
+        x0 = hero.X;
+        hero.Update(100, 1, 1);                                          // 斜着跑:两个轴都改用斜跑的数值
+        Assert.Equal(HeroMotion.Dash, hero.Motion);
+        Assert.Equal(x0 + TownHero.EngineDashDiagonalX * hero.SpeedFactorX * 0.1, hero.X, 6);
+        Assert.Equal(y0 + TownHero.EngineDashDiagonalY * hero.SpeedFactorY * 0.1, hero.Y, 6);
+        Assert.True(TownHero.EngineDashDiagonalX < TownHero.EngineDashX);
     }
 
     [Fact]
@@ -191,7 +249,7 @@ public class HeroActionTests
         Assert.Equal(swings + 1, hero.SwingNumber);
         Assert.Equal(3, hero.AttackCount);                               // 连招本身还是三段,与奔跑攻击互不相干
 
-        // 挥击中不能转身、不能改走向;滑行速度从 242.5 线性减到 0(300 毫秒):走完 242.5 × 0.3 / 2 = 36.375 像素
+        // 挥击中不能转身、不能改走向;滑行速度从起手时的水平速度(直跑)线性减到 0(300 毫秒):走完 速度 × 0.3 / 2 像素
         for (int i = 0; i < 40 && hero.IsAttacking; i++)
         {
             hero.Update(10, -1, 1, false);
@@ -213,12 +271,14 @@ public class HeroActionTests
         using var fx = new AvatarFixture();
         using DnfAssets assets = DnfAssets.Open(fx.Root);
 
+        double slide = TownHero.DefaultDashSpeedX * 0.3 / 2.0;           // 滑行总距离:速度从 v 线性减到 0,300 毫秒
+
         TownHero one = NewHero(assets);
         DoubleTapRight(one);
         double x0 = one.X;
         one.Update(1000, 1, 0, true);                                    // 一帧就把整个奔跑攻击走完
         Assert.Equal(HeroMotion.Rest, one.Motion);
-        Assert.Equal(x0 + 36.375, one.X, 9);
+        Assert.Equal(x0 + slide, one.X, 9);
 
         TownHero many = NewHero(assets);
         DoubleTapRight(many);
@@ -228,13 +288,14 @@ public class HeroActionTests
             many.Update(1, 0, 0);
         }
         Assert.Equal(HeroMotion.Rest, many.Motion);                      // 300 毫秒整,与一帧走完的结果一样
-        Assert.Equal(x0 + 36.375, many.X, 6);
+        Assert.Equal(x0 + slide, many.X, 6);
 
-        // 区域右边界 x = 140:双击的三步走到 123.25,滑行本来能走到 159.6,被边界挡在 140
+        // 区域右边界 x = 140:双击的三步走到 133.375,滑行本来能走到 200,被边界挡在 140
         var area = new List<WorldRect> { new WorldRect(0, 0, 140, 100) };
         TownHero edge = NewHero(assets, area: area);
         DoubleTapRight(edge);
-        Assert.InRange(edge.X, 123.0, 124.0);
+        Assert.Equal(100 + TownHero.DefaultWalkSpeedX * 0.05 + TownHero.DefaultDashSpeedX * 0.05, edge.X, 6);
+        Assert.InRange(edge.X, 133.0, 134.0);
         edge.Update(10, 1, 0, true);
         for (int i = 0; i < 40 && edge.IsAttacking; i++)
         {
@@ -245,35 +306,44 @@ public class HeroActionTests
     }
 
     [Fact]
-    public void JumpingFollowsTheBallisticArcAndLandsAfterAboutNinetyThreeHundredthsThenStandsAfterTheLandingFrame()
+    public void AJumpCrouchesFirstThenFollowsTheBallisticArcAndLandsThenStandsAfterTheLandingFrame()
     {
         using var fx = new AvatarFixture();
         using DnfAssets assets = DnfAssets.Open(fx.Root);
         TownHero hero = NewHero(assets);
+        double v0 = hero.JumpTakeoffSpeed, g = hero.JumpGravity;
+        int prepare = (int)hero.JumpPrepareMs;
+        Assert.Equal(100, prepare);
 
-        hero.Update(10, 0, 0, false, true);
-        Assert.Equal((HeroMotion.Jump, true), (hero.Motion, hero.IsAirborne));
+        // 按下起跳(同时按着右):先蹲姿——还在地面上,不管按着什么方向都不动
+        hero.Update(1, 1, 0, false, true);
+        Assert.Equal((HeroMotion.Jump, true, true), (hero.Motion, hero.IsAirborne, !hero.FacingLeft));
         Assert.Equal(AvatarFixture.JumpAni, hero.CurrentAnimationPath);
-        double z = 430 * 0.01 - 0.5 * 925 * 0.01 * 0.01;                  // 初速度 430、重力 925 的第一步
-        Assert.Equal(z, hero.Z, 9);
-
-        double maxZ = hero.Z;
-        int landedStep = -1;
-        for (int step = 2; step <= 200 && landedStep < 0; step++)
+        double x0 = hero.X;
+        for (int ms = 2; ms <= prepare; ms++)
         {
-            hero.Update(10, 0, 0);
-            maxZ = Math.Max(maxZ, hero.Z);
-            if (hero.Z == 0)
-            {
-                landedStep = step;
-            }
+            hero.Update(1, 1, 0);
         }
-        Assert.Equal(93, landedStep);                                    // 腾空 0.93 秒
-        Assert.InRange(maxZ, 99.5, 100.0);                               // 最高 ≈ 430² / (2 × 925) = 99.95
-        Assert.Equal((HeroMotion.Jump, false), (hero.Motion, hero.IsAttacking));   // 落地帧:还是跳跃动作
-        Assert.Equal(7, hero.CurrentFrame);
+        Assert.Equal((0.0, x0, 1), (hero.Z, hero.X, hero.CurrentFrame));   // 蹲满 100 毫秒:刚离地,动画换到起跳帧
 
-        // 落地帧 50 毫秒:这段时间不接受操作
+        // 离地后的第一步:初速度 v0、重力 g
+        hero.Update(10, 0, 0);
+        Assert.Equal(v0 * 0.01 - 0.5 * g * 0.01 * 0.01, hero.Z, 9);
+
+        // 一毫秒一毫秒走到落地:腾空时间 = 2 v0 / g,最高 = v0² / 2g
+        double maxZ = hero.Z;
+        int now = prepare + 10;
+        while (hero.Z > 0 && now < 3000)
+        {
+            hero.Update(1, 0, 0);
+            now++;
+            maxZ = Math.Max(maxZ, hero.Z);
+        }
+        Assert.InRange(now, prepare + hero.JumpAirtimeMs, prepare + hero.JumpAirtimeMs + 1.0001);
+        Assert.InRange(maxZ, hero.JumpApexHeight - 0.01, hero.JumpApexHeight);
+        Assert.Equal((HeroMotion.Jump, false, hero.JumpLandFrame), (hero.Motion, hero.IsAttacking, hero.CurrentFrame));   // 落地帧:还是跳跃动作
+
+        // 落地段 50 毫秒(从精确的触地时刻算起):这段时间不接受操作
         double x = hero.X;
         hero.Update(40, 1, 0, true, true);
         Assert.Equal((HeroMotion.Jump, x, 0L), (hero.Motion, hero.X, hero.SwingNumber));
@@ -284,46 +354,107 @@ public class HeroActionTests
     }
 
     [Fact]
-    public void TheJumpAnimationPlaysTheRisePhaseHoldsAtTheTopThenTheFallPhaseHoldsBeforeTheLandingFrame()
+    public void TheLandingAndTheApexAreTimedExactlyWhateverTheFrameLength()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+
+        // 同一段跳跃:一个大步长一次走到落地段的中间,与一毫秒一毫秒走,落地后站起来的时刻相同(落地段 50 毫秒从精确触地时刻算起)
+        TownHero fine = NewHero(assets);
+        fine.Update(1, 0, 0, false, true);
+        double landAt = fine.JumpPrepareMs + fine.JumpAirtimeMs;          // 触地的精确时刻(自按下起跳起算)
+        int t = 1;
+        while (fine.Motion == HeroMotion.Jump && t < 5000)
+        {
+            fine.Update(1, 0, 0);
+            t++;
+        }
+        Assert.Equal(HeroMotion.Rest, fine.Motion);
+        Assert.InRange(t, landAt + fine.JumpLandingMs, landAt + fine.JumpLandingMs + 1.0001);
+
+        TownHero coarse = NewHero(assets);
+        coarse.Update(40, 0, 0, false, true);
+        coarse.Update(landAt + 20 - 40, 0, 0);                            // 触地之后 20 毫秒
+        Assert.Equal((HeroMotion.Jump, 0.0), (coarse.Motion, coarse.Z));
+        coarse.Update(29, 0, 0);                                          // 49 毫秒:还在落地段
+        Assert.Equal(HeroMotion.Jump, coarse.Motion);
+        coarse.Update(2, 0, 0);                                           // 51 毫秒:站起来
+        Assert.Equal(HeroMotion.Rest, coarse.Motion);
+    }
+
+    [Fact]
+    public void TheJumpAnimationCrouchesRisesHoldsAtTheTopThenLoopsTheFallPhaseAndPlaysTheLandingFrame()
     {
         using var fx = new AvatarFixture();
         using DnfAssets assets = DnfAssets.Open(fx.Root);
         TownHero hero = NewHero(assets);
+        Assert.Equal((1, 4, 7), (hero.JumpLiftoffFrame, hero.JumpFallFrame, hero.JumpLandFrame));
 
         // 动画帧(起始毫秒):0(0)、1(100)、2(200)、3 停留(280)、4(10280)、5(10380)、6 停留(10460)、7 落地(20460)
+        // 时间轴(自按下起跳起算):蹲姿 0..100,离地后的上升段 100..(100 + v0/g),之后的下降段到落地
+        double apex = hero.JumpPrepareMs + hero.JumpTakeoffSpeed / hero.JumpGravity * 1000.0;     // ≈ 525.4 毫秒
+        double landing = hero.JumpPrepareMs + hero.JumpAirtimeMs;                                // ≈ 950.9 毫秒
         var frames = new Dictionary<int, int>();
-        hero.Update(10, 0, 0, false, true);
+        hero.Update(1, 0, 0, false, true);
         frames[1] = hero.CurrentFrame;
-        for (int step = 2; step <= 93; step++)
+        int last = (int)landing + 1;
+        for (int ms = 2; ms <= last; ms++)
         {
-            hero.Update(10, 0, 0);
-            frames[step] = hero.CurrentFrame;
+            hero.Update(1, 0, 0);
+            frames[ms] = hero.CurrentFrame;
         }
-        Assert.Equal(new[] { 0, 0, 1, 2, 3, 3 }, new[] { frames[1], frames[9], frames[10], frames[20], frames[28], frames[40] });
-        // 最高点在第 47 步(v ≤ 0):下降段从停留帧之后的帧 4 起按下降时间播,180 毫秒后到第二个停留帧
-        Assert.Equal(new[] { 4, 4, 5, 5, 6, 6 }, new[] { frames[47], frames[56], frames[57], frames[64], frames[65], frames[92] });
-        Assert.Equal(7, frames[93]);                                     // 落地
+        // 蹲姿:只播第 0 帧(没有离地)
+        Assert.Equal(new[] { 0, 0, 0 }, new[] { frames[1], frames[50], frames[99] });
+        // 离地后:起跳帧 100..199 毫秒,第 2 帧 200..279,然后停在第一个停留帧(第 3 帧)直到最高点
+        Assert.Equal(new[] { 1, 1, 2, 2, 3, 3 }, new[] { frames[100], frames[199], frames[200], frames[279], frames[280], frames[(int)apex - 5] });
+        // 最高点之后:下降段在第 4、5 帧之间循环(各 100、80 毫秒),不进第二个停留帧(第 6 帧)
+        int d = (int)Math.Ceiling(apex);                                  // 第一步已经过了最高点
+        Assert.Equal(new[] { 4, 4, 5, 5, 4, 4, 5 }, new[] { frames[d + 10], frames[d + 90], frames[d + 110], frames[d + 170], frames[d + 190], frames[d + 270], frames[d + 290] });
+        for (int ms = d + 1; ms < (int)landing; ms++)
+        {
+            Assert.InRange(frames[ms], 4, 5);
+        }
+        Assert.Equal(7, frames[last]);                                    // 落地:落地帧
     }
 
     [Fact]
-    public void WhileAirborneTheHeldDirectionsMoveTheHeroAtThePercentOfTheGroundSpeedAndTurnIt()
+    public void WhileAirborneTheHeldDirectionsMoveTheHeroAtTheWalkingSpeedAndHalfTheDepthSpeedAndTurnIt()
     {
         using var fx = new AvatarFixture();
         using DnfAssets assets = DnfAssets.Open(fx.Root);
         TownHero hero = NewHero(assets, x: 500, y: 100);
+        double factorX = hero.SpeedFactorX, factorY = hero.SpeedFactorY;
 
-        hero.Update(10, -1, 1, false, true);                             // 一边按左下一边起跳:朝左
+        hero.Update(10, -1, 1, false, true);                             // 一边按左下一边起跳:朝左,先蹲 100 毫秒
         Assert.True(hero.FacingLeft);
+        Steps(hero, 9, -1, 1);
+        Assert.Equal((500.0, 100.0), (hero.X, hero.Y));                  // 蹲姿期间不动
+
+        // 离地后:水平速度与地面行走相同(斜向用斜行的数值),深度速度是行走的一半
         Steps(hero, 20, -1, 1);
+        double xDiag = TownHero.EngineWalkDiagonalX * factorX * 0.01;
+        double yDiag = TownHero.EngineAirDiagonalY * factorY * 0.01;
+        Assert.Equal(500 - 20 * xDiag, hero.X, 6);
+        Assert.Equal(100 + 20 * yDiag, hero.Y, 6);
+        Assert.Equal(TownHero.EngineAirY, Math.Floor(TownHero.EngineWalkY / 2));     // 深度速度减半(客户端用整数除法:114/2 = 57、95/2 = 47)
+        Assert.Equal(TownHero.EngineAirDiagonalY, Math.Floor(TownHero.EngineWalkDiagonalY / 2));
+
         Steps(hero, 20, 1, -1);                                          // 腾空中可以反向、可以转身
         Assert.False(hero.FacingLeft);
-        double xAir = TownHero.DefaultWalkSpeedX * 0.95 * 0.01;
-        double yAir = TownHero.DefaultWalkSpeedY * 0.95 * 0.01;
-        Assert.Equal(500 - 21 * xAir + 20 * xAir, hero.X, 6);
-        Assert.Equal(100 + 21 * yAir - 20 * yAir, hero.Y, 6);
+        Assert.Equal(500.0, hero.X, 6);
+        Assert.Equal(100.0, hero.Y, 6);
 
-        // 一路按着右下直到落地,再等落地帧结束
-        for (int i = 0; i < 100 && hero.Motion != HeroMotion.Rest; i++)
+        double x1 = hero.X;
+        Steps(hero, 10, 1, 0);                                           // 直着飘:用直行的水平速度,深度不动
+        Assert.Equal(x1 + 10 * TownHero.EngineWalkX * factorX * 0.01, hero.X, 6);
+        Assert.Equal(100.0, hero.Y, 6);
+        double y1 = hero.Y;
+        Steps(hero, 10, 0, 1);                                           // 只按下:水平不动,深度用空中的竖直速度
+        Assert.Equal(y1 + 10 * TownHero.EngineAirY * factorY * 0.01, hero.Y, 6);
+        Assert.True(hero.IsAirborne);
+
+        // 一路按着右下直到落地,再等落地段结束
+        for (int i = 0; i < 200 && hero.Motion != HeroMotion.Rest; i++)
         {
             hero.Update(10, 1, 1);
         }
@@ -331,7 +462,7 @@ public class HeroActionTests
     }
 
     [Fact]
-    public void ARunningJumpKeepsTheDashSpeedInTheAir()
+    public void ARunningJumpUsesTheWalkingAirSpeedsBecauseBothJumpSourcesSendTheSameCommand()
     {
         using var fx = new AvatarFixture();
         using DnfAssets assets = DnfAssets.Open(fx.Root);
@@ -339,15 +470,17 @@ public class HeroActionTests
         DoubleTapRight(hero);
         double x0 = hero.X;
         hero.Update(10, 1, 0, false, true);
-        Steps(hero, 91, 1, 0);                                           // 起跳那一步 + 91 步 = 第 92 步,还在空中
+        Steps(hero, 9, 1, 0);                                            // 蹲姿期间不动(奔跑速度也不带进来)
+        Assert.Equal(x0, hero.X, 9);
+        Steps(hero, 40, 1, 0);                                           // 离地后 400 毫秒,还在上升
         Assert.True(hero.IsAirborne);
-        Assert.Equal(x0 + 92 * TownHero.DefaultDashSpeedX * 0.95 * 0.01, hero.X, 6);
+        Assert.Equal(x0 + 40 * TownHero.EngineWalkX * hero.SpeedFactorX * 0.01, hero.X, 6);
 
-        // 同一段起跳从站立出发:用行走速度
+        // 同一段起跳从站立出发:一样
         TownHero walker = NewHero(assets);
         walker.Update(10, 1, 0, false, true);
-        Steps(walker, 91, 1, 0);
-        Assert.Equal(100 + 92 * TownHero.DefaultWalkSpeedX * 0.95 * 0.01, walker.X, 6);
+        Steps(walker, 49, 1, 0);
+        Assert.Equal(100 + 40 * TownHero.EngineWalkX * walker.SpeedFactorX * 0.01, walker.X, 6);
     }
 
     [Fact]
@@ -358,7 +491,7 @@ public class HeroActionTests
         TownHero hero = NewHero(assets);
 
         hero.Update(10, 0, 0, false, true);
-        Steps(hero, 9, 0, 0);
+        Steps(hero, 19, 0, 0);                                           // 蹲 100 毫秒 + 空中 100 毫秒
         long swings = hero.SwingNumber;
         hero.Update(10, 1, 0, true);                                     // 空中出招,同时按着右:水平照常飘,朝向在出招时锁住
         Assert.Equal((HeroMotion.JumpAttack, HeroAttackKind.Jump, true), (hero.Motion, hero.AttackKind, hero.IsAttacking));
@@ -377,10 +510,12 @@ public class HeroActionTests
         // 落地时还在挥:被打断,进入落地帧
         TownHero late = NewHero(assets);
         late.Update(10, 0, 0, false, true);
-        Steps(late, 83, 0, 0);                                           // 第 84 步
-        late.Update(10, 0, 0, true);                                     // 第 85 步出招,200 毫秒挥不完就落地(第 93 步)
+        Steps(late, 76, 0, 0);                                           // 第 77 步:蹲 100 毫秒 + 空中 670 毫秒
+        late.Update(10, 0, 0, true);                                     // 第 78 步出招,200 毫秒挥不完就落地(在第 96 步,950.9 毫秒)
         Assert.Equal(HeroMotion.JumpAttack, late.Motion);
-        Steps(late, 8, 0, 0);
+        Steps(late, 17, 0, 0);                                           // 第 95 步:还在空中挥
+        Assert.Equal(HeroMotion.JumpAttack, late.Motion);
+        late.Update(10, 0, 0);                                           // 第 96 步:落地
         Assert.Equal((HeroMotion.Jump, false, 0.0), (late.Motion, late.IsAttacking, late.Z));
         late.Update(50, 0, 0);
         Assert.Equal(HeroMotion.Rest, late.Motion);
@@ -398,10 +533,11 @@ public class HeroActionTests
 
         TownHero hero = NewHero(assets);
         hero.Update(10, 0, 0, false, true);
-        Steps(hero, 20, 0, 0);                                           // 第 21 步
+        Steps(hero, 20, 0, 0);                                           // 第 21 步:蹲 100 毫秒 + 空中 110 毫秒
         hero.Update(10, 0, 0, false, true);                              // 第 22 步:空中再按跳跃,没有二段跳
         Assert.Equal(HeroMotion.Jump, hero.Motion);
-        Assert.Equal(430 * 0.22 - 0.5 * 925 * 0.22 * 0.22, hero.Z, 6);   // 还是同一条弹道(初速度没有被重置)
+        double v0 = hero.JumpTakeoffSpeed, g = hero.JumpGravity;
+        Assert.Equal(v0 * 0.12 - 0.5 * g * 0.12 * 0.12, hero.Z, 6);      // 还是同一条弹道(初速度没有被重置):空中 120 毫秒
     }
 
     [Fact]
@@ -413,9 +549,10 @@ public class HeroActionTests
         var projection = new TownProjection(0, 200);
 
         hero.Update(10, 0, 0, false, true);
-        int z1 = (int)Math.Round(hero.Z);
+        int z1 = (int)Math.Round(hero.Z);                                // 蹲姿:还在地上(动画帧 0)
+        Assert.Equal(0, z1);
         List<SceneSprite> first = hero.Sprites(assets, projection);
-        Steps(hero, 46, 0, 0);                                           // 第 47 步:最高点(动画帧 4,与第 1 步的帧 0 用同一张 IMG 帧,图层数相同)
+        Steps(hero, 52, 0, 0);                                           // 第 53 步(530 毫秒):刚过最高点(动画帧 4,与帧 0 用同一张 IMG 帧,图层数相同)
         int z2 = (int)Math.Round(hero.Z);
         List<SceneSprite> top = hero.Sprites(assets, projection);
 

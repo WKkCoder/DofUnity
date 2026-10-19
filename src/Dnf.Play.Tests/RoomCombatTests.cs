@@ -406,16 +406,22 @@ public class RoomCombatTests
         // 空中攻击的攻击信息:加成 −50%(伤害 ≈ 12.65);攻击框 z ∈ [Z, Z + 50],怪物受击框 z ∈ [0, 60]
         var jump = new HeroStrikeInfo(-50, 0, false);
 
-        // 起跳后 20 毫秒出招:挥击的第 1 帧在出招后 100 毫秒,那时离地 ≈ 46 像素,框 z ∈ [46, 96] 与 [0, 60] 相交
+        // 起跳要先蹲 100 毫秒(第 0~9 步),离地后第一步(第 10 步)出招:挥击的第 1 帧在出招后 100 毫秒,
+        // 那时腾空 100 毫秒、离地 ≈ 51 像素,框 z ∈ [51, 101] 与 [0, 60] 相交
         using var low = new Arena(new[] { (340, 100) }, chr: AvatarFixture.ActionChrPath, jump: jump, monsterSpeed: 0);
-        low.Steps(60, jumpAt: 0, attackAt: 2);
+        low.Steps(60, jumpAt: 0, attackAt: 10);
         RoomCombatSession s = low.Session;
         Assert.Equal(1, s.Hits);
         Assert.InRange(s.TotalDamage, 12, 13);
 
-        // 在最高点附近出招:挥击第 1 帧时离地 ≈ 100 像素,框 z ∈ [100, 150] 够不着 [0, 60]
+        // 蹲姿期间按攻击键没有用(还没离地)
+        using var crouching = new Arena(new[] { (340, 100) }, chr: AvatarFixture.ActionChrPath, jump: jump, monsterSpeed: 0);
+        crouching.Steps(5, jumpAt: 0, attackAt: 3);
+        Assert.Equal((HeroMotion.Jump, 0L), (crouching.Hero.Motion, crouching.Hero.SwingNumber));
+
+        // 在上升途中出招(第 40 步,腾空 310 毫秒):挥击第 1 帧时腾空 400 毫秒、离地 ≈ 122 像素,框 z ∈ [122, 172] 够不着 [0, 60]
         using var high = new Arena(new[] { (340, 100) }, chr: AvatarFixture.ActionChrPath, jump: jump, monsterSpeed: 0);
-        high.Steps(70, jumpAt: 0, attackAt: 35);
+        high.Steps(70, jumpAt: 0, attackAt: 40);
         Assert.Equal(HeroMotion.Jump, high.Hero.Motion);                  // 已经挥完回到跳跃动作
         Assert.Equal((0, 1L), (high.Session.Hits, high.Hero.SwingNumber));
     }
@@ -431,15 +437,16 @@ public class RoomCombatTests
         var boxes = new HeroStrikeBoxes(assets);
 
         hero.Update(10, 0, 0, false, true);
-        for (int i = 0; i < 26; i++)
+        for (int i = 0; i < 36; i++)
         {
-            hero.Update(10, 0, 0);                                       // 第 27 步:腾空 0.27 秒
+            hero.Update(10, 0, 0);                                       // 第 37 步:蹲 0.1 秒 + 腾空 0.27 秒
         }
-        hero.Update(10, 0, 0, true);                                     // 第 28 步出招:腾空 0.28 秒,离地 430 × 0.28 − 462.5 × 0.28² ≈ 84.2 像素
+        hero.Update(10, 0, 0, true);                                     // 第 38 步出招:腾空 0.28 秒,离地 v0 × 0.28 − g/2 × 0.28² ≈ 108 像素
         Assert.Equal(HeroMotion.JumpAttack, hero.Motion);
         Assert.Empty(boxes.At(hero, 0));                                 // 第 0 帧没有框
         int wz = (int)Math.Round(hero.Z);
-        Assert.Equal(84, wz);
+        Assert.Equal((int)Math.Round(hero.JumpTakeoffSpeed * 0.28 - 0.5 * hero.JumpGravity * 0.28 * 0.28), wz);
+        Assert.InRange(wz, 100, 115);
         List<Aabb> list = boxes.At(hero, 1);
         Assert.Equal(new[] { new Aabb(HeroX + 20, HeroX + 60, HeroY - 10, HeroY + 10, wz, wz + 50) }, list.ToArray());
     }
