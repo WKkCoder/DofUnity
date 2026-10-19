@@ -19,11 +19,39 @@ namespace Dnf.Play
         /// <summary>[damage reaction] 是倒地。</summary>
         public bool KnockDown { get; }
 
-        public HeroStrikeInfo(int damageBonus, int pushAside, bool knockDown)
+        /// <summary>
+        /// 技能伤害的两个数(技能 .skl 的 [level info] 取当前等级的第 0、1 列,证据 E-076):按攻击力百分之几、外加固定值。
+        /// 两个都是 0 表示不是技能伤害(普攻按 <see cref="DamageBonus"/> 算)。
+        /// </summary>
+        public int SkillRatePercent { get; }
+
+        public int SkillFixed { get; }
+
+        /// <summary>伤害按技能的两个数算(<see cref="SkillRatePercent"/>、<see cref="SkillFixed"/>)。</summary>
+        public bool IsSkillDamage => SkillRatePercent != 0 || SkillFixed != 0;
+
+        public HeroStrikeInfo(int damageBonus, int pushAside, bool knockDown, int skillRatePercent = 0, int skillFixed = 0)
         {
             DamageBonus = damageBonus;
             PushAside = pushAside;
             KnockDown = knockDown;
+            SkillRatePercent = skillRatePercent;
+            SkillFixed = skillFixed;
+        }
+
+        /// <summary>读一份 .atk 里命中要用的字段;路径为 null、读不到时全是默认值。</summary>
+        public static HeroStrikeInfo Read(GameData data, string atkPath)
+        {
+            AttackInfoData info = atkPath == null || data == null ? null : data.GetAttackInfo(atkPath)?.Data;
+            return info == null
+                ? new HeroStrikeInfo(0, 0, false)
+                : new HeroStrikeInfo(info.DamageBonus, info.PushAside, info.Reaction == DamageReaction.Down);
+        }
+
+        /// <summary>同一份攻击信息,换上技能伤害的两个数。</summary>
+        public HeroStrikeInfo WithSkillDamage(int ratePercent, int fixedDamage)
+        {
+            return new HeroStrikeInfo(DamageBonus, PushAside, KnockDown, ratePercent, fixedDamage);
         }
     }
 
@@ -38,7 +66,26 @@ namespace Dnf.Play
 
         public static int Roll(int damageBonusPercent, Random random)
         {
-            double v = BaseHit * (100 + damageBonusPercent) / 100.0;
+            return Round(BaseHit * (100 + damageBonusPercent) / 100.0, random);
+        }
+
+        /// <summary>
+        /// 技能的基础值:照基线里一级鬼斩打在一级哥布林身上显示 146 标的(把 .skl 一级的两个数代入 <see cref="RollSkill"/> 的式子反推,
+        /// 得 31.15 上下;与普攻的 <see cref="BaseHit"/> 不同,可能是魔法/物理攻击力的差别,也可能式子本身不是这样,只有一个样本,证据 E-076)。
+        /// </summary>
+        public const double SkillBaseHit = 31.15;
+
+        /// <summary>
+        /// 技能一击的占位伤害:<see cref="SkillBaseHit"/> × 百分比 / 100 + 固定值(两个数取自技能 .skl 的 [level info]),小数部分按概率进位。
+        /// 真实公式要等完整角色面板接进来(P5.M3)。
+        /// </summary>
+        public static int RollSkill(int ratePercent, int fixedDamage, Random random)
+        {
+            return Round(SkillBaseHit * ratePercent / 100.0 + fixedDamage, random);
+        }
+
+        private static int Round(double v, Random random)
+        {
             double floor = Math.Floor(v);
             int result = (int)floor + (random.NextDouble() < v - floor ? 1 : 0);
             return result < 1 ? 1 : result;
@@ -143,9 +190,11 @@ namespace Dnf.Play
     /// <see cref="Build"/> 把怪物、受击对象的血条、伤害数字与连击数叠进绘制列表。
     /// 已做:主角三段普攻(.chr [attack motion])的攻击框与怪物受击框相交判定(同一击对同一怪只算一次)、
     /// 怪物生命值取自 <see cref="MonsterAbility"/>、受击硬直与击退、死亡、简易追击与出招(出招不伤害主角)。
-    /// 没做:真实伤害公式(用 <see cref="PlaceholderDamage"/>)、技能、主角受伤、掉落、出口开关与换房间。证据 E-069。
+    /// 技能(证据 E-076):A 鬼斩、S 上挑、D 后跳三个快捷槽(<see cref="Skills"/>),冷却取自技能脚本;鬼斩与上挑能打中怪物,后跳是位移;
+    /// 鬼斩放出来时还有两层斩击光影(<see cref="Effects"/>,<see cref="AnimatedEffect"/>)。
+    /// 没做:真实伤害公式(用 <see cref="PlaceholderDamage"/>)、耗蓝、命中停顿、技能音效与语音、主角受伤、掉落、出口开关与换房间。证据 E-069。
     /// </summary>
-    public sealed class RoomCombatSession : IActionSession
+    public sealed class RoomCombatSession : ISkillSession
     {
         /// <summary>一小步的最长时间(毫秒):比任何动画帧都短,保证每一帧的判定框至少被检查一次。</summary>
         public const double MaxStepMs = 10;
@@ -169,6 +218,7 @@ namespace Dnf.Play
         private readonly HeroStrikeBoxes _boxes;
         private readonly OverlayArt _art = new OverlayArt();
         private readonly List<HitPopup> _popups = new List<HitPopup>();
+        private readonly List<AnimatedEffect> _effects = new List<AnimatedEffect>();
         private readonly HashSet<MonsterActor> _hitThisSwing = new HashSet<MonsterActor>();
         private readonly Random _random;
         private long _evalSwing = -1;
@@ -180,6 +230,9 @@ namespace Dnf.Play
         public IReadOnlyList<MonsterActor> Monsters => _monsters;
         public IReadOnlyList<HitPopup> Popups => _popups;
 
+        /// <summary>正在播的技能特效(鬼斩的斩击光影等)。</summary>
+        public IReadOnlyList<AnimatedEffect> Effects => _effects;
+
         /// <summary>最近一次被打中的怪物(用来画左上角的血条);久未再中就不画。</summary>
         public MonsterActor Target { get; private set; }
 
@@ -187,6 +240,9 @@ namespace Dnf.Play
         public int Kills { get; private set; }
         public int Combo { get; private set; }
         public long TotalDamage { get; private set; }
+
+        /// <summary>放出来的技能次数(冷却中、忙碌或没绑定的按键不算)。</summary>
+        public int SkillCasts { get; private set; }
 
         public string MapPath => _room.MapPath;
         public TownHero Hero => _room.Hero;
@@ -211,9 +267,13 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>A、S、D 三个技能快捷槽与冷却(证据 E-076);构造时没给就是空的(按技能键没有反应)。</summary>
+        public HeroSkills Skills { get; }
+
         public RoomCombatSession(DnfAssets assets, RoomSession room, IReadOnlyList<MonsterActor> monsters, IReadOnlyList<HeroStrikeInfo> strikes, int seed = 1,
-            HeroStrikeInfo dashStrike = default, HeroStrikeInfo jumpStrike = default)
+            HeroStrikeInfo dashStrike = default, HeroStrikeInfo jumpStrike = default, HeroSkills skills = null)
         {
+            Skills = skills ?? new HeroSkills(new HeroSkillSlot[0]);
             _assets = assets ?? throw new ArgumentNullException(nameof(assets));
             _room = room ?? throw new ArgumentNullException(nameof(room));
             _monsters = new List<MonsterActor>(monsters ?? new List<MonsterActor>());
@@ -250,11 +310,11 @@ namespace Dnf.Play
             CharacterDef chr = data.GetCharacter(0);
             for (int i = 0; chr != null && i < room.Hero.AttackCount; i++)
             {
-                strikes.Add(StrikeInfoOf(data, chr.AttackInfoPath(i)));
+                strikes.Add(HeroStrikeInfo.Read(data, chr.AttackInfoPath(i)));
             }
             // 奔跑攻击与空中攻击的攻击信息:.chr 的 [dashattack info]、[jumpattack info](证据 E-072)
-            HeroStrikeInfo dash = StrikeInfoOf(data, chr?.MotionPath("[dashattack info]"));
-            HeroStrikeInfo jump = StrikeInfoOf(data, chr?.MotionPath("[jumpattack info]"));
+            HeroStrikeInfo dash = HeroStrikeInfo.Read(data, chr?.MotionPath("[dashattack info]"));
+            HeroStrikeInfo jump = HeroStrikeInfo.Read(data, chr?.MotionPath("[jumpattack info]"));
 
             MonsterCatalog catalog = MonsterCatalog.Read(assets);
             var models = new Dictionary<int, MonsterModel>();
@@ -280,16 +340,7 @@ namespace Dnf.Play
                     def.Tags.IntOr("[attack delay]", 0), def.Tags.IntOr("[attack speed]", 0));
                 actors.Add(actor);
             }
-            return new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump);
-        }
-
-        /// <summary>读一份 .atk 里普攻要用的字段;路径为 null、读不到时全是默认值。</summary>
-        private static HeroStrikeInfo StrikeInfoOf(GameData data, string atkPath)
-        {
-            AttackInfoData info = atkPath == null ? null : data.GetAttackInfo(atkPath)?.Data;
-            return info == null
-                ? new HeroStrikeInfo(0, 0, false)
-                : new HeroStrikeInfo(info.DamageBonus, info.PushAside, info.Reaction == DamageReaction.Down);
+            return new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, HeroSkills.Create(data, chr, 0));
         }
 
         /// <summary>
@@ -322,9 +373,18 @@ namespace Dnf.Play
         /// </summary>
         public void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed)
         {
+            Update(deltaMs, dirX, dirY, attackPressed, jumpPressed, SkillKeys.None);
+        }
+
+        /// <summary>
+        /// 同上,多一组技能键(A、S、D 的"刚按下"边沿,同样只在第一小步里生效):这一小步里技能放出来了,同一小步的攻击键与跳跃键就作废
+        /// (一次按键只做一件事)。
+        /// </summary>
+        public void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed, SkillKeys skillsPressed)
+        {
             if (deltaMs <= 0)
             {
-                Step(0, dirX, dirY, attackPressed, jumpPressed);
+                Step(0, dirX, dirY, attackPressed, jumpPressed, skillsPressed);
                 return;
             }
             double remaining = deltaMs;
@@ -332,14 +392,23 @@ namespace Dnf.Play
             while (remaining > 0)
             {
                 double step = remaining < MaxStepMs ? remaining : MaxStepMs;
-                Step(step, dirX, dirY, first && attackPressed, first && jumpPressed);
+                Step(step, dirX, dirY, first && attackPressed, first && jumpPressed, first ? skillsPressed : SkillKeys.None);
                 first = false;
                 remaining -= step;
             }
         }
 
-        private void Step(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed)
+        private void Step(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed, SkillKeys skillsPressed)
         {
+            Skills.Advance(deltaMs);
+            HeroSkillSlot cast = skillsPressed == SkillKeys.None ? null : Skills.TryCast(skillsPressed, _room.Hero);
+            if (cast != null)
+            {
+                attackPressed = false;
+                jumpPressed = false;
+                SkillCasts++;
+                SpawnEffects(cast);
+            }
             _room.Update(deltaMs, dirX, dirY, attackPressed, jumpPressed);
             TownHero hero = _room.Hero;
             foreach (MonsterActor m in _monsters)
@@ -356,6 +425,14 @@ namespace Dnf.Play
                     _popups.RemoveAt(i);
                 }
             }
+            for (int i = _effects.Count - 1; i >= 0; i--)
+            {
+                _effects[i].Advance(deltaMs);
+                if (_effects[i].Finished)
+                {
+                    _effects.RemoveAt(i);
+                }
+            }
             _targetMs += deltaMs;
             _comboMs += deltaMs;
             if (_comboMs >= ComboMs)
@@ -365,6 +442,21 @@ namespace Dnf.Play
             if (_targetMs >= TargetBarMs)
             {
                 Target = null;
+            }
+        }
+
+        /// <summary>技能放出来的那一刻,在主角前方 <see cref="HeroSkillSlot.EffectForwardX"/> 像素、同一条地面线上放这个技能的特效动画(朝向跟主角)。画在主角前面一层。</summary>
+        private void SpawnEffects(HeroSkillSlot slot)
+        {
+            TownHero hero = _room.Hero;
+            double x = hero.X + (hero.FacingLeft ? -slot.EffectForwardX : slot.EffectForwardX);
+            foreach (string path in slot.EffectPaths)
+            {
+                AnimatedEffect effect = AnimatedEffect.Create(_assets, path, x, hero.Y, 0.0, hero.FacingLeft);
+                if (effect != null)
+                {
+                    _effects.Add(effect);
+                }
             }
         }
 
@@ -440,11 +532,22 @@ namespace Dnf.Play
                 case HeroAttackKind.Jump:
                     info = _jumpStrike;
                     break;
+                case HeroAttackKind.Skill:
+                    // 有自己攻击信息与伤害数的技能(鬼斩)用自己的;借普攻动作放的技能(上挑)沿用那一段普攻的攻击信息
+                    HeroSkillSlot slot = Skills.SlotOfSkill(hero.SkillId);
+                    if (slot != null && slot.Strike.HasValue)
+                    {
+                        info = slot.Strike.Value;
+                        break;
+                    }
+                    goto default;
                 default:
                     info = hero.AttackStage < _strikes.Length ? _strikes[hero.AttackStage] : new HeroStrikeInfo(0, 0, false);
                     break;
             }
-            int damage = PlaceholderDamage.Roll(info.DamageBonus, _random);
+            int damage = info.IsSkillDamage
+                ? PlaceholderDamage.RollSkill(info.SkillRatePercent, info.SkillFixed, _random)
+                : PlaceholderDamage.Roll(info.DamageBonus, _random);
             bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, hero.FacingLeft);
             Hits++;
             Combo++;
@@ -472,6 +575,14 @@ namespace Dnf.Play
             foreach (MonsterActor m in _monsters)
             {
                 SceneSprite s = m.Sprite(_assets, projection);
+                if (s != null)
+                {
+                    extra.Add(s);
+                }
+            }
+            foreach (AnimatedEffect e in _effects)
+            {
+                SceneSprite s = e.Sprite(_assets, projection);
                 if (s != null)
                 {
                     extra.Add(s);

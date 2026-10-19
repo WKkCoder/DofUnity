@@ -26,6 +26,44 @@ internal sealed class AvatarFixture : IDisposable
     public const int JumpSpeedStat = 90;
     public const int BodyWidthStat = 36;
     public const int BodyDepthStat = 12;
+
+    /// <summary>主角脚本 [skill] 里的主动技能编号(与原版同号:鬼斩 5、上挑 46、后跳 169);上挑的等级是 3,冷却在 1 级与最高级(10 级)之间线性插值。</summary>
+    public const int HardAttackSkill = 5;
+    public const int UpperSlashSkill = 46;
+    public const int BackStepSkill = 169;
+    public const int UpperSlashLevel = 3;
+    public const int UpperSlashCoolStart = 2000;
+    public const int UpperSlashCoolEnd = 1000;
+    public const int UpperSlashMpStart = 5;
+    public const int UpperSlashMpEnd = 35;
+
+    /// <summary>鬼斩的冷却(两端相同)与后跳的耗蓝:都是测试用的合成数,与原版数据无关。</summary>
+    public const int HardAttackCool = 4500;
+    public const int HardAttackMp = 13;
+    public const int BackStepMp = 2;
+
+    /// <summary>后跳 .skl 的 [static data] 第 0 个数(起跳力,纯属测试用的数)。</summary>
+    public const int BackStepPowerStat = 270;
+
+    /// <summary>
+    /// 鬼斩:[etc motion] 的第 1 项是它的动作动画(第 0 项是别的动作,所以"在动作表里的下标"与"在攻击信息表里的下标"故意不同),
+    /// [etc attack info] 的第 0 项是它的攻击信息;1 级的伤害两个数(百分比、固定值)是 .skl [level info] 第一行,击退像素是 .atk 的 [push aside](都是测试用的数)。
+    /// 动作 600 毫秒,第 2、3 帧(200 到 400 毫秒)各有一个攻击框:x 从 +20 起宽 60,y 从 −10 起深 20,z 从 0 起高 50。
+    /// </summary>
+    public const string HardAttackAni = "character/test/animation/hardattack.ani";
+    public const string HardAttackAtk = "character/test/attackinfo/hardattack.atk";
+    public const int HardAttackRate = 200;
+    public const int HardAttackFixed = 40;
+    public const int HardAttackPushAside = 150;
+    public const int HardAttackMotionMs = 600;
+
+    /// <summary>
+    /// 鬼斩的两层特效(角色目录下 effect/animation/):都是 350 毫秒——空帧 150、图 50、图 50、空帧 100(原版的斩击光影也是先空一段再出图);
+    /// 第二层每帧带图形特效 2(加法混合)。图用皮肤 IMG 的第 0、1 帧,帧偏移 (-5, -8)。
+    /// </summary>
+    public const string HardAttackEffect1 = "character/test/effect/animation/hardattack1.ani";
+    public const string HardAttackEffect2 = "character/test/effect/animation/hardattack2.ani";
+    public const int EffectDurationMs = 350;
     public const string DashAni = "character/test/animation/dash.ani";
     public const string DashAttackAni = "character/test/animation/dashattack.ani";
     public const string JumpAni = "character/test/animation/jump.ani";
@@ -175,7 +213,32 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[weight]").Int(WeightStat)
                 .Tag("[jump speed]").Int(JumpSpeedStat)
                 .Tag("[width]").Int(BodyWidthStat, BodyDepthStat)
+                // 初始技能表("编号 等级"成对):181 与 174 是被动,5、46、169 是带出招指令的主动技能,顺序与原版新建剑士一样
+                .Tag("[skill]").Int(181, 2, HardAttackSkill, 1, UpperSlashSkill, UpperSlashLevel, BackStepSkill, 1, 174, 1)
+                // 技能动作与攻击信息(两个表的下标不对应:护身动作没有攻击信息,鬼斩在动作表里是第 1 项、在攻击信息表里是第 0 项)
+                .Tag("[etc motion]").Str("Animation/Guard.ani").Str("Animation/HardAttack.ani")
+                .Tag("[etc attack info]").Str("AttackInfo/HardAttack.atk")
                 .Tag("[attack motion]").Str("animation/attack1.ani").Str("Animation/Attack2.ani").Str("animation/attack3.ani").Build()),
+            // 技能目录:职业 0 → ActionChrPath;三个主动技能与一个被动技能的 .skl(数是合成的)
+            ("character/character.lst", NewScript().Int(0).Str("test/action.chr").Build()),
+            ("skill/skilllist.lst", NewScript().Int(0).Str("testskill.lst").Build()),
+            ("skill/testskill.lst", NewScript()
+                .Int(181).Str("test/passive.skl").Int(HardAttackSkill).Str("test/hardattack.skl").Int(UpperSlashSkill).Str("test/upperslash.skl")
+                .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Build()),
+            ("skill/test/passive.skl", NewScript().Tag("[type]").Str("[passive]").Build()),
+            ("skill/test/hardattack.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[command]").Str("UP").Tag("[maximum level]").Int(10)
+                .Tag("[consume MP]").Int(HardAttackMp, 150).Tag("[cool time]").Int(HardAttackCool, HardAttackCool).Tag("[static data]").Int(120)
+                // 两列的按等级取值表:第 1 级 (200, 40),第 2 级 (250, 60)
+                .Tag("[level info]").Int(2, HardAttackRate, HardAttackFixed, 250, 60).Build()),
+            // 鬼斩的攻击信息:击倒,水平击退 HardAttackPushAside 像素
+            (HardAttackAtk, NewScript().Tag("[damage reaction]").Tag("[down]").Tag("[push aside]").Int(HardAttackPushAside).Build()),
+            ("skill/test/upperslash.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[command]").Str("SKILL").Tag("[maximum level]").Int(10)
+                .Tag("[consume MP]").Int(UpperSlashMpStart, UpperSlashMpEnd).Tag("[cool time]").Int(UpperSlashCoolStart, UpperSlashCoolEnd).Tag("[static data]").Int(110, -200).Build()),
+            ("skill/test/backstep.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[command]").Str("DOWN").Tag("[maximum level]").Int(1)
+                .Tag("[consume MP]").Int(BackStepMp, BackStepMp).Tag("[static data]").Int(BackStepPowerStat).Build()),
             (EquipRoot + "/avatar/skin/askin_default.equ", NewScript()
                 .Tag("[equipment type]").Str("[skin avatar]")
                 .Tag("[animation job]").Str(JobTag)
@@ -228,6 +291,12 @@ internal sealed class AvatarFixture : IDisposable
             (Attack1Ani, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, null), (1, 100, null))),
             (Attack2Ani, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, null))),
             (Attack3Ani, BuildBoxAni((0, 200, null), (1, 200, new[] { ((ushort)15, new[] { 20, -10, 0, 40, 20, 50 }) }))),
+            // 技能动作:护身(占动作表的第 0 项)与鬼斩(600 毫秒,第 2、3 帧各带一个攻击框)
+            ("character/test/animation/guard.ani", BuildBoxAni((0, 100, null))),
+            (HardAttackEffect1, BuildEffectAni(false)),
+            (HardAttackEffect2, BuildEffectAni(true)),
+            (HardAttackAni, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }),
+                (1, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }), (0, 200, null))),
             (WeaponLayerB + "/attack1.ani", BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, new[] { ((ushort)15, new[] { 10, -10, 0, 50, 20, 60 }) }), (1, 100, null))),
             (WeaponLayerB + "/attack2.ani", BuildBoxAni((0, 100, null), (1, 100, new[] { ((ushort)15, new[] { 10, -10, 0, 50, 20, 60 }) }), (0, 100, null))),
             (WeaponLayerC + "/attack1.ani", BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, new[] { ((ushort)15, new[] { 10, 30, 0, 10, 10, 10 }) }), (1, 100, null))),
@@ -305,6 +374,26 @@ internal sealed class AvatarFixture : IDisposable
         }
         return TestData.BuildAni(new[] { "Character/Test/Equipment/Avatar/skin/tt_body0000.img" },
             new (ushort, byte[])[0], specs);
+    }
+
+    /// <summary>
+    /// 技能特效的 .ani(见 <see cref="HardAttackEffect1"/>):空帧 150、皮肤 IMG 第 0 帧 50、第 1 帧 50、空帧 100 毫秒,不循环;
+    /// <paramref name="additive"/> 为真时每帧带图形特效 2(加法混合)。
+    /// </summary>
+    private static byte[] BuildEffectAni(bool additive)
+    {
+        var specs = new List<TestData.AniFrameSpec>();
+        foreach ((int image, int frameIndex, int delay) in new[] { (-1, 0, 150), (0, 0, 50), (0, 1, 50), (-1, 0, 100) })
+        {
+            var f = new TestData.AniFrameSpec { ImageIndex = image, FrameIndex = frameIndex, X = -5, Y = -8 };
+            f.Props.Add((12, TestData.LE32(delay)));
+            if (additive)
+            {
+                f.Props.Add((11, new byte[] { 2, 0 }));
+            }
+            specs.Add(f);
+        }
+        return TestData.BuildAni(new[] { "Character/Test/Equipment/Avatar/skin/tt_body0000.img" }, new (ushort, byte[])[0], specs);
     }
 
     /// <summary>

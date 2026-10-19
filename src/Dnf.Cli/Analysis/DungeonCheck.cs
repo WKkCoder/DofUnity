@@ -80,8 +80,8 @@ internal static class DungeonCheck
             }
             else
             {
-                bool attack = script.Poll(t, out int dx, out int dy, out bool jump);
-                session.Update(frameMs, dx, dy, attack, jump);
+                bool attack = script.Poll(t, out int dx, out int dy, out bool jump, out SkillKeys skills);
+                session.Update(frameMs, dx, dy, attack, jump, skills);
             }
             t += frameMs;
 

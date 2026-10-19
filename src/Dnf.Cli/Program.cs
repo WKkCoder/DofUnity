@@ -73,7 +73,7 @@ namespace Dnf.Cli
         /// <summary>hero-check --cam-range 最小,最大:镜头 x 的范围(赛丽亚房间是 0,96)。</summary>
         public string? CamRange { get; set; }
 
-        /// <summary>hero-find --motion rest|move:主角的动作(默认 rest);--search N:以 --start 为中心搜索的半径(像素,默认 24,最大 80)。</summary>
+        /// <summary>hero-find --motion rest|move|dashattack|attack&lt;N&gt;|etc&lt;N&gt;|ani:&lt;路径&gt;[#帧号]:主角的动作(默认 rest);--search N:以 --start 为中心搜索的半径(像素,默认 24,最大 80)。</summary>
         public string Motion { get; set; } = "rest";
         public int Search { get; set; } = 24;
 
@@ -190,8 +190,8 @@ namespace Dnf.Cli
             "      合成整个场景(地图 [animation] 图层 + NPC;加法混合光效与染色 alpha 的帧间插值见证据 E-030),与截图整屏逐像素对照并按格子给出吻合率。\n" +
             "  dnf hero-check --index <index.tsv> --shots <截图目录> --prefix <截图名前缀> --start x,y,left|right [--keys 毫秒:方向,…] [--phase auto|毫秒] [--cam-range 0,96] [--map <地图>]\n" +
             "      按\"起始状态 + 按键时间表\"模拟主角与镜头,在每张连拍截图的时刻合成主角,逐张给出主角像素的吻合率与 ±3 像素内的最佳偏移(证据 E-065、E-066;截图只在本机,不入库)。\n" +
-            "  dnf hero-find --shot <截图.png> --start x,y,left|right [--map <房间地图>] [--cam-x N] [--hero-wait] [--motion rest|move] [--search N]\n" +
-            "      在一张截图里找主角:以 --start 为中心搜 ±N 像素(默认 24)、同时试遍站立/行走的每个动画帧,列出主角不透明像素精确一致率最高的位置(证据 E-070)。\n" +
+            "  dnf hero-find --shot <截图.png> --start x,y,left|right [--map <房间地图>] [--cam-x N] [--hero-wait] [--motion rest|move|dashattack|attack<N>|etc<N>|ani:<路径>[#帧号]] [--search N]\n" +
+            "      在一张截图里找主角:以 --start 为中心搜 ±N 像素(默认 24)、同时试遍这个动作(站立/行走/奔跑攻击/连招第 N 段/[etc motion] 第 N 项)的每个动画帧,列出主角不透明像素精确一致率最高的位置(证据 E-070、E-076)。\n" +
             "  dnf room-check --shots <截图目录> --prefix <截图名前缀> [--index <index.tsv>] --map <房间地图> [--gate right:364:closed …]\n" +
             "      对一组原版连拍,逐张量出副本房间的镜头 x(背景、瓦片、图层动画与门按候选镜头合成,在没有界面的区域数精确一致的像素,取最大;证据 E-067、E-068)。\n" +
             "  dnf fit-map --shot <截图.png> [--map <地图>] [--fit-tol N] [--range-x N] [--range-y N] [--samples N] [--png <输出.png>]\n" +
@@ -430,7 +430,7 @@ namespace Dnf.Cli
                         opts.CamRange = NextValue(args, ref i);
                         break;
                     case "--motion":
-                        opts.Motion = NextValue(args, ref i) is var mo2 && (mo2 is "rest" or "move") ? mo2 : throw new UserError("--motion 需要 rest 或 move");
+                        opts.Motion = NextValue(args, ref i) is var mo2 && HeroFind.IsMotionSpec(mo2) ? mo2 : throw new UserError("--motion 需要 rest、move、dashattack、attack<N>(连招第 N 段,从 0 数)、etc<N>([etc motion] 第 N 项)或 ani:<PVF 动画路径>[#帧号]");
                         break;
                     case "--search":
                         opts.Search = int.TryParse(NextValue(args, ref i), out int sr) && sr >= 0 && sr <= 80 ? sr : throw new UserError("--search 需要 0 到 80 的整数");

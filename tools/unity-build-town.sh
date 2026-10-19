@@ -197,6 +197,42 @@ if [ "$platform" = "macos" ]; then
       python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-room-action-$(printf '%.2f' "$at").png" --max-diff 0
     done
 
+    # 技能 A S D(证据 E-076):时间表是 "0.2 秒向左走、2.5 秒停下、3.0 秒向右点一下转身、3.3 秒按 A(鬼斩)、5.0 秒按 S(上挑)、6.0 秒按 D(后跳)"。
+    # 3.55 秒:鬼斩挥击中,两只怪物受击倒下、斩击光影两层叠在前面;3.7 秒:光影收尾;5.2 秒:上挑(连招第三段的挥击);6.2 秒:后跳腾空。
+    # 播放器与命令行 combat-check 同一份时间表、同一个模拟类,逐字节对照;再实时跑一遍,检查三个技能都放出来了。
+    skill_play="0.2:left,2.5:none,3.0:right,3.1:none,3.3:a,5.0:s,6.0:d,7.0:none"
+    for at in 3.55 3.7 5.2 6.2; do
+      tag="room-skill-$at"
+      ms="$(python3 -c "print(int(float('$at')*1000.0))")"
+      rm -f "out/town-demo-$tag.png" "out/town-cpu-room-skill-$at.png"
+      set +e
+      "$app" -batchmode -logFile "$PWD/re/unity-run-town-$tag-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-$tag.png" \
+        -dnftime "$ms" -dnfmap map/lorien/s2.map -dnfautowalk "$skill_play" -dnfplayat "$at"
+      rc=$?
+      set -e
+      echo "播放器退出码(离屏渲染 $tag): $rc"
+      grep -E 'DNF_TOWN_DEMO' "$PWD/re/unity-run-town-$tag-macos.log" || true
+      [ "$rc" -eq 0 ] || exit "$rc"
+      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play "$skill_play" --seconds "$at" \
+        --shots-at "$at" --png "$PWD/out/town-cpu-room-skill" >/dev/null
+      python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-room-skill-$(printf '%.2f' "$at").png" --max-diff 0
+    done
+    skill_log="$PWD/re/unity-run-town-room-skill-macos.log"
+    rm -f "$skill_log"
+    set +e
+    "$app" -batchmode -logFile "$skill_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 8 -dnfautowalk "$skill_play"
+    rc=$?
+    set -e
+    echo "播放器退出码(房间里实时放技能): $rc"
+    grep -E 'DNF_TOWN_DEMO' "$skill_log" || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$skill_log"; then
+      echo "实时放技能的日志里有异常:$skill_log" >&2
+      exit 1
+    fi
+    grep -q -E 'DNF_TOWN_DEMO ran .* room=true monsters=[0-9]+/4 hits=[1-9][0-9]* .* casts=3 ' "$skill_log" \
+      || { echo "实时放技能里 A、S、D 没有各放出一次、或没有命中过怪物(应有 casts=3 与 hits>=1):$skill_log" >&2; exit 1; }
+
     # 整座副本(证据 E-070):洛兰的迷宫,自动机(DungeonBot)打副本。
     # 播放器带 -dnfdungeon -dnfexplore(或 -dnfbot)-dnfplayat 时按固定 1/60 秒步长确定地打到指定时刻,再离屏渲染一帧;
     # 命令行 dungeon-check --bot(--explore)是同一局、同一时刻写 PNG,逐字节对照。

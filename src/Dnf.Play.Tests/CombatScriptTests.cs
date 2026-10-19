@@ -31,6 +31,81 @@ public class CombatScriptTests
         }
     }
 
+    private sealed class SkillRecorder : ISkillSession
+    {
+        public readonly List<(bool Attack, bool Jump, SkillKeys Skills)> Calls = new();
+
+        public string MapPath => "x";
+        public TownHero Hero => null;
+        public TownCamera Camera => null;
+        public int LayerCount => 0;
+        public int NpcCount => 0;
+
+        public void Update(double deltaMs, int dirX, int dirY)
+        {
+            Calls.Add((false, false, (SkillKeys)(-1)));
+        }
+
+        public void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed)
+        {
+            Calls.Add((attackPressed, jumpPressed, (SkillKeys)(-1)));          // 带技能键的会话应该走六个参数的那一个
+        }
+
+        public void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed, SkillKeys skillsPressed)
+        {
+            Calls.Add((attackPressed, jumpPressed, skillsPressed));
+        }
+
+        public List<SceneSprite> Build(long timeMs)
+        {
+            return new List<SceneSprite>();
+        }
+    }
+
+    [Fact]
+    public void SkillItemsFireOncePerKeyAndCombineWithTheOtherActions()
+    {
+        CombatScript s = CombatScript.Parse("1:a,2:right+s+d+attack,3:none,4:jump+a");
+        Assert.False(s.Poll(999, out _, out _, out _, out SkillKeys skills));
+        Assert.Equal(SkillKeys.None, skills);
+        s.Poll(1000, out _, out _, out _, out skills);
+        Assert.Equal(SkillKeys.A, skills);
+        s.Poll(1001, out _, out _, out _, out skills);                        // 同一项不会再触发
+        Assert.Equal(SkillKeys.None, skills);
+
+        Assert.True(s.Poll(2000, out int dx, out _, out _, out skills));       // 同一项可以同时有技能键、方向与攻击键
+        Assert.Equal((1, SkillKeys.S | SkillKeys.D), (dx, skills));
+        s.Poll(2500, out _, out _, out _, out skills);
+        Assert.Equal(SkillKeys.None, skills);
+
+        // 不带技能键参数的重载把技能键也算作已读
+        s.Poll(4000, out _, out _, out bool jump);
+        Assert.True(jump);
+        s.Poll(4001, out _, out _, out _, out skills);
+        Assert.Equal(SkillKeys.None, skills);
+
+        Assert.Throws<FormatException>(() => CombatScript.Parse("1:q"));
+    }
+
+    [Fact]
+    public void StepGivesTheSkillKeysToASessionThatTakesThemAndStillWorksForOneThatDoesNot()
+    {
+        var rec = new SkillRecorder();
+        CombatScript s = CombatScript.Parse("0.05:s,0.1:a+d");
+        for (int i = 0; i < 8; i++)
+        {
+            s.Step(rec);
+        }
+        // 步 3(50.0 毫秒)按 S;步 6(100.0 毫秒)按 A 与 D;其余没有技能键
+        Assert.Equal(new[] { SkillKeys.None, SkillKeys.None, SkillKeys.None, SkillKeys.S, SkillKeys.None, SkillKeys.None, SkillKeys.A | SkillKeys.D, SkillKeys.None },
+            rec.Calls.Select(c => c.Skills).ToArray());
+
+        var plain = new Recorder();
+        CombatScript t = CombatScript.Parse("0:s");
+        t.Step(plain);                                                         // 只认五个参数的会话照常工作(技能键被丢掉)
+        Assert.Single(plain.Calls);
+    }
+
     [Fact]
     public void AnEmptyOrBlankScriptIsEmptyAndPressesNothing()
     {

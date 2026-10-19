@@ -267,12 +267,12 @@ internal static class SceneCompare
         string[] parts = opts.Hero!.Split(',');
         if (parts.Length != 5 || !double.TryParse(parts[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double x)
             || !double.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double y)
-            || parts[2] is not ("left" or "right") || parts[3] is not ("rest" or "move") || !long.TryParse(parts[4], out long ms) || ms < 0)
+            || parts[2] is not ("left" or "right") || !HeroFind.IsMotionSpec(parts[3]) || !long.TryParse(parts[4], out long ms) || ms < 0)
         {
-            throw new UserError("--hero 需要 x,y,left|right,rest|move,动作毫秒(例如 615,234,right,rest,600)");
+            throw new UserError("--hero 需要 x,y,left|right,动作,动作毫秒(动作:rest、move、dashattack、attack<N>、etc<N>;例如 615,234,right,rest,600)");
         }
         TownHero hero = BuildDefaultHero(assets, opts.MapPath, opts.HeroWeapon, x, y, parts[2] == "left", opts.HeroWait);
-        hero.Place(x, y, parts[2] == "left", parts[3] == "move" ? HeroMotion.Move : HeroMotion.Rest, ms);
+        HeroFind.PlaceMotion(hero, parts[3], x, y, parts[2] == "left", ms);
         return hero;
     }
 

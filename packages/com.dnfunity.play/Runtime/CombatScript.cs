@@ -7,7 +7,8 @@ namespace Dnf.Play
 {
     /// <summary>
     /// 按时间表替主角按键(无人值守地验证走动、挥击与命中,也用来让命令行与 Unity 播放器跑出完全相同的战斗画面)。
-    /// 时间表是逗号分隔的 "秒:动作":动作是 none、left、right、up、down(可用 + 组合),再加上 attack、jump 表示在那一刻按一下攻击键或跳跃键(只按一次的边沿);
+    /// 时间表是逗号分隔的 "秒:动作":动作是 none、left、right、up、down(可用 + 组合),再加上 attack、jump 表示在那一刻按一下攻击键或跳跃键(只按一次的边沿),
+    /// a、s、d 表示按一下技能快捷键 A、S、D(例如 "1:a" 在第 1 秒放 A 槽的技能);
     /// 方向保持到下一项改变为止,例如 "0.5:left,2:left+attack,3:none"。
     /// 双击方向键奔跑就写成"按、松、按":"0:right,0.1:none,0.2:right"(两次按下相隔 0.2 秒)。
     /// 两种用法:<see cref="Poll"/> 按任意时刻读取按键状态(实时运行);<see cref="Step"/> 以固定的 1/60 秒步长推进一个会话(逐帧确定的模拟,
@@ -27,6 +28,8 @@ namespace Dnf.Play
             public bool AttackFired;
             public bool Jump;
             public bool JumpFired;
+            public SkillKeys Skills;
+            public SkillKeys SkillsFired;
         }
 
         private readonly List<Key> _keys = new List<Key>();
@@ -65,6 +68,9 @@ namespace Dnf.Play
                         case "down": key.DirY = 1; break;
                         case "attack": key.Attack = true; break;
                         case "jump": key.Jump = true; break;
+                        case "a": key.Skills |= SkillKeys.A; break;
+                        case "s": key.Skills |= SkillKeys.S; break;
+                        case "d": key.Skills |= SkillKeys.D; break;
                         case "none": break;
                         default: throw new FormatException("时间表里不认识的动作 " + word);
                     }
@@ -89,8 +95,17 @@ namespace Dnf.Play
         /// </summary>
         public bool Poll(double timeMs, out int dirX, out int dirY, out bool jump)
         {
+            return Poll(timeMs, out dirX, out dirY, out jump, out _);
+        }
+
+        /// <summary>
+        /// 同上,另外给出自上次读取以来新到点的技能键(<paramref name="skills"/>:时间表里的 a、s、d 对应 A、S、D 三个快捷键,每一项只会给出一次)。
+        /// </summary>
+        public bool Poll(double timeMs, out int dirX, out int dirY, out bool jump, out SkillKeys skills)
+        {
             bool attack = false;
             jump = false;
+            skills = SkillKeys.None;
             foreach (Key k in _keys)
             {
                 if (k.Seconds * 1000.0 <= timeMs)
@@ -107,6 +122,12 @@ namespace Dnf.Play
                         k.JumpFired = true;
                         jump = true;
                     }
+                    SkillKeys fresh = k.Skills & ~k.SkillsFired;
+                    if (fresh != SkillKeys.None)
+                    {
+                        k.SkillsFired |= fresh;
+                        skills |= fresh;
+                    }
                 }
             }
             dirX = _dirX;
@@ -121,8 +142,15 @@ namespace Dnf.Play
             {
                 throw new ArgumentNullException(nameof(session));
             }
-            bool attack = Poll(TimeMs, out int dirX, out int dirY, out bool jump);
-            session.Update(StepMs, dirX, dirY, attack, jump);
+            bool attack = Poll(TimeMs, out int dirX, out int dirY, out bool jump, out SkillKeys skills);
+            if (session is ISkillSession withSkills)
+            {
+                withSkills.Update(StepMs, dirX, dirY, attack, jump, skills);
+            }
+            else
+            {
+                session.Update(StepMs, dirX, dirY, attack, jump);
+            }
             TimeMs += StepMs;
             return attack;
         }

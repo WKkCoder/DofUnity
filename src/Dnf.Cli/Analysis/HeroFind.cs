@@ -37,7 +37,7 @@ internal static class HeroFind
     {
         if (opts.Screenshot == null || opts.Start == null)
         {
-            throw new UserError("hero-find 需要 --shot <截图.png> --start x,y,left|right [--map <房间地图>] [--cam-x N] [--hero-wait] [--motion rest|move] [--search N] [--top N]");
+            throw new UserError("hero-find 需要 --shot <截图.png> --start x,y,left|right [--map <房间地图>] [--cam-x N] [--hero-wait] [--motion rest|move|dashattack|attack<N>|etc<N>|ani:<路径>[#帧号]] [--search N] [--top N]");
         }
         var sw = Stopwatch.StartNew();
         string[] p = opts.Start.Split(',');
@@ -47,7 +47,7 @@ internal static class HeroFind
             throw new UserError("--start 需要 x,y,left|right,例如 172,279,right");
         }
         bool left = p[2] == "left";
-        HeroMotion motion = opts.Motion == "move" ? HeroMotion.Move : HeroMotion.Rest;
+        string motionSpec = opts.Motion;
         int search = opts.Search;
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
         Raster shot = PngReader.Load(opts.Screenshot);
@@ -60,7 +60,7 @@ internal static class HeroFind
         var seenFrames = new HashSet<int>();
         for (long ms = 0; ms < 4000; ms += 10)
         {
-            hero.Place(cx, cy, left, motion, ms);
+            PlaceMotion(hero, motionSpec, cx, cy, left, ms);
             int frame = hero.CurrentFrame;
             if (!seenFrames.Add(frame))
             {
@@ -100,7 +100,7 @@ internal static class HeroFind
         }
 
         hits.Sort((a, b) => b.Ratio.CompareTo(a.Ratio));
-        Console.WriteLine("截图 " + Path.GetFileName(opts.Screenshot) + ",镜头 x " + opts.CameraX + ",朝向 " + (left ? "左" : "右") + ",动作 " + (motion == HeroMotion.Move ? "行走" : (opts.HeroWait ? "战斗待机" : "站立"))
+        Console.WriteLine("截图 " + Path.GetFileName(opts.Screenshot) + ",镜头 x " + opts.CameraX + ",朝向 " + (left ? "左" : "右") + ",动作 " + DescribeMotion(motionSpec, opts.HeroWait)
             + ",以 (" + cx + "," + cy + ") 为中心搜索 ±" + search + " 像素,共试了 " + seenFrames.Count + " 个动画帧");
         Console.WriteLine("世界x  世界y  帧  动作ms  主角不透明像素  精确一致  吻合率");
         for (int i = 0; i < Math.Min(10, hits.Count); i++)
@@ -111,6 +111,69 @@ internal static class HeroFind
         }
         Console.Error.WriteLine("用时 " + sw.Elapsed.TotalSeconds.ToString("F1") + "s");
         return 0;
+    }
+
+    /// <summary>
+    /// --motion 的取值:rest、move、dashattack、attack&lt;N&gt;(连招第 N 段,从 0 数)、etc&lt;N&gt;([etc motion] 第 N 项,技能动画)、
+    /// ani:&lt;PVF 动画路径&gt;[#帧号](任意一个动画;带 # 时停在那一帧,例如 ani:character/swordman/animation/hardattack.ani#4)。
+    /// </summary>
+    internal static bool IsMotionSpec(string spec)
+    {
+        return spec is "rest" or "move" or "dashattack" || TrySuffix(spec, "attack", out _) || TrySuffix(spec, "etc", out _)
+            || (spec.StartsWith("ani:", StringComparison.Ordinal) && spec.Length > 4);
+    }
+
+    private static bool TrySuffix(string spec, string prefix, out int n)
+    {
+        n = 0;
+        return spec.StartsWith(prefix, StringComparison.Ordinal) && int.TryParse(spec.AsSpan(prefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out n);
+    }
+
+    /// <summary>把主角摆成 <paramref name="spec"/> 描述的动作、已播放 <paramref name="ms"/> 毫秒。</summary>
+    internal static void PlaceMotion(TownHero hero, string spec, double x, double y, bool left, long ms)
+    {
+        if (TrySuffix(spec, "attack", out int stage))
+        {
+            hero.PlaceAttack(x, y, left, stage, ms);
+        }
+        else if (TrySuffix(spec, "etc", out int etc))
+        {
+            hero.PlaceSkillMotion(x, y, left, 0, etc, ms);
+        }
+        else if (spec.StartsWith("ani:", StringComparison.Ordinal))
+        {
+            string path = spec.Substring(4);
+            int hash = path.LastIndexOf('#');
+            if (hash > 0 && int.TryParse(path.AsSpan(hash + 1), NumberStyles.None, CultureInfo.InvariantCulture, out int frame))
+            {
+                hero.PlaceSkillFrame(x, y, left, 0, path.Substring(0, hash), frame);   // ani:路径#帧号:停在这一帧(跳跃动画的停留帧之后用时间走不到)
+            }
+            else
+            {
+                hero.PlaceSkillMotion(x, y, left, 0, path, ms);
+            }
+        }
+        else
+        {
+            hero.Place(x, y, left, spec == "move" ? HeroMotion.Move : (spec == "dashattack" ? HeroMotion.DashAttack : HeroMotion.Rest), ms);
+        }
+    }
+
+    private static string DescribeMotion(string spec, bool wait)
+    {
+        if (TrySuffix(spec, "attack", out int stage))
+        {
+            return "连招第 " + stage + " 段";
+        }
+        if (TrySuffix(spec, "etc", out int etc))
+        {
+            return "[etc motion] 第 " + etc + " 项";
+        }
+        if (spec.StartsWith("ani:", StringComparison.Ordinal))
+        {
+            return "动画 " + spec.Substring(4);
+        }
+        return spec == "move" ? "行走" : (spec == "dashattack" ? "奔跑攻击" : (wait ? "战斗待机" : "站立"));
     }
 
     /// <summary>主角精灵分别合成到黑底与白底,两次相同的像素就是完全不透明的像素;返回它们的位置与颜色(0xRRGGBB)。</summary>

@@ -1,3 +1,4 @@
+using System;
 using Dnf.Data;
 
 namespace Dnf.Game
@@ -37,6 +38,39 @@ namespace Dnf.Game
         public string CustomAttackInfoPath(int index)
         {
             return (uint)index < (uint)EtcAttackInfos.Length ? PvfPath.ResolveRelativeTo(Path, EtcAttackInfos[index]) : null;
+        }
+
+        /// <summary>
+        /// 按文件名(不分大小写,如 "hardattack.atk")在 [etc attack info] 里找下标;找不到返回 -1。
+        /// [etc attack info] 与 [etc motion] 的下标不是一一对应的(例如护身的动作没有攻击信息),所以按名字找,不拿一个表的下标去套另一个表(证据 E-076)。
+        /// </summary>
+        public int EtcAttackInfoIndexOf(string fileName)
+        {
+            return IndexOfFileName(EtcAttackInfos, fileName);
+        }
+
+        /// <summary>按文件名(不分大小写,如 "hardattack.ani")在 [etc motion] 里找下标;找不到返回 -1。</summary>
+        public int EtcMotionIndexOf(string fileName)
+        {
+            return IndexOfFileName(EtcMotions, fileName);
+        }
+
+        private static int IndexOfFileName(string[] paths, string fileName)
+        {
+            if (string.IsNullOrEmpty(fileName))
+            {
+                return -1;
+            }
+            for (int i = 0; i < paths.Length; i++)
+            {
+                string p = paths[i];
+                int cut = Math.Max(p.LastIndexOf('/'), p.LastIndexOf('\\'));
+                if (string.Equals(p.Substring(cut + 1), fileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return i;
+                }
+            }
+            return -1;
         }
 
         /// <summary>按单项动画标签(如 "[waiting motion]"、"[basic motion]")取路径;没有则返回 null。</summary>

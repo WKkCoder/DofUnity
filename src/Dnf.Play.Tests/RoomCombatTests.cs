@@ -2,6 +2,7 @@ using Dnf.Data;
 using Dnf.Game;
 using Dnf.Render;
 using Dnf.Render.Tests;
+using Dnf.Script;
 
 namespace Dnf.Play.Tests;
 
@@ -32,8 +33,10 @@ public class RoomCombatTests
         public TownHero Hero => Session.Hero;
 
         /// <param name="frozen">为真时主角的可走区域只是脚下一小块:怪物的每一步都会落在区域外,所以所有怪物都原地不动(也推不动)。</param>
+        /// <param name="withSkills">为真时按合成的角色脚本([skill] 初始技能表)排出技能快捷槽(要用带跳跃的 <see cref="AvatarFixture.ActionChrPath"/>)。</param>
         public Arena(IReadOnlyList<(int X, int Y)> monsters, HeroStrikeInfo[] strikes = null, bool facingLeft = false, int hp = 100,
-            bool frozen = false, int seed = 1, string chr = null, HeroStrikeInfo dash = default, HeroStrikeInfo jump = default, double monsterSpeed = 222.5)
+            bool frozen = false, int seed = 1, string chr = null, HeroStrikeInfo dash = default, HeroStrikeInfo jump = default, double monsterSpeed = 222.5,
+            bool withSkills = false)
         {
             Assets = DnfAssets.Open(_fx.Root);
             var tiles = new List<TileFile>();
@@ -57,7 +60,13 @@ public class RoomCombatTests
                 var spawn = new RoomMonsterSpawn(1, 0, 0, monsters[i].X, monsters[i].Y, 0, 1, 0, "[fixed]", "[normal]");
                 actors.Add(new MonsterActor(i, spawn, model, 1, hp, monsterSpeed, 1500, 0));
             }
-            Session = new RoomCombatSession(Assets, room, actors, strikes ?? Plain(), seed, dash, jump);
+            HeroSkills skills = null;
+            if (withSkills)
+            {
+                var data = new GameData(new PvfScriptSource(Assets.Pvf));
+                skills = HeroSkills.Create(data, data.GetCharacter(0), 0);
+            }
+            Session = new RoomCombatSession(Assets, room, actors, strikes ?? Plain(), seed, dash, jump, skills);
         }
 
         /// <summary>每 10 毫秒一步推进:前 <paramref name="steps"/> 步按 (dirX, dirY) 走,攻击键与跳跃键在 <paramref name="attackAt"/>、<paramref name="jumpAt"/> 那一步按下(从 0 数)。</summary>
@@ -449,5 +458,178 @@ public class RoomCombatTests
         Assert.InRange(wz, 100, 115);
         List<Aabb> list = boxes.At(hero, 1);
         Assert.Equal(new[] { new Aabb(HeroX + 20, HeroX + 60, HeroY - 10, HeroY + 10, wz, wz + 50) }, list.ToArray());
+    }
+
+    // ---- 技能键(证据 E-076) ----
+
+    /// <summary>每 10 毫秒一步推进 <paramref name="ms"/> 毫秒;<paramref name="pressAt"/> 里的 (时刻, 键) 在那一步按下技能键。</summary>
+    private static void RunSkills(RoomCombatSession s, int ms, params (int At, SkillKeys Keys)[] pressAt)
+    {
+        for (int t = 0; t < ms; t += 10)
+        {
+            SkillKeys keys = SkillKeys.None;
+            foreach ((int at, SkillKeys k) in pressAt)
+            {
+                if (at == t)
+                {
+                    keys |= k;
+                }
+            }
+            s.Update(10, 0, 0, false, false, keys);
+        }
+    }
+
+    [Fact]
+    public void TheUpperSlashKeyHitsWithTheThirdStagesBoxAndDamageBonusAndItsCooldownBlocksTheNextPress()
+    {
+        // 第三段(下标 2)的 [damage bonus] 是 +100%:25.3 × 2 = 50.6;普攻前两段是 0
+        var strikes = new[] { new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(100, 0, false) };
+        using var arena = new Arena(new[] { (340, 100) }, strikes, hp: 1000, frozen: true, chr: AvatarFixture.ActionChrPath, withSkills: true);
+        RoomCombatSession s = arena.Session;
+        HeroSkillSlot upper = s.Skills.SlotOf(SkillKeys.S);
+
+        long hitAt = -1;
+        for (int t = 0; t < 600; t += 10)
+        {
+            s.Update(10, 0, 0, false, false, t == 0 ? SkillKeys.S : SkillKeys.None);
+            if (s.Hits > 0 && hitAt < 0)
+            {
+                hitAt = s.Hero.MotionMs;
+            }
+        }
+        // 第三段的基础动画第 1 帧(200 到 400 毫秒)带攻击框;整段 400 毫秒挥完,同一击只算一次
+        Assert.InRange(hitAt, 200, 209);
+        Assert.Equal((1, 0), (s.Hits, s.Kills));
+        Assert.InRange(s.TotalDamage, 50, 51);
+        Assert.Equal(HeroMotion.Rest, s.Hero.Motion);
+
+        // 冷却 1778 毫秒:从按键起算 1000 毫秒时再按没有反应,过了 1778 毫秒才能再放
+        Assert.False(upper.Ready);
+        int hits = s.Hits;
+        RunSkills(s, 400, (0, SkillKeys.S));                             // 此时约 1000 毫秒:冷却中,按了没有反应
+        Assert.Equal((hits, HeroMotion.Rest), (s.Hits, s.Hero.Motion));
+        RunSkills(s, 800);                                               // 此时约 1800 毫秒:冷却好了
+        Assert.True(upper.Ready);
+        RunSkills(s, 600, (0, SkillKeys.S));                             // 再放一次,再命中一次
+        Assert.Equal(2, s.Hits);
+        Assert.Equal(HeroMotion.Rest, s.Hero.Motion);
+    }
+
+    [Fact]
+    public void ASkillKeyCancelsTheAttackAndJumpPressedInTheSameStep()
+    {
+        using var arena = new Arena(new[] { (340, 100) }, chr: AvatarFixture.ActionChrPath, withSkills: true);
+        RoomCombatSession s = arena.Session;
+        s.Update(10, 0, 0, true, true, SkillKeys.S);                      // 同一步按下 X、C、S:只放上挑
+        Assert.Equal((HeroMotion.Skill, AvatarFixture.UpperSlashSkill, false), (s.Hero.Motion, s.Hero.SkillId, s.Hero.IsAirborne));
+
+        // 技能放不出来(冷却中)时,这一步的攻击键照常生效
+        using var other = new Arena(new[] { (340, 100) }, chr: AvatarFixture.ActionChrPath, withSkills: true);
+        RunSkills(other.Session, 500, (0, SkillKeys.S));                  // 放一次上挑(400 毫秒挥完),冷却 1778 毫秒
+        Assert.Equal(HeroMotion.Rest, other.Session.Hero.Motion);
+        other.Session.Update(10, 0, 0, true, false, SkillKeys.S);
+        Assert.Equal(HeroMotion.Attack, other.Session.Hero.Motion);
+    }
+
+    [Fact]
+    public void TheHardAttackKeyPlaysItsMotionInPlaceAndHitsOnceWithItsOwnBoxAndSkillDamage()
+    {
+        // 动作 600 毫秒,第 2、3 帧(200 到 400 毫秒)各有一个攻击框;两帧的框都碰到怪物,同一击仍只算一次。
+        // 普攻的 [damage bonus] 故意给成 +2000%:如果误用普攻的数,伤害会是几百
+        var strikes = new[] { new HeroStrikeInfo(2000, 0, false), new HeroStrikeInfo(2000, 0, false), new HeroStrikeInfo(2000, 0, false) };
+        using var arena = new Arena(new[] { (340, 100) }, strikes, hp: 1000, frozen: true, chr: AvatarFixture.ActionChrPath, withSkills: true);
+        RoomCombatSession s = arena.Session;
+        HeroSkillSlot hard = s.Skills.SlotOf(SkillKeys.A);
+
+        long hitAt = -1;
+        for (int t = 0; t < 700; t += 10)
+        {
+            s.Update(10, 0, 0, false, false, t == 0 ? SkillKeys.A : SkillKeys.None);
+            if (s.Hits > 0 && hitAt < 0)
+            {
+                hitAt = s.Hero.MotionMs;
+            }
+        }
+        Assert.InRange(hitAt, 200, 209);
+        Assert.Equal((1, 0), (s.Hits, s.Kills));
+        // 伤害 = 技能基础值 × 百分比 / 100 + 固定值(一级:200%、40),小数部分按概率进位
+        double expected = PlaceholderDamage.SkillBaseHit * AvatarFixture.HardAttackRate / 100.0 + AvatarFixture.HardAttackFixed;
+        Assert.InRange(s.TotalDamage, (long)Math.Floor(expected), (long)Math.Floor(expected) + 1);
+        Assert.Equal((HeroMotion.Rest, (double)HeroX), (s.Hero.Motion, s.Hero.X));
+        Assert.InRange(hard.CooldownLeftMs, AvatarFixture.HardAttackCool - 691.0, AvatarFixture.HardAttackCool - 689.0);   // 冷却从按键那一步起算,之后又走了 69 步(690 毫秒)
+        Assert.False(hard.Ready);
+
+        // 冷却中再按没有反应
+        RunSkills(s, 100, (0, SkillKeys.A));
+        Assert.Equal((HeroMotion.Rest, 1), (s.Hero.Motion, s.Hits));
+        Assert.Equal(1, s.SkillCasts);                                      // 冷却中那一下不算放出
+    }
+
+    [Fact]
+    public void TheHardAttackKeyAlsoPlaysItsTwoEffectLayersInFrontOfTheHeroAndTheyEndOnTheirOwn()
+    {
+        using var arena = new Arena(new[] { (700, 100) }, hp: 1000, frozen: true, chr: AvatarFixture.ActionChrPath, withSkills: true);
+        RoomCombatSession s = arena.Session;
+        Assert.Empty(s.Effects);
+
+        s.Update(10, 0, 0, false, false, SkillKeys.A);
+        Assert.Equal(2, s.Effects.Count);
+        Assert.Equal(new[] { AvatarFixture.HardAttackEffect1, AvatarFixture.HardAttackEffect2 }, s.Effects.Select(e => e.Path).ToArray());
+        Assert.All(s.Effects, e => Assert.Equal((HeroX + HeroSkills.HardAttackEffectForwardX, HeroY, false), (e.X, e.Y, e.FacingLeft)));   // 主角朝右:放在世界 x 前方(右)
+
+        // 特效开头是 150 毫秒的空帧:前 150 毫秒画面里只有主角的精灵,之后才多出两层特效(主角的世界 y 是 100,特效的排序键 101)
+        int heroId = TownHero.ObjectId;
+        Assert.Contains(s.Build(0), x => x.NpcId == heroId);
+        Assert.DoesNotContain(s.Build(0), x => x.AnimationPath == AvatarFixture.HardAttackEffect1);
+        RunSkills(s, 150);
+        List<SceneSprite> drawn = s.Build(0);
+        SceneSprite plain = Assert.Single(drawn, x => x.AnimationPath == AvatarFixture.HardAttackEffect1);
+        SceneSprite glow = Assert.Single(drawn, x => x.AnimationPath == AvatarFixture.HardAttackEffect2);
+        Assert.Equal((SpriteBlend.Normal, SpriteBlend.Additive, HeroY + 1), (plain.Blend, glow.Blend, plain.SortKey));
+        // 画家排序之后特效排在主角的精灵后面(盖在前面)
+        int lastHero = drawn.FindLastIndex(x => x.NpcId == heroId);
+        Assert.True(drawn.IndexOf(plain) > lastHero);
+        Assert.True(drawn.IndexOf(glow) > lastHero);
+
+        RunSkills(s, 300);                                               // 350 毫秒的特效播完就从表里去掉
+        Assert.Empty(s.Effects);
+        Assert.DoesNotContain(s.Build(0), x => x.AnimationPath == AvatarFixture.HardAttackEffect1);
+
+        // 上挑、后跳没有特效
+        using var other = new Arena(new[] { (700, 100) }, chr: AvatarFixture.ActionChrPath, withSkills: true);
+        RunSkills(other.Session, 100, (0, SkillKeys.S));
+        Assert.Empty(other.Session.Effects);
+    }
+
+    [Fact]
+    public void TheHardAttackEffectsSitInFrontOfTheHeroWhicheverWayHeFaces()
+    {
+        using var arena = new Arena(new[] { (30, 100) }, hp: 1000, frozen: true, chr: AvatarFixture.ActionChrPath, withSkills: true);
+        RoomCombatSession s = arena.Session;
+        s.Update(50, -1, 0, false, false);                                 // 先往左走一小步,主角转向左
+        TownHero hero = s.Hero;
+        Assert.True(hero.FacingLeft);
+        s.Update(10, 0, 0, false, false, SkillKeys.A);
+        Assert.Equal(2, s.Effects.Count);
+        Assert.All(s.Effects, e => Assert.Equal((hero.X - HeroSkills.HardAttackEffectForwardX, hero.Y, true), (e.X, e.Y, e.FacingLeft)));
+    }
+
+    [Fact]
+    public void TheBackStepKeyHopsBackwardsWithoutHittingAnythingAndSessionsWithoutSkillsIgnoreTheKeys()
+    {
+        using var arena = new Arena(new[] { (340, 100) }, chr: AvatarFixture.ActionChrPath, withSkills: true);
+        RoomCombatSession s = arena.Session;
+        RunSkills(s, 100, (0, SkillKeys.D));
+        TownHero hero = s.Hero;
+        Assert.Equal((HeroMotion.Jump, true), (hero.Motion, hero.IsBackStep));
+        Assert.True(hero.X < HeroX);                                      // 朝右,往左退
+        Assert.True(hero.Z > 0);
+        RunSkills(s, 900);
+        Assert.Equal((HeroMotion.Rest, 0.0, 0), (hero.Motion, hero.Z, s.Hits));
+
+        using var bare = new Arena(new[] { (340, 100) }, chr: AvatarFixture.ActionChrPath);
+        Assert.Empty(bare.Session.Skills.Slots);
+        RunSkills(bare.Session, 100, (0, SkillKeys.D), (0, SkillKeys.S), (0, SkillKeys.A));
+        Assert.Equal(HeroMotion.Rest, bare.Session.Hero.Motion);
     }
 }

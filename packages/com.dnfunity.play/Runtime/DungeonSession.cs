@@ -24,7 +24,7 @@ namespace Dnf.Play
     /// 没做 / 没量过:客户端"走进出口就换房间"的触发代码(没有读到,触发条件是推断)、主角对象编号的来源(<see cref="HeroObjectId"/>)、淡入期间是否接受操作(现在接受)、
     /// 转场时怪物是否冻结(现在不冻结)、清房时站姿切换的确切时刻、结算界面。
     /// </summary>
-    public sealed class DungeonSession : IActionSession
+    public sealed class DungeonSession : ISkillSession
     {
         /// <summary>
         /// 没有碰撞体的左右出口的触发范围:主角离出口的横向距离不超过它(像素;近似,没有量过;真实数据里左右出口都有碰撞体)。
@@ -271,9 +271,15 @@ namespace Dnf.Play
         /// </summary>
         public void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed)
         {
+            Update(deltaMs, dirX, dirY, attackPressed, jumpPressed, SkillKeys.None);
+        }
+
+        /// <summary>同上,多一组技能键(A、S、D 的"刚按下"边沿,同样只在第一小步里生效);技能放在当前房间的战斗会话里(证据 E-076)。</summary>
+        public void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed, SkillKeys skillsPressed)
+        {
             if (deltaMs <= 0)
             {
-                StepOnce(0, dirX, dirY, attackPressed, jumpPressed);
+                StepOnce(0, dirX, dirY, attackPressed, jumpPressed, skillsPressed);
                 return;
             }
             double remaining = deltaMs;
@@ -281,17 +287,17 @@ namespace Dnf.Play
             while (remaining > 0)
             {
                 double step = remaining < RoomCombatSession.MaxStepMs ? remaining : RoomCombatSession.MaxStepMs;
-                StepOnce(step, dirX, dirY, first && attackPressed, first && jumpPressed);
+                StepOnce(step, dirX, dirY, first && attackPressed, first && jumpPressed, first ? skillsPressed : SkillKeys.None);
                 first = false;
                 remaining -= step;
             }
         }
 
-        private void StepOnce(double stepMs, int dirX, int dirY, bool attackPressed, bool jumpPressed)
+        private void StepOnce(double stepMs, int dirX, int dirY, bool attackPressed, bool jumpPressed, SkillKeys skillsPressed)
         {
             bool inTransition = _phase != Phase.None;
             CellState cell = _cells[CellY * Maze.Cols + CellX];
-            cell.Session.Update(stepMs, dirX, dirY, attackPressed, jumpPressed);
+            cell.Session.Update(stepMs, dirX, dirY, attackPressed, jumpPressed, skillsPressed);
             _clockMs += stepMs;
             if (!cell.Cleared && AllMonstersGone(cell.Session))
             {
@@ -409,8 +415,10 @@ namespace Dnf.Play
         private void Travel(GateSide side)
         {
             TownHero hero = Current.Hero;
+            HeroSkills carried = Current.Skills;
             Maze.TryNeighbor(CellX, CellY, side, out int nx, out int ny);
             Enter(nx, ny, true, ExitBits.Opposite(side), hero.FacingLeft);
+            Current.Skills.CopyCooldownsFrom(carried);   // 技能冷却不因换房间清零
             Transitions++;
         }
 

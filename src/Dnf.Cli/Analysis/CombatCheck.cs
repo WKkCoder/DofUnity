@@ -104,7 +104,7 @@ internal static class CombatCheck
         }
 
         Console.WriteLine();
-        Console.WriteLine("结束:主角 (" + F(session.Hero.X) + "," + F(session.Hero.Y) + "),命中 " + session.Hits + " 次,击杀 " + session.Kills + " 个,总伤害 " + session.TotalDamage
+        Console.WriteLine("结束:主角 (" + F(session.Hero.X) + "," + F(session.Hero.Y) + "),命中 " + session.Hits + " 次,放技能 " + session.SkillCasts + " 次,击杀 " + session.Kills + " 个,总伤害 " + session.TotalDamage
             + ",剩余 " + session.AliveCount + " 个");
         foreach (MonsterActor m in session.Monsters)
         {

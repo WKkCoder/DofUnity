@@ -82,6 +82,9 @@ namespace Dnf.Game
         /// <summary>[type] 的取值,如 "[active]"、"[passive]";没有时为 null。</summary>
         public string Type { get; }
 
+        /// <summary>有 [command](出招指令)标签:主动技能里能放进快捷槽、按指令放出的才有(证据 E-076:新建角色的初始技能表里,恰好是它们占了 A S D 三个快捷槽)。</summary>
+        public bool HasCommand { get; }
+
         public SkillDef(int id, string path, ScriptLine[] lines)
         {
             Id = id;
@@ -94,6 +97,7 @@ namespace Dnf.Game
             RequiredLevel = table.IntOr("[required level]", 0);
             MaximumLevel = table.IntOr("[maximum level]", 0);
             Type = table.FirstString("[type]");
+            HasCommand = table.Has("[command]");
 
             // 按出现顺序走一遍:[pvp] ... [/pvp] 之间的 [static data]/[level info] 属于决斗场,其余属于普通模式
             int[] pveStatic = Array.Empty<int>();

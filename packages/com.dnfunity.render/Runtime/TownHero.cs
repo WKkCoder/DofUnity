@@ -114,14 +114,22 @@ namespace Dnf.Render
 
         /// <summary>空中挥击([jumpattack motion]):每次跳跃一击,落地即结束。</summary>
         JumpAttack,
+
+        /// <summary>
+        /// 技能动作:鬼斩播放 .chr [etc motion] 里自己的动画(原地不动,<see cref="TownHero.BeginSkillMotion"/>);
+        /// 上挑(持短剑以外的武器时)就是连招第三段的动画与攻击信息整段打一遍(<see cref="TownHero.BeginSkillStrike"/>);后跳是跳跃状态的特殊参数,不走这个动作(<see cref="TownHero.BeginBackStep"/>)。
+        /// 另有"先挥普攻、播到指定帧再换成技能动画、可以滑行"的通用写法(<see cref="TownHero.BeginSkillWindup"/>、<see cref="TownHero.SkillSlideSpeed"/>),留给持别的武器时的上挑和以后的技能。
+        /// </summary>
+        Skill,
     }
 
-    /// <summary>当前这一击属于哪一类:连招里的普攻、奔跑攻击、跳跃攻击。</summary>
+    /// <summary>当前这一击属于哪一类:连招里的普攻、奔跑攻击、跳跃攻击、技能。</summary>
     public enum HeroAttackKind
     {
         Normal,
         Dash,
         Jump,
+        Skill,
     }
 
     /// <summary>主角的障碍物(出口的门框与墙):给出主角占位盒中心在 (x, y) 时压到的障碍(没有则 null),调用方用返回值判断顶着的是哪一个。</summary>
@@ -320,6 +328,23 @@ namespace Dnf.Render
         private string _jumpAttackPath;
         private AniTimeline _jumpAttackTimeline;
 
+        // 技能动作:.chr 的 [etc motion] 里按需载入的几段动画(键是小写文件名),与当前正在播的那一段
+        private sealed class EtcMotion
+        {
+            public AniFile Ani;
+            public string Path;
+            public AniTimeline Timeline;
+        }
+
+        private readonly Dictionary<string, EtcMotion> _etcMotions = new Dictionary<string, EtcMotion>(StringComparer.Ordinal);
+        private EtcMotion _skillMotion;
+        private int _skillWindupStage = -1;
+        private int _skillWindupUntilFrame;
+        private EtcMotion _skillThen;
+        private double _skillSlideV0;
+        private double _skillSlideAccel;
+        private double _skillSlideV;
+
         // 双击检测:上一帧的水平方向、最近一次按下的方向与距今的时间;本次更新里刚好完成了一次双击(只在这一次更新里有效)
         private int _prevDirX;
         private int _tapDir;
@@ -338,6 +363,10 @@ namespace Dnf.Render
         private bool _descending;
         private double _landingMs = -1;
         private bool _airAttackUsed;
+
+        // 后跳(BackStep):跳跃状态的另一种参数,没有蹲姿、水平速度恒定朝后、重力与起跳速度按跳跃速度属性 100 取、不能空中攻击
+        private bool _backStep;
+        private double _backStepVx;
 
         /// <summary>攻击动画的播放倍率。取 1.0(.ani 原速);原版连拍里没有量过攻击一击的时长(证据 E-069),角色脚本的 [attack speed] 与它的关系没有研究。</summary>
         public const double DefaultAttackAnimationRate = 1.0;
@@ -485,11 +514,29 @@ namespace Dnf.Render
         /// <summary>从开始玩起累计挥出的次数(每开始一击加 1)。命中判定用它给"同一击只打中同一目标一次"去重。</summary>
         public long SwingNumber { get; private set; }
 
-        /// <summary>是否正在挥击(连招、奔跑攻击或空中攻击)。</summary>
-        public bool IsAttacking => Motion == HeroMotion.Attack || Motion == HeroMotion.DashAttack || Motion == HeroMotion.JumpAttack;
+        /// <summary>是否正在挥击(连招、奔跑攻击、空中攻击或技能)。</summary>
+        public bool IsAttacking => Motion == HeroMotion.Attack || Motion == HeroMotion.DashAttack || Motion == HeroMotion.JumpAttack || Motion == HeroMotion.Skill;
 
         /// <summary>正在挥的这一击的种类;不在攻击时为 <see cref="HeroAttackKind.Normal"/>。</summary>
-        public HeroAttackKind AttackKind => Motion == HeroMotion.DashAttack ? HeroAttackKind.Dash : (Motion == HeroMotion.JumpAttack ? HeroAttackKind.Jump : HeroAttackKind.Normal);
+        public HeroAttackKind AttackKind => Motion == HeroMotion.DashAttack ? HeroAttackKind.Dash
+            : (Motion == HeroMotion.JumpAttack ? HeroAttackKind.Jump : (Motion == HeroMotion.Skill ? HeroAttackKind.Skill : HeroAttackKind.Normal));
+
+        /// <summary>正在放的技能编号(客户端的技能序号,例如上挑是 46);不在放技能时为 0。</summary>
+        public int SkillId { get; private set; }
+
+        /// <summary>技能还在起手阶段(先播普攻的第 <see cref="AttackStage"/> 段,播到指定帧才换成技能自己的动画)。</summary>
+        public bool SkillWindingUp => Motion == HeroMotion.Skill && _skillWindupStage >= 0;
+
+        /// <summary>当前技能动画的文件名(小写,形如 upperslashafter.ani);起手阶段与不在放技能时为 null。</summary>
+        public string SkillMotionName => Motion == HeroMotion.Skill && _skillWindupStage < 0 && _skillMotion != null ? FileNameOf(_skillMotion.Path) : null;
+
+        /// <summary>技能的水平滑行速度(像素/秒,沿朝向,已减速到此刻的值)。</summary>
+        public double SkillSlideSpeed => Motion == HeroMotion.Skill && _skillWindupStage < 0 ? _skillSlideV : 0.0;
+
+        private static string FileNameOf(string path)
+        {
+            return path.Substring(path.LastIndexOf('/') + 1).ToLowerInvariant();
+        }
 
         /// <summary>当前这一击的动画文件名(小写,形如 attack1.ani);不在攻击时为 null。</summary>
         public string AttackMotionFile
@@ -511,6 +558,9 @@ namespace Dnf.Render
                         break;
                     case HeroMotion.JumpAttack:
                         path = _jumpAttackPath;
+                        break;
+                    case HeroMotion.Skill:
+                        path = _skillWindupStage >= 0 ? _attackPaths[_skillWindupStage] : _skillMotion.Path;
                         break;
                     default:
                         return null;
@@ -574,6 +624,7 @@ namespace Dnf.Render
             hero.LoadBodySize(assets, chrPath);
             hero.LoadDashMotions(assets, chrPath);
             hero.LoadJumpMotions(assets, chrPath);
+            hero.LoadEtcMotions(assets, chrPath);
             return hero;
         }
 
@@ -588,6 +639,7 @@ namespace Dnf.Render
             hero.LoadBodySize(assets, chrPath);
             hero.LoadDashMotions(assets, chrPath);
             hero.LoadJumpMotions(assets, chrPath);
+            hero.LoadEtcMotions(assets, chrPath);
             return hero;
         }
 
@@ -642,12 +694,17 @@ namespace Dnf.Render
                 case HeroMotion.JumpAttack:
                     Motion = HeroMotion.Rest;   // 腾空状态有速度与相位,不能直接摆出来
                     break;
+                case HeroMotion.Skill:
+                    Motion = HeroMotion.Rest;   // 技能要指明是哪一段动画,见 PlaceSkillMotion
+                    break;
                 default:
                     Motion = motion;
                     break;
             }
             _motionMs = motionMs < 0 ? 0 : motionMs;
             AttackStage = 0;
+            SkillId = 0;
+            _skillWindupStage = -1;
             _attackQueued = false;
             _dashTrigger = false;
             if (RunArmed)
@@ -672,6 +729,8 @@ namespace Dnf.Render
             _descending = false;
             _landingMs = -1;
             _airAttackUsed = false;
+            _backStep = false;
+            _backStepVx = 0.0;
         }
 
         /// <summary>摆成"正在挥连招第 <paramref name="stage"/> 段、已播放 <paramref name="motionMs"/> 毫秒(按墙钟)"。没载入攻击动作时无效。</summary>
@@ -690,6 +749,372 @@ namespace Dnf.Render
             _motionMs = motionMs < 0 ? 0 : motionMs;
             _attackQueued = false;
             ResetAir();
+        }
+
+        // ---- 技能动作(.chr 的 [etc motion],证据 E-076) ----
+
+        private DnfAssets _etcAssets;
+        private string[] _etcPaths = Array.Empty<string>();
+
+        /// <summary>
+        /// 记下 .chr 的 [etc motion](一串 .ani,技能与特殊动作用,按序号取)。动画本身在第一次用到时才读,所以这里很便宜。
+        /// 没有这个标签就是空表。
+        /// </summary>
+        public void LoadEtcMotions(DnfAssets assets, string chrPath)
+        {
+            ScriptLine[] doc = ReadChr(assets, chrPath);
+            var paths = new List<string>();
+            foreach (ScriptLine line in doc)
+            {
+                if (!line.TagIs("[etc motion]"))
+                {
+                    continue;
+                }
+                foreach (ScriptValue v in line.Values)
+                {
+                    if (v.Kind == ScriptValueKind.String && !string.IsNullOrEmpty(v.Text))
+                    {
+                        paths.Add(PvfPath.ResolveRelativeTo(chrPath, v.Text));
+                    }
+                }
+                break;
+            }
+            _etcAssets = assets;
+            _etcPaths = paths.ToArray();
+            _etcMotions.Clear();
+        }
+
+        /// <summary>[etc motion] 的条目数。</summary>
+        public int EtcMotionCount => _etcPaths.Length;
+
+        /// <summary>[etc motion] 第 <paramref name="index"/> 项的 PVF 路径;越界返回 null。</summary>
+        public string EtcMotionPath(int index)
+        {
+            return (uint)index < (uint)_etcPaths.Length ? _etcPaths[index] : null;
+        }
+
+        /// <summary>按文件名(不分大小写,如 "hardattack.ani")找 [etc motion] 里的下标;没有返回 -1。技能按名字找动画,不依赖各角色的排列顺序(证据 E-076)。</summary>
+        public int EtcMotionIndexOf(string fileName)
+        {
+            if (string.IsNullOrEmpty(fileName))
+            {
+                return -1;
+            }
+            for (int i = 0; i < _etcPaths.Length; i++)
+            {
+                if (string.Equals(FileNameOf(_etcPaths[i]), fileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        private EtcMotion EtcAt(int index)
+        {
+            if ((uint)index >= (uint)_etcPaths.Length || _etcAssets == null)
+            {
+                return null;
+            }
+            return EtcByPath(_etcPaths[index]);
+        }
+
+        private EtcMotion EtcByPath(string path)
+        {
+            if (_etcAssets == null || string.IsNullOrEmpty(path))
+            {
+                return null;
+            }
+            if (_etcMotions.TryGetValue(path, out EtcMotion cached))
+            {
+                return cached;
+            }
+            AniFile ani = _etcAssets.LoadAni(path);
+            EtcMotion made = ani == null || ani.Frames.Length == 0 ? null : new EtcMotion { Ani = ani, Path = path, Timeline = new AniTimeline(ani) };
+            _etcMotions[path] = made;
+            return made;
+        }
+
+        /// <summary>[etc motion] 第 <paramref name="index"/> 项的墙钟时长(毫秒,已按播放倍率折算,向上取整);读不到返回 0。</summary>
+        public double EtcMotionDurationMs(int index)
+        {
+            EtcMotion m = EtcAt(index);
+            if (m == null)
+            {
+                return 0.0;
+            }
+            double rate = AttackAnimationRate > 0.0 ? AttackAnimationRate : 1.0;
+            return Math.Ceiling(m.Timeline.TotalMilliseconds / rate);
+        }
+
+        /// <summary>
+        /// 直接放一个技能:播 [etc motion] 第 <paramref name="etcIndex"/> 项,沿朝向以 <paramref name="slideSpeed"/>(像素/秒)起滑,
+        /// 加速度 <paramref name="slideAccel"/>(像素/秒²,通常为负),速度减到 0 为止。读不到动画时返回 false,不改变状态。
+        /// 只在地面站立、行走、奔跑时能放。
+        /// </summary>
+        public bool BeginSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel)
+        {
+            if (IsAirborne || IsAttacking)
+            {
+                return false;
+            }
+            EtcMotion m = EtcAt(etcIndex);
+            if (m == null)
+            {
+                return false;
+            }
+            StartSkill(skillId, -1, 0, m, slideSpeed, slideAccel);
+            return true;
+        }
+
+        /// <summary>
+        /// 放一个先挥普攻再换动画的技能(例如上挑):先播连招第 <paramref name="windupStage"/> 段,播到第 <paramref name="untilFrame"/> 帧
+        /// (动画帧号,从 0 数)就换成 [etc motion] 第 <paramref name="thenEtcIndex"/> 项,换的时候开始滑行。
+        /// 起手段的动画先播完而没到那一帧就直接结束。读不到动画时返回 false,不改变状态。
+        /// </summary>
+        public bool BeginSkillWindup(int skillId, int windupStage, int untilFrame, int thenEtcIndex, double slideSpeed, double slideAccel)
+        {
+            if (IsAirborne || IsAttacking || (uint)windupStage >= (uint)_attacks.Length)
+            {
+                return false;
+            }
+            EtcMotion then = EtcAt(thenEtcIndex);
+            if (then == null)
+            {
+                return false;
+            }
+            StartSkill(skillId, windupStage, untilFrame, then, slideSpeed, slideAccel);
+            return true;
+        }
+
+        /// <summary>
+        /// 把连招第 <paramref name="stage"/> 段整段当成一个技能打出来(上挑:持短剑以外的武器时,上挑就是第三击的动画与攻击信息,证据 E-076):
+        /// 朝向锁定、不接连招,播完回到站立。命中用这一段的攻击框与攻击信息(与普攻同一份)。
+        /// 只在地面站立、行走、奔跑时能放;没有这一段时返回 false,不改变状态。
+        /// </summary>
+        public bool BeginSkillStrike(int skillId, int stage)
+        {
+            if (IsAirborne || IsAttacking || (uint)stage >= (uint)_attacks.Length)
+            {
+                return false;
+            }
+            StartSkill(skillId, stage, int.MaxValue, null, 0.0, 0.0);
+            return true;
+        }
+
+        /// <summary>后跳时"跳跃速度属性"的取值:客户端的后跳参数(模式 1)把它当 100 算(证据 E-076)。</summary>
+        public const int BackStepJumpSpeedStat = 100;
+
+        /// <summary>后跳的重力加速度(像素/秒²):跳跃速度属性取 <see cref="BackStepJumpSpeedStat"/> 时的重力。</summary>
+        public double BackStepGravity => BackStepJumpSpeedStat * (EngineGroundGravity - MapGravityAdjust) / 100.0;
+
+        /// <summary>
+        /// 后跳的水平速度(像素/秒)= 奔跑速度表的水平值 × 角色脚本 [move speed](千分比,证据 E-076:副本里量到的后跳水平速度与它吻合,
+        /// 而城镇里标定的行走系数 <see cref="DefaultSpeedFactorX"/> 套上去快了近一倍);没有这个属性时退回 <see cref="SpeedFactorX"/>。
+        /// </summary>
+        public double BackStepSpeedX => EngineDashX * (MoveSpeedStat > 0 ? MoveSpeedStat / 1000.0 : SpeedFactorX);
+
+        /// <summary>正在后跳(跳跃状态的特殊参数,见 <see cref="BeginBackStep"/>)。</summary>
+        public bool IsBackStep => _backStep && Motion == HeroMotion.Jump;
+
+        /// <summary>
+        /// 后跳(技能 169,证据 E-076):客户端把它做成跳跃状态的一组特殊参数(阶段 1 腾空、模式 1 固定方向,第三个分量是 .skl 的 [static data] 第 0 个数,即起跳力 <paramref name="power"/>):
+        /// 没有起跳前的蹲姿,一放就腾空;起跳速度与重力都按"跳跃速度属性取 <see cref="BackStepJumpSpeedStat"/>"算;
+        /// 水平方向沿朝向的反方向匀速退(<see cref="BackStepSpeedX"/>),深度方向不动,腾空中不改方向、不能空中攻击;动画停在下落帧(最后一个停留帧);
+        /// 落地直接回到站立(基线里落地后下一张截图就是站立动画的第一帧,没有落地段)。
+        /// 只在地面站立、行走、奔跑时能放;没有跳跃动作时返回 false,不改变状态。
+        /// </summary>
+        public bool BeginBackStep(int skillId, double power)
+        {
+            if (_jump == null || IsAirborne || IsAttacking)
+            {
+                return false;
+            }
+            Motion = HeroMotion.Jump;
+            SkillId = skillId;
+            AttackStage = 0;
+            _motionMs = 0;
+            _attackQueued = false;
+            _prepMs = -1;
+            _airMs = 0;
+            _descendMs = 0;
+            _descending = false;
+            _landingMs = -1;
+            _airAttackUsed = true;
+            _backStep = true;
+            _backStepVx = (FacingLeft ? 1.0 : -1.0) * BackStepSpeedX;
+            _vz = TakeoffSpeed(power, WeightStat, BackStepJumpSpeedStat);
+            Z = 0;
+            return true;
+        }
+
+        /// <summary>后跳落地:直接回到站立。</summary>
+        private void FinishBackStep()
+        {
+            Motion = HeroMotion.Rest;
+            SkillId = 0;
+            Z = 0;
+            _vz = 0;
+            _descending = false;
+            _landingMs = -1;
+            _backStep = false;
+            _backStepVx = 0.0;
+            _motionMs = 0;
+        }
+
+        private void StartSkill(int skillId, int windupStage, int untilFrame, EtcMotion motion, double slideSpeed, double slideAccel)
+        {
+            Motion = HeroMotion.Skill;
+            SkillId = skillId;
+            AttackStage = windupStage < 0 ? 0 : windupStage;
+            _skillWindupStage = windupStage;
+            _skillWindupUntilFrame = untilFrame;
+            _skillMotion = windupStage < 0 ? motion : null;
+            _skillThen = motion;
+            _skillSlideV0 = slideSpeed;
+            _skillSlideAccel = slideAccel;
+            _skillSlideV = windupStage < 0 ? slideSpeed : 0.0;
+            _motionMs = 0;
+            _attackQueued = false;
+            SwingNumber++;
+        }
+
+        /// <summary>摆成"正在放技能的主体阶段,动画是 [etc motion] 第 <paramref name="etcIndex"/> 项,已播放 <paramref name="motionMs"/> 毫秒(按墙钟)"。读不到动画时摆成站立。</summary>
+        public void PlaceSkillMotion(double x, double y, bool facingLeft, int skillId, int etcIndex, long motionMs)
+        {
+            PlaceSkillMotion(x, y, facingLeft, skillId, EtcAt(etcIndex), motionMs);
+        }
+
+        /// <summary>同 <see cref="PlaceSkillMotion(double, double, bool, int, int, long)"/>,动画直接按 PVF 路径给(分析用:在全部动画里找与截图吻合的那一个)。</summary>
+        public void PlaceSkillMotion(double x, double y, bool facingLeft, int skillId, string aniPath, long motionMs)
+        {
+            PlaceSkillMotion(x, y, facingLeft, skillId, EtcByPath(aniPath), motionMs);
+        }
+
+        /// <summary>同上,按帧号给:摆成这个动画的第 <paramref name="frame"/> 帧刚开始(分析用)。</summary>
+        public void PlaceSkillFrame(double x, double y, bool facingLeft, int skillId, string aniPath, int frame)
+        {
+            EtcMotion m = EtcByPath(aniPath);
+            long ms = m == null ? 0 : (long)Math.Ceiling(m.Timeline.StartMs(Math.Max(0, Math.Min(frame, m.Timeline.FrameCount - 1))) * (AttackAnimationRate > 0.0 ? 1.0 / AttackAnimationRate : 1.0));
+            PlaceSkillMotion(x, y, facingLeft, skillId, m, ms);
+        }
+
+        private void PlaceSkillMotion(double x, double y, bool facingLeft, int skillId, EtcMotion m, long motionMs)
+        {
+            if (m == null)
+            {
+                Place(x, y, facingLeft, HeroMotion.Rest, motionMs);
+                return;
+            }
+            X = x;
+            Y = y;
+            FacingLeft = facingLeft;
+            Motion = HeroMotion.Skill;
+            SkillId = skillId;
+            AttackStage = 0;
+            _skillWindupStage = -1;
+            _skillMotion = m;
+            _skillThen = m;
+            _skillSlideV0 = 0;
+            _skillSlideAccel = 0;
+            _skillSlideV = 0;
+            _motionMs = motionMs < 0 ? 0 : motionMs;
+            _attackQueued = false;
+            ResetAir();
+        }
+
+        /// <summary>
+        /// 技能这一步:起手阶段播普攻动画,播到指定帧就换成技能自己的动画(新动画从头播,换动画那一步不带余量);
+        /// 主体阶段沿朝向滑行,速度按 v(t) = max(0, v0 + a·t) 变化,受可走区域与障碍限制;动画播完回到站立。
+        /// </summary>
+        private void AdvanceSkill(double deltaMs)
+        {
+            if (_skillWindupStage >= 0)
+            {
+                _motionMs += deltaMs;
+                int frame = _attackTimelines[_skillWindupStage].FrameAt(AttackAnimationMs);
+                if (frame >= _skillWindupUntilFrame)
+                {
+                    _skillMotion = _skillThen;
+                    _skillWindupStage = -1;
+                    _skillSlideV = _skillSlideV0;
+                    _motionMs = 0;
+                    SwingNumber++;
+                    return;
+                }
+                if (_motionMs >= AttackDurationMs(_skillWindupStage))
+                {
+                    FinishSkill();
+                }
+                return;
+            }
+            double from = _motionMs;
+            _motionMs += deltaMs;
+            double duration = EtcDurationMs(_skillMotion);
+            double t0 = Math.Min(from, duration);
+            double t1 = Math.Min(_motionMs, duration);
+            if (t1 > t0 && _skillSlideV0 != 0.0)
+            {
+                double distance = SlideDistance(_skillSlideV0, _skillSlideAccel, t0, t1);
+                X = MoveAxis(X, (FacingLeft ? -1.0 : 1.0) * distance, true);
+            }
+            _skillSlideV = SlideSpeedAt(_skillSlideV0, _skillSlideAccel, t1);
+            if (_motionMs >= duration)
+            {
+                FinishSkill();
+            }
+        }
+
+        private double EtcDurationMs(EtcMotion m)
+        {
+            double rate = AttackAnimationRate > 0.0 ? AttackAnimationRate : 1.0;
+            return Math.Ceiling(m.Timeline.TotalMilliseconds / rate);
+        }
+
+        private void FinishSkill()
+        {
+            Motion = HeroMotion.Rest;
+            AttackStage = 0;
+            SkillId = 0;
+            _skillWindupStage = -1;
+            _skillMotion = null;
+            _skillSlideV = 0.0;
+            _attackQueued = false;
+            _motionMs = 0;
+        }
+
+        /// <summary>滑行速度 v(t) = max(0, v0 + a·t)(t 为毫秒,a 为像素/秒²,v 为像素/秒);v0 与 a 同向减速到 0 就停住,不会反向。</summary>
+        public static double SlideSpeedAt(double v0, double accel, double ms)
+        {
+            double v = v0 + accel * ms / 1000.0;
+            if (v0 >= 0.0)
+            {
+                return v < 0.0 ? 0.0 : v;
+            }
+            return v > 0.0 ? 0.0 : v;
+        }
+
+        /// <summary>从 <paramref name="ms0"/> 到 <paramref name="ms1"/> 毫秒之间滑行的距离(像素,带符号,与 v0 同号),速度减到 0 就不再增加。</summary>
+        public static double SlideDistance(double v0, double accel, double ms0, double ms1)
+        {
+            if (ms1 <= ms0)
+            {
+                return 0.0;
+            }
+            if (accel != 0.0 && (v0 > 0.0) == (accel < 0.0) && v0 != 0.0)
+            {
+                double stopMs = -v0 / accel * 1000.0;   // 速度减到 0 的时刻
+                if (ms0 >= stopMs)
+                {
+                    return 0.0;
+                }
+                if (ms1 > stopMs)
+                {
+                    ms1 = stopMs;
+                }
+            }
+            double s0 = ms0 / 1000.0, s1 = ms1 / 1000.0;
+            return v0 * (s1 - s0) + 0.5 * accel * (s1 * s1 - s0 * s0);
         }
 
         /// <summary>
@@ -1001,6 +1426,9 @@ namespace Dnf.Render
                 case HeroMotion.DashAttack:
                     AdvanceDashAttack(deltaMs);
                     return;
+                case HeroMotion.Skill:
+                    AdvanceSkill(deltaMs);
+                    return;
                 case HeroMotion.Jump:
                 case HeroMotion.JumpAttack:
                     AdvanceAir(deltaMs, dirX, dirY, attackPressed);
@@ -1242,16 +1670,21 @@ namespace Dnf.Render
                 _motionMs += deltaMs;
             }
             double seconds = deltaMs / 1000.0;
-            if (dirX != 0 && Motion == HeroMotion.Jump)
+            if (dirX != 0 && Motion == HeroMotion.Jump && !_backStep)
             {
                 FacingLeft = dirX < 0;
             }
             bool diagonal = dirX != 0 && dirY != 0;
             double vx = dirX * (diagonal ? EngineWalkDiagonalX : EngineWalkX) * SpeedFactorX;
             double vy = dirY * (diagonal ? EngineAirDiagonalY : EngineAirY) * SpeedFactorY;
+            if (_backStep)
+            {
+                vx = _backStepVx;   // 后跳:方向在起跳时定下,腾空中不受方向键影响
+                vy = 0.0;
+            }
             X = MoveAxis(X, vx * seconds, true);
             Y = MoveAxis(Y, vy * seconds, false);
-            double g = JumpGravity;
+            double g = _backStep ? BackStepGravity : JumpGravity;
             double z0 = Z, v0 = _vz;
             Z += v0 * seconds - 0.5 * g * seconds * seconds;
             _vz -= g * seconds;
@@ -1262,6 +1695,11 @@ namespace Dnf.Render
             }
             if (Z <= 0 && _vz < 0)
             {
+                if (_backStep)
+                {
+                    FinishBackStep();
+                    return;
+                }
                 // 步内精确的触地时刻:z0 + v0 t − g t² / 2 = 0 的正根;之后的时间算在落地段里
                 double leftover = 0.0;
                 if (g > 0)
@@ -1441,6 +1879,8 @@ namespace Dnf.Render
                         return _dash;
                     case HeroMotion.DashAttack:
                         return _dashAttack;
+                    case HeroMotion.Skill:
+                        return _skillWindupStage >= 0 ? _attacks[_skillWindupStage] : _skillMotion.Ani;
                     case HeroMotion.Jump:
                         return _jump;
                     case HeroMotion.JumpAttack:
@@ -1465,6 +1905,8 @@ namespace Dnf.Render
                         return _dashPath;
                     case HeroMotion.DashAttack:
                         return _dashAttackPath;
+                    case HeroMotion.Skill:
+                        return _skillWindupStage >= 0 ? _attackPaths[_skillWindupStage] : _skillMotion.Path;
                     case HeroMotion.Jump:
                         return _jumpPath;
                     case HeroMotion.JumpAttack:
@@ -1489,6 +1931,8 @@ namespace Dnf.Render
                         return _dashTimeline.FrameAt((long)(_motionMs * MoveAnimationRate));
                     case HeroMotion.DashAttack:
                         return _dashAttackTimeline.FrameAt(AttackAnimationMs);
+                    case HeroMotion.Skill:
+                        return (_skillWindupStage >= 0 ? _attackTimelines[_skillWindupStage] : _skillMotion.Timeline).FrameAt(AttackAnimationMs);
                     case HeroMotion.JumpAttack:
                         return _jumpAttackTimeline.FrameAt(AttackAnimationMs);
                     case HeroMotion.Jump:
@@ -1507,6 +1951,11 @@ namespace Dnf.Render
         private int JumpFrame()
         {
             AniTimeline t = _jumpTimeline;
+            if (_backStep)
+            {
+                // 后跳的姿势:基线里整个腾空期间都是同一张图,与跳跃动画的末尾停留帧(下落帧一路播到的最后一帧)是同一张
+                return PhasedJump ? _jumpHold2 : Math.Max(0, t.FrameCount - 1);
+            }
             if (!PhasedJump)
             {
                 return t.FrameAt(_landingMs >= 0 ? t.TotalMilliseconds : (long)_airMs);
@@ -1543,6 +1992,25 @@ namespace Dnf.Render
     public interface IActionSession : IHeroSession
     {
         void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed);
+    }
+
+    /// <summary>
+    /// 技能快捷键(原版默认键位里 A、S、D 是前三个技能快捷槽,证据 E-072、E-076):一次更新里"刚按下"的键。
+    /// 槽里放什么技能由角色的初始技能表决定(<c>HeroSkills</c>)。
+    /// </summary>
+    [Flags]
+    public enum SkillKeys
+    {
+        None = 0,
+        A = 1,
+        S = 2,
+        D = 4,
+    }
+
+    /// <summary>带技能快捷键的场景游戏(副本房间里的战斗):同 <see cref="IActionSession"/>,每帧多一组"刚按下"的技能键。</summary>
+    public interface ISkillSession : IActionSession
+    {
+        void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed, SkillKeys skillsPressed);
     }
 
     /// <summary>

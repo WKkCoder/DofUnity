@@ -32,13 +32,15 @@ namespace Dnf.Client
     /// 带 -dnfshot 时只离屏渲染一帧写成 PNG 就退出(用来和 CPU 合成器逐字节对照,见 tools/unity-build-town.sh);
     /// 这时默认不画主角,带 -dnfhero 才把主角摆到指定的位置、朝向与动作进度(与 dnf render-town --scene --hero 同一写法)。
     /// 带 -dnfquitafter 时实时运行指定秒数后退出,并在日志里留一行 DNF_TOWN_DEMO ran …(用来在无窗口的环境里检查实时循环)。
-    /// 带 -dnfautowalk 时不读键盘,按"开始运行后第几秒:动作"的时间表替主角按键(方向 left、right、up、down、none,可用 + 组合,再加 attack 表示按一下攻击键;
+    /// 带 -dnfautowalk 时不读键盘,按"开始运行后第几秒:动作"的时间表替主角按键(方向 left、right、up、down、none,可用 + 组合,再加 attack、jump 表示按一下攻击、跳跃键,a、s、d 表示按一下技能键;
     /// 见 <see cref="CombatScript"/>),用来无人值守地验证走动、撞墙、镜头跟随与挥击(例如 -dnfautowalk 0.5:left,3:none,3.2:attack)。-dnfnohero 完全不带主角。
     /// 副本房间默认带怪物(-dnfnomonsters 去掉);离屏渲染一帧时默认不带(与 CPU 合成的参照一致),带 -dnfmonsters 才画。
     /// 带 -dnfplayat &lt;秒&gt; 与 -dnfshot 时,离屏渲染前先让房间战斗按 -dnfautowalk 的时间表以固定 1/60 秒步长确定地模拟到这一刻(此时自动带怪物与主角),
     /// 与命令行 combat-check 同一份模拟,用来把战斗中的一帧与 CPU 合成逐字节对照(见 tools/unity-build-town.sh)。
     /// 副本同理:-dnfdungeon -dnfbot -dnfplayat &lt;秒&gt; -dnfshot 先让自动机按固定 1/60 秒步长打到这一刻,与命令行 dungeon-check --bot --shots-at 对照。
-    /// 按键:方向键 走动(按住);X 普攻(连按接下一段);空格 暂停/继续;暂停时左右方向键按 50 毫秒步进动画时间;H 显示/隐藏文字;Esc 退出;点击/触摸 暂停/继续。
+    /// 按键(副本房间里的主角,按原版默认键位,证据 E-072、E-076):方向键 走动(按住;同方向再按一下接着按住 = 奔跑);X 普攻(连按接下一段);C 跳跃;
+    /// A S D 前三个技能快捷槽(新建的剑士是鬼斩、上挑、后跳,各有冷却);Z 与原版的另一个快捷槽没有确认绑什么,不响应。
+    /// 空格 暂停/继续;暂停时左右方向键按 50 毫秒步进动画时间;H 显示/隐藏文字;Esc 退出;点击/触摸 暂停/继续。
     /// 画面以整数倍放大并居中(留黑边),所以与原版 800×600 像素一一对应、不糊。
     /// </summary>
     public sealed class TownDemo : MonoBehaviour
@@ -401,7 +403,7 @@ namespace Dnf.Client
                 + (IsRoomSession ? " room=true" : "")
                 + (_session is RoomCombatSession fight
                     ? " monsters=" + fight.AliveCount + "/" + fight.Monsters.Count + " hits=" + fight.Hits + " kills=" + fight.Kills + " combo=" + fight.Combo
-                        + " stage=" + (h.IsAttacking ? h.AttackStage + 1 : 0)
+                        + " casts=" + fight.SkillCasts + " stage=" + (h.IsAttacking ? h.AttackStage + 1 : 0)
                     : string.Empty)
                 + (_session is DungeonSession d
                     ? " dungeon=" + _dungeonPath + " cell=(" + d.CellX + "," + d.CellY + ") map=" + d.MapPath + " entered=" + d.RoomsEntered + " cleared=" + d.RoomsCleared
@@ -480,11 +482,16 @@ namespace Dnf.Client
                     {
                         int dirX = 0, dirY = 0;
                         bool attack = false, jump = false;
+                        SkillKeys skills = SkillKeys.None;
                         if (_heroInput)
                         {
-                            attack = ReadHeroInput(out dirX, out dirY, out jump);
+                            attack = ReadHeroInput(out dirX, out dirY, out jump, out skills);
                         }
-                        if (_session is IActionSession action)
+                        if (_session is ISkillSession skillSession)
+                        {
+                            skillSession.Update(deltaMs, dirX, dirY, attack, jump, skills);
+                        }
+                        else if (_session is IActionSession action)
                         {
                             action.Update(deltaMs, dirX, dirY, attack, jump);
                         }
@@ -515,14 +522,16 @@ namespace Dnf.Client
         /// <summary>
         /// 方向键(或 -dnfautowalk 的时间表)当前的状态:-1/0/1;返回这一帧有没有"刚按下攻击键"(X 键,或时间表里到点的 attack),
         /// <paramref name="jump"/> 是这一帧有没有"刚按下跳跃键"(C 键,或时间表里到点的 jump)。
-        /// 按原版的默认键位(clientonly/hotkeysystem.co,证据 E-072):X 普通攻击、C 跳跃;Z 与空格是"技能"槽,技能系统还没做,所以不响应。
+        /// 按原版的默认键位(clientonly/hotkeysystem.co,证据 E-072):X 普通攻击、C 跳跃、A S D 是前三个技能快捷槽(鬼斩、上挑、后跳,证据 E-076);
+        /// Z 与空格也是技能槽,但原版里它们绑什么技能没有确认,所以不响应(空格在本演示里是暂停)。
         /// </summary>
-        private bool ReadHeroInput(out int dirX, out int dirY, out bool jump)
+        private bool ReadHeroInput(out int dirX, out int dirY, out bool jump, out SkillKeys skills)
         {
             jump = false;
+            skills = SkillKeys.None;
             if (!_script.IsEmpty)
             {
-                return _script.Poll((Time.realtimeSinceStartup - _runningSince) * 1000.0, out dirX, out dirY, out jump);
+                return _script.Poll((Time.realtimeSinceStartup - _runningSince) * 1000.0, out dirX, out dirY, out jump, out skills);
             }
             dirX = 0;
             dirY = 0;
@@ -531,6 +540,9 @@ namespace Dnf.Client
             if (Input.GetKey(KeyCode.UpArrow)) { dirY -= 1; }
             if (Input.GetKey(KeyCode.DownArrow)) { dirY += 1; }
             jump = Input.GetKeyDown(KeyCode.C);
+            if (Input.GetKeyDown(KeyCode.A)) { skills |= SkillKeys.A; }
+            if (Input.GetKeyDown(KeyCode.S)) { skills |= SkillKeys.S; }
+            if (Input.GetKeyDown(KeyCode.D)) { skills |= SkillKeys.D; }
             return Input.GetKeyDown(KeyCode.X);
         }
 
@@ -677,6 +689,33 @@ namespace Dnf.Client
             }
         }
 
+        /// <summary>技能快捷槽一行文字:键、技能编号、冷却(没实现的标 n/a)。</summary>
+        private static string SkillsText(HeroSkills skills)
+        {
+            if (skills == null || skills.Slots.Count == 0)
+            {
+                return string.Empty;
+            }
+            var sb = new System.Text.StringBuilder("skills");
+            foreach (HeroSkillSlot s in skills.Slots)
+            {
+                sb.Append("  ").Append(s.Key.ToString()).Append(" #").Append(s.SkillId);
+                if (!HeroSkills.IsImplemented(s.SkillId))
+                {
+                    sb.Append(" n/a");
+                }
+                else if (s.Ready)
+                {
+                    sb.Append(" ready");
+                }
+                else
+                {
+                    sb.Append(' ').Append((s.CooldownLeftMs / 1000.0).ToString("F1", System.Globalization.CultureInfo.InvariantCulture)).Append('s');
+                }
+            }
+            return sb.Append('\n').ToString();
+        }
+
         private void DrawHud()
         {
             float pad = 12f;
@@ -701,15 +740,23 @@ namespace Dnf.Client
                     hero += "monsters alive " + fight.AliveCount + "/" + fight.Monsters.Count + "  hits " + fight.Hits + "  kills " + fight.Kills
                         + "  combo " + fight.Combo + "  damage " + fight.TotalDamage + "\n";
                 }
+                if (_session is DungeonSession skillDungeon)
+                {
+                    hero += SkillsText(skillDungeon.Current.Skills);
+                }
+                else if (_session is RoomCombatSession skillFight)
+                {
+                    hero += SkillsText(skillFight.Skills);
+                }
                 if (_session is DungeonSession)
                 {
-                    help = (_bot != null ? "Auto-play bot is driving (bot input only)   " : "Arrow keys: walk (double-tap Left/Right: run)   X: attack (again to chain; while running: dash attack)   C: jump (X in the air: jump attack)   ")
-                        + "Space: pause   H: hide text   Esc: quit   (clear a room to open its gates, then walk into a gate; placeholder damage; monsters do not hurt you; Z/Space skills not implemented)";
+                    help = (_bot != null ? "Auto-play bot is driving (bot input only)   " : "Arrow keys: walk (double-tap Left/Right: run)   X: attack (again to chain; while running: dash attack)   C: jump (X in the air: jump attack)   A: Hard Attack   S: Upper Slash   D: Back Step   ")
+                        + "Space: pause   H: hide text   Esc: quit   (clear a room to open its gates, then walk into a gate; placeholder damage; no MP; monsters do not hurt you; Z/Space not bound)";
                 }
                 else
                 {
                     help = _session is RoomCombatSession
-                        ? "Arrow keys: walk (double-tap Left/Right: run)   X: attack (again to chain; while running: dash attack)   C: jump (X in the air: jump attack)   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (placeholder damage; monsters do not hurt you)"
+                        ? "Arrow keys: walk (double-tap Left/Right: run)   X: attack (again to chain; while running: dash attack)   C: jump (X in the air: jump attack)   A: Hard Attack   S: Upper Slash   D: Back Step   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (placeholder damage; no MP; monsters do not hurt you)"
                         : "Arrow keys: walk   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (no UI, no combat)";
                 }
             }
