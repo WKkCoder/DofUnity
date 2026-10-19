@@ -57,6 +57,9 @@ internal static class DungeonCheck
         LogEnter(0, session, null);
 
         double totalMs = seconds * 1000.0;
+        double baseFrameMs = opts.FrameMs > 0 ? opts.FrameMs : CombatScript.StepMs;
+        var jitterRandom = opts.Jitter > 0 ? new Random(opts.Seed * 7919 + 13) : null;
+        double frameMs = baseFrameMs;
         double t = 0;
         int shotIndex = 0;
         int lastCell = session.CellY * maze.Cols + session.CellX;
@@ -64,20 +67,23 @@ internal static class DungeonCheck
         string lastClearText = string.Empty;
         while (t < totalMs && !session.Finished)
         {
-            bool attack;
-            int dx, dy;
+            int fromX = session.CellX, fromY = session.CellY;
+            double fromHeroY = session.Hero.Y;
+            if (jitterRandom != null)
+            {
+                frameMs = baseFrameMs * (1.0 + opts.Jitter * (jitterRandom.NextDouble() * 2.0 - 1.0));
+            }
             if (opts.Bot)
             {
-                attack = bot.Next(session, out dx, out dy);
+                // 与播放器同一个办法:自动机按固定的 1/60 秒心跳补步,所以 --frame-ms、--jitter 不会改变它打出的这一局
+                bot.Advance(session, frameMs);
             }
             else
             {
-                attack = script.Poll(t, out dx, out dy);
+                bool attack = script.Poll(t, out int dx, out int dy, out bool jump);
+                session.Update(frameMs, dx, dy, attack, jump);
             }
-            int fromX = session.CellX, fromY = session.CellY;
-            double fromHeroY = session.Hero.Y;
-            session.Update(CombatScript.StepMs, dx, dy, attack);
-            t += CombatScript.StepMs;
+            t += frameMs;
 
             if (session.RoomsCleared != lastCleared)
             {
@@ -95,7 +101,7 @@ internal static class DungeonCheck
                 LogEnter(t, session, (fromX, fromY, fromHeroY));
                 lastCell = cell;
             }
-            if (opts.Trace && (long)(t / 1000.0) != (long)((t - CombatScript.StepMs) / 1000.0))
+            if (opts.Trace && (long)(t / 1000.0) != (long)((t - frameMs) / 1000.0))
             {
                 Console.WriteLine("  [跟踪 " + Sec(t) + "s] 格 (" + session.CellX + "," + session.CellY + ") 主角 (" + F(session.Hero.X) + "," + F(session.Hero.Y)
                     + ") 怪物剩 " + session.Current.AliveCount + "/" + session.Current.Monsters.Count + " 命中 " + session.Hits);

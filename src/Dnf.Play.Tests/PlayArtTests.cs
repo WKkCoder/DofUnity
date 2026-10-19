@@ -154,6 +154,29 @@ public class PlayArtTests
     }
 
     [Fact]
+    public void AnOverlaySpriteCanCarryATintAlphaAndASolidBlockIsCachedPerSizeAndColour()
+    {
+        var art = new OverlayArt();
+        SpriteFrame block = art.Solid(8, 4, 0x102030u);
+        Assert.Equal((8, 4, 0, 0), (block.Width, block.Height, block.OffsetX, block.OffsetY));
+        Assert.Equal(8 * 4 * 4, block.Rgba.Length);
+        for (int i = 0; i < 8 * 4; i++)
+        {
+            Assert.Equal(new byte[] { 0x10, 0x20, 0x30, 255 }, block.Rgba.Skip(i * 4).Take(4).ToArray());
+        }
+        Assert.Same(block, art.Solid(8, 4, 0x102030u));                  // 同样的尺寸与颜色:同一个对象
+        Assert.NotSame(block, art.Solid(8, 4, 0x102031u));
+        Assert.NotSame(block, art.Solid(4, 8, 0x102030u));
+        Assert.Throws<ArgumentOutOfRangeException>(() => art.Solid(0, 4, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => art.Solid(4, 0, 0));
+
+        // 换房间的黑幕:整屏的黑色块,按 tintAlpha 变浓变淡(证据 E-071 的混合模型)
+        SceneSprite fade = OverlayArt.Place(art.Solid(800, 600, OverlayArt.Black), 0, 0, 3, "fade", 128);
+        Assert.Equal((128, SpriteBlend.Normal, OverlayArt.UiRank, 3), (fade.TintAlpha, fade.Blend, fade.LayerRank, fade.SortKey));
+        Assert.Equal(255, OverlayArt.Place(block, 0, 0).TintAlpha);       // 默认原样不透明
+    }
+
+    [Fact]
     public void PlaceholderDamageScalesByTheBonusAndRoundsRandomlyAroundTheFraction()
     {
         // 25.3 × 0.85 = 21.505:只会出 21 或 22,平均 21.505

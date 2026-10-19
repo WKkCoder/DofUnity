@@ -18,6 +18,12 @@ public class DungeonSessionTests
     private const int HeroX = 300;
     private const int HeroY = 100;
 
+    // 带碰撞体的合成出口:左边的墙占 x ∈ [16, 80),右边的墙占 x ∈ [1072, 1120);主角占位盒半宽 26 → 贴住墙时 x = 106(左)与 1046(右)
+    private const int LeftWedgeColumns = 4;
+    private const int RightWedgeColumns = 3;
+    private const double BesideLeftWallX = 16 + LeftWedgeColumns * 16 + GateBody.HeroHalfWidth;
+    private const double BesideRightWallX = 1104 - 13 * 16 + (14 - RightWedgeColumns) * 16 - GateBody.HeroHalfWidth;
+
     private static ScriptLine Line(string tag, params int[] numbers)
     {
         var values = new ScriptValue[numbers.Length];
@@ -67,6 +73,7 @@ public class DungeonSessionTests
         private readonly AvatarFixture _fx = new AvatarFixture();
         private readonly Func<int, int, (int X, int Y)[]> _monstersOf;
         private readonly int _hp;
+        private readonly bool _bodies;
 
         public DnfAssets Assets { get; }
         public DungeonLayout Layout { get; }
@@ -75,13 +82,33 @@ public class DungeonSessionTests
         /// <summary>每格的房间只造一次(会话也只会造一次),方便测试直接取到房间里的对象。</summary>
         public Dictionary<(int X, int Y), RoomCombatSession> Rooms { get; } = new();
 
-        public Dungeon(DungeonLayout layout, Func<int, int, (int X, int Y)[]> monstersOf, int hp = 10)
+        /// <summary>
+        /// <paramref name="bodies"/> 为真时给左右出口装上合成的碰撞体:左边是 4 列宽的墙(x 从 16 到 80),右边是 3 列宽的墙(x 从 1072 到 1120),行数覆盖整个房间;
+        /// 为假时出口没有碰撞体(退回近似的触发与固定的到达偏移)。
+        /// </summary>
+        public Dungeon(DungeonLayout layout, Func<int, int, (int X, int Y)[]> monstersOf, int hp = 10, bool bodies = false)
         {
             Assets = DnfAssets.Open(_fx.Root);
             Layout = layout;
             _monstersOf = monstersOf;
             _hp = hp;
+            _bodies = bodies;
             Session = new DungeonSession(layout, Build);
+        }
+
+        /// <summary>整个房间高(30 行,y 从 0 到 360)的墙:左边的墙占前 <see cref="LeftWedgeColumns"/> 列,右边的墙占最后 <see cref="RightWedgeColumns"/> 列。</summary>
+        private static TileFile WallTile(GateSide side)
+        {
+            var pass = new byte[14 * 30];
+            for (int r = 0; r < 30; r++)
+            {
+                for (int c = 0; c < 14; c++)
+                {
+                    bool solid = side == GateSide.Left ? c < LeftWedgeColumns : c >= 14 - RightWedgeColumns;
+                    pass[r * 14 + c] = solid ? (byte)2 : (byte)0;
+                }
+            }
+            return new TileFile("wall", new List<KeyValuePair<string, int>>(), 80, pass);
         }
 
         private RoomCombatSession Build(int cx, int cy)
@@ -102,7 +129,13 @@ public class DungeonSessionTests
                     continue;
                 }
                 int[] p = gatePos[(int)side];
-                gates.Add(new RoomGate(Assets, new GateObject(800 + (int)side, "x.obj", "[normal]", new List<GatePart>(), null), side, p[0], p[1]));
+                var gate = new RoomGate(Assets, new GateObject(800 + (int)side, "x.obj", "[normal]", new List<GatePart>(), null), side, p[0], p[1]);
+                if (_bodies && (side == GateSide.Left || side == GateSide.Right))
+                {
+                    // 锚点:左边的墙在 (0 列, 10 行),右边在 (13 列, 10 行) → 通行格的左上角是 (出口 x − 列 × 16, 0)
+                    gate.SetBody(WallTile(side), side == GateSide.Left ? 0 : 13, 10);
+                }
+                gates.Add(gate);
             }
             var content = new RoomContent(map, null, null, null, gates);
             AvatarClass cls = AvatarClass.FromChr(Assets, AvatarFixture.ChrPath, AvatarFixture.JobTag);
@@ -110,6 +143,7 @@ public class DungeonSessionTests
             TownHero hero = TownHero.Create(Assets, AvatarFixture.ChrPath, outfit, new RoomWalkArea(map), HeroX, HeroY, false);
             hero.LoadBattleRest(Assets, AvatarFixture.ChrPath);
             hero.BattleStance = true;
+            hero.Blocker = new GateBodies(gates);
             var room = new RoomSession(Assets, content, hero, new TownCamera(0, map.MaxCameraX, hero.X));
 
             MonsterModel model = MonsterModel.Read(Assets, AvatarFixture.BlobMobPath);
@@ -297,20 +331,196 @@ public class DungeonSessionTests
         s.Hero.Place(560, 300, true, HeroMotion.Rest, 0);                // 站到下出口(560, 348)的正上方,朝左
         RunUntil(s, () => s.CellY == 1, 0, 1);
         Assert.Equal((0, 1), (s.CellX, s.CellY));
-        // (0,1) D 的上出口在 (560, 144):主角在它下面 24 像素、x 与出口相同、朝向保持
-        Assert.Equal((560.0, 144.0 + DungeonSession.EntryOffsetVertical, true), (s.Hero.X, s.Hero.Y, s.Hero.FacingLeft));
-        Assert.Equal(160, s.Camera.IntX);                                // 560 − 400
-        // 再回上去:从上出口出来,进入 (0,0) 的下出口(560, 348)上面 24 像素
+        // (0,1) D 的上出口在 (560, 144):主角在它下面 3 像素、x 比出口多 2、朝向保持
+        Assert.Equal((560.0 + DungeonSession.ArrivalOffsetX, 144.0 + DungeonSession.ArrivalOffsetVertical, true), (s.Hero.X, s.Hero.Y, s.Hero.FacingLeft));
+        Assert.Equal(112, s.Camera.IntX);                                // 镜头先放在 0 再按死区跟随:562 − 450
+        // 再回上去:从上出口出来,进入 (0,0) 的下出口(560, 348)上面 3 像素
         s.Build(0);
         RunUntil(s, () => s.CellY == 0, 0, -1);
-        Assert.Equal((560.0, 348.0 - DungeonSession.EntryOffsetVertical), (s.Hero.X, s.Hero.Y));
+        Assert.Equal((560.0 + DungeonSession.ArrivalOffsetX, 348.0 - DungeonSession.ArrivalOffsetVertical), (s.Hero.X, s.Hero.Y));
+    }
+
+    [Fact]
+    public void PushingIntoTheOpenGateBodyFadesOutSwapsTheRoomAtTheEndOfTheFadeOutAndFadesBackIn()
+    {
+        using var d = new Dungeon(RingLayout(), OneWeakAtStart, bodies: true);
+        DungeonSession s = d.Session;
+        Run(s, 1000, 0, 0, true);                                        // 杀掉怪物,清房
+        Assert.True(s.IsCleared(0, 0));
+        Assert.False(s.InTransition);
+        Assert.Equal(0, s.FadeAlpha);
+        Assert.DoesNotContain(s.Build(5000), x => x.AnimationPath == "fade");
+
+        int guard = 0;
+        while (!s.InTransition && guard++ < 2000)
+        {
+            s.Update(10, 1, 0, false);                                   // 往右走,顶在右出口的墙上
+        }
+        Assert.True(s.InTransition);
+        Assert.Equal(BesideRightWallX, s.Hero.X);                        // 墙的左沿 1072 − 半宽 26
+        Assert.Equal((0, 0, 0, 0), (s.CellX, s.CellY, s.Transitions, s.FadeAlpha));
+
+        // 淡出 250 毫秒:房间还是原来的,主角照常被操作(一直顶着墙),黑幕线性变浓
+        for (int k = 1; k <= 12; k++)
+        {
+            s.Update(10, 1, 0, false);
+        }
+        Assert.Equal((0, 0, 0), (s.CellX, s.CellY, s.Transitions));
+        Assert.Equal(122, s.FadeAlpha);                                  // 255 × 120 / 250 = 122.4
+        Assert.Equal(BesideRightWallX, s.Hero.X);
+        List<SceneSprite> frame = s.Build(5000);
+        SceneSprite fade = Assert.Single(frame, x => x.AnimationPath == "fade");
+        Assert.Equal((122, 800, 600, 0, 0), (fade.TintAlpha, fade.Frame.Width, fade.Frame.Height, fade.ScreenX, fade.ScreenY));
+        Assert.Equal(OverlayArt.UiRank, fade.LayerRank);
+        Assert.True(fade.SortKey > frame.Where(x => x.LayerRank == OverlayArt.UiRank && x.AnimationPath != "fade").Max(x => x.SortKey));   // 盖在小地图上面
+        for (int k = 13; k <= 24; k++)
+        {
+            s.Update(10, 1, 0, false);
+        }
+        Assert.Equal((0, 0, 0), (s.CellX, s.CellY, s.Transitions));
+        Assert.Equal(245, s.FadeAlpha);                                  // 255 × 240 / 250 = 244.8
+
+        // 第 25 步 = 250 毫秒:这一步的末尾换房间;主角贴着对侧(左)出口的墙、y 与朝向保持、站姿待机,镜头在 0
+        s.Update(10, 1, 0, false);
+        Assert.Equal((1, 0, 1), (s.CellX, s.CellY, s.Transitions));
+        Assert.True(s.InTransition);
+        Assert.Equal(255, s.FadeAlpha);
+        TownHero hero = s.Hero;
+        Assert.Equal((BesideLeftWallX, false, HeroMotion.Rest), (hero.X, hero.FacingLeft, hero.Motion));
+        Assert.Equal(HeroY, hero.Y, 3);
+        Assert.Equal(0, s.Camera.IntX);
+
+        // 全黑 130 毫秒,再淡入 250 毫秒
+        for (int k = 1; k <= 12; k++)
+        {
+            s.Update(10, 0, 0, false);
+        }
+        Assert.Equal(255, s.FadeAlpha);
+        s.Update(10, 0, 0, false);                                       // 全黑满 130 毫秒 → 淡入开始
+        Assert.Equal(255, s.FadeAlpha);
+        for (int k = 1; k <= 12; k++)
+        {
+            s.Update(10, 0, 0, false);
+        }
+        Assert.Equal(133, s.FadeAlpha);                                  // 255 × (1 − 120 / 250) = 132.6
+        for (int k = 13; k <= 24; k++)
+        {
+            s.Update(10, 0, 0, false);
+        }
+        Assert.Equal(10, s.FadeAlpha);                                   // 255 × (1 − 240 / 250) = 10.2
+        Assert.True(s.InTransition);
+        s.Update(10, 0, 0, false);
+        Assert.False(s.InTransition);
+        Assert.Equal(0, s.FadeAlpha);
+        Assert.DoesNotContain(s.Build(5000), x => x.AnimationPath == "fade");
+        Assert.Equal((1, 0, 1), (s.CellX, s.CellY, s.Transitions));
+    }
+
+    [Fact]
+    public void ALongFrameCrossesTheWholeTransitionAtTheSameMomentsAsSmallSteps()
+    {
+        using var a = new Dungeon(RingLayout(), OneWeakAtStart, bodies: true);
+        using var b = new Dungeon(RingLayout(), OneWeakAtStart, bodies: true);
+        Run(a.Session, 1000, 0, 0, true);
+        Run(b.Session, 1000, 0, 0, true);
+        int guard = 0;
+        while (!a.Session.InTransition && guard++ < 2000)
+        {
+            a.Session.Update(10, 1, 0, false);
+            b.Session.Update(10, 1, 0, false);
+        }
+        Assert.True(b.Session.InTransition);
+        a.Session.Update(630, 0, 0, false);                              // 一帧就走完 淡出 + 全黑 + 淡入(两边都按 10 毫秒一小步推进)
+        for (int k = 0; k < 63; k++)
+        {
+            b.Session.Update(10, 0, 0, false);
+        }
+        Assert.False(a.Session.InTransition);
+        Assert.False(b.Session.InTransition);
+        Assert.Equal((a.Session.CellX, a.Session.CellY, a.Session.Transitions), (b.Session.CellX, b.Session.CellY, b.Session.Transitions));
+        Assert.Equal(a.Session.Hero.X, b.Session.Hero.X, 6);
+    }
+
+    [Fact]
+    public void AGateBodyBlocksTheHeroEvenWhileTheGateIsShutAndNothingTriggersBeforeTheRoomIsCleared()
+    {
+        using var d = new Dungeon(RingLayout(), (cx, cy) => new[] { (900, 300) }, hp: 100000, bodies: true);
+        DungeonSession s = d.Session;
+        Run(s, 6000, 1, 0);                                              // 右出口关着:挡住,不触发
+        Assert.Equal(BesideRightWallX, s.Hero.X);
+        Assert.False(s.InTransition);
+        Assert.Equal((0, 0, 0), (s.CellX, s.CellY, s.Transitions));
+        Run(s, 6000, -1, 0);                                             // 左边是墙:同样
+        Assert.Equal(BesideLeftWallX, s.Hero.X);
+        Assert.False(s.InTransition);
+        Assert.Equal((0, 0, 0), (s.CellX, s.CellY, s.Transitions));
+        Assert.False(s.IsCleared(0, 0));
+    }
+
+    [Fact]
+    public void ThePushIntoAWallNeverTriggersEvenAfterTheRoomIsCleared()
+    {
+        using var d = new Dungeon(RingLayout(), OneWeakAtStart, bodies: true);
+        DungeonSession s = d.Session;
+        Run(s, 1000, 0, 0, true);
+        Assert.True(s.IsCleared(0, 0));
+        Run(s, 6000, -1, 0);                                             // 起点格的左边是墙(不可开)
+        Assert.Equal(BesideLeftWallX, s.Hero.X);
+        Assert.False(s.InTransition);
+        Assert.Equal((0, 0, 0), (s.CellX, s.CellY, s.Transitions));
+    }
+
+    [Fact]
+    public void GoingBackThroughABodiedGateArrivesBesideTheOppositeBodyFacingLeftWithTheCameraRule()
+    {
+        using var d = new Dungeon(RingLayout(), OneWeakAtStart, bodies: true);
+        DungeonSession s = d.Session;
+        Run(s, 1000, 0, 0, true);
+        Run(s, 600, 0, 1);                                               // 往下走一点,让 y 与出生时不同
+        double y = s.Hero.Y;
+        RunUntil(s, () => s.CellX == 1, 1, 0);
+        Assert.Equal((BesideLeftWallX, false), (s.Hero.X, s.Hero.FacingLeft));
+        Assert.Equal(y, s.Hero.Y, 1);
+        Run(s, 700, 0, 0);                                               // 等转场结束
+        Assert.False(s.InTransition);
+        RunUntil(s, () => s.CellX == 0, -1, 0);                          // 顶着左边的墙(这一格的左出口是普通出口,开着)回去
+        Assert.Equal((0, 0, 2), (s.CellX, s.CellY, s.Transitions));
+        TownHero hero = s.Hero;
+        Assert.Equal((BesideRightWallX, true, HeroMotion.Rest), (hero.X, hero.FacingLeft, hero.Motion));
+        Assert.Equal(y, hero.Y, 1);
+        Assert.Equal(320, s.Camera.IntX);                                // 镜头在 0,跟随 1046 夹到最大 320
+    }
+
+    [Fact]
+    public void TheUpAndDownGatesTriggerOnlyByPushingAgainstTheBandEdgeNearTheGate()
+    {
+        using var d = new Dungeon(RingLayout(), OneWeakAtStart, bodies: true);
+        DungeonSession s = d.Session;
+        Run(s, 1000, 0, 0, true);
+        Assert.True(s.IsCleared(0, 0));
+        // 站在下出口(560, 348)的正上方,没有往下顶:不触发
+        s.Hero.Place(560, 345, false, HeroMotion.Rest, 0);
+        Run(s, 500, 0, 0);
+        Assert.False(s.InTransition);
+        Assert.Equal((0, 0, 0), (s.CellX, s.CellY, s.Transitions));
+        // 离出口横向太远,往下顶也不触发
+        s.Hero.Place(200, 345, false, HeroMotion.Rest, 0);
+        Run(s, 1000, 0, 1);
+        Assert.False(s.InTransition);
+        Assert.Equal((0, 0), (s.CellX, s.CellY));
+        // 回到出口跟前往下顶:触发
+        s.Hero.Place(560, 345, false, HeroMotion.Rest, 0);
+        Run(s, 200, 0, 1);
+        Assert.True(s.InTransition);
+        Run(s, 700, 0, 0);
+        Assert.Equal((0, 1, 1), (s.CellX, s.CellY, s.Transitions));
     }
 
     [Fact]
     public void ClearingTheBossRoomSetsBossClearedFinishesTheDungeonAndShowsTheBanner()
     {
-        // 路线:起点格杀怪 → 下到 (0,1) → 右边是首领出口 → 进首领格 (1,1),从它的左出口进来,怪物就在主角前面 40 像素
-        using var d = new Dungeon(RingLayout(), (cx, cy) => cx == 0 && cy == 0 ? new[] { (340, 100) } : (cx == 1 && cy == 1 ? new[] { (130, 168) } : None()));
+        // 路线:起点格杀怪 → 下到 (0,1)(从上出口进来,y = 144 + 3)→ 右边是首领出口 → 进首领格 (1,1),从它的左出口进来(y 保持),怪物就在主角前面 40 像素
+        using var d = new Dungeon(RingLayout(), (cx, cy) => cx == 0 && cy == 0 ? new[] { (340, 100) } : (cx == 1 && cy == 1 ? new[] { (130, 147) } : None()));
         DungeonSession s = d.Session;
         Run(s, 1000, 0, 0, true);
         s.Hero.Place(560, 300, false, HeroMotion.Rest, 0);
@@ -319,7 +529,7 @@ public class DungeonSessionTests
         Assert.Equal(GateKind.Boss, d.Layout.GateKindAt(0, 1, GateSide.Right));
         RunUntil(s, () => s.CellX == 1, 1, 0);
         Assert.Equal((1, 1), (s.CellX, s.CellY));
-        Assert.Equal((90.0, 168.0), (s.Hero.X, s.Hero.Y));
+        Assert.Equal((90.0, 144.0 + DungeonSession.ArrivalOffsetVertical), (s.Hero.X, s.Hero.Y));
         Assert.False(s.BossCleared);
         Assert.DoesNotContain(s.Build(10), x => x.AnimationPath == "clear");
         Assert.Equal(1, s.Current.AliveCount);
@@ -451,6 +661,52 @@ public class DungeonSessionTests
             Assert.False(bot.Next(s, out int ex, out int ey));
             Assert.Equal((0, 0), (ex, ey));
         }
+    }
+
+    [Fact]
+    public void TheBotPlaysTheSameGameAtAnyFrameLengthBecauseItAdvancesInFixedBeats()
+    {
+        // 自动机的走位与出手间隔按"心跳"数写:实时运行里帧长不固定(甚至一帧 100 毫秒),Advance 必须把它们折成固定的 1/60 秒心跳,
+        // 打出的是同一局(证据 E-072:按帧长直接喂它,帧长到 60 毫秒时会在怪物旁来回晃)
+        (int X, int Y)[] Monsters(int cx, int cy)
+        {
+            return cx == 0 && cy == 0 ? new[] { (340, 100), (420, 120) }
+                : cx == 1 && cy == 0 ? new[] { (300, 200) }
+                : cx == 1 && cy == 1 ? new[] { (400, 150), (500, 180) }
+                : None();
+        }
+
+        (double Clock, int Hits, int Kills, int Transitions, int Entered, double HeroX, double HeroY, int Beats) Play(Func<double> frameMs)
+        {
+            using var d = new Dungeon(RingLayout(), Monsters, hp: 40);
+            DungeonSession s = d.Session;
+            var bot = new DungeonBot(true);
+            for (int frame = 0; frame < 400000 && !s.Finished; frame++)
+            {
+                bot.Advance(s, frameMs());
+            }
+            Assert.True(s.BossCleared, "没有打通");
+            return (s.ClockMs, s.Hits, s.Kills, s.Transitions, s.RoomsEntered, s.Hero.X, s.Hero.Y, bot.Steps);
+        }
+
+        var reference = Play(() => CombatScript.StepMs);
+        Assert.True(reference.Beats > 600);
+        Assert.Equal(reference, Play(() => 5));
+        Assert.Equal(reference, Play(() => 33.3));
+        Assert.Equal(reference, Play(() => 100));
+        var random = new Random(7);
+        Assert.Equal(reference, Play(() => 1 + random.NextDouble() * 99));
+
+        // 一帧的 deltaMs 记进欠账,欠账超过 MaxDebtMs 的部分丢掉;一帧最多补 MaxBeatsPerFrame 个心跳
+        using var d2 = new Dungeon(RingLayout(), Monsters, hp: 40);
+        var bot2 = new DungeonBot(false);
+        Assert.Equal(0, bot2.Advance(d2.Session, CombatScript.StepMs * 0.99));          // 不足一个心跳
+        Assert.Equal(1, bot2.Advance(d2.Session, CombatScript.StepMs * 0.02));          // 凑够了
+        int burst = bot2.Advance(d2.Session, 5000);                                      // 卡了 5 秒:只补 200 毫秒(约 12 个心跳,浮点舍入可能少一个)
+        Assert.InRange(burst, DungeonBot.MaxBeatsPerFrame - 1, DungeonBot.MaxBeatsPerFrame);
+        Assert.Equal(0, bot2.Advance(d2.Session, 0));                                    // 其余的丢掉了,下一帧不会接着补
+        Assert.Equal(0, bot2.Advance(d2.Session, -50));                                  // 负的时间当 0
+        Assert.Throws<ArgumentNullException>(() => bot2.Advance(null!, 16));
     }
 
     [Fact]

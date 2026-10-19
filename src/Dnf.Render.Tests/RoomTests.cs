@@ -415,4 +415,99 @@ public class RoomTests
         Assert.False(DemoRoom.IsRoomMap(assets, "map/test/missing.map"));
         Assert.False(DemoRoom.IsRoomMap(assets, RoomFixture.DungeonPath));
     }
+
+    [Fact]
+    public void ASolidCellIsAnyNonZeroPassValueAndCellsOutsideTheTableAreNotSolid()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TileFile tile = TileFile.Read(assets, RoomFixture.DoorBodyTile)!;
+        Assert.Equal(6, tile.Rows);
+        Assert.True(tile.IsSolid(10, 0));
+        Assert.True(tile.IsSolid(13, 5));
+        Assert.False(tile.IsSolid(9, 0));
+        Assert.False(tile.IsSolid(0, 3));
+        // 表外:不挡(与"不能走"相反,CanWalk 在表外是 false)
+        Assert.False(tile.IsSolid(-1, 0));
+        Assert.False(tile.IsSolid(14, 0));
+        Assert.False(tile.IsSolid(10, 6));
+        Assert.False(tile.IsSolid(10, -1));
+        Assert.False(tile.CanWalk(-1, 0));
+        Assert.False(tile.CanWalk(10, 0));
+        Assert.True(tile.CanWalk(9, 0));
+
+        // 通行值 1、5、6 这类也挡路
+        var odd = new TileFile("odd", new List<KeyValuePair<string, int>>(), 80, new byte[] { 0, 1, 5, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 });
+        Assert.Equal(new[] { false, true, true, true, false }, Enumerable.Range(0, 5).Select(c => odd.IsSolid(c, 0)).ToArray());
+    }
+
+    [Fact]
+    public void AGateObjectEndingInATileReadsTheDoorAnchorAndTheGateGetsItsBodyFromIt()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        PassiveObjectCatalog catalog = PassiveObjectCatalog.Read(assets);
+        GateObject obj = GateObject.Read(assets, catalog, RoomFixture.DoorBodyId)!;
+        Assert.Equal(RoomFixture.DoorBodyTile, obj.DoorTilePath);
+        Assert.Equal((13, 4), (obj.DoorAnchorColumn, obj.DoorAnchorRow));
+        Assert.Equal("[bottom]", obj.Layer);
+        Assert.Single(obj.Parts);                                        // .til 不是一段动画;门框的 (种类, 变体) 仍是第一对 (0, 1)
+        Assert.Equal((0, 1), (obj.Parts[0].Kind, obj.Parts[0].Variant));
+
+        // 没有 .til 的出口物件没有锚点也没有碰撞体
+        GateObject plain = GateObject.Read(assets, catalog, RoomFixture.LeftNormalId)!;
+        Assert.Equal((0, 0), (plain.DoorAnchorColumn, plain.DoorAnchorRow));
+        Assert.Null(new RoomGate(assets, plain, GateSide.Left, 16, 120).Body);
+
+        // 通行格的左上角 = 门的位置 − (列 × 16, 行 × 12)
+        var gate = new RoomGate(assets, obj, GateSide.Right, 1104, 120);
+        Assert.NotNull(gate.Body);
+        Assert.Equal((1104 - 13 * 16, 120 - 4 * 12), (gate.Body!.OriginX, gate.Body.OriginY));
+
+        // 构造函数里的锚点是可选的(默认 0、0)
+        var manual = new GateObject(1, "x.obj", "[normal]", new List<GatePart>(), null);
+        Assert.Equal((0, 0), (manual.DoorAnchorColumn, manual.DoorAnchorRow));
+    }
+
+    [Fact]
+    public void TheGateBodyOverlapsTheSolidCellsOnHalfOpenIntervalsWithTheHeroBoxAroundTheOrigin()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TileFile tile = TileFile.Read(assets, RoomFixture.DoorBodyTile)!;
+        var body = new GateBody(tile, 896, 72);
+        // 挡路的格子占 x ∈ [896 + 160, 1120) = [1056, 1120)、y ∈ [72, 144);主角占位盒是 [x − 26, x + 26) × [y − 5, y + 5)
+        Assert.Equal((26.0, 5.0), (GateBody.HeroHalfWidth, GateBody.HeroHalfDepth));
+        Assert.False(body.Overlaps(1030, 100));                          // 盒的右沿刚好贴在 1056:半开区间,不重叠
+        Assert.True(body.Overlaps(1030.001, 100));
+        Assert.True(body.Overlaps(1080, 100));
+        Assert.False(body.Overlaps(1146, 100));                          // 盒的左沿到了 1120:已经在表外
+        Assert.True(body.Overlaps(1145.99, 100));                        // 差一点还压着最后一列
+        // 深度方向:盒 [y − 5, y + 5) 与 [72, 144)
+        Assert.False(body.Overlaps(1080, 67));
+        Assert.True(body.Overlaps(1080, 67.001));
+        Assert.True(body.Overlaps(1080, 148.999));
+        Assert.False(body.Overlaps(1080, 149));
+        // 在表外的左边,什么也没有
+        Assert.False(body.Overlaps(300, 100));
+        Assert.Throws<ArgumentNullException>(() => new GateBody(null!, 0, 0));
+    }
+
+    [Fact]
+    public void GateBodiesReportTheOverlappedGateAndIgnoreGatesWithoutABody()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        PassiveObjectCatalog catalog = PassiveObjectCatalog.Read(assets);
+        var withBody = new RoomGate(assets, GateObject.Read(assets, catalog, RoomFixture.DoorBodyId)!, GateSide.Right, 1104, 120);
+        var plain = new RoomGate(assets, GateObject.Read(assets, catalog, RoomFixture.LeftNormalId)!, GateSide.Left, 16, 120);
+
+        var bodies = new GateBodies(new RoomGate[] { plain, withBody, null });
+        Assert.Equal(1, bodies.Count);
+        Assert.Same(withBody, bodies.BlockedBy(1080, 100));
+        Assert.Null(bodies.BlockedBy(300, 100));
+        Assert.Equal(0, new GateBodies(null!).Count);
+        Assert.Equal(0, new GateBodies(new[] { plain }).Count);
+        Assert.Null(new GateBodies(new[] { plain }).BlockedBy(0, 0));
+    }
 }

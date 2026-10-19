@@ -25,6 +25,14 @@ internal sealed class RoomFixture : IDisposable
     public const int LeftNormalId = 801;
     public const int RightWallId = 806;
 
+    /// <summary>
+    /// 带碰撞体的出口物件(不在副本定义的十个编号里):[string data] 是门框动画加一个 .til,[int data] 里 .til 对应的那一对是锚点 (列 13, 行 4);
+    /// 这个 .til 是 14 列 × 6 行,第 10 到 13 列在每一行都挡路(通行值 2)。
+    /// </summary>
+    public const int DoorBodyId = 811;
+
+    public const string DoorBodyTile = "passiveobject/mapobject/pathgate/test/til/wall.til";
+
     private const byte TagType = (byte)TokenType.Tag;
     private const byte IntType = (byte)TokenType.Int;
     private const byte StrType = (byte)TokenType.String;
@@ -107,6 +115,20 @@ internal sealed class RoomFixture : IDisposable
         return table;
     }
 
+    /// <summary>14 列 × 6 行的通行表:第 10 到 13 列在每一行都挡路(2),其余能走(0)。出口物件自带的 .til 的样子。</summary>
+    public static int[] WallTable()
+    {
+        var table = new int[14 * 6];
+        for (int row = 0; row < 6; row++)
+        {
+            for (int col = 10; col < 14; col++)
+            {
+                table[row * 14 + col] = 2;
+            }
+        }
+        return table;
+    }
+
     public RoomFixture()
     {
         Root = Path.Combine(Path.GetTempPath(), "dnf-room-test-" + Guid.NewGuid().ToString("N"));
@@ -151,7 +173,8 @@ internal sealed class RoomFixture : IDisposable
             ("passiveobject/passiveobject.lst", NewScript()
                 .Int(TreeId).Str("MapObject/Obstacle/Tree.obj")
                 .Int(ParticleId).Str("MapObject/ParticleFactory/RayGround.obj")
-                .Int(LeftNormalId).Str("MapObject/PathGate/Test/LeftNormal.obj").Build()),
+                .Int(LeftNormalId).Str("MapObject/PathGate/Test/LeftNormal.obj")
+                .Int(DoorBodyId).Str("MapObject/PathGate/Test/RightDoor.obj").Build()),
             ("passiveobject/mapobject/obstacle/tree.obj", NewScript()
                 .Tag("[width]").Int(40, 20)
                 .Tag("[floating height]").Int(0)
@@ -165,6 +188,12 @@ internal sealed class RoomFixture : IDisposable
                 .Tag("[layer]").Str("[normal]")
                 .Tag("[string data]").Str("Animation/Frame.ani", "Animation/Door.ani", "Animation/Open.ani").Tag("[/string data]")
                 .Tag("[int data]").Int(0, 1, 1, 1, 2, 1).Tag("[/int data]").Build()),
+            // 门框 + 碰撞体 .til;[int data] 的第二对 (13, 4) 是 .til 的锚点,不是 (种类, 变体)
+            ("passiveobject/mapobject/pathgate/test/rightdoor.obj", NewScript()
+                .Tag("[layer]").Str("[bottom]")
+                .Tag("[string data]").Str("Animation/Frame.ani", "Til/Wall.til").Tag("[/string data]")
+                .Tag("[int data]").Int(0, 1, 13, 4).Tag("[/int data]").Build()),
+            (DoorBodyTile, NewScript().Tag("[pass type]").Int(WallTable()).Build()),
             ("passiveobject/mapobject/pathgate/test/animation/frame.ani", BuildAni("Map/Test/Gate%d%d.img", 0, 0, 0)),
             ("passiveobject/mapobject/pathgate/test/animation/door.ani", BuildAni("Map/Test/Gate%d%d.img", 1, 0, 0)),
             ("passiveobject/mapobject/pathgate/test/animation/open.ani", BuildAni("Map/Test/Gate%d%d.img", 2, 0, 0)),

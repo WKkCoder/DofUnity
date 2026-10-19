@@ -67,6 +67,16 @@ namespace Dnf.Render
             Loops = ani.Loops;
         }
 
+        /// <summary>第 <paramref name="frame"/> 帧的起始时刻(毫秒,从动画开始算);帧号越界时夹在 [0, 最后一帧]。</summary>
+        public long StartMs(int frame)
+        {
+            if (FrameCount == 0)
+            {
+                return 0;
+            }
+            return _starts[frame < 0 ? 0 : (frame >= FrameCount ? FrameCount - 1 : frame)];
+        }
+
         /// <summary>时刻 <paramref name="ms"/>(从动画开始算)正在显示的帧号;没有帧时返回 -1。</summary>
         public int FrameAt(long ms)
         {

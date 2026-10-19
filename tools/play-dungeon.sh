@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 试玩整座洛兰副本(证据 E-070):用 tools/unity-build-town.sh macos 构建好的播放器,运行时读取你自备的数据。
-# 用法: tools/play-dungeon.sh            自己玩:方向键走、X 键普攻;怪物清完出口打开,走进出口换房间;Esc 退出
+# 用法: tools/play-dungeon.sh            自己玩:方向键走(左或右双击=奔跑)、X 键普攻(奔跑中 X=奔跑攻击)、C 键跳跃(空中 X=跳跃攻击);
+#                                       怪物清完出口打开,顶着出口的门洞走进去换房间;Esc 退出。Z 与空格在原版是技能槽,技能系统还没做,按了没反应
 #       tools/play-dungeon.sh explore    自动机逛遍所有房间再打首领(看一遍整条路线)
 #       tools/play-dungeon.sh bot        自动机直奔首领
 # 伤害是占位值,怪物不会伤害你,没有结算界面。数据目录取 DNF_DIR(local.env 或环境变量)。

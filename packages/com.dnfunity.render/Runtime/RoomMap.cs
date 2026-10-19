@@ -90,6 +90,19 @@ namespace Dnf.Render
             }
             return Pass[row * Columns + column] == 0;
         }
+
+        /// <summary>
+        /// 某个格子是否挡路。与 <see cref="CanWalk(int, int)"/> 不同,表外算"不挡"(出入口的门洞、门框只在表里画出自己的那一块,表外什么也没有)。
+        /// 证据 E-072:出入口 .obj 自带的 .til 当作主角的碰撞体用,通行值非 0 的格子挡路。
+        /// </summary>
+        public bool IsSolid(int column, int row)
+        {
+            if (column < 0 || column >= Columns || row < 0 || row >= Rows)
+            {
+                return false;
+            }
+            return Pass[row * Columns + column] != 0;
+        }
     }
 
     /// <summary>

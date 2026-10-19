@@ -23,7 +23,17 @@ namespace Dnf.Play
         /// <summary>连续按攻击键的间隔(步)。</summary>
         public const int AttackEvery = 6;
 
+        /// <summary>走向上下出口时,目标点放在出口线外这么远(像素):只要在出口附近就一直往外顶,由可走带的边缘挡住并触发出口。</summary>
+        public const double PushBeyondEdge = 200;
+
+        /// <summary>实时运行时一帧里最多补几个心跳(见 <see cref="Advance"/>)。</summary>
+        public const int MaxBeatsPerFrame = 12;
+
+        /// <summary>实时运行时最多欠多少毫秒的心跳:卡顿很久之后只补这么多,其余丢掉。</summary>
+        public const double MaxDebtMs = 200.0;
+
         private readonly bool _explore;
+        private double _debtMs;
         private int _steps;
         private double _lastX = double.NaN;
         private double _lastY = double.NaN;
@@ -60,6 +70,30 @@ namespace Dnf.Play
                 t += CombatScript.StepMs;
             }
             return t;
+        }
+
+        /// <summary>
+        /// 实时运行用:过去了一帧、<paramref name="deltaMs"/> 毫秒,按固定的 1/60 秒"心跳"补步——每个心跳先 <see cref="Next"/> 再让会话推进 <see cref="CombatScript.StepMs"/>,
+        /// 直到欠的时间不足一个心跳(一帧最多补 <see cref="MaxBeatsPerFrame"/> 个,欠账不超过 <see cref="MaxDebtMs"/>)。返回这一帧补了几个心跳。
+        /// 自动机的走位死区、出手间隔与卡住检测都是按心跳数写的,按可变的帧长直接喂给它,帧长一大(60 毫秒以上)就会在怪物旁来回晃、整座副本打不完;
+        /// 按心跳补步,同一个会话不管帧长是多少、抖不抖,打出的是同一局(与 <see cref="RunUntil"/>、命令行 dnf dungeon-check --bot 一致)。
+        /// </summary>
+        public int Advance(DungeonSession session, double deltaMs)
+        {
+            if (session == null)
+            {
+                throw new ArgumentNullException(nameof(session));
+            }
+            _debtMs = Math.Min(_debtMs + Math.Max(0.0, deltaMs), MaxDebtMs);
+            int beats = 0;
+            while (beats < MaxBeatsPerFrame && _debtMs >= CombatScript.StepMs && !session.Finished)
+            {
+                bool attack = Next(session, out int dx, out int dy);
+                session.Update(CombatScript.StepMs, dx, dy, attack);
+                _debtMs -= CombatScript.StepMs;
+                beats++;
+            }
+            return beats;
         }
 
         /// <summary>读会话当前的状态,给出这一步的方向与是否按攻击键。副本已经走完时全部为 0 / false。</summary>
@@ -161,12 +195,12 @@ namespace Dnf.Play
                     ty = hero.Y;
                     break;
                 case GateSide.Up:
-                    tx = g[0];
-                    ty = g[1] - 8;
+                    tx = g[0] + DungeonSession.ArrivalOffsetX;
+                    ty = g[1] - PushBeyondEdge;                          // 上下出口靠"顶着可走带的边缘往外走"触发:目标放在带外,一直往外顶
                     break;
                 default:
-                    tx = g[0];
-                    ty = g[1] + 8;
+                    tx = g[0] + DungeonSession.ArrivalOffsetX;
+                    ty = g[1] + PushBeyondEdge;
                     break;
             }
             // 左右出口只要 x 到位(y 不管);上下出口先对齐 x 再走 y

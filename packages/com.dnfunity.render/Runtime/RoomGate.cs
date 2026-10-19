@@ -77,8 +77,8 @@ namespace Dnf.Render
 
     /// <summary>
     /// 副本里的出口(.obj,passiveobject.lst 里编号 361 到 370 是洛兰的 左/右/上/下 × 普通/首领/墙):
-    /// [string data] 依次是若干动画,可能以一个 .til(出入口通行格,这里暂不使用)结尾;[int data] 与它们一一对应,每个是 (种类, 变体号) 一对,
-    /// 带 .til 的那一对是 (列, 行) 在门的通行格里的锚点。图层取自 [layer]。
+    /// [string data] 依次是若干动画,可能以一个 .til(出入口的通行格,当作主角的碰撞体,见 <see cref="GateBody"/>)结尾;
+    /// [int data] 与它们一一对应,每个是 (种类, 变体号) 一对,带 .til 的那一对是 (列, 行):门的位置在通行格里的锚点(证据 E-072)。图层取自 [layer]。
     /// </summary>
     public sealed class GateObject
     {
@@ -93,13 +93,22 @@ namespace Dnf.Render
         /// <summary>出入口通行格 .til 的 PVF 路径;没有为 null。</summary>
         public string DoorTilePath { get; }
 
-        public GateObject(int objectId, string scriptPath, string layer, IReadOnlyList<GatePart> parts, string doorTilePath)
+        /// <summary>门的位置落在通行格的哪一格(列):通行格的左上角 x = 门 x − 列 × 16。没有 .til 时为 0。</summary>
+        public int DoorAnchorColumn { get; }
+
+        /// <summary>门的位置落在通行格的哪一格(行):通行格的左上角 y = 门 y − 行 × 12。没有 .til 时为 0。</summary>
+        public int DoorAnchorRow { get; }
+
+        public GateObject(int objectId, string scriptPath, string layer, IReadOnlyList<GatePart> parts, string doorTilePath,
+            int doorAnchorColumn = 0, int doorAnchorRow = 0)
         {
             ObjectId = objectId;
             ScriptPath = scriptPath;
             Layer = layer;
             Parts = parts ?? throw new ArgumentNullException(nameof(parts));
             DoorTilePath = doorTilePath;
+            DoorAnchorColumn = doorAnchorColumn;
+            DoorAnchorRow = doorAnchorRow;
         }
 
         /// <summary>读一个门物件;编号不在目录里、或脚本缺失时返回 null。</summary>
@@ -137,19 +146,22 @@ namespace Dnf.Render
             }
             var parts = new List<GatePart>();
             string tile = null;
+            int anchorColumn = 0, anchorRow = 0;
             for (int i = 0; i < strings.Count; i++)
             {
                 string resolved = PvfPath.ResolveRelativeTo(path, strings[i]);
+                int kind = 2 * i < ints.Count ? ints[2 * i] : 0;
+                int variant = 2 * i + 1 < ints.Count ? ints[2 * i + 1] : 1;
                 if (resolved.EndsWith(".til", StringComparison.Ordinal))
                 {
                     tile = resolved;
+                    anchorColumn = 2 * i < ints.Count ? ints[2 * i] : 0;
+                    anchorRow = 2 * i + 1 < ints.Count ? ints[2 * i + 1] : 0;
                     continue;
                 }
-                int kind = 2 * i < ints.Count ? ints[2 * i] : 0;
-                int variant = 2 * i + 1 < ints.Count ? ints[2 * i + 1] : 1;
                 parts.Add(new GatePart(kind, variant, resolved));
             }
-            return new GateObject(objectId, path, layer, parts, tile);
+            return new GateObject(objectId, path, layer, parts, tile, anchorColumn, anchorRow);
         }
 
         /// <summary>把动画里的图片名模板(例如 "Map/PathGate/GranFlorisSideGate%d%d.img")按变体号补成真实图名,小写。没有 "%d" 时原样返回。</summary>
@@ -216,6 +228,9 @@ namespace Dnf.Render
         /// <summary>摆放用的图层大类(<see cref="TownScene.LayerRank"/>)。</summary>
         public int Rank { get; }
 
+        /// <summary>出口的碰撞体(门框与墙);出口脚本没有 .til(上下出口)或读不到时为 null。</summary>
+        public GateBody Body { get; private set; }
+
         public RoomGate(DnfAssets assets, GateObject obj, GateSide side, int x, int y)
         {
             _object = obj ?? throw new ArgumentNullException(nameof(obj));
@@ -234,6 +249,23 @@ namespace Dnf.Render
                 _anis.Add(ani);
                 _timelines.Add(new AniTimeline(ani));
             }
+            if (obj.DoorTilePath != null)
+            {
+                TileFile tile = TileFile.Read(assets, obj.DoorTilePath);
+                if (tile != null && tile.Pass.Count > 0)
+                {
+                    SetBody(tile, obj.DoorAnchorColumn, obj.DoorAnchorRow);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 给出口装上碰撞体:<paramref name="tile"/> 的通行格,出口位置落在它的 (<paramref name="anchorColumn"/>, <paramref name="anchorRow"/>) 格上,
+        /// 所以通行格的左上角在 (x − 列 × 16, y − 行 × 12)。证据 E-072。
+        /// </summary>
+        public void SetBody(TileFile tile, int anchorColumn, int anchorRow)
+        {
+            Body = tile == null ? null : new GateBody(tile, X - anchorColumn * TileFile.CellWidth, Y - anchorRow * TileFile.CellHeight);
         }
 
         /// <summary>
@@ -278,6 +310,87 @@ namespace Dnf.Render
                     additive ? SpriteBlend.Additive : SpriteBlend.Normal, timeline.TintAlphaAt(t), Rank));
             }
             return result;
+        }
+    }
+
+    /// <summary>
+    /// 出口的碰撞体(证据 E-072):出口 .obj 自带的 .til 里通行值非 0 的格子,每格 16 × 12 像素(半开区间),通行格的左上角在 (<see cref="OriginX"/>, <see cref="OriginY"/>)。
+    /// 主角的占位盒是以脚下原点为中心的 [x − 26, x + 26) × [y − 5, y + 5)(半宽 26 由四个样本拟合,.chr 的 [width] 是 40 与 10,与它们的关系没有研究),
+    /// 盒子压到任何一个挡路的格子就算撞上。门开着或关着碰撞体都在(开门只是换了图):关着的门挡路,开着的门洞是"楔形"的,
+    /// 主角顶着门洞的斜边走进去就触发换房间。
+    /// </summary>
+    public sealed class GateBody
+    {
+        /// <summary>主角占位盒的半宽(像素;拟合值)。</summary>
+        public const double HeroHalfWidth = 26.0;
+
+        /// <summary>主角占位盒的半深(像素;假设,只有在门洞贴近上下沿时才起作用)。</summary>
+        public const double HeroHalfDepth = 5.0;
+
+        public TileFile Tile { get; }
+        public int OriginX { get; }
+        public int OriginY { get; }
+
+        public GateBody(TileFile tile, int originX, int originY)
+        {
+            Tile = tile ?? throw new ArgumentNullException(nameof(tile));
+            OriginX = originX;
+            OriginY = originY;
+        }
+
+        /// <summary>主角脚下原点在 (<paramref name="x"/>, <paramref name="y"/>) 时,占位盒是否压到了挡路的格子。</summary>
+        public bool Overlaps(double x, double y)
+        {
+            int c0 = (int)Math.Floor((x - HeroHalfWidth - OriginX) / TileFile.CellWidth);
+            int c1 = (int)Math.Ceiling((x + HeroHalfWidth - OriginX) / TileFile.CellWidth) - 1;
+            int r0 = (int)Math.Floor((y - HeroHalfDepth - OriginY) / TileFile.CellHeight);
+            int r1 = (int)Math.Ceiling((y + HeroHalfDepth - OriginY) / TileFile.CellHeight) - 1;
+            for (int r = r0; r <= r1; r++)
+            {
+                for (int c = c0; c <= c1; c++)
+                {
+                    if (Tile.IsSolid(c, r))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+    }
+
+    /// <summary>一个房间里所有出口的碰撞体,给主角当障碍(<see cref="TownHero.Blocker"/>)。<see cref="IHeroBlocker.BlockedBy"/> 返回压到的那个 <see cref="RoomGate"/>。</summary>
+    public sealed class GateBodies : IHeroBlocker
+    {
+        private readonly List<RoomGate> _gates = new List<RoomGate>();
+
+        public GateBodies(IEnumerable<RoomGate> gates)
+        {
+            if (gates == null)
+            {
+                return;
+            }
+            foreach (RoomGate g in gates)
+            {
+                if (g != null && g.Body != null)
+                {
+                    _gates.Add(g);
+                }
+            }
+        }
+
+        public int Count => _gates.Count;
+
+        public object BlockedBy(double x, double y)
+        {
+            foreach (RoomGate g in _gates)
+            {
+                if (g.Body.Overlaps(x, y))
+                {
+                    return g;
+                }
+            }
+            return null;
         }
     }
 }

@@ -2,12 +2,12 @@ using Dnf.Render;
 
 namespace Dnf.Play.Tests;
 
-/// <summary>按时间表替主角按键(证据 E-069):解析、实时读取与固定步长推进。不依赖游戏数据。</summary>
+/// <summary>按时间表替主角按键(证据 E-069、E-072):解析、实时读取与固定步长推进。不依赖游戏数据。</summary>
 public class CombatScriptTests
 {
     private sealed class Recorder : IActionSession
     {
-        public readonly List<(double Delta, int DirX, int DirY, bool Attack)> Calls = new();
+        public readonly List<(double Delta, int DirX, int DirY, bool Attack, bool Jump)> Calls = new();
 
         public string MapPath => "x";
         public TownHero Hero => null;
@@ -17,12 +17,12 @@ public class CombatScriptTests
 
         public void Update(double deltaMs, int dirX, int dirY)
         {
-            Calls.Add((deltaMs, dirX, dirY, false));
+            Calls.Add((deltaMs, dirX, dirY, false, false));
         }
 
-        public void Update(double deltaMs, int dirX, int dirY, bool attackPressed)
+        public void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed)
         {
-            Calls.Add((deltaMs, dirX, dirY, attackPressed));
+            Calls.Add((deltaMs, dirX, dirY, attackPressed, jumpPressed));
         }
 
         public List<SceneSprite> Build(long timeMs)
@@ -81,6 +81,43 @@ public class CombatScriptTests
     }
 
     [Fact]
+    public void AJumpItemFiresExactlyOnceAndIsIndependentOfTheAttackKey()
+    {
+        CombatScript s = CombatScript.Parse("1:jump,2:right+jump+attack,3:none");
+        Assert.False(s.Poll(999, out _, out _, out bool jump));
+        Assert.False(jump);
+        Assert.False(s.Poll(1000, out int dx, out int dy, out jump));        // 只有 jump:攻击键不触发
+        Assert.True(jump);
+        Assert.Equal((0, 0), (dx, dy));
+        s.Poll(1001, out _, out _, out jump);                                 // 同一项不会再触发
+        Assert.False(jump);
+        Assert.True(s.Poll(2000, out dx, out dy, out jump));                  // 同一项可以同时有 jump 与 attack
+        Assert.True(jump);
+        Assert.Equal((1, 0), (dx, dy));
+        s.Poll(2000, out _, out _, out jump);
+        Assert.False(jump);
+
+        // 三参数的重载忽略跳跃键(也把它算作已读)
+        CombatScript t = CombatScript.Parse("1:jump");
+        Assert.False(t.Poll(1000, out _, out _));
+        t.Poll(2000, out _, out _, out jump);
+        Assert.False(jump);
+    }
+
+    [Fact]
+    public void ATapReleaseTapPatternCanBeWrittenAsATimeTable()
+    {
+        // 双击右:0 秒按下、0.1 秒松开、0.2 秒再按下并保持
+        CombatScript s = CombatScript.Parse("0:right,0.1:none,0.2:right");
+        s.Poll(50, out int dx, out _);
+        Assert.Equal(1, dx);
+        s.Poll(150, out dx, out _);
+        Assert.Equal(0, dx);
+        s.Poll(250, out dx, out _);
+        Assert.Equal(1, dx);
+    }
+
+    [Fact]
     public void StepAdvancesTheSessionInFixedStepsAndTheClockByTheSameAmount()
     {
         var rec = new Recorder();
@@ -97,6 +134,20 @@ public class CombatScriptTests
         Assert.Equal(new[] { false, false, false, true, false, false, false, false }, rec.Calls.Select(c => c.Attack).ToArray());
         Assert.Equal((1, 0), (rec.Calls[5].DirX, rec.Calls[5].DirY));
         Assert.Equal((0, 0), (rec.Calls[7].DirX, rec.Calls[7].DirY));
+        Assert.All(rec.Calls, c => Assert.False(c.Jump));
+    }
+
+    [Fact]
+    public void StepPassesTheJumpEdgeToTheSession()
+    {
+        var rec = new Recorder();
+        CombatScript s = CombatScript.Parse("0.05:jump");
+        for (int i = 0; i < 6; i++)
+        {
+            s.Step(rec);
+        }
+        Assert.Equal(new[] { false, false, false, true, false, false }, rec.Calls.Select(c => c.Jump).ToArray());
+        Assert.All(rec.Calls, c => Assert.False(c.Attack));
     }
 
     [Fact]
@@ -118,7 +169,7 @@ public class CombatScriptTests
     [InlineData("1")]
     [InlineData("a:left")]
     [InlineData("1:left:right")]
-    [InlineData("1:jump")]
+    [InlineData("1:dance")]
     [InlineData("1:left+fly")]
     public void MalformedItemsAreRejected(string text)
     {

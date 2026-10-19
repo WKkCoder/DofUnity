@@ -468,21 +468,30 @@ namespace Dnf.Client
             {
                 if (_session != null && !_paused)
                 {
-                    int dirX = 0, dirY = 0;
-                    bool attack = false;
-                    if (_heroInput)
-                    {
-                        attack = ReadHeroInput(out dirX, out dirY);
-                    }
                     // 一帧最多推进 100 毫秒:窗口被拖动、打开数据等卡顿之后主角不会一步冲出去
                     double deltaMs = Math.Min(Time.unscaledDeltaTime * 1000.0, 100.0);
-                    if (_session is IActionSession action)
+                    if (_bot != null && _session is DungeonSession botDungeon)
                     {
-                        action.Update(deltaMs, dirX, dirY, attack);
+                        // 自动机按固定的 1/60 秒"心跳"决策并推进(与命令行 dungeon-check --bot 同一局):帧率抖动、卡顿只会让一帧里多补或少补几个心跳,
+                        // 不会改变它的路线。它的走位、出手间隔都是按心跳数写的,按可变的帧长喂给它会在怪物旁来回晃(证据 E-072 的实时运行里出现过)。
+                        _bot.Advance(botDungeon, deltaMs);
                     }
                     else
                     {
-                        _session.Update(deltaMs, dirX, dirY);
+                        int dirX = 0, dirY = 0;
+                        bool attack = false, jump = false;
+                        if (_heroInput)
+                        {
+                            attack = ReadHeroInput(out dirX, out dirY, out jump);
+                        }
+                        if (_session is IActionSession action)
+                        {
+                            action.Update(deltaMs, dirX, dirY, attack, jump);
+                        }
+                        else
+                        {
+                            _session.Update(deltaMs, dirX, dirY);
+                        }
                     }
                 }
                 _spriteCount = _view.ShowAt((long)_clockMs).Count;
@@ -504,17 +513,16 @@ namespace Dnf.Client
         }
 
         /// <summary>
-        /// 方向键(或 -dnfautowalk 的时间表)当前的状态:-1/0/1;返回这一帧有没有"刚按下攻击键"(X 键,或时间表里到点的 attack)。
+        /// 方向键(或 -dnfautowalk 的时间表)当前的状态:-1/0/1;返回这一帧有没有"刚按下攻击键"(X 键,或时间表里到点的 attack),
+        /// <paramref name="jump"/> 是这一帧有没有"刚按下跳跃键"(C 键,或时间表里到点的 jump)。
+        /// 按原版的默认键位(clientonly/hotkeysystem.co,证据 E-072):X 普通攻击、C 跳跃;Z 与空格是"技能"槽,技能系统还没做,所以不响应。
         /// </summary>
-        private bool ReadHeroInput(out int dirX, out int dirY)
+        private bool ReadHeroInput(out int dirX, out int dirY, out bool jump)
         {
-            if (_bot != null && _session is DungeonSession dungeon)
-            {
-                return _bot.Next(dungeon, out dirX, out dirY);
-            }
+            jump = false;
             if (!_script.IsEmpty)
             {
-                return _script.Poll((Time.realtimeSinceStartup - _runningSince) * 1000.0, out dirX, out dirY);
+                return _script.Poll((Time.realtimeSinceStartup - _runningSince) * 1000.0, out dirX, out dirY, out jump);
             }
             dirX = 0;
             dirY = 0;
@@ -522,6 +530,7 @@ namespace Dnf.Client
             if (Input.GetKey(KeyCode.RightArrow)) { dirX += 1; }
             if (Input.GetKey(KeyCode.UpArrow)) { dirY -= 1; }
             if (Input.GetKey(KeyCode.DownArrow)) { dirY += 1; }
+            jump = Input.GetKeyDown(KeyCode.C);
             return Input.GetKeyDown(KeyCode.X);
         }
 
@@ -677,7 +686,8 @@ namespace Dnf.Client
             {
                 TownHero h = _session.Hero;
                 hero = "hero (" + ((int)h.X) + ", " + ((int)h.Y) + ")  " + (h.FacingLeft ? "facing left" : "facing right") + "  " + h.Motion
-                    + (h.IsAttacking ? " stage " + (h.AttackStage + 1) : string.Empty)
+                    + (h.IsAttacking && h.AttackKind == HeroAttackKind.Normal ? " stage " + (h.AttackStage + 1) : string.Empty)
+                    + (h.IsAirborne ? "  z " + (int)h.Z : string.Empty)
                     + "  camera x " + _session.Camera.IntX + "\n";
                 if (_session is DungeonSession dungeon)
                 {
@@ -693,13 +703,13 @@ namespace Dnf.Client
                 }
                 if (_session is DungeonSession)
                 {
-                    help = (_bot != null ? "Auto-play bot is driving (bot input only)   " : "Arrow keys: walk   X: attack (press again to chain)   ")
-                        + "Space: pause   H: hide text   Esc: quit   (clear a room to open its gates, then walk into a gate; placeholder damage; monsters do not hurt you)";
+                    help = (_bot != null ? "Auto-play bot is driving (bot input only)   " : "Arrow keys: walk (double-tap Left/Right: run)   X: attack (again to chain; while running: dash attack)   C: jump (X in the air: jump attack)   ")
+                        + "Space: pause   H: hide text   Esc: quit   (clear a room to open its gates, then walk into a gate; placeholder damage; monsters do not hurt you; Z/Space skills not implemented)";
                 }
                 else
                 {
                     help = _session is RoomCombatSession
-                        ? "Arrow keys: walk   X: attack (press again to chain)   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (placeholder damage; monsters do not hurt you)"
+                        ? "Arrow keys: walk (double-tap Left/Right: run)   X: attack (again to chain; while running: dash attack)   C: jump (X in the air: jump attack)   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (placeholder damage; monsters do not hurt you)"
                         : "Arrow keys: walk   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (no UI, no combat)";
                 }
             }

@@ -33,7 +33,7 @@ public class RoomCombatTests
 
         /// <param name="frozen">为真时主角的可走区域只是脚下一小块:怪物的每一步都会落在区域外,所以所有怪物都原地不动(也推不动)。</param>
         public Arena(IReadOnlyList<(int X, int Y)> monsters, HeroStrikeInfo[] strikes = null, bool facingLeft = false, int hp = 100,
-            bool frozen = false, int seed = 1)
+            bool frozen = false, int seed = 1, string chr = null, HeroStrikeInfo dash = default, HeroStrikeInfo jump = default, double monsterSpeed = 222.5)
         {
             Assets = DnfAssets.Open(_fx.Root);
             var tiles = new List<TileFile>();
@@ -47,7 +47,7 @@ public class RoomCombatTests
             AvatarClass cls = AvatarClass.FromChr(Assets, AvatarFixture.ChrPath, AvatarFixture.JobTag);
             AvatarOutfit outfit = AvatarOutfit.CreateDefault(Assets, cls, AvatarFixture.EquipRoot, AvatarFixture.WeaponEqu);
             var area = frozen ? new List<WorldRect> { new WorldRect(HeroX - 5, HeroY - 5, 10, 10) } : new List<WorldRect>();
-            TownHero hero = TownHero.Create(Assets, AvatarFixture.ChrPath, outfit, area, HeroX, HeroY, facingLeft, TownHero.DungeonRestTag);
+            TownHero hero = TownHero.Create(Assets, chr ?? AvatarFixture.ChrPath, outfit, area, HeroX, HeroY, facingLeft, TownHero.DungeonRestTag);
             var room = new RoomSession(Assets, content, hero, new TownCamera(0, map.MaxCameraX, hero.X));
 
             MonsterModel model = MonsterModel.Read(Assets, AvatarFixture.BlobMobPath);
@@ -55,9 +55,18 @@ public class RoomCombatTests
             for (int i = 0; i < monsters.Count; i++)
             {
                 var spawn = new RoomMonsterSpawn(1, 0, 0, monsters[i].X, monsters[i].Y, 0, 1, 0, "[fixed]", "[normal]");
-                actors.Add(new MonsterActor(i, spawn, model, 1, hp, 222.5, 1500, 0));
+                actors.Add(new MonsterActor(i, spawn, model, 1, hp, monsterSpeed, 1500, 0));
             }
-            Session = new RoomCombatSession(Assets, room, actors, strikes ?? Plain(), seed);
+            Session = new RoomCombatSession(Assets, room, actors, strikes ?? Plain(), seed, dash, jump);
+        }
+
+        /// <summary>每 10 毫秒一步推进:前 <paramref name="steps"/> 步按 (dirX, dirY) 走,攻击键与跳跃键在 <paramref name="attackAt"/>、<paramref name="jumpAt"/> 那一步按下(从 0 数)。</summary>
+        public void Steps(int steps, int dirX = 0, int dirY = 0, int attackAt = -1, int jumpAt = -1)
+        {
+            for (int i = 0; i < steps; i++)
+            {
+                Session.Update(10, dirX, dirY, i == attackAt, i == jumpAt);
+            }
         }
 
         /// <summary>每 10 毫秒一步推进 <paramref name="ms"/> 毫秒;<paramref name="pressAt"/> 里的时刻(毫秒,从这次调用起算)那一步按下攻击键。</summary>
@@ -355,5 +364,83 @@ public class RoomCombatTests
         TownHero noStat = TownHero.Create(assets, AvatarFixture.NoAttackChrPath, outfit, new List<WorldRect>(), 0, 0, false, TownHero.DungeonRestTag);
         Assert.Equal(0, noStat.MoveSpeedStat);
         Assert.Equal(noStat.WalkSpeedX, RoomCombatSession.WalkSpeed(noStat, 123), 9);                         // 主角没有数 → 与主角同速
+    }
+
+    [Fact]
+    public void ADashAttackStrikesWithItsOwnBoxAndItsOwnStrikeInfoWhileTheChainStaysUntouched()
+    {
+        // 奔跑攻击的攻击信息:加成 +100%(伤害 ≈ 50.6)、推 40 像素、倒地;连招各段的加成都是 0
+        var dash = new HeroStrikeInfo(100, 40, true);
+        using var arena = new Arena(new[] { (400, 100) }, chr: AvatarFixture.ActionChrPath, dash: dash, monsterSpeed: 0);   // 怪物原地不动
+        RoomCombatSession s = arena.Session;
+        TownHero hero = s.Hero;
+        hero.Update(50, 1, 0);                                           // 双击右进入奔跑(这三步主角自己走到 x ≈ 323)
+        hero.Update(50, 0, 0);
+        hero.Update(50, 1, 0);
+        Assert.Equal(HeroMotion.Dash, hero.Motion);
+
+        s.Update(10, 1, 0, true, false);                                 // 奔跑中按攻击键:奔跑攻击
+        Assert.Equal(HeroAttackKind.Dash, hero.AttackKind);
+        for (int i = 0; i < 40 && hero.IsAttacking; i++)
+        {
+            s.Update(10, 0, 0, false, false);
+        }
+        Assert.False(hero.IsAttacking);
+        Assert.Equal((1, 0), (s.Hits, s.Kills));
+        Assert.InRange(s.TotalDamage, 50, 51);                           // 25.3 × (100 + 100) / 100
+        MonsterActor m = s.Monsters[0];
+        Assert.Equal(AvatarFixture.BlobAnimationDir + "/down.ani", m.CurrentAnimationPath);   // 倒地
+        arena.Steps(80);
+        Assert.Equal(400 + 40.0, m.X, 6);                                // 朝右的奔跑攻击把怪物往右推 40
+
+        // 同一份数据里站着出的第一段普攻不受奔跑攻击信息的影响
+        using var walker = new Arena(new[] { (340, 100) }, chr: AvatarFixture.ActionChrPath, dash: dash, monsterSpeed: 0);
+        walker.Steps(60, attackAt: 0);
+        Assert.Equal(1, walker.Session.Hits);
+        Assert.InRange(walker.Session.TotalDamage, 25, 26);
+    }
+
+    [Fact]
+    public void AJumpAttackFollowsTheHeroHeightAndUsesTheJumpStrikeInfo()
+    {
+        // 空中攻击的攻击信息:加成 −50%(伤害 ≈ 12.65);攻击框 z ∈ [Z, Z + 50],怪物受击框 z ∈ [0, 60]
+        var jump = new HeroStrikeInfo(-50, 0, false);
+
+        // 起跳后 20 毫秒出招:挥击的第 1 帧在出招后 100 毫秒,那时离地 ≈ 46 像素,框 z ∈ [46, 96] 与 [0, 60] 相交
+        using var low = new Arena(new[] { (340, 100) }, chr: AvatarFixture.ActionChrPath, jump: jump, monsterSpeed: 0);
+        low.Steps(60, jumpAt: 0, attackAt: 2);
+        RoomCombatSession s = low.Session;
+        Assert.Equal(1, s.Hits);
+        Assert.InRange(s.TotalDamage, 12, 13);
+
+        // 在最高点附近出招:挥击第 1 帧时离地 ≈ 100 像素,框 z ∈ [100, 150] 够不着 [0, 60]
+        using var high = new Arena(new[] { (340, 100) }, chr: AvatarFixture.ActionChrPath, jump: jump, monsterSpeed: 0);
+        high.Steps(70, jumpAt: 0, attackAt: 35);
+        Assert.Equal(HeroMotion.Jump, high.Hero.Motion);                  // 已经挥完回到跳跃动作
+        Assert.Equal((0, 1L), (high.Session.Hits, high.Hero.SwingNumber));
+    }
+
+    [Fact]
+    public void StrikeBoxesOfAnAirAttackAreLiftedByTheHeroHeight()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        AvatarClass cls = AvatarClass.FromChr(assets, AvatarFixture.ChrPath, AvatarFixture.JobTag);
+        AvatarOutfit outfit = AvatarOutfit.CreateDefault(assets, cls, AvatarFixture.EquipRoot, AvatarFixture.WeaponEqu);
+        TownHero hero = TownHero.Create(assets, AvatarFixture.ActionChrPath, outfit, new List<WorldRect>(), HeroX, HeroY, false, TownHero.DungeonRestTag);
+        var boxes = new HeroStrikeBoxes(assets);
+
+        hero.Update(10, 0, 0, false, true);
+        for (int i = 0; i < 26; i++)
+        {
+            hero.Update(10, 0, 0);                                       // 第 27 步:腾空 0.27 秒
+        }
+        hero.Update(10, 0, 0, true);                                     // 第 28 步出招:腾空 0.28 秒,离地 430 × 0.28 − 462.5 × 0.28² ≈ 84.2 像素
+        Assert.Equal(HeroMotion.JumpAttack, hero.Motion);
+        Assert.Empty(boxes.At(hero, 0));                                 // 第 0 帧没有框
+        int wz = (int)Math.Round(hero.Z);
+        Assert.Equal(84, wz);
+        List<Aabb> list = boxes.At(hero, 1);
+        Assert.Equal(new[] { new Aabb(HeroX + 20, HeroX + 60, HeroY - 10, HeroY + 10, wz, wz + 50) }, list.ToArray());
     }
 }

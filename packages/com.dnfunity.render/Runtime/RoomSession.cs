@@ -50,7 +50,13 @@ namespace Dnf.Render
         /// <summary>同 <see cref="Update(double, int, int)"/>,多一个攻击键(见 <see cref="TownHero.Update(double, int, int, bool)"/>)。</summary>
         public void Update(double deltaMs, int dirX, int dirY, bool attackPressed)
         {
-            Hero.Update(deltaMs, dirX, dirY, attackPressed);
+            Update(deltaMs, dirX, dirY, attackPressed, false);
+        }
+
+        /// <summary>同上,再多一个跳跃键(见 <see cref="TownHero.Update(double, int, int, bool, bool)"/>)。</summary>
+        public void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed)
+        {
+            Hero.Update(deltaMs, dirX, dirY, attackPressed, jumpPressed);
             Camera.Follow(Hero.X);
         }
 
@@ -255,6 +261,7 @@ namespace Dnf.Render
                 TownHero.TownRestTag);
             hero.LoadBattleRest(assets, DemoHero.SwordmanChrPath);
             hero.BattleStance = true;
+            hero.Blocker = new GateBodies(gates);   // 出口的门框与墙挡路(证据 E-072)
             var camera = new TownCamera(0, map.MaxCameraX, hero.X);
             return new RoomSession(assets, content, hero, camera);
         }

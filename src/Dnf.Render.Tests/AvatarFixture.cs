@@ -14,6 +14,17 @@ internal sealed class AvatarFixture : IDisposable
     public const string ChrPath = "character/test/test.chr";
     public const string NoAttackChrPath = "character/test/noattack.chr";
 
+    /// <summary>
+    /// 带奔跑与跳跃的角色脚本:除了 <see cref="ChrPath"/> 有的之外,还有 [dash motion](四帧 × 100 毫秒、循环)、[dashattack motion](三帧 × 100 毫秒)、
+    /// [jump motion](八帧:100、100、80、停留 10000、100、80、停留 10000、落地 50 毫秒)、[jumpattack motion](100、50、50 毫秒)、
+    /// [jump power] 430 与 [jump speed] 95(取值只是借用真实脚本里常见的量级)。
+    /// </summary>
+    public const string ActionChrPath = "character/test/action.chr";
+    public const string DashAni = "character/test/animation/dash.ani";
+    public const string DashAttackAni = "character/test/animation/dashattack.ani";
+    public const string JumpAni = "character/test/animation/jump.ani";
+    public const string JumpAttackAni = "character/test/animation/jumpattack.ani";
+
     /// <summary>主角脚本里合成的 [move speed](纯属测试用的数)。</summary>
     public const int MoveSpeedStat = 400;
     public const string JobTag = "[tester]";
@@ -144,6 +155,19 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[rest motion]").Str("animation/rest.ani")
                 .Tag("[waiting motion]").Str("animation/wait.ani")
                 .Tag("[move motion]").Str("animation/move.ani").Build()),
+            (ActionChrPath, NewScript()
+                .Tag("[body image path]").Str("Character/Test/Equipment/Avatar/skin/tt_body%04d.img")
+                .Tag("[rest motion]").Str("animation/rest.ani")
+                .Tag("[waiting motion]").Str("animation/wait.ani")
+                .Tag("[move motion]").Str("animation/move.ani")
+                .Tag("[move speed]").Float(MoveSpeedStat)
+                .Tag("[dash motion]").Str("animation/dash.ani")
+                .Tag("[dashattack motion]").Str("Animation/DashAttack.ani")
+                .Tag("[jump motion]").Str("animation/jump.ani")
+                .Tag("[jumpattack motion]").Str("animation/jumpattack.ani")
+                .Tag("[jump power]").Int(430)
+                .Tag("[jump speed]").Int(95)
+                .Tag("[attack motion]").Str("animation/attack1.ani").Str("Animation/Attack2.ani").Str("animation/attack3.ani").Build()),
             (EquipRoot + "/avatar/skin/askin_default.equ", NewScript()
                 .Tag("[equipment type]").Str("[skin avatar]")
                 .Tag("[animation job]").Str(JobTag)
@@ -186,6 +210,12 @@ internal sealed class AvatarFixture : IDisposable
             (RestAni, BuildAni(new[] { (0, 100), (1, 300) })),
             (MoveAni, BuildAni(new[] { (0, 100), (1, 100), (0, 100) })),
             (WaitAni, BuildAni(new[] { (1, 100), (0, 100) })),
+            // 奔跑(循环)、奔跑攻击;跳跃动画有两个停留帧(最高点与落地前,各 10000 毫秒),最后一帧是 50 毫秒的落地帧;空中攻击 200 毫秒
+            (DashAni, BuildAni(new[] { (0, 100), (1, 100), (0, 100), (1, 100) })),
+            // 奔跑攻击在第 1 帧(100 到 200 毫秒)、空中攻击在第 1 帧(100 到 150 毫秒)各有一个攻击框:x 从 +20 起宽 40,y 从 −10 起深 20,z 从 0 起高 50
+            (DashAttackAni, BuildBoxAni((0, 100, null), (1, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 40, 20, 50 }) }), (0, 100, null))),
+            (JumpAni, BuildBoxAni((0, 100, null), (1, 100, null), (0, 80, null), (1, 10000, null), (0, 100, null), (1, 80, null), (0, 10000, null), (1, 50, null))),
+            (JumpAttackAni, BuildBoxAni((0, 100, null), (1, 50, new[] { ((ushort)15, new[] { 20, -10, 0, 40, 20, 50 }) }), (0, 50, null))),
             // 三段普攻:四帧 × 100、三帧 × 100、两帧 × 200 毫秒;攻击框(类型 15)在武器图层的动画里,第三段的基础动画自己带一个
             (Attack1Ani, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, null), (1, 100, null))),
             (Attack2Ani, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, null))),

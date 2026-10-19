@@ -55,9 +55,9 @@ namespace DnfUnity.Tests
                 Calls.Add(dirX + "," + dirY + ",-");
             }
 
-            public void Update(double deltaMs, int dirX, int dirY, bool attackPressed)
+            public void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed)
             {
-                Calls.Add(dirX + "," + dirY + "," + (attackPressed ? "A" : "-"));
+                Calls.Add(dirX + "," + dirY + "," + (attackPressed ? "A" : "-") + (jumpPressed ? "J" : string.Empty));
             }
 
             public List<SceneSprite> Build(long timeMs)
@@ -85,8 +85,20 @@ namespace DnfUnity.Tests
         public void CombatScript_RejectsMalformedItems()
         {
             Assert.Throws<FormatException>(() => CombatScript.Parse("1"));
-            Assert.Throws<FormatException>(() => CombatScript.Parse("1:jump"));
+            Assert.Throws<FormatException>(() => CombatScript.Parse("1:dance"));
             Assert.IsTrue(CombatScript.Parse("").IsEmpty);
+        }
+
+        [Test]
+        public void CombatScript_PassesTheJumpEdgeToTheSession()
+        {
+            var rec = new Recorder();
+            CombatScript script = CombatScript.Parse("0.05:jump");
+            for (int i = 0; i < 5; i++)
+            {
+                script.Step(rec);
+            }
+            CollectionAssert.AreEqual(new[] { "0,0,-", "0,0,-", "0,0,-", "0,0,-J", "0,0,-" }, rec.Calls);
         }
     }
 }

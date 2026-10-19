@@ -102,6 +102,32 @@ namespace Dnf.Render
 
         /// <summary>普通攻击连招里的一击(.chr 的 [attack motion] 第 <see cref="TownHero.AttackStage"/> 项,证据 E-069)。</summary>
         Attack,
+
+        /// <summary>奔跑([dash motion]):在地面上双击左或右方向键进入,按住方向键保持,松开就停(证据 E-072;双击的时间窗没有量过)。</summary>
+        Dash,
+
+        /// <summary>奔跑中挥击([dashattack motion]):向前滑出一段,挥完回到站立。</summary>
+        DashAttack,
+
+        /// <summary>跳跃([jump motion]):腾空,空中可以改变水平与深度方向,落地后回到站立。</summary>
+        Jump,
+
+        /// <summary>空中挥击([jumpattack motion]):每次跳跃一击,落地即结束。</summary>
+        JumpAttack,
+    }
+
+    /// <summary>当前这一击属于哪一类:连招里的普攻、奔跑攻击、跳跃攻击。</summary>
+    public enum HeroAttackKind
+    {
+        Normal,
+        Dash,
+        Jump,
+    }
+
+    /// <summary>主角的障碍物(出口的门框与墙):给出主角占位盒中心在 (x, y) 时压到的障碍(没有则 null),调用方用返回值判断顶着的是哪一个。</summary>
+    public interface IHeroBlocker
+    {
+        object BlockedBy(double x, double y);
     }
 
     /// <summary>
@@ -163,9 +189,10 @@ namespace Dnf.Render
     }
 
     /// <summary>
-    /// 城镇里可以用键盘操作的主角:状态(站立/行走、朝向)、位置、在可走区域里的移动,以及按状态选 .ani 帧并用换装合成成精灵。
+    /// 城镇里可以用键盘操作的主角:状态(站立/行走/奔跑/跳跃/挥击、朝向)、位置、在可走区域里的移动,以及按状态选 .ani 帧并用换装合成成精灵。
     /// 行走速度是在原版连拍上标定的(水平约 222.5 像素/秒、竖直约 90 像素/秒,证据 E-066);竖直速度只有一个房间里的两段样本,
-    /// 斜着走时两个方向各按各的速度(是否归一化没有样本)。没有跳跃、奔跑与攻击。
+    /// 斜着走时两个方向各按各的速度(是否归一化没有样本)。奔跑速度 242.5 像素/秒取自原版连拍里镜头的速度(证据 E-072);
+    /// 跳跃的初速度与奔跑的双击时间窗、奔跑动画倍率、空中速度都是假设(见各常量),等原版录像量过再改。
     /// </summary>
     public sealed class TownHero
     {
@@ -183,6 +210,30 @@ namespace Dnf.Render
         /// 倍率与角色脚本 [move speed] 的关系没有研究,取 1.2。
         /// </summary>
         public const double DefaultMoveAnimationRate = 1.2;
+
+        /// <summary>奔跑的水平速度(像素/秒):原版连拍里主角冲出画面死区时镜头的速度(多个镜头位置回归得 242.5,证据 E-072);只有这一个数,比行走快 9%。</summary>
+        public const double DefaultDashSpeedX = 242.5;
+
+        /// <summary>奔跑时的竖直速度(像素/秒):没有量过,取与行走相同(假设)。</summary>
+        public const double DefaultDashSpeedY = 90.0;
+
+        /// <summary>
+        /// 双击方向键算"奔跑"的时间窗(毫秒,从上一次按下到这一次按下;假设)。
+        /// 原版基线里自动化脚本的"点一下再按住"能触发奔跑,说明窗口至少有几十到一百多毫秒;上限没有量过,取 300。
+        /// </summary>
+        public const double DoubleTapWindowMs = 300.0;
+
+        /// <summary>跳跃重力(像素/秒²;假设,原版没有量过)。角色脚本的 [jump power] 当作初速度(像素/秒),配上它得到的是升到最高约一百像素、腾空不到一秒的一跳。</summary>
+        public const double DefaultJumpGravity = 925.0;
+
+        /// <summary>角色脚本缺 [jump power] 时的默认初速度(像素/秒;随手取的同量级整数,不是原版的数值)。</summary>
+        public const double DefaultJumpPower = 400.0;
+
+        /// <summary>落地帧的锁定时长(毫秒;假设):落地这一帧显示期间不接受操作。</summary>
+        public const double LandingMs = 50.0;
+
+        /// <summary>延时不短于它的帧是"停留帧"(跳跃动画里最高点与落地前各有一个延时极长的帧,由游戏逻辑决定什么时候往下走)。</summary>
+        public const int HoldDelayMs = 5000;
 
         private readonly AniFile _rest;
         private readonly AniFile _move;
@@ -202,6 +253,38 @@ namespace Dnf.Render
         private AniTimeline _battleRestTimeline;
         private bool _battleStance;
 
+        // 奔跑与跳跃的动作(角色脚本没写就是 null,对应的操作不生效)
+        private AniFile _dash;
+        private string _dashPath;
+        private AniTimeline _dashTimeline;
+        private AniFile _dashAttack;
+        private string _dashAttackPath;
+        private AniTimeline _dashAttackTimeline;
+        private AniFile _jump;
+        private string _jumpPath;
+        private AniTimeline _jumpTimeline;
+        private int _jumpHold1 = -1;
+        private int _jumpHold2 = -1;
+        private AniFile _jumpAttack;
+        private string _jumpAttackPath;
+        private AniTimeline _jumpAttackTimeline;
+
+        // 双击检测:上一帧的水平方向、最近一次按下的方向与距今的时间
+        private int _prevDirX;
+        private int _tapDir;
+        private double _sinceTapMs = double.MaxValue;
+        private bool _running;
+
+        // 跳跃:竖直速度(像素/秒)、腾空时间、下降段时间、落地帧计时(负数表示没在落地)
+        private double _vz;
+        private double _airMs;
+        private double _descendMs;
+        private bool _descending;
+        private double _landingMs = -1;
+        private bool _airAttackUsed;
+        private double _airSpeedX;
+        private double _airSpeedY;
+
         /// <summary>攻击动画的播放倍率。取 1.0(.ani 原速);原版连拍里没有量过攻击一击的时长(证据 E-069),角色脚本的 [attack speed] 与它的关系没有研究。</summary>
         public const double DefaultAttackAnimationRate = 1.0;
 
@@ -219,8 +302,52 @@ namespace Dnf.Render
         public HeroMotion Motion { get; private set; }
         public double WalkSpeedX { get; set; } = DefaultWalkSpeedX;
         public double WalkSpeedY { get; set; } = DefaultWalkSpeedY;
+        public double DashSpeedX { get; set; } = DefaultDashSpeedX;
+        public double DashSpeedY { get; set; } = DefaultDashSpeedY;
         public double MoveAnimationRate { get; set; } = DefaultMoveAnimationRate;
         public double AttackAnimationRate { get; set; } = DefaultAttackAnimationRate;
+
+        /// <summary>离地高度(像素;0 在地面上)。画面上的位置往上抬这么多,深度排序仍按 <see cref="Y"/>。</summary>
+        public double Z { get; private set; }
+
+        /// <summary>跳跃的初速度(像素/秒),取自 [jump power];没写时 <see cref="DefaultJumpPower"/>。</summary>
+        public double JumpPower { get; set; } = DefaultJumpPower;
+
+        /// <summary>跳跃的重力(像素/秒²);假设值,见 <see cref="DefaultJumpGravity"/>。</summary>
+        public double JumpGravity { get; set; } = DefaultJumpGravity;
+
+        /// <summary>[jump speed](百分数,空中水平与深度速度占地面行走速度的比;把它当百分比是假设,没写时 100)。</summary>
+        public int JumpSpeedPercent { get; set; } = 100;
+
+        /// <summary>有奔跑动作([dash motion])。</summary>
+        public bool CanDash => _dash != null;
+
+        /// <summary>有奔跑攻击动作([dashattack motion])。</summary>
+        public bool CanDashAttack => _dashAttack != null;
+
+        /// <summary>有跳跃动作([jump motion])。</summary>
+        public bool CanJump => _jump != null;
+
+        /// <summary>有跳跃攻击动作([jumpattack motion])。</summary>
+        public bool CanJumpAttack => _jumpAttack != null;
+
+        /// <summary>双击方向键进入奔跑之后、松开方向键之前为真(不论当前动作是不是奔跑,例如挥击中)。</summary>
+        public bool RunArmed => _running;
+
+        /// <summary>腾空中(跳跃或空中挥击)。</summary>
+        public bool IsAirborne => Motion == HeroMotion.Jump || Motion == HeroMotion.JumpAttack;
+
+        /// <summary>出口的碰撞体等障碍;为 null 时只受可走区域限制。</summary>
+        public IHeroBlocker Blocker { get; set; }
+
+        /// <summary>最近一次 <see cref="Update(double, int, int, bool, bool)"/> 里,水平移动被哪个障碍挡住了(<see cref="IHeroBlocker.BlockedBy"/> 的返回值);没被挡住为 null。</summary>
+        public object PushedInto { get; private set; }
+
+        /// <summary>最近一次更新里,向上走被可走区域(或障碍)挡住了。</summary>
+        public bool PushedUp { get; private set; }
+
+        /// <summary>最近一次更新里,向下走被可走区域(或障碍)挡住了。</summary>
+        public bool PushedDown { get; private set; }
 
         /// <summary>角色脚本 [attack motion] 里的连招段数(没载入攻击动作时为 0)。</summary>
         public int AttackCount => _attacks.Length;
@@ -237,20 +364,37 @@ namespace Dnf.Render
         /// <summary>从开始玩起累计挥出的次数(每开始一击加 1)。命中判定用它给"同一击只打中同一目标一次"去重。</summary>
         public long SwingNumber { get; private set; }
 
-        /// <summary>是否正在挥击。</summary>
-        public bool IsAttacking => Motion == HeroMotion.Attack;
+        /// <summary>是否正在挥击(连招、奔跑攻击或空中攻击)。</summary>
+        public bool IsAttacking => Motion == HeroMotion.Attack || Motion == HeroMotion.DashAttack || Motion == HeroMotion.JumpAttack;
+
+        /// <summary>正在挥的这一击的种类;不在攻击时为 <see cref="HeroAttackKind.Normal"/>。</summary>
+        public HeroAttackKind AttackKind => Motion == HeroMotion.DashAttack ? HeroAttackKind.Dash : (Motion == HeroMotion.JumpAttack ? HeroAttackKind.Jump : HeroAttackKind.Normal);
 
         /// <summary>当前这一击的动画文件名(小写,形如 attack1.ani);不在攻击时为 null。</summary>
         public string AttackMotionFile
         {
             get
             {
-                if (!IsAttacking || (uint)AttackStage >= (uint)_attackPaths.Length)
+                string path;
+                switch (Motion)
                 {
-                    return null;
+                    case HeroMotion.Attack:
+                        if ((uint)AttackStage >= (uint)_attackPaths.Length)
+                        {
+                            return null;
+                        }
+                        path = _attackPaths[AttackStage];
+                        break;
+                    case HeroMotion.DashAttack:
+                        path = _dashAttackPath;
+                        break;
+                    case HeroMotion.JumpAttack:
+                        path = _jumpAttackPath;
+                        break;
+                    default:
+                        return null;
                 }
-                string path = _attackPaths[AttackStage];
-                return path.Substring(path.LastIndexOf('/') + 1).ToLowerInvariant();
+                return path == null ? null : path.Substring(path.LastIndexOf('/') + 1).ToLowerInvariant();
             }
         }
 
@@ -306,6 +450,8 @@ namespace Dnf.Render
             var hero = new TownHero(outfit, rest, restPath, move, movePath, area, x, y, facingLeft);
             hero.LoadAttackMotions(assets, chrPath);
             hero.LoadMoveSpeedStat(assets, chrPath);
+            hero.LoadDashMotions(assets, chrPath);
+            hero.LoadJumpMotions(assets, chrPath);
             return hero;
         }
 
@@ -317,6 +463,8 @@ namespace Dnf.Render
             var hero = new TownHero(outfit, rest, restPath, move, movePath, walk, x, y, facingLeft);
             hero.LoadAttackMotions(assets, chrPath);
             hero.LoadMoveSpeedStat(assets, chrPath);
+            hero.LoadDashMotions(assets, chrPath);
+            hero.LoadJumpMotions(assets, chrPath);
             return hero;
         }
 
@@ -356,10 +504,50 @@ namespace Dnf.Render
             X = x;
             Y = y;
             FacingLeft = facingLeft;
-            Motion = motion == HeroMotion.Attack && _attacks.Length == 0 ? HeroMotion.Rest : motion;
+            switch (motion)
+            {
+                case HeroMotion.Attack:
+                    Motion = _attacks.Length == 0 ? HeroMotion.Rest : motion;
+                    break;
+                case HeroMotion.Dash:
+                    Motion = _dash == null ? HeroMotion.Rest : motion;
+                    break;
+                case HeroMotion.DashAttack:
+                    Motion = _dashAttack == null ? HeroMotion.Rest : motion;
+                    break;
+                case HeroMotion.Jump:
+                case HeroMotion.JumpAttack:
+                    Motion = HeroMotion.Rest;   // 腾空状态有速度与相位,不能直接摆出来
+                    break;
+                default:
+                    Motion = motion;
+                    break;
+            }
             _motionMs = motionMs < 0 ? 0 : motionMs;
             AttackStage = 0;
             _attackQueued = false;
+            _running = Motion == HeroMotion.Dash || Motion == HeroMotion.DashAttack;
+            if (_running)
+            {
+                // 摆成奔跑:把"上一帧按着的方向"也摆成朝向,这样紧接着的更新里同方向的按住不算新的一次按下
+                _prevDirX = FacingLeft ? -1 : 1;
+                _tapDir = _prevDirX;
+            }
+            ResetAir();
+            PushedInto = null;
+            PushedUp = false;
+            PushedDown = false;
+        }
+
+        private void ResetAir()
+        {
+            Z = 0;
+            _vz = 0;
+            _airMs = 0;
+            _descendMs = 0;
+            _descending = false;
+            _landingMs = -1;
+            _airAttackUsed = false;
         }
 
         /// <summary>摆成"正在挥连招第 <paramref name="stage"/> 段、已播放 <paramref name="motionMs"/> 毫秒(按墙钟)"。没载入攻击动作时无效。</summary>
@@ -377,6 +565,8 @@ namespace Dnf.Render
             AttackStage = stage < 0 ? 0 : (stage >= _attacks.Length ? _attacks.Length - 1 : stage);
             _motionMs = motionMs < 0 ? 0 : motionMs;
             _attackQueued = false;
+            _running = false;
+            ResetAir();
         }
 
         /// <summary>
@@ -496,6 +686,101 @@ namespace Dnf.Render
             }
         }
 
+        /// <summary>读 .chr 的 [dash motion] 与 [dashattack motion](相对角色脚本所在目录)。缺哪个,对应的操作就不生效。</summary>
+        public void LoadDashMotions(DnfAssets assets, string chrPath)
+        {
+            ScriptLine[] doc = ReadChr(assets, chrPath);
+            LoadMotion(assets, chrPath, doc, "[dash motion]", out _dash, out _dashPath, out _dashTimeline);
+            LoadMotion(assets, chrPath, doc, "[dashattack motion]", out _dashAttack, out _dashAttackPath, out _dashAttackTimeline);
+        }
+
+        /// <summary>
+        /// 读 .chr 的 [jump motion]、[jumpattack motion]、[jump power](初速度)与 [jump speed](空中速度的百分比)。
+        /// 跳跃动画里延时 ≥ <see cref="HoldDelayMs"/> 的"停留帧"标出最高点与落地前的两个相位(原版的跳跃动画就是这样做的,证据 E-072)。
+        /// </summary>
+        public void LoadJumpMotions(DnfAssets assets, string chrPath)
+        {
+            ScriptLine[] doc = ReadChr(assets, chrPath);
+            LoadMotion(assets, chrPath, doc, "[jump motion]", out _jump, out _jumpPath, out _jumpTimeline);
+            LoadMotion(assets, chrPath, doc, "[jumpattack motion]", out _jumpAttack, out _jumpAttackPath, out _jumpAttackTimeline);
+            JumpPower = DefaultJumpPower;
+            JumpSpeedPercent = 100;
+            foreach (ScriptLine line in doc)
+            {
+                if (line.TagIs("[jump power]"))
+                {
+                    double? n = line.FirstNumber();
+                    if (n.HasValue && n.Value > 0)
+                    {
+                        JumpPower = n.Value;
+                    }
+                }
+                else if (line.TagIs("[jump speed]"))
+                {
+                    double? n = line.FirstNumber();
+                    if (n.HasValue && n.Value > 0)
+                    {
+                        JumpSpeedPercent = (int)Math.Round(n.Value);
+                    }
+                }
+            }
+            _jumpHold1 = -1;
+            _jumpHold2 = -1;
+            if (_jump != null)
+            {
+                for (int i = 0; i < _jump.Frames.Length; i++)
+                {
+                    if (_jump.Frames[i].DelayMs < HoldDelayMs)
+                    {
+                        continue;
+                    }
+                    if (_jumpHold1 < 0)
+                    {
+                        _jumpHold1 = i;
+                    }
+                    else
+                    {
+                        _jumpHold2 = i;
+                        break;
+                    }
+                }
+            }
+        }
+
+        private static ScriptLine[] ReadChr(DnfAssets assets, string chrPath)
+        {
+            return assets.ReadScript(chrPath) ?? throw new DnfFormatException("PVF 里没有角色脚本: " + chrPath);
+        }
+
+        private static void LoadMotion(DnfAssets assets, string chrPath, ScriptLine[] doc, string tag, out AniFile ani, out string path, out AniTimeline timeline)
+        {
+            ani = null;
+            path = null;
+            timeline = null;
+            foreach (ScriptLine line in doc)
+            {
+                if (!line.TagIs(tag))
+                {
+                    continue;
+                }
+                string rel = line.FirstString();
+                if (string.IsNullOrEmpty(rel))
+                {
+                    return;
+                }
+                string resolved = PvfPath.ResolveRelativeTo(chrPath, rel);
+                AniFile loaded = assets.LoadAni(resolved);
+                if (loaded == null || loaded.Frames.Length == 0)
+                {
+                    return;
+                }
+                ani = loaded;
+                path = resolved;
+                timeline = new AniTimeline(loaded);
+                return;
+            }
+        }
+
         /// <summary>
         /// 推进 <paramref name="deltaMs"/> 毫秒。<paramref name="dirX"/>、<paramref name="dirY"/> 是方向键状态(取符号:负为左/上,正为右/下)。
         /// 有任何方向就进入行走,否则站立;状态变化时动作从头播放。水平方向非 0 时朝向跟着变,只按上下时保持原朝向。
@@ -512,29 +797,104 @@ namespace Dnf.Render
         /// </summary>
         public void Update(double deltaMs, int dirX, int dirY, bool attackPressed)
         {
+            Update(deltaMs, dirX, dirY, attackPressed, false);
+        }
+
+        /// <summary>
+        /// 同 <see cref="Update(double, int, int, bool)"/>,多一个跳跃键(刚按下的边沿):在地面上站立、行走或奔跑时按下就起跳;
+        /// 在地面奔跑时按攻击键出奔跑攻击;在空中按攻击键出空中攻击(每次跳跃一击)。
+        /// 奔跑:地面上双击左或右(两次按下相隔不超过 <see cref="DoubleTapWindowMs"/>)就进入,按住保持(上下可以同时按),松开或反向就停;
+        /// 角色脚本没有 [dash motion] 时没有奔跑。跳跃时按着的水平方向决定朝向,腾空中可以继续改变水平与深度方向与朝向(挥击中不能)。
+        /// </summary>
+        public void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed)
+        {
             if (deltaMs < 0)
             {
                 deltaMs = 0;
             }
             dirX = Math.Sign(dirX);
             dirY = Math.Sign(dirY);
-            if (Motion == HeroMotion.Attack)
+            PushedInto = null;
+            PushedUp = false;
+            PushedDown = false;
+            TrackTap(deltaMs, dirX);
+            switch (Motion)
             {
-                AdvanceAttack(deltaMs, attackPressed);
-                return;
+                case HeroMotion.Attack:
+                    AdvanceAttack(deltaMs, attackPressed);
+                    return;
+                case HeroMotion.DashAttack:
+                    AdvanceDashAttack(deltaMs);
+                    return;
+                case HeroMotion.Jump:
+                case HeroMotion.JumpAttack:
+                    AdvanceAir(deltaMs, dirX, dirY, attackPressed);
+                    return;
             }
-            if (attackPressed && _attacks.Length > 0)
+            if (jumpPressed && _jump != null)
             {
                 if (dirX != 0)
                 {
                     FacingLeft = dirX < 0;
                 }
-                BeginAttack(0, 0.0);
-                AdvanceAttack(deltaMs, false);
+                BeginJump();
+                AdvanceAir(deltaMs, dirX, dirY, false);
                 return;
             }
+            if (attackPressed)
+            {
+                if (Motion == HeroMotion.Dash && _dashAttack != null)
+                {
+                    BeginDashAttack();
+                    AdvanceDashAttack(deltaMs);
+                    return;
+                }
+                if (_attacks.Length > 0)
+                {
+                    if (dirX != 0)
+                    {
+                        FacingLeft = dirX < 0;
+                    }
+                    BeginAttack(0, 0.0);
+                    AdvanceAttack(deltaMs, false);
+                    return;
+                }
+            }
+            GroundMove(deltaMs, dirX, dirY);
+        }
+
+        /// <summary>
+        /// 双击检测:记下水平方向的按下与松开。一次"按下"= 水平方向从无变成有(或直接换了方向);
+        /// 与上一次按下同方向、中间松开过、间隔不超过时间窗,就是双击,进入奔跑;松开或换方向结束奔跑。
+        /// </summary>
+        private void TrackTap(double deltaMs, int dirX)
+        {
+            if (_sinceTapMs < 1e12)
+            {
+                _sinceTapMs += deltaMs;
+            }
+            if (dirX != _prevDirX)
+            {
+                if (dirX == 0)
+                {
+                    _running = false;
+                }
+                else
+                {
+                    _running = _prevDirX == 0 && dirX == _tapDir && _sinceTapMs <= DoubleTapWindowMs;
+                    _tapDir = dirX;
+                    _sinceTapMs = 0;
+                }
+            }
+            _prevDirX = dirX;
+        }
+
+        /// <summary>地面上的站立、行走与奔跑。</summary>
+        private void GroundMove(double deltaMs, int dirX, int dirY)
+        {
             bool moving = dirX != 0 || dirY != 0;
-            HeroMotion next = moving ? HeroMotion.Move : HeroMotion.Rest;
+            bool running = _running && dirX != 0 && _dash != null;
+            HeroMotion next = !moving ? HeroMotion.Rest : (running ? HeroMotion.Dash : HeroMotion.Move);
             if (dirX != 0)
             {
                 FacingLeft = dirX < 0;
@@ -548,8 +908,8 @@ namespace Dnf.Render
             if (moving)
             {
                 double seconds = deltaMs / 1000.0;
-                X = MoveAxis(X, dirX * WalkSpeedX * seconds, true);
-                Y = MoveAxis(Y, dirY * WalkSpeedY * seconds, false);
+                X = MoveAxis(X, dirX * (running ? DashSpeedX : WalkSpeedX) * seconds, true);
+                Y = MoveAxis(Y, dirY * (running ? DashSpeedY : WalkSpeedY) * seconds, false);
             }
         }
 
@@ -560,6 +920,154 @@ namespace Dnf.Render
             _motionMs = carryMs;
             _attackQueued = false;
             SwingNumber++;
+        }
+
+        private void BeginDashAttack()
+        {
+            Motion = HeroMotion.DashAttack;
+            AttackStage = 0;
+            _motionMs = 0;
+            _attackQueued = false;
+            SwingNumber++;
+        }
+
+        /// <summary>奔跑攻击一击的墙钟时长(毫秒);没有这个动作为 0。</summary>
+        public double DashAttackDurationMs
+        {
+            get
+            {
+                if (_dashAttackTimeline == null)
+                {
+                    return 0.0;
+                }
+                double rate = AttackAnimationRate > 0.0 ? AttackAnimationRate : 1.0;
+                return Math.Ceiling(_dashAttackTimeline.TotalMilliseconds / rate);
+            }
+        }
+
+        /// <summary>
+        /// 奔跑攻击:动画播放期间沿朝向向前滑,速度从奔跑速度线性减到 0(假设:原版有 sq_getDashAttackSlideStopFrame 一类的"滑行停止帧"设定,
+        /// 具体曲线没有量过),滑行受可走区域与障碍限制;播完回到站立,奔跑状态结束(要再双击才能继续跑)。
+        /// </summary>
+        private void AdvanceDashAttack(double deltaMs)
+        {
+            double duration = DashAttackDurationMs;
+            double from = _motionMs;
+            _motionMs += deltaMs;
+            if (duration > 0)
+            {
+                double t0 = Math.Min(from, duration);
+                double t1 = Math.Min(_motionMs, duration);
+                if (t1 > t0)
+                {
+                    double v0 = DashSpeedX * (1.0 - t0 / duration);
+                    double v1 = DashSpeedX * (1.0 - t1 / duration);
+                    double distance = (v0 + v1) * 0.5 * (t1 - t0) / 1000.0;
+                    X = MoveAxis(X, (FacingLeft ? -1.0 : 1.0) * distance, true);
+                }
+            }
+            if (_motionMs >= duration)
+            {
+                Motion = HeroMotion.Rest;
+                AttackStage = 0;
+                _running = false;
+                _motionMs = 0;
+            }
+        }
+
+        private void BeginJump()
+        {
+            bool wasRunning = Motion == HeroMotion.Dash;
+            Motion = HeroMotion.Jump;
+            _motionMs = 0;
+            _airMs = 0;
+            _descendMs = 0;
+            _descending = false;
+            _landingMs = -1;
+            _airAttackUsed = false;
+            _vz = JumpPower;
+            Z = 0;
+            double factor = JumpSpeedPercent > 0 ? JumpSpeedPercent / 100.0 : 1.0;
+            _airSpeedX = (wasRunning ? DashSpeedX : WalkSpeedX) * factor;
+            _airSpeedY = (wasRunning ? DashSpeedY : WalkSpeedY) * factor;
+        }
+
+        /// <summary>
+        /// 腾空的一步:竖直方向按初速度与重力走(最高点之后进入下降段),水平与深度按按住的方向以 <see cref="JumpSpeedPercent"/> 折算的速度走;
+        /// 落到地面就进入落地帧,落地帧播完回到站立。空中攻击的动画播完回到跳跃动作;落地时还在挥就被打断。
+        /// </summary>
+        private void AdvanceAir(double deltaMs, int dirX, int dirY, bool attackPressed)
+        {
+            if (_landingMs >= 0)
+            {
+                _landingMs += deltaMs;
+                if (_landingMs >= LandingMs)
+                {
+                    Motion = HeroMotion.Rest;
+                    _motionMs = 0;
+                    _landingMs = -1;
+                }
+                return;
+            }
+            if (attackPressed && Motion == HeroMotion.Jump && !_airAttackUsed && _jumpAttack != null)
+            {
+                Motion = HeroMotion.JumpAttack;
+                AttackStage = 0;
+                _motionMs = 0;
+                _airAttackUsed = true;
+                SwingNumber++;
+            }
+            _airMs += deltaMs;
+            if (_descending)
+            {
+                _descendMs += deltaMs;
+            }
+            if (Motion == HeroMotion.JumpAttack)
+            {
+                _motionMs += deltaMs;
+            }
+            double seconds = deltaMs / 1000.0;
+            if (dirX != 0 && Motion == HeroMotion.Jump)
+            {
+                FacingLeft = dirX < 0;
+            }
+            X = MoveAxis(X, dirX * _airSpeedX * seconds, true);
+            Y = MoveAxis(Y, dirY * _airSpeedY * seconds, false);
+            Z += _vz * seconds - 0.5 * JumpGravity * seconds * seconds;
+            _vz -= JumpGravity * seconds;
+            if (!_descending && _vz <= 0)
+            {
+                _descending = true;
+                _descendMs = 0;
+            }
+            if (Z <= 0 && _vz < 0)
+            {
+                Z = 0;
+                _vz = 0;
+                _descending = false;
+                _landingMs = 0;
+                Motion = HeroMotion.Jump;
+                AttackStage = 0;
+                return;
+            }
+            if (Motion == HeroMotion.JumpAttack && _motionMs >= JumpAttackDurationMs)
+            {
+                Motion = HeroMotion.Jump;
+            }
+        }
+
+        /// <summary>空中攻击一击的墙钟时长(毫秒);没有这个动作为 0。</summary>
+        public double JumpAttackDurationMs
+        {
+            get
+            {
+                if (_jumpAttackTimeline == null)
+                {
+                    return 0.0;
+                }
+                double rate = AttackAnimationRate > 0.0 ? AttackAnimationRate : 1.0;
+                return Math.Ceiling(_jumpAttackTimeline.TotalMilliseconds / rate);
+            }
         }
 
         /// <summary>这一击的墙钟时长(毫秒):动画总时长除以播放倍率,向上取整。</summary>
@@ -597,13 +1105,18 @@ namespace Dnf.Render
             _motionMs = 0;
         }
 
-        /// <summary>沿一个轴走 <paramref name="delta"/>,每次最多一像素地检查可走区域,走到边界就停在边界上。</summary>
+        /// <summary>
+        /// 沿一个轴走 <paramref name="delta"/>,每次最多一像素地检查可走区域与障碍,走到边界就停在边界上。
+        /// 被挡住的那一步会记下:水平方向被障碍挡住记在 <see cref="PushedInto"/>,竖直方向被挡住记在 <see cref="PushedUp"/> 或 <see cref="PushedDown"/>。
+        /// 主角出生时就压在障碍里(例如摆放不当)的话,这一步忽略障碍,让他能走出来。
+        /// </summary>
         private double MoveAxis(double from, double delta, bool horizontal)
         {
             if (delta == 0 || _walk.IsUnrestricted)
             {
                 return from + delta;
             }
+            _ignoreBlocker = Blocker != null && Blocker.BlockedBy(X, Y) != null;
             double pos = from;
             double remaining = Math.Abs(delta);
             double sign = delta < 0 ? -1.0 : 1.0;
@@ -613,6 +1126,7 @@ namespace Dnf.Render
                 double candidate = pos + sign * step;
                 if (!InArea(horizontal ? candidate : X, horizontal ? Y : candidate))
                 {
+                    NotePush(horizontal, sign, horizontal ? candidate : X, horizontal ? Y : candidate);
                     // 这一步出界:往前挪到刚好还在区域内的最远处(边界是整数,先试到边界上)
                     double edge = sign < 0 ? Math.Ceiling(candidate) : Math.Floor(candidate);
                     if (sign < 0 ? edge > pos : edge < pos)
@@ -649,35 +1163,151 @@ namespace Dnf.Render
             return pos + 0.0; // 把 -0.0 变成 0.0(碰到 x = 0 的边界时会出现)
         }
 
+        private bool _ignoreBlocker;
+
         private bool InArea(double x, double y)
         {
-            return _walk.Contains(x, y);
+            if (!_walk.Contains(x, y))
+            {
+                return false;
+            }
+            return Blocker == null || _ignoreBlocker || Blocker.BlockedBy(x, y) == null;
         }
 
-        /// <summary>当前动画与帧:站立或行走的 .ani、它的路径、此刻显示的帧号。</summary>
-        public AniFile CurrentAni => Motion == HeroMotion.Attack ? _attacks[AttackStage] : (Motion == HeroMotion.Move ? _move : (_battleStance ? _battleRest : _rest));
+        /// <summary>某一步被挡住了:记下是被哪个障碍挡的(只记水平方向),或竖直方向上是向上还是向下被挡。</summary>
+        private void NotePush(bool horizontal, double sign, double candidateX, double candidateY)
+        {
+            if (horizontal)
+            {
+                if (Blocker != null && !_ignoreBlocker)
+                {
+                    object by = Blocker.BlockedBy(candidateX, candidateY);
+                    if (by != null)
+                    {
+                        PushedInto = by;
+                    }
+                }
+            }
+            else if (sign < 0)
+            {
+                PushedUp = true;
+            }
+            else
+            {
+                PushedDown = true;
+            }
+        }
 
-        public string CurrentAnimationPath => Motion == HeroMotion.Attack ? _attackPaths[AttackStage] : (Motion == HeroMotion.Move ? _movePath : (_battleStance ? _battleRestPath : _restPath));
+        /// <summary>当前动画与帧:站立、行走、奔跑、跳跃或挥击的 .ani、它的路径、此刻显示的帧号。</summary>
+        public AniFile CurrentAni
+        {
+            get
+            {
+                switch (Motion)
+                {
+                    case HeroMotion.Attack:
+                        return _attacks[AttackStage];
+                    case HeroMotion.Move:
+                        return _move;
+                    case HeroMotion.Dash:
+                        return _dash;
+                    case HeroMotion.DashAttack:
+                        return _dashAttack;
+                    case HeroMotion.Jump:
+                        return _jump;
+                    case HeroMotion.JumpAttack:
+                        return _jumpAttack;
+                    default:
+                        return _battleStance ? _battleRest : _rest;
+                }
+            }
+        }
 
-        public int CurrentFrame => Motion == HeroMotion.Attack
-            ? _attackTimelines[AttackStage].FrameAt(AttackAnimationMs)
-            : (Motion == HeroMotion.Move
-                ? _moveTimeline.FrameAt((long)(_motionMs * MoveAnimationRate))
-                : (_battleStance ? _battleRestTimeline : _restTimeline).FrameAt(MotionMs));
+        public string CurrentAnimationPath
+        {
+            get
+            {
+                switch (Motion)
+                {
+                    case HeroMotion.Attack:
+                        return _attackPaths[AttackStage];
+                    case HeroMotion.Move:
+                        return _movePath;
+                    case HeroMotion.Dash:
+                        return _dashPath;
+                    case HeroMotion.DashAttack:
+                        return _dashAttackPath;
+                    case HeroMotion.Jump:
+                        return _jumpPath;
+                    case HeroMotion.JumpAttack:
+                        return _jumpAttackPath;
+                    default:
+                        return _battleStance ? _battleRestPath : _restPath;
+                }
+            }
+        }
 
-        /// <summary>主角的精灵(按换装图层顺序),位置模型与 NPC 相同。</summary>
+        public int CurrentFrame
+        {
+            get
+            {
+                switch (Motion)
+                {
+                    case HeroMotion.Attack:
+                        return _attackTimelines[AttackStage].FrameAt(AttackAnimationMs);
+                    case HeroMotion.Move:
+                        return _moveTimeline.FrameAt((long)(_motionMs * MoveAnimationRate));
+                    case HeroMotion.Dash:
+                        return _dashTimeline.FrameAt((long)(_motionMs * MoveAnimationRate));
+                    case HeroMotion.DashAttack:
+                        return _dashAttackTimeline.FrameAt(AttackAnimationMs);
+                    case HeroMotion.JumpAttack:
+                        return _jumpAttackTimeline.FrameAt(AttackAnimationMs);
+                    case HeroMotion.Jump:
+                        return JumpFrame();
+                    default:
+                        return (_battleStance ? _battleRestTimeline : _restTimeline).FrameAt(MotionMs);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 跳跃动画的帧:动画里有两个停留帧时(最高点与落地前),上升段按腾空时间播、到第一个停留帧停住,
+        /// 最高点之后从第一个停留帧之后的帧起按下降时间播、到第二个停留帧停住,落地换最后的落地帧;没有停留帧的动画就按腾空时间一路播。
+        /// </summary>
+        private int JumpFrame()
+        {
+            AniTimeline t = _jumpTimeline;
+            if (_jumpHold1 < 0 || _jumpHold2 < 0)
+            {
+                return t.FrameAt(_landingMs >= 0 ? t.TotalMilliseconds : (long)_airMs);
+            }
+            if (_landingMs >= 0)
+            {
+                return Math.Min(_jumpHold2 + 1, t.FrameCount - 1);
+            }
+            if (!_descending)
+            {
+                return t.FrameAt(Math.Min((long)_airMs, t.StartMs(_jumpHold1)));
+            }
+            long from = t.StartMs(_jumpHold1 + 1);
+            return t.FrameAt(Math.Min(from + (long)_descendMs, t.StartMs(_jumpHold2)));
+        }
+
+        /// <summary>主角的精灵(按换装图层顺序),位置模型与 NPC 相同;腾空时整体往上抬 <see cref="Z"/> 像素,深度排序仍按脚下的 <see cref="Y"/>。</summary>
         public List<SceneSprite> Sprites(DnfAssets assets, TownProjection projection)
         {
             int wx = (int)Math.Floor(X);
             int wy = (int)Math.Floor(Y);
-            return Outfit.SpritesAt(assets, CurrentAni, CurrentAnimationPath, CurrentFrame, projection, wx, wy, 0, FacingLeft, wy, ObjectId);
+            int wz = (int)Math.Round(Z);
+            return Outfit.SpritesAt(assets, CurrentAni, CurrentAnimationPath, CurrentFrame, projection, wx, wy, wz, FacingLeft, wy, ObjectId);
         }
     }
 
-    /// <summary>带攻击键的场景游戏:每帧多一个"攻击键刚按下"的输入(副本房间里的战斗,证据 E-069)。</summary>
+    /// <summary>带攻击键与跳跃键的场景游戏:每帧多两个"刚按下"的输入(副本房间里的战斗,证据 E-069、E-072)。</summary>
     public interface IActionSession : IHeroSession
     {
-        void Update(double deltaMs, int dirX, int dirY, bool attackPressed);
+        void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed);
     }
 
     /// <summary>

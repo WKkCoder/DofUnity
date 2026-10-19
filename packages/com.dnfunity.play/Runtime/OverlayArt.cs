@@ -82,6 +82,7 @@ namespace Dnf.Play
         private readonly Dictionary<string, SpriteFrame> _texts = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
         private readonly Dictionary<long, SpriteFrame> _bars = new Dictionary<long, SpriteFrame>();
         private readonly Dictionary<string, SpriteFrame> _maps = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
+        private readonly Dictionary<string, SpriteFrame> _solids = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
 
         /// <summary>字库里有没有这个字符(没有的字符画成空格)。</summary>
         public static bool HasGlyph(char c)
@@ -326,10 +327,39 @@ namespace Dnf.Play
             rgba[o + 3] = alpha;
         }
 
-        /// <summary>叠加层精灵:屏幕左上角为 (<paramref name="x"/>, <paramref name="y"/>),大类 <see cref="UiRank"/>。</summary>
-        public static SceneSprite Place(SpriteFrame frame, int x, int y, int order = 0, string tag = "overlay")
+        /// <summary>
+        /// 叠加层精灵:屏幕左上角为 (<paramref name="x"/>, <paramref name="y"/>),大类 <see cref="UiRank"/>。
+        /// <paramref name="tintAlpha"/>(0 到 255)是整体的不透明度,255 是原样;换房间的淡入淡出就是一整块黑色按它变浓变淡(证据 E-071 的混合模型)。
+        /// </summary>
+        public static SceneSprite Place(SpriteFrame frame, int x, int y, int order = 0, string tag = "overlay", int tintAlpha = 255)
         {
-            return new SceneSprite(frame, x, y, order, -3, tag, 0, false, SpriteBlend.Normal, 255, UiRank);
+            return new SceneSprite(frame, x, y, order, -3, tag, 0, false, SpriteBlend.Normal, tintAlpha, UiRank);
+        }
+
+        /// <summary>一整块纯色的不透明块(<paramref name="rgb"/> 是 0xRRGGBB)。同样的参数总是返回同一个对象。</summary>
+        public SpriteFrame Solid(int width, int height, uint rgb)
+        {
+            if (width < 1 || height < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(width));
+            }
+            string key = width + "x" + height + ":" + rgb;
+            if (_solids.TryGetValue(key, out SpriteFrame cached))
+            {
+                return cached;
+            }
+            var rgba = new byte[width * height * 4];
+            byte r = (byte)((rgb >> 16) & 0xFF), g = (byte)((rgb >> 8) & 0xFF), b = (byte)(rgb & 0xFF);
+            for (int i = 0; i < width * height; i++)
+            {
+                rgba[i * 4] = r;
+                rgba[i * 4 + 1] = g;
+                rgba[i * 4 + 2] = b;
+                rgba[i * 4 + 3] = 255;
+            }
+            var frame = new SpriteFrame(width, height, 0, 0, width, height, rgba);
+            _solids[key] = frame;
+            return frame;
         }
 
         private static void Put(byte[] rgba, int w, int h, int x, int y, uint rgb)

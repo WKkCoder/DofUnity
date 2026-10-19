@@ -87,7 +87,8 @@ namespace Dnf.Play
             }
             int direction = hero.FacingLeft ? Direction.Left : Direction.Right;
             int wx = (int)Math.Floor(hero.X), wy = (int)Math.Floor(hero.Y);
-            AddBoxes(result, hero.CurrentAni, frame, wx, wy, direction);
+            int wz = (int)Math.Round(hero.Z);   // 空中攻击的判定框跟着主角离地的高度
+            AddBoxes(result, hero.CurrentAni, frame, wx, wy, wz, direction);
             string file = hero.AttackMotionFile;
             if (file == null)
             {
@@ -95,7 +96,7 @@ namespace Dnf.Play
             }
             foreach (AniFile ani in LayerAnimations(hero.Outfit, file))
             {
-                AddBoxes(result, ani, frame, wx, wy, direction);
+                AddBoxes(result, ani, frame, wx, wy, wz, direction);
             }
             return result;
         }
@@ -121,7 +122,7 @@ namespace Dnf.Play
             return anis;
         }
 
-        private static void AddBoxes(List<Aabb> into, AniFile ani, int frame, int wx, int wy, int direction)
+        private static void AddBoxes(List<Aabb> into, AniFile ani, int frame, int wx, int wy, int wz, int direction)
         {
             if (ani == null || (uint)frame >= (uint)ani.Frames.Length)
             {
@@ -131,7 +132,7 @@ namespace Dnf.Play
             {
                 if (box.Type == AniBoxType.Attack)
                 {
-                    into.Add(Combat.ToWorld(box, wx, wy, 0, direction));
+                    into.Add(Combat.ToWorld(box, wx, wy, wz, direction));
                 }
             }
         }
@@ -163,6 +164,8 @@ namespace Dnf.Play
         private readonly RoomSession _room;
         private readonly List<MonsterActor> _monsters;
         private readonly HeroStrikeInfo[] _strikes;
+        private readonly HeroStrikeInfo _dashStrike;
+        private readonly HeroStrikeInfo _jumpStrike;
         private readonly HeroStrikeBoxes _boxes;
         private readonly OverlayArt _art = new OverlayArt();
         private readonly List<HitPopup> _popups = new List<HitPopup>();
@@ -208,7 +211,8 @@ namespace Dnf.Play
             }
         }
 
-        public RoomCombatSession(DnfAssets assets, RoomSession room, IReadOnlyList<MonsterActor> monsters, IReadOnlyList<HeroStrikeInfo> strikes, int seed = 1)
+        public RoomCombatSession(DnfAssets assets, RoomSession room, IReadOnlyList<MonsterActor> monsters, IReadOnlyList<HeroStrikeInfo> strikes, int seed = 1,
+            HeroStrikeInfo dashStrike = default, HeroStrikeInfo jumpStrike = default)
         {
             _assets = assets ?? throw new ArgumentNullException(nameof(assets));
             _room = room ?? throw new ArgumentNullException(nameof(room));
@@ -218,6 +222,8 @@ namespace Dnf.Play
             {
                 _strikes[i] = strikes[i];
             }
+            _dashStrike = dashStrike;
+            _jumpStrike = jumpStrike;
             _boxes = new HeroStrikeBoxes(assets);
             _random = new Random(seed);
             SyncStance();
@@ -244,11 +250,11 @@ namespace Dnf.Play
             CharacterDef chr = data.GetCharacter(0);
             for (int i = 0; chr != null && i < room.Hero.AttackCount; i++)
             {
-                AttackInfoData info = data.GetAttackInfo(chr.AttackInfoPath(i))?.Data;
-                strikes.Add(info == null
-                    ? new HeroStrikeInfo(0, 0, false)
-                    : new HeroStrikeInfo(info.DamageBonus, info.PushAside, info.Reaction == DamageReaction.Down));
+                strikes.Add(StrikeInfoOf(data, chr.AttackInfoPath(i)));
             }
+            // 奔跑攻击与空中攻击的攻击信息:.chr 的 [dashattack info]、[jumpattack info](证据 E-072)
+            HeroStrikeInfo dash = StrikeInfoOf(data, chr?.MotionPath("[dashattack info]"));
+            HeroStrikeInfo jump = StrikeInfoOf(data, chr?.MotionPath("[jumpattack info]"));
 
             MonsterCatalog catalog = MonsterCatalog.Read(assets);
             var models = new Dictionary<int, MonsterModel>();
@@ -274,7 +280,16 @@ namespace Dnf.Play
                     def.Tags.IntOr("[attack delay]", 0), def.Tags.IntOr("[attack speed]", 0));
                 actors.Add(actor);
             }
-            return new RoomCombatSession(assets, room, actors, strikes, seed);
+            return new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump);
+        }
+
+        /// <summary>读一份 .atk 里普攻要用的字段;路径为 null、读不到时全是默认值。</summary>
+        private static HeroStrikeInfo StrikeInfoOf(GameData data, string atkPath)
+        {
+            AttackInfoData info = atkPath == null ? null : data.GetAttackInfo(atkPath)?.Data;
+            return info == null
+                ? new HeroStrikeInfo(0, 0, false)
+                : new HeroStrikeInfo(info.DamageBonus, info.PushAside, info.Reaction == DamageReaction.Down);
         }
 
         /// <summary>
@@ -292,19 +307,24 @@ namespace Dnf.Play
 
         public void Update(double deltaMs, int dirX, int dirY)
         {
-            Update(deltaMs, dirX, dirY, false);
+            Update(deltaMs, dirX, dirY, false, false);
+        }
+
+        public void Update(double deltaMs, int dirX, int dirY, bool attackPressed)
+        {
+            Update(deltaMs, dirX, dirY, attackPressed, false);
         }
 
         /// <summary>
         /// 推进 <paramref name="deltaMs"/> 毫秒。长帧(卡顿)会被切成不超过 <see cref="MaxStepMs"/> 的小步,
         /// 每一小步都推进主角、怪物并判定命中,这样挥击的最后一帧不会因为一帧过长而被跳过、怪物的追击与击退也与帧率无关。
-        /// 攻击键是"刚按下"的边沿,只在第一小步里生效。
+        /// 攻击键与跳跃键是"刚按下"的边沿,只在第一小步里生效。
         /// </summary>
-        public void Update(double deltaMs, int dirX, int dirY, bool attackPressed)
+        public void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed)
         {
             if (deltaMs <= 0)
             {
-                Step(0, dirX, dirY, attackPressed);
+                Step(0, dirX, dirY, attackPressed, jumpPressed);
                 return;
             }
             double remaining = deltaMs;
@@ -312,15 +332,15 @@ namespace Dnf.Play
             while (remaining > 0)
             {
                 double step = remaining < MaxStepMs ? remaining : MaxStepMs;
-                Step(step, dirX, dirY, first && attackPressed);
+                Step(step, dirX, dirY, first && attackPressed, first && jumpPressed);
                 first = false;
                 remaining -= step;
             }
         }
 
-        private void Step(double deltaMs, int dirX, int dirY, bool attackPressed)
+        private void Step(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed)
         {
-            _room.Update(deltaMs, dirX, dirY, attackPressed);
+            _room.Update(deltaMs, dirX, dirY, attackPressed, jumpPressed);
             TownHero hero = _room.Hero;
             foreach (MonsterActor m in _monsters)
             {
@@ -411,7 +431,19 @@ namespace Dnf.Play
 
         private void Strike(TownHero hero, MonsterActor monster)
         {
-            HeroStrikeInfo info = hero.AttackStage < _strikes.Length ? _strikes[hero.AttackStage] : new HeroStrikeInfo(0, 0, false);
+            HeroStrikeInfo info;
+            switch (hero.AttackKind)
+            {
+                case HeroAttackKind.Dash:
+                    info = _dashStrike;
+                    break;
+                case HeroAttackKind.Jump:
+                    info = _jumpStrike;
+                    break;
+                default:
+                    info = hero.AttackStage < _strikes.Length ? _strikes[hero.AttackStage] : new HeroStrikeInfo(0, 0, false);
+                    break;
+            }
             int damage = PlaceholderDamage.Roll(info.DamageBonus, _random);
             bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, hero.FacingLeft);
             Hits++;

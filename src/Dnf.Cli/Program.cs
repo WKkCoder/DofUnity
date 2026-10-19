@@ -109,6 +109,12 @@ namespace Dnf.Cli
         public int Seed { get; set; } = 1;
         public bool RandomLayout { get; set; }
 
+        /// <summary>dungeon-check --frame-ms:每一帧推进多少毫秒(默认 1000/60);用来模拟播放器里帧率不固定的实时运行(自动机按固定心跳补步,不受影响;时间表按帧长取样)。</summary>
+        public double FrameMs { get; set; }
+
+        /// <summary>dungeon-check --jitter:每一帧的毫秒数在 ±这个比例内随机浮动(0 到 0.9,随机数由 --seed 决定);模拟播放器里帧时间的抖动。</summary>
+        public double Jitter { get; set; }
+
         /// <summary>dungeon-check --layout-only:只打印迷宫与每格选中的房间,不模拟。</summary>
         public bool LayoutOnly { get; set; }
 
@@ -180,8 +186,8 @@ namespace Dnf.Cli
             "      对地图 [animation] 里每个动画的每一帧,在截图里搜索不透明像素在容差内一致最多的位置,并与位置模型的预测比较(证据 E-030)。\n" +
             "  dnf combat-check --map <房间地图> [--start x,y,left|right] [--play 秒:动作,…] [--seconds N] [--shots-at 秒,…] [--png 前缀]\n" +
             "      (副本房间里的战斗模拟:按时间表按键,打印命中与怪物状态,可在指定时刻输出 800×600 画面;证据 E-069)\n" +
-            "  dnf dungeon-check [--dungeon <副本定义>] [--seed N] [--random-layout] [--bot [--explore] | --play 秒:动作,…] [--seconds N(默认 900)] [--shots-at 秒,…] [--png 前缀] [--layout-only]\n" +
-            "      (整座副本:读迷宫、选每格的房间、打印布局;--bot 让自动机从起点打到首领清空,逐个房间打印进出与清房时刻;--shots-at 在指定时刻输出画面;证据 E-070)\n" +
+            "  dnf dungeon-check [--dungeon <副本定义>] [--seed N] [--random-layout] [--bot [--explore] | --play 秒:动作,…] [--seconds N(默认 900)] [--frame-ms 毫秒] [--jitter 比例] [--shots-at 秒,…] [--png 前缀] [--layout-only]\n" +
+            "      (整座副本:读迷宫、选每格的房间、打印布局;--bot 让自动机从起点打到首领清空,逐个房间打印进出与清房时刻;--shots-at 在指定时刻输出画面;--frame-ms、--jitter 改每帧的毫秒数与抖动,模拟帧率不固定的实时运行(自动机按固定心跳补步,不受影响;时间表按帧长取样);证据 E-070、E-072)\n" +
             "  dnf fit-sprite --shot <截图.png> --img <NPK 里的 IMG 路径,如 sprite/map/01tile03.img> [--frame N] [--pred x,y] [--fit-tol N] [--range-x N] [--range-y N] [--samples N]\n" +
             "      在截图里搜索某一张 IMG 帧的不透明像素在容差内一致最多的位置(以 --pred 为中心,默认 0,0),打印前几个峰;用来量地面瓦片、远景/中景与门的摆放。\n" +
             "  dnf sq-check [--json <文件>]\n" +
@@ -362,6 +368,16 @@ namespace Dnf.Cli
                         break;
                     case "--seed":
                         opts.Seed = int.TryParse(NextValue(args, ref i), out int seedValue) ? seedValue : throw new UserError("--seed 需要整数");
+                        break;
+                    case "--frame-ms":
+                        opts.FrameMs = double.TryParse(NextValue(args, ref i), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double frameMs) && frameMs > 0
+                            ? frameMs
+                            : throw new UserError("--frame-ms 需要大于 0 的毫秒数");
+                        break;
+                    case "--jitter":
+                        opts.Jitter = double.TryParse(NextValue(args, ref i), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double jitter) && jitter >= 0 && jitter <= 0.9
+                            ? jitter
+                            : throw new UserError("--jitter 需要 0 到 0.9 之间的小数");
                         break;
                     case "--hero-weapon":
                         opts.HeroWeapon = NextValue(args, ref i);

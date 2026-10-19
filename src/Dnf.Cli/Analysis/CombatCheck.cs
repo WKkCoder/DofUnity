@@ -82,7 +82,8 @@ internal static class CombatCheck
             if (state != lastState)
             {
                 Console.WriteLine("  t=" + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s  主角 " + session.Hero.Motion
-                    + (session.Hero.IsAttacking ? " 第 " + (session.Hero.AttackStage + 1) + " 段" : string.Empty)
+                    + (session.Hero.IsAttacking && session.Hero.AttackKind == HeroAttackKind.Normal ? " 第 " + (session.Hero.AttackStage + 1) + " 段" : string.Empty)
+                    + (session.Hero.IsAirborne ? " 离地 " + F(session.Hero.Z) : string.Empty)
                     + " (" + F(session.Hero.X) + "," + F(session.Hero.Y) + ") 朝" + (session.Hero.FacingLeft ? "左" : "右") + " 镜头 " + session.Camera.IntX);
                 lastState = state;
             }
