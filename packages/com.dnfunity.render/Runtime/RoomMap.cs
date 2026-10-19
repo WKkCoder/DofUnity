@@ -193,6 +193,17 @@ namespace Dnf.Render
         /// <summary>四个出口 (x, y),按 <see cref="GateSide"/> 排;脚本里没有写的出口为 null(数组长度恒为 4)。</summary>
         public IReadOnlyList<int[]> Gates { get; }
 
+        /// <summary>
+        /// [pathgate recognize range]:四个出口的识别矩形的 (宽, 高),按 <see cref="GateSide"/> 排;脚本没写的出口为 null,宽或高不大于 0 的分量用缺省值(见 <see cref="GateAreas"/>)。
+        /// 数组长度恒为 4。
+        /// </summary>
+        public IReadOnlyList<int[]> GateRanges { get; }
+
+        /// <summary>四个出口的识别矩形(证据 E-074,见 <see cref="Render.GateAreas"/>),按 <see cref="GateSide"/> 排;没有这个出口位置的为 null。</summary>
+        public IReadOnlyList<WorldRect?> GateRects => _gateRects ?? (_gateRects = GateAreas.Compute(Gates, GateRanges));
+
+        private WorldRect?[] _gateRects;
+
         /// <summary>[dungeon start area] 的矩形;没有时为 null。</summary>
         public WorldRect? StartArea { get; }
 
@@ -209,8 +220,10 @@ namespace Dnf.Render
 
         public RoomMap(string mapPath, string type, IReadOnlyList<TileFile> tiles, int farScroll, int middleScroll, int nearScroll,
             IReadOnlyList<RoomBackground> backgrounds, IReadOnlyList<MapAnimation> animations, IReadOnlyList<int[]> gates, WorldRect? startArea,
-            IReadOnlyList<PassivePlacement> passiveObjects = null, IReadOnlyList<RoomMonsterSpawn> monsters = null)
+            IReadOnlyList<PassivePlacement> passiveObjects = null, IReadOnlyList<RoomMonsterSpawn> monsters = null,
+            IReadOnlyList<int[]> gateRanges = null)
         {
+            GateRanges = gateRanges ?? new List<int[]> { null, null, null, null };
             MapPath = mapPath;
             Type = type ?? string.Empty;
             Tiles = tiles ?? throw new ArgumentNullException(nameof(tiles));
@@ -238,6 +251,7 @@ namespace Dnf.Render
             int far = 0, middle = 0, near = 0;
             var backgrounds = new List<RoomBackground>();
             var gates = new List<int[]> { null, null, null, null };
+            var ranges = new List<int[]> { null, null, null, null };
             WorldRect? start = null;
             var passive = new List<PassivePlacement>();
             var monsters = new List<RoomMonsterSpawn>();
@@ -311,6 +325,14 @@ namespace Dnf.Render
                         gates[side] = new[] { n[side * 2], n[side * 2 + 1] };
                     }
                 }
+                else if (line.TagIs("[pathgate recognize range]"))
+                {
+                    List<int> n = line.Ints();
+                    for (int side = 0; side < 4 && side * 2 + 1 < n.Count; side++)
+                    {
+                        ranges[side] = new[] { n[side * 2], n[side * 2 + 1] };
+                    }
+                }
                 else if (line.TagIs("[dungeon start area]"))
                 {
                     List<int> n = line.Ints();
@@ -332,7 +354,7 @@ namespace Dnf.Render
                     ReadMonsters(line.Values, monsters);
                 }
             }
-            return new RoomMap(mapPath, type, tiles, far, middle, near, backgrounds, MapScript.ReadAnimations(assets, mapPath), gates, start, passive, monsters);
+            return new RoomMap(mapPath, type, tiles, far, middle, near, backgrounds, MapScript.ReadAnimations(assets, mapPath), gates, start, passive, monsters, ranges);
         }
 
         /// <summary>

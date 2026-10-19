@@ -195,11 +195,11 @@ namespace Dnf.Play
                     ty = hero.Y;
                     break;
                 case GateSide.Up:
-                    tx = g[0] + DungeonSession.ArrivalOffsetX;
+                    tx = g[0];
                     ty = g[1] - PushBeyondEdge;                          // 上下出口靠"顶着可走带的边缘往外走"触发:目标放在带外,一直往外顶
                     break;
                 default:
-                    tx = g[0] + DungeonSession.ArrivalOffsetX;
+                    tx = g[0];
                     ty = g[1] + PushBeyondEdge;
                     break;
             }

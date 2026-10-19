@@ -11,18 +11,23 @@ namespace Dnf.Play.Tests;
 ///   (0,0) J = 右 + 下(起点)      (1,0) M = 左 + 下
 ///   (0,1) D = 右 + 上            (1,1) G = 上 + 左(首领)
 ///
-/// 房间宽 1120(五块瓦片),镜头最大 320;出口位置:左 (16,120)、右 (1104,120)、上 (560,144)、下 (560,348)。主角出生在 (300,100) 朝右。
+/// 房间宽 1120(五块瓦片),镜头最大 320;出口位置:左 (16,120)、右 (1104,120)、上 (560,12)、下 (560,348)(上下出口紧贴可走带的上下边缘:y = 0 与 y = 360,
+/// 这样顶着边缘走正好落在出口的识别矩形里,与原版地图一致)。主角出生在 (300,100) 朝右。
 /// </summary>
 public class DungeonSessionTests
 {
     private const int HeroX = 300;
     private const int HeroY = 100;
 
-    // 带碰撞体的合成出口:左边的墙占 x ∈ [16, 80),右边的墙占 x ∈ [1072, 1120);主角占位盒半宽 26 → 贴住墙时 x = 106(左)与 1046(右)
+    /// <summary>进房间落点的随机种子用的主角对象编号(种子 = 它 × 地图编号);下面的参考落点由独立的 Python 实现按客户端的公式算出(证据 E-074)。</summary>
+    private const int TestHeroId = 1002;
+
+    // 带碰撞体的合成出口:左边的墙占格 1 到 4(x ∈ [16, 80))并向左延伸到地图左缘,右边的墙占格 67 到 69(x ∈ [1072, 1120));
+    // 主角占位盒 40 × 10(上下各 5):盒的左沿贴住墙(x − 20 = 80)时脚下原点 x = 100;盒的右沿 x + 20 必须 ≤ 1071,所以实数坐标停在 1052 之前一点点(向下取整 ≤ 1051)
     private const int LeftWedgeColumns = 4;
     private const int RightWedgeColumns = 3;
-    private const double BesideLeftWallX = 16 + LeftWedgeColumns * 16 + GateBody.HeroHalfWidth;
-    private const double BesideRightWallX = 1104 - 13 * 16 + (14 - RightWedgeColumns) * 16 - GateBody.HeroHalfWidth;
+    private const double BesideLeftWallX = 16 + LeftWedgeColumns * 16 + 20;
+    private const double BesideRightWallX = 1104 - 13 * 16 + (14 - RightWedgeColumns) * 16 - 20;
 
     private static ScriptLine Line(string tag, params int[] numbers)
     {
@@ -84,16 +89,16 @@ public class DungeonSessionTests
 
         /// <summary>
         /// <paramref name="bodies"/> 为真时给左右出口装上合成的碰撞体:左边是 4 列宽的墙(x 从 16 到 80),右边是 3 列宽的墙(x 从 1072 到 1120),行数覆盖整个房间;
-        /// 为假时出口没有碰撞体(退回近似的触发与固定的到达偏移)。
+        /// 为假时左右出口没有碰撞体(退回近似的触发)。
         /// </summary>
-        public Dungeon(DungeonLayout layout, Func<int, int, (int X, int Y)[]> monstersOf, int hp = 10, bool bodies = false)
+        public Dungeon(DungeonLayout layout, Func<int, int, (int X, int Y)[]> monstersOf, int hp = 10, bool bodies = false, int heroObjectId = TestHeroId)
         {
             Assets = DnfAssets.Open(_fx.Root);
             Layout = layout;
             _monstersOf = monstersOf;
             _hp = hp;
             _bodies = bodies;
-            Session = new DungeonSession(layout, Build);
+            Session = new DungeonSession(layout, Build, heroObjectId);
         }
 
         /// <summary>整个房间高(30 行,y 从 0 到 360)的墙:左边的墙占前 <see cref="LeftWedgeColumns"/> 列,右边的墙占最后 <see cref="RightWedgeColumns"/> 列。</summary>
@@ -118,7 +123,7 @@ public class DungeonSessionTests
             {
                 tiles.Add(new TileFile("t" + i, new List<KeyValuePair<string, int>>(), 80, new byte[14 * 30]));
             }
-            var gatePos = new List<int[]> { new[] { 16, 120 }, new[] { 1104, 120 }, new[] { 560, 144 }, new[] { 560, 348 } };
+            var gatePos = new List<int[]> { new[] { 16, 120 }, new[] { 1104, 120 }, new[] { 560, 12 }, new[] { 560, 348 } };
             var map = new RoomMap("map/test/cell" + cx + cy + ".map", "[normal]", tiles, 50, 80, 120, new List<RoomBackground>(), new List<MapAnimation>(),
                 gatePos, null);
             var gates = new List<RoomGate>();
@@ -252,7 +257,7 @@ public class DungeonSessionTests
         using var d = new Dungeon(RingLayout(), (cx, cy) => new[] { (900, 300) }, hp: 100000);
         DungeonSession s = d.Session;
         Run(s, 6000, 1, 0);
-        Assert.True(s.Hero.X > 1090);                                    // 走到了右出口跟前(出口的触发范围是 24 像素)
+        Assert.True(s.Hero.X > 1092);                                    // 走到了右出口跟前(出口的触发范围是 12 像素)
         Assert.Equal((0, 0, 0, false), (s.CellX, s.CellY, s.Transitions, s.IsCleared(0, 0)));
         Run(s, 3000, 0, 1);                                              // 下出口也一样
         Assert.Equal((0, 0, 0), (s.CellX, s.CellY, s.Transitions));
@@ -280,10 +285,11 @@ public class DungeonSessionTests
     }
 
     [Fact]
-    public void LeavingThroughTheRightGateEntersTheNextRoomBy74PixelsFromItsLeftGateKeepingYAndFacing()
+    public void LeavingThroughTheRightGateEntersTheNextRoomAtTheClientsRandomPointInItsLeftGateAreaFacingRight()
     {
         using var d = new Dungeon(RingLayout(), OneWeakAtStart);
         DungeonSession s = d.Session;
+        Assert.Equal(TestHeroId, s.HeroObjectId);
         Run(s, 1000, 0, 0, true);
         Run(s, 600, 0, 1);                                               // 往下走一点,让 y 与出生时不同
         double y = s.Hero.Y;
@@ -291,12 +297,30 @@ public class DungeonSessionTests
         RunUntil(s, () => s.CellX == 1, 1, 0);
         Assert.Equal((1, 0), (s.CellX, s.CellY));
         TownHero hero = s.Hero;
-        Assert.Equal(16 + DungeonSession.EntryOffsetLeftGate, hero.X);   // 左出口 x = 16
-        Assert.Equal(90, hero.X);
-        Assert.InRange(hero.Y, y - 1.5, y + 1.5);                        // y 保持(离开那一步之后最多再走一小步)
+        // 格 (1,0) 的地图编号是 2,种子 = 1002 × 2;左出口矩形 [16, 136) × [67, 173),占位盒 40 × 10 → 客户端的随机数取到 (36, 129),站得下,不用挪
+        Assert.Equal((36.0, 129.0), (hero.X, hero.Y));
+        Assert.NotEqual(y, hero.Y, 1);                                   // y 不是沿用的
         Assert.False(hero.FacingLeft);
         Assert.Equal(HeroMotion.Rest, hero.Motion);
-        Assert.Equal(0, s.Camera.IntX);                                  // 居中再夹住:90 − 400 < 0
+        Assert.Equal(0, s.Camera.IntX);                                  // 居中再夹住:36 − 400 < 0
+    }
+
+    [Fact]
+    public void TheArrivalPointDependsOnlyOnTheHeroIdAndTheMapSoTheSameHeroAlwaysLandsOnTheSameSpot()
+    {
+        double[] Arrive(int heroId)
+        {
+            using var d = new Dungeon(RingLayout(), OneWeakAtStart, heroObjectId: heroId);
+            DungeonSession s = d.Session;
+            Run(s, 1000, 0, 0, true);
+            RunUntil(s, () => s.CellX == 1, 1, 0);
+            return new[] { s.Hero.X, s.Hero.Y };
+        }
+
+        Assert.Equal(Arrive(TestHeroId), Arrive(TestHeroId));
+        Assert.Equal(new[] { 110.0, 158.0 }, Arrive(1000));              // 种子 = 1000 × 2
+        Assert.Equal(new[] { 96.0, 80.0 }, Arrive(1001));
+        Assert.NotEqual(Arrive(1000), Arrive(1001));
     }
 
     [Fact]
@@ -311,10 +335,10 @@ public class DungeonSessionTests
         RunUntil(s, () => s.CellX == 0, -1, 0);                          // 走左出口回去
         Assert.Equal((0, 0, 2), (s.CellX, s.CellY, s.Transitions));
         TownHero hero = s.Hero;
-        Assert.Equal(1104 - DungeonSession.EntryOffsetRightGate, hero.X);
-        Assert.Equal(1034, hero.X);
+        // 格 (0,0) 的地图编号是 1,种子 = 1002 × 1;右出口矩形 [984, 1104) × [67, 173) → (1061, 104)
+        Assert.Equal((1061.0, 104.0), (hero.X, hero.Y));
         Assert.True(hero.FacingLeft);
-        Assert.Equal(320, s.Camera.IntX);                                // 1034 − 400 = 634,夹到最大 320
+        Assert.Equal(320, s.Camera.IntX);                                // 1061 − 450 = 611,夹到最大 320
         Assert.Same(d.Rooms[(0, 0)], s.Current);
         Assert.Equal((0, 1), (s.Current.AliveCount, s.Current.Monsters.Count(m => m.IsGone)));   // 怪物没有复活
         Assert.False(hero.BattleStance);
@@ -323,7 +347,7 @@ public class DungeonSessionTests
     }
 
     [Fact]
-    public void VerticalGatesPlaceTheHeroOnTheInsideOfTheOppositeGateAndKeepTheFacing()
+    public void VerticalGatesPlaceTheHeroInsideTheOppositeGateAreaAndKeepTheFacing()
     {
         using var d = new Dungeon(RingLayout(), OneWeakAtStart);
         DungeonSession s = d.Session;
@@ -331,13 +355,38 @@ public class DungeonSessionTests
         s.Hero.Place(560, 300, true, HeroMotion.Rest, 0);                // 站到下出口(560, 348)的正上方,朝左
         RunUntil(s, () => s.CellY == 1, 0, 1);
         Assert.Equal((0, 1), (s.CellX, s.CellY));
-        // (0,1) D 的上出口在 (560, 144):主角在它下面 3 像素、x 比出口多 2、朝向保持
-        Assert.Equal((560.0 + DungeonSession.ArrivalOffsetX, 144.0 + DungeonSession.ArrivalOffsetVertical, true), (s.Hero.X, s.Hero.Y, s.Hero.FacingLeft));
-        Assert.Equal(112, s.Camera.IntX);                                // 镜头先放在 0 再按死区跟随:562 − 450
-        // 再回上去:从上出口出来,进入 (0,0) 的下出口(560, 348)上面 3 像素
+        // (0,1) D 的地图编号是 3,种子 = 1002 × 3;上出口 (560, 12) 的识别矩形 [490, 630) × [−8, 32) → (593, 17),朝向保持
+        Assert.Equal((593.0, 17.0, true), (s.Hero.X, s.Hero.Y, s.Hero.FacingLeft));
+        Assert.Equal(143, s.Camera.IntX);                                // 镜头先放在 0 再按死区跟随:593 − 450
+        // 再回上去:进入 (0,0)(地图编号 1)的下出口 (560, 348) 的识别矩形 [490, 630) × [328, 368):取到的点 (543, 361) 在地图下沿之外 → 找最近的可站点 (543, 358)
         s.Build(0);
         RunUntil(s, () => s.CellY == 0, 0, -1);
-        Assert.Equal((560.0 + DungeonSession.ArrivalOffsetX, 348.0 - DungeonSession.ArrivalOffsetVertical), (s.Hero.X, s.Hero.Y));
+        Assert.Equal((543.0, 358.0), (s.Hero.X, s.Hero.Y));
+    }
+
+    [Fact]
+    public void TheUpGateTriggersOnlyByPushingUpInsideItsRecognitionRectangle()
+    {
+        using var d = new Dungeon(RingLayout(), OneWeakAtStart);
+        DungeonSession s = d.Session;
+        Run(s, 1000, 0, 0, true);
+        s.Hero.Place(560, 300, false, HeroMotion.Rest, 0);
+        RunUntil(s, () => s.CellY == 1, 0, 1);
+        Run(s, 700, 0, 0);                                               // 等转场结束
+        Assert.False(s.InTransition);
+        // (0,1) 的上出口 (560, 12):识别矩形 [490, 630) × [−8, 32)
+        s.Hero.Place(560, 25, false, HeroMotion.Rest, 0);                // 站在矩形里、没有往上顶:不触发
+        Run(s, 300, 0, 0);
+        Assert.False(s.InTransition);
+        s.Hero.Place(200, 25, false, HeroMotion.Rest, 0);                // 离矩形横向太远,顶到边缘也不触发
+        Run(s, 600, 0, -1);
+        Assert.False(s.InTransition);
+        Assert.Equal((0, 1), (s.CellX, s.CellY));
+        s.Hero.Place(560, 25, false, HeroMotion.Rest, 0);                // 回到矩形里往上顶:触发
+        Run(s, 600, 0, -1);
+        Assert.True(s.InTransition);
+        Run(s, 700, 0, 0);
+        Assert.Equal((0, 0, 2), (s.CellX, s.CellY, s.Transitions));
     }
 
     [Fact]
@@ -357,7 +406,7 @@ public class DungeonSessionTests
             s.Update(10, 1, 0, false);                                   // 往右走,顶在右出口的墙上
         }
         Assert.True(s.InTransition);
-        Assert.Equal(BesideRightWallX, s.Hero.X);                        // 墙的左沿 1072 − 半宽 26
+        Assert.Equal(BesideRightWallX, s.Hero.X, 3);                     // 墙的左沿 1072 − 占位盒半宽 20(实数坐标停在它之前一点点)
         Assert.Equal((0, 0, 0, 0), (s.CellX, s.CellY, s.Transitions, s.FadeAlpha));
 
         // 淡出 250 毫秒:房间还是原来的,主角照常被操作(一直顶着墙),黑幕线性变浓
@@ -367,7 +416,7 @@ public class DungeonSessionTests
         }
         Assert.Equal((0, 0, 0), (s.CellX, s.CellY, s.Transitions));
         Assert.Equal(122, s.FadeAlpha);                                  // 255 × 120 / 250 = 122.4
-        Assert.Equal(BesideRightWallX, s.Hero.X);
+        Assert.Equal(BesideRightWallX, s.Hero.X, 3);
         List<SceneSprite> frame = s.Build(5000);
         SceneSprite fade = Assert.Single(frame, x => x.AnimationPath == "fade");
         Assert.Equal((122, 800, 600, 0, 0), (fade.TintAlpha, fade.Frame.Width, fade.Frame.Height, fade.ScreenX, fade.ScreenY));
@@ -380,14 +429,14 @@ public class DungeonSessionTests
         Assert.Equal((0, 0, 0), (s.CellX, s.CellY, s.Transitions));
         Assert.Equal(245, s.FadeAlpha);                                  // 255 × 240 / 250 = 244.8
 
-        // 第 25 步 = 250 毫秒:这一步的末尾换房间;主角贴着对侧(左)出口的墙、y 与朝向保持、站姿待机,镜头在 0
+        // 第 25 步 = 250 毫秒:这一步的末尾换房间;主角落在对侧(左)出口的识别矩形里、朝右、站姿待机,镜头在 0。
+        // 客户端的随机数取到的点是 (36, 129),在左边的墙里(墙盖住 x < 80,占位盒的左沿 x − 20 要 ≥ 80)→ 由近到远找最近的可站点:半径 66 处的 (102, 129)
         s.Update(10, 1, 0, false);
         Assert.Equal((1, 0, 1), (s.CellX, s.CellY, s.Transitions));
         Assert.True(s.InTransition);
         Assert.Equal(255, s.FadeAlpha);
         TownHero hero = s.Hero;
-        Assert.Equal((BesideLeftWallX, false, HeroMotion.Rest), (hero.X, hero.FacingLeft, hero.Motion));
-        Assert.Equal(HeroY, hero.Y, 3);
+        Assert.Equal((102.0, 129.0, false, HeroMotion.Rest), (hero.X, hero.Y, hero.FacingLeft, hero.Motion));
         Assert.Equal(0, s.Camera.IntX);
 
         // 全黑 130 毫秒,再淡入 250 毫秒
@@ -447,11 +496,11 @@ public class DungeonSessionTests
         using var d = new Dungeon(RingLayout(), (cx, cy) => new[] { (900, 300) }, hp: 100000, bodies: true);
         DungeonSession s = d.Session;
         Run(s, 6000, 1, 0);                                              // 右出口关着:挡住,不触发
-        Assert.Equal(BesideRightWallX, s.Hero.X);
+        Assert.Equal(BesideRightWallX, s.Hero.X, 3);
         Assert.False(s.InTransition);
         Assert.Equal((0, 0, 0), (s.CellX, s.CellY, s.Transitions));
         Run(s, 6000, -1, 0);                                             // 左边是墙:同样
-        Assert.Equal(BesideLeftWallX, s.Hero.X);
+        Assert.Equal(BesideLeftWallX, s.Hero.X, 3);
         Assert.False(s.InTransition);
         Assert.Equal((0, 0, 0), (s.CellX, s.CellY, s.Transitions));
         Assert.False(s.IsCleared(0, 0));
@@ -465,30 +514,28 @@ public class DungeonSessionTests
         Run(s, 1000, 0, 0, true);
         Assert.True(s.IsCleared(0, 0));
         Run(s, 6000, -1, 0);                                             // 起点格的左边是墙(不可开)
-        Assert.Equal(BesideLeftWallX, s.Hero.X);
+        Assert.Equal(BesideLeftWallX, s.Hero.X, 3);
         Assert.False(s.InTransition);
         Assert.Equal((0, 0, 0), (s.CellX, s.CellY, s.Transitions));
     }
 
     [Fact]
-    public void GoingBackThroughABodiedGateArrivesBesideTheOppositeBodyFacingLeftWithTheCameraRule()
+    public void GoingBackThroughABodiedGateArrivesInsideTheOppositeGateAreaClearOfTheBodyFacingLeftWithTheCameraRule()
     {
         using var d = new Dungeon(RingLayout(), OneWeakAtStart, bodies: true);
         DungeonSession s = d.Session;
         Run(s, 1000, 0, 0, true);
         Run(s, 600, 0, 1);                                               // 往下走一点,让 y 与出生时不同
-        double y = s.Hero.Y;
         RunUntil(s, () => s.CellX == 1, 1, 0);
-        Assert.Equal((BesideLeftWallX, false), (s.Hero.X, s.Hero.FacingLeft));
-        Assert.Equal(y, s.Hero.Y, 1);
+        Assert.Equal((102.0, 129.0, false), (s.Hero.X, s.Hero.Y, s.Hero.FacingLeft));   // 与上一个测试同样:随机点 (36, 129) 在墙里 → 挪到 (102, 129)
         Run(s, 700, 0, 0);                                               // 等转场结束
         Assert.False(s.InTransition);
         RunUntil(s, () => s.CellX == 0, -1, 0);                          // 顶着左边的墙(这一格的左出口是普通出口,开着)回去
         Assert.Equal((0, 0, 2), (s.CellX, s.CellY, s.Transitions));
         TownHero hero = s.Hero;
-        Assert.Equal((BesideRightWallX, true, HeroMotion.Rest), (hero.X, hero.FacingLeft, hero.Motion));
-        Assert.Equal(y, hero.Y, 1);
-        Assert.Equal(320, s.Camera.IntX);                                // 镜头在 0,跟随 1046 夹到最大 320
+        // 右出口矩形 [984, 1104) × [67, 173) 里取到的点是 (1061, 104),在右边的墙里(盒的右沿 x + 20 要 ≤ 1071)→ 半径 12 处的 (1049, 104)
+        Assert.Equal((1049.0, 104.0, true, HeroMotion.Rest), (hero.X, hero.Y, hero.FacingLeft, hero.Motion));
+        Assert.Equal(320, s.Camera.IntX);                                // 镜头在 0,跟随 1049 夹到最大 320
     }
 
     [Fact]
@@ -519,8 +566,9 @@ public class DungeonSessionTests
     [Fact]
     public void ClearingTheBossRoomSetsBossClearedFinishesTheDungeonAndShowsTheBanner()
     {
-        // 路线:起点格杀怪 → 下到 (0,1)(从上出口进来,y = 144 + 3)→ 右边是首领出口 → 进首领格 (1,1),从它的左出口进来(y 保持),怪物就在主角前面 40 像素
-        using var d = new Dungeon(RingLayout(), (cx, cy) => cx == 0 && cy == 0 ? new[] { (340, 100) } : (cx == 1 && cy == 1 ? new[] { (130, 147) } : None()));
+        // 路线:起点格杀怪 → 下到 (0,1)(从上出口进来)→ 右边是首领出口 → 进首领格 (1,1),从它的左出口进来:地图编号 4、种子 = 1002 × 4,
+        // 左出口矩形里取到的点是 (70, 113),怪物就摆在主角前面 40 像素
+        using var d = new Dungeon(RingLayout(), (cx, cy) => cx == 0 && cy == 0 ? new[] { (340, 100) } : (cx == 1 && cy == 1 ? new[] { (110, 113) } : None()));
         DungeonSession s = d.Session;
         Run(s, 1000, 0, 0, true);
         s.Hero.Place(560, 300, false, HeroMotion.Rest, 0);
@@ -529,7 +577,7 @@ public class DungeonSessionTests
         Assert.Equal(GateKind.Boss, d.Layout.GateKindAt(0, 1, GateSide.Right));
         RunUntil(s, () => s.CellX == 1, 1, 0);
         Assert.Equal((1, 1), (s.CellX, s.CellY));
-        Assert.Equal((90.0, 144.0 + DungeonSession.ArrivalOffsetVertical), (s.Hero.X, s.Hero.Y));
+        Assert.Equal((70.0, 113.0), (s.Hero.X, s.Hero.Y));
         Assert.False(s.BossCleared);
         Assert.DoesNotContain(s.Build(10), x => x.AnimationPath == "clear");
         Assert.Equal(1, s.Current.AliveCount);

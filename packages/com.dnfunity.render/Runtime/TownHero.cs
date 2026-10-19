@@ -571,6 +571,7 @@ namespace Dnf.Render
             var hero = new TownHero(outfit, rest, restPath, move, movePath, area, x, y, facingLeft);
             hero.LoadAttackMotions(assets, chrPath);
             hero.LoadMoveSpeedStat(assets, chrPath);
+            hero.LoadBodySize(assets, chrPath);
             hero.LoadDashMotions(assets, chrPath);
             hero.LoadJumpMotions(assets, chrPath);
             return hero;
@@ -584,6 +585,7 @@ namespace Dnf.Render
             var hero = new TownHero(outfit, rest, restPath, move, movePath, walk, x, y, facingLeft);
             hero.LoadAttackMotions(assets, chrPath);
             hero.LoadMoveSpeedStat(assets, chrPath);
+            hero.LoadBodySize(assets, chrPath);
             hero.LoadDashMotions(assets, chrPath);
             hero.LoadJumpMotions(assets, chrPath);
             return hero;
@@ -739,6 +741,46 @@ namespace Dnf.Render
                     {
                         _motionMs = 0;
                     }
+                }
+            }
+        }
+
+        /// <summary>占位盒宽的缺省值(像素):角色脚本没有可读的 [width] 时的兜底;真实的宽读自角色脚本(<see cref="LoadBodySize"/>,证据 E-074)。</summary>
+        public const int DefaultBodyWidth = 40;
+
+        /// <summary>占位盒深的缺省值(像素):角色脚本没有可读的 [width] 时的兜底;真实的深读自角色脚本(<see cref="LoadBodySize"/>,证据 E-074)。</summary>
+        public const int DefaultBodyDepth = 10;
+
+        /// <summary>
+        /// 占位盒的宽(横向,像素):.chr 的 [width] 第一个数。客户端用它做进房间的落点与瓦片格足迹测试(证据 E-074);
+        /// 以脚下原点为中心,左右各取一半。没有读过 [width] 时为 <see cref="DefaultBodyWidth"/>。
+        /// </summary>
+        public int BodyWidth { get; private set; } = DefaultBodyWidth;
+
+        /// <summary>占位盒的深(纵深方向,像素):.chr 的 [width] 第二个数,上下各取一半。没有读过 [width] 时为 <see cref="DefaultBodyDepth"/>。</summary>
+        public int BodyDepth { get; private set; } = DefaultBodyDepth;
+
+        /// <summary>读 .chr 的 [width](两个整数:宽与深);没有这个标签或数不够两个就保持缺省值。</summary>
+        public void LoadBodySize(DnfAssets assets, string chrPath)
+        {
+            ScriptLine[] doc = assets.ReadScript(chrPath);
+            if (doc == null)
+            {
+                throw new DnfFormatException("PVF 里没有角色脚本: " + chrPath);
+            }
+            BodyWidth = DefaultBodyWidth;
+            BodyDepth = DefaultBodyDepth;
+            foreach (ScriptLine line in doc)
+            {
+                if (line.TagIs("[width]"))
+                {
+                    List<int> n = line.Ints();
+                    if (n.Count >= 2 && n[0] >= 0 && n[1] >= 0)
+                    {
+                        BodyWidth = n[0];
+                        BodyDepth = n[1];
+                    }
+                    break;
                 }
             }
         }

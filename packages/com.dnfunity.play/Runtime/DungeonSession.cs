@@ -13,39 +13,24 @@ namespace Dnf.Play
     /// 做了:
     ///   · 出口开关:进房间时有怪物,出口关着;最后一只怪物消失(死亡动画播完)的那一刻出口开始淡出打开(基线上量到打开时刻 ≈ 目标死亡标记后 0.5 秒);
     ///     进房间时本来就没有怪物(或回到清空的房间)出口直接开着。
-    ///   · 出口的碰撞体(E-072):左右出口 .obj 自带的 .til 是主角的碰撞体,开着关着都在;关着的门与墙挡路,清房之后主角顶着门洞的楔形斜边走进去就换房间(推挤触发);
-    ///     上下出口没有碰撞体,向上(下)走顶到可走带的边缘、且横向在出口附近就触发。没有碰撞体的左右出口(没有 .til 的合成数据)退回到"离出口 24 像素以内"的近似。
+    ///   · 出口的碰撞体(E-072、E-074):左右出口 .obj 自带的 .til 是主角的碰撞体(盖在舞台格上),开着关着都在;关着的门与墙挡路,清房之后主角顶着门洞的楔形斜边走进去就换房间(推挤触发);
+    ///     上下出口没有碰撞体,向上(下)走顶到可走带的边缘、且人在这个出口的识别矩形里(<see cref="GateAreas"/>;服务端也用这个矩形校验过门位置)就触发。没有碰撞体的左右出口(没有 .til 的合成数据)退回到"离出口 12 像素以内"的近似。
     ///   · 换房间:先淡出到全黑(250 毫秒,期间主角照常被操作)、黑屏停 130 毫秒时换房间、再淡入(250 毫秒),时长取自原版连拍;淡入淡出盖住整个画面(含小地图)。
-    ///     新房间里主角站在对侧出口前:左右出口从出口 x 起、y 与朝向保持,沿房间里的方向找到占位盒不再压着碰撞体的第一个位置(基线上 4 个样本吻合);
-    ///     上下出口站在 (出口 x + 2, 出口 y ± 3)、朝向保持(上出口量过一个样本,下出口是对称假设)。镜头先放在 0 再按死区跟随主角。
+    ///     新房间里主角落在"进来的那个出口"的识别矩形里:用客户端的随机数在矩形里取一个点、站不下就由近到远找最近的可站点(<see cref="RoomArrival"/>,证据 E-074);
+    ///     左出口进来朝右、右出口进来朝左,上下出口朝向保持。镜头先放在 0 再按死区跟随主角。
     ///     房间会话按格缓存,回去时怪物不会复活(基线上走回第一个房间时就是清空的)。
     ///   · 首领格清空 → <see cref="BossCleared"/>;迷宫外的出口(只有单格副本的右边有)走进去 → <see cref="ExitReached"/>。
     ///   · 屏幕右上角的占位小地图。
-    /// 没做 / 没量过:上下出口的触发范围与下出口的到达位置、淡入期间是否接受操作(现在接受)、转场时怪物是否冻结(现在不冻结)、
-    /// 清房时站姿切换的确切时刻、结算界面。
+    /// 没做 / 没量过:客户端"走进出口就换房间"的触发代码(没有读到,触发条件是推断)、主角对象编号的来源(<see cref="HeroObjectId"/>)、淡入期间是否接受操作(现在接受)、
+    /// 转场时怪物是否冻结(现在不冻结)、清房时站姿切换的确切时刻、结算界面。
     /// </summary>
     public sealed class DungeonSession : IActionSession
     {
-        /// <summary>没有碰撞体的左边出口:到达时出口 x 向右的偏移(像素;基线上量到 74,证据 E-070;有碰撞体时用扫描规则)。</summary>
-        public const int EntryOffsetLeftGate = 74;
-
-        /// <summary>没有碰撞体的右边出口:到达时出口 x 向左的偏移(像素;基线上量到 70)。</summary>
-        public const int EntryOffsetRightGate = 70;
-
-        /// <summary>从上下出口进来:相对出口 x 的横向偏移(像素;上出口量到 +2,证据 E-072)。</summary>
-        public const int ArrivalOffsetX = 2;
-
-        /// <summary>从上下出口进来:相对出口 y 向房间里的偏移(像素;上出口量到 3,下出口取对称)。</summary>
-        public const int ArrivalOffsetVertical = 3;
-
-        /// <summary>没有碰撞体的左右出口的触发范围:主角离出口的横向距离不超过它(像素;近似,没有量过)。</summary>
-        public const int TriggerReachSide = 24;
-
-        /// <summary>上下出口的触发范围:主角离出口线的纵向距离不超过它(像素;近似)。</summary>
-        public const int TriggerReachVertical = 12;
-
-        /// <summary>上下出口的触发范围:主角与出口(出口 x + 2)的横向距离不超过它(像素;近似,没有量过)。</summary>
-        public const int TriggerSpanVertical = 60;
+        /// <summary>
+        /// 没有碰撞体的左右出口的触发范围:主角离出口的横向距离不超过它(像素;近似,没有量过;真实数据里左右出口都有碰撞体)。
+        /// 要小于进房间落点离出口的最小距离(识别矩形的边沿 + 占位盒半宽 20),否则一落地就又触发。
+        /// </summary>
+        public const int TriggerReachSide = 12;
 
         /// <summary>换房间的转场:淡出、全黑、淡入各多久(毫秒;原版连拍里量到 ≈250、≈130、≈250,证据 E-072)。</summary>
         public const double FadeOutMs = 250;
@@ -198,10 +183,17 @@ namespace Dnf.Play
         public int LayerCount => Current.LayerCount;
         public int NpcCount => Current.NpcCount;
 
-        public DungeonSession(DungeonLayout layout, DungeonRoomFactory factory)
+        /// <summary>
+        /// 主角对象的编号:进房间落点的随机种子是它乘地图编号(证据 E-074,见 <see cref="GateArrival.SeedFor"/>)。
+        /// 原版里它由对象管理器分配,来源没有查明,所以是个可设的参数;缺省 <see cref="GateArrival.DefaultHeroObjectId"/>。
+        /// </summary>
+        public int HeroObjectId { get; }
+
+        public DungeonSession(DungeonLayout layout, DungeonRoomFactory factory, int heroObjectId = GateArrival.DefaultHeroObjectId)
         {
             _layout = layout ?? throw new ArgumentNullException(nameof(layout));
             _factory = factory ?? throw new ArgumentNullException(nameof(factory));
+            HeroObjectId = heroObjectId;
             _cells = new CellState[layout.Maze.Cols * layout.Maze.Rows];
             for (int y = 0; y < layout.Maze.Rows; y++)
             {
@@ -210,7 +202,7 @@ namespace Dnf.Play
                     _cells[y * layout.Maze.Cols + x] = new CellState { X = x, Y = y };
                 }
             }
-            Enter(layout.StartX, layout.StartY, false, GateSide.Left, 0, false);
+            Enter(layout.StartX, layout.StartY, false, GateSide.Left, false);
         }
 
         /// <summary>
@@ -218,21 +210,23 @@ namespace Dnf.Play
         /// 否则取候选里最前面的(基线上就是这样,证据 E-070)。<paramref name="seed"/> 同时是各房间战斗的随机种子。
         /// </summary>
         public static DungeonSession Create(DnfAssets assets, string dungeonPath, int seed = 1, bool randomLayout = false,
-            string weaponEqu = DemoHero.StarterWeapon)
+            string weaponEqu = DemoHero.StarterWeapon, int heroObjectId = GateArrival.DefaultHeroObjectId)
         {
             DungeonMaze maze = DungeonMaze.Read(assets, dungeonPath)
                 ?? throw new DnfFormatException("副本定义里没有可用的迷宫: " + dungeonPath);
             DungeonRoomPool pool = DungeonRoomPool.Read(assets, DungeonRoomPool.FolderFor(dungeonPath));
             DungeonLayout layout = DungeonLayout.Create(maze, pool, randomLayout ? new Random(seed) : null);
             AvatarOutfit outfit = DemoRoom.DefaultOutfit(assets, weaponEqu);
-            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed));
+            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId), heroObjectId);
         }
 
         /// <summary>
         /// 用真实素材造房间:读这一格选中的房间地图,按迷宫给的出口种类摆出口,主角放在出生点
-        /// (量过出生点的房间用量到的,其余取 <see cref="DemoRoom.DefaultSpawn"/>;换房间时再按出口重新摆),怪物按地图 [monster] 摆。
+        /// (量过出生点的房间用量到的;其余按客户端的规则落在 [dungeon start area] 里,见 <see cref="RoomArrival.PlaceAtStart"/>,没有出生区的退到 <see cref="DemoRoom.DefaultSpawn"/>;
+        /// 换房间时再按出口重新摆),怪物按地图 [monster] 摆。
         /// </summary>
-        public static DungeonRoomFactory CreateAssetFactory(DnfAssets assets, DungeonLayout layout, AvatarOutfit outfit, int seed)
+        public static DungeonRoomFactory CreateAssetFactory(DnfAssets assets, DungeonLayout layout, AvatarOutfit outfit, int seed,
+            int heroObjectId = GateArrival.DefaultHeroObjectId)
         {
             return (cx, cy) =>
             {
@@ -241,7 +235,8 @@ namespace Dnf.Play
                 List<RoomGate> gates = DemoRoom.BuildGates(assets, map, layout.Maze.GateSet, side => layout.GateKindAt(cx, cy, side));
                 double x, y;
                 bool left = false;
-                if (DemoRoom.TryGetSlice(cand.MapPath, out RoomSlice slice) && slice.HasSpawn)
+                bool measured = DemoRoom.TryGetSlice(cand.MapPath, out RoomSlice slice) && slice.HasSpawn;
+                if (measured)
                 {
                     x = slice.SpawnX;
                     y = slice.SpawnY;
@@ -252,6 +247,10 @@ namespace Dnf.Play
                     DemoRoom.DefaultSpawn(map, out x, out y);
                 }
                 RoomSession room = DemoRoom.CreateRoom(assets, map, gates, outfit, x, y, left);
+                if (!measured)
+                {
+                    RoomArrival.PlaceAtStart(room, cand.MapId, heroObjectId);
+                }
                 return RoomCombatSession.Create(assets, room, seed + cy * layout.Maze.Cols + cx);
             };
         }
@@ -377,7 +376,7 @@ namespace Dnf.Play
         /// <summary>
         /// 主角这一步是否触发了出口。有碰撞体的左右出口:水平移动顶在这个出口的碰撞体上(<see cref="TownHero.PushedInto"/>);
         /// 没有碰撞体的左右出口:离出口横向 <see cref="TriggerReachSide"/> 像素以内;上下出口:向上(下)走被可走带的边缘挡住、
-        /// 离出口线 <see cref="TriggerReachVertical"/> 像素以内、横向离出口 x + <see cref="ArrivalOffsetX"/> 不超过 <see cref="TriggerSpanVertical"/> 像素。
+        /// 且人在这个出口的识别矩形里(<see cref="RoomGate.Area"/>,服务端校验过门位置用的也是它;"顶着边缘走"才触发是推断,客户端的触发代码没有读到)。
         /// </summary>
         public static bool HeroTriggers(RoomGate gate, TownHero hero)
         {
@@ -388,9 +387,9 @@ namespace Dnf.Play
                 case GateSide.Right:
                     return gate.Body != null ? ReferenceEquals(hero.PushedInto, gate) : hero.X >= gate.X - TriggerReachSide;
                 case GateSide.Up:
-                    return hero.PushedUp && hero.Y <= gate.Y + TriggerReachVertical && Math.Abs(hero.X - (gate.X + ArrivalOffsetX)) <= TriggerSpanVertical;
+                    return hero.PushedUp && GateAreas.Contains(gate.Area, (int)Math.Floor(hero.X), (int)Math.Floor(hero.Y));
                 default:
-                    return hero.PushedDown && hero.Y >= gate.Y - TriggerReachVertical && Math.Abs(hero.X - (gate.X + ArrivalOffsetX)) <= TriggerSpanVertical;
+                    return hero.PushedDown && GateAreas.Contains(gate.Area, (int)Math.Floor(hero.X), (int)Math.Floor(hero.Y));
             }
         }
 
@@ -411,11 +410,11 @@ namespace Dnf.Play
         {
             TownHero hero = Current.Hero;
             Maze.TryNeighbor(CellX, CellY, side, out int nx, out int ny);
-            Enter(nx, ny, true, ExitBits.Opposite(side), hero.Y, hero.FacingLeft);
+            Enter(nx, ny, true, ExitBits.Opposite(side), hero.FacingLeft);
             Transitions++;
         }
 
-        private void Enter(int x, int y, bool viaGate, GateSide entry, double carryY, bool carryFacingLeft)
+        private void Enter(int x, int y, bool viaGate, GateSide entry, bool carryFacingLeft)
         {
             CellState cell = _cells[y * Maze.Cols + x];
             if (cell.Session == null)
@@ -426,7 +425,7 @@ namespace Dnf.Play
             CellY = y;
             if (viaGate)
             {
-                PlaceHero(cell.Session, entry, carryY, carryFacingLeft);
+                PlaceHero(cell.Session, entry, _layout.RoomAt(x, y).MapId, carryFacingLeft);
             }
             if (!cell.Visited)
             {
@@ -440,70 +439,15 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 把主角摆到 <paramref name="entry"/> 侧出口前(证据 E-072)。左右出口:从出口 x 起、y 与朝向保持(朝房间里),
-        /// 沿房间里的方向一像素一像素地找第一个占位盒不再压着这个出口碰撞体的位置(没有碰撞体时退回固定偏移 <see cref="EntryOffsetLeftGate"/>、<see cref="EntryOffsetRightGate"/>);
-        /// 上下出口:(出口 x + <see cref="ArrivalOffsetX"/>, 出口 y ± <see cref="ArrivalOffsetVertical"/>)、朝向保持。再挪到最近的可走点。
+        /// 把主角摆到 <paramref name="entry"/> 侧出口的落点(证据 E-074,<see cref="RoomArrival.PlaceAtGate"/>):在这个出口的识别矩形里按客户端的随机数取点、
+        /// 站不下就找最近的可站点;左出口进来朝右、右出口进来朝左,上下出口保持 <paramref name="carryFacingLeft"/>。
         /// 镜头先放在 0 再按死区跟随主角(原版进房间的第一张截图上镜头由此而来)。房间地图没有这一侧的出口位置时保持房间里主角原来的位置。
         /// </summary>
-        private static void PlaceHero(RoomCombatSession session, GateSide entry, double carryY, bool carryFacingLeft)
+        private void PlaceHero(RoomCombatSession session, GateSide entry, int mapId, bool carryFacingLeft)
         {
-            RoomMap map = session.Room.Map;
-            TownHero hero = session.Hero;
-            int[] g = map.Gates[(int)entry];
-            if (g != null)
-            {
-                RoomGate gate = FindGate(session, entry);
-                GateBody body = gate?.Body;
-                double x, y;
-                bool left;
-                switch (entry)
-                {
-                    case GateSide.Left:
-                        x = g[0] + (body == null ? EntryOffsetLeftGate : 0);
-                        y = carryY;
-                        left = false;
-                        break;
-                    case GateSide.Right:
-                        x = g[0] - (body == null ? EntryOffsetRightGate : 0);
-                        y = carryY;
-                        left = true;
-                        break;
-                    case GateSide.Up:
-                        x = g[0] + ArrivalOffsetX;
-                        y = g[1] + ArrivalOffsetVertical;
-                        left = carryFacingLeft;
-                        break;
-                    default:
-                        x = g[0] + ArrivalOffsetX;
-                        y = g[1] - ArrivalOffsetVertical;
-                        left = carryFacingLeft;
-                        break;
-                }
-                if (body != null && (entry == GateSide.Left || entry == GateSide.Right))
-                {
-                    double step = entry == GateSide.Left ? 1.0 : -1.0;
-                    for (int i = 0; i < 600 && body.Overlaps(x, y); i++)
-                    {
-                        x += step;
-                    }
-                }
-                map.NearestWalkable(x, y, out double wx, out double wy);
-                hero.Place(wx, wy, left, HeroMotion.Rest, 0);
-            }
+            RoomArrival.PlaceAtGate(session.Room, entry, mapId, HeroObjectId, carryFacingLeft);
             session.Camera.Place(0);
-            session.Camera.Follow(hero.X);
-        }
-
-        private static RoomGate FindGate(RoomCombatSession session, GateSide side)
-        {
-            foreach (RoomGate gate in session.Room.Content.Gates)
-            {
-                if (gate.Side == side)
-                {
-                    return gate;
-                }
-            }
-            return null;
+            session.Camera.Follow(session.Hero.X);
         }
 
         public List<SceneSprite> Build(long timeMs)

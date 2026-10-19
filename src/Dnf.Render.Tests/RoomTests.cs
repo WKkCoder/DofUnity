@@ -459,10 +459,12 @@ public class RoomTests
         Assert.Equal((0, 0), (plain.DoorAnchorColumn, plain.DoorAnchorRow));
         Assert.Null(new RoomGate(assets, plain, GateSide.Left, 16, 120).Body);
 
-        // 通行格的左上角 = 门的位置 − (列 × 16, 行 × 12)
+        // 通行格左上角那一格 = (门 x / 16 − 列, 门 y / 12 − 行):先把门的位置换成格子再对齐(余数舍掉,证据 E-074)
         var gate = new RoomGate(assets, obj, GateSide.Right, 1104, 120);
         Assert.NotNull(gate.Body);
-        Assert.Equal((1104 - 13 * 16, 120 - 4 * 12), (gate.Body!.OriginX, gate.Body.OriginY));
+        Assert.Equal((1104 / 16 - 13, 120 / 12 - 4, GateSide.Right), (gate.Body!.OriginColumn, gate.Body.OriginRow, gate.Body.Side));
+        var inexact = new RoomGate(assets, obj, GateSide.Left, 1119, 131);
+        Assert.Equal((69 - 13, 10 - 4), (inexact.Body!.OriginColumn, inexact.Body.OriginRow));   // 1119 / 16 = 69、131 / 12 = 10,余数不进位
 
         // 构造函数里的锚点是可选的(默认 0、0)
         var manual = new GateObject(1, "x.obj", "[normal]", new List<GatePart>(), null);
@@ -470,27 +472,55 @@ public class RoomTests
     }
 
     [Fact]
-    public void TheGateBodyOverlapsTheSolidCellsOnHalfOpenIntervalsWithTheHeroBoxAroundTheOrigin()
+    public void TheGateBodyOverlapsTheSolidCellsThroughTheHeroFootprintAndExtendsToTheMapEdge()
     {
         using var fx = new RoomFixture();
         using DnfAssets assets = DnfAssets.Open(fx.Root);
         TileFile tile = TileFile.Read(assets, RoomFixture.DoorBodyTile)!;
-        var body = new GateBody(tile, 896, 72);
-        // 挡路的格子占 x ∈ [896 + 160, 1120) = [1056, 1120)、y ∈ [72, 144);主角占位盒是 [x − 26, x + 26) × [y − 5, y + 5)
-        Assert.Equal((26.0, 5.0), (GateBody.HeroHalfWidth, GateBody.HeroHalfDepth));
-        Assert.False(body.Overlaps(1030, 100));                          // 盒的右沿刚好贴在 1056:半开区间,不重叠
-        Assert.True(body.Overlaps(1030.001, 100));
-        Assert.True(body.Overlaps(1080, 100));
-        Assert.False(body.Overlaps(1146, 100));                          // 盒的左沿到了 1120:已经在表外
-        Assert.True(body.Overlaps(1145.99, 100));                        // 差一点还压着最后一列
-        // 深度方向:盒 [y − 5, y + 5) 与 [72, 144)
-        Assert.False(body.Overlaps(1080, 67));
-        Assert.True(body.Overlaps(1080, 67.001));
-        Assert.True(body.Overlaps(1080, 148.999));
-        Assert.False(body.Overlaps(1080, 149));
-        // 在表外的左边,什么也没有
-        Assert.False(body.Overlaps(300, 100));
-        Assert.Throws<ArgumentNullException>(() => new GateBody(null!, 0, 0));
+        // 门体表 14 列 × 6 行,第 10 到 13 列每行都挡路;左上角那一格是 (56, 6),所以挡路的格子是第 66 到 69 列(x ∈ [1056, 1120))、第 6 到 11 行(y ∈ [72, 144))
+        var body = new GateBody(tile, 56, 6, GateSide.Right);
+        // 占位盒 40 × 10:左右各 20、上下各 5,边界像素算在内;格子 = 像素 / 16、像素 / 12
+        Assert.False(body.Overlaps(1035, 100, 40, 10));                  // 盒的右沿 1055 还在第 65 列
+        Assert.True(body.Overlaps(1036, 100, 40, 10));                   // 右沿 1056 = 第 66 列的第一个像素:压着了
+        Assert.True(body.Overlaps(1080, 100, 40, 10));
+        Assert.True(body.Overlaps(1119, 100, 40, 10));
+        Assert.True(body.Overlaps(1500, 100, 40, 10));                   // 右出口:第 13 列的值一直沿用到地图右缘
+        Assert.True(body.Overlaps(1036.9, 100.9, 40, 10));               // 实数坐标先向下取整
+        Assert.False(body.Overlaps(1035.9, 100.9, 40, 10));
+        // 深度方向:盒 [y − 5, y + 5] 对第 6 到 11 行
+        Assert.False(body.Overlaps(1080, 66, 40, 10));                   // 71 / 12 = 5 行
+        Assert.True(body.Overlaps(1080, 67, 40, 10));                    // 72 / 12 = 6 行
+        Assert.True(body.Overlaps(1080, 148, 40, 10));                   // 143 / 12 = 11 行
+        Assert.False(body.Overlaps(1080, 149, 40, 10));                  // 144 / 12 = 12 行:表外
+        // 表左边没有延伸(右出口)
+        Assert.False(body.Overlaps(300, 100, 40, 10));
+        // 盒的大小可换:宽 0、深 0 的盒只看一个格子
+        Assert.False(body.Overlaps(1055, 100, 0, 0));
+        Assert.True(body.Overlaps(1056, 100, 0, 0));
+        Assert.Throws<ArgumentNullException>(() => new GateBody(null!, 0, 0, GateSide.Left));
+    }
+
+    [Fact]
+    public void ALeftGateBodyReachesTheLeftMapEdgeWithColumnZeroAndNeverTheRight()
+    {
+        // 14 列 × 6 行:第 0、1、5 行整行挡路,第 2 到 4 行整行能走(RoomFixture.PassTable)
+        var table = new TileFile("door", new List<KeyValuePair<string, int>>(), 80, RoomFixture.PassTable().Select(v => (byte)v).ToArray());
+        var body = new GateBody(table, 3, 10, GateSide.Left);            // 表的左上角在第 3 列、第 10 行
+        // 表内
+        Assert.Equal(2, body.ValueAt(3, 10));
+        Assert.Equal(0, body.ValueAt(3, 12));
+        Assert.Equal(2, body.ValueAt(16, 15));
+        // 表左边:左出口把第 0 列的值延伸到地图左缘(第 0 列起),只延伸表所在的行
+        Assert.Equal(new byte[] { 2, 2, 2 }, new[] { body.ValueAt(0, 10), body.ValueAt(1, 11), body.ValueAt(2, 15) });
+        Assert.Equal(new byte[] { 0, 0, 0 }, new[] { body.ValueAt(0, 12), body.ValueAt(1, 13), body.ValueAt(2, 14) });
+        Assert.Equal(0, body.ValueAt(0, 9));                             // 表上方的行没有
+        Assert.Equal(0, body.ValueAt(0, 16));                            // 表下方的行没有
+        Assert.Equal(0, body.ValueAt(-1, 10));                           // 地图以外没有
+        // 表右边:左出口不延伸
+        Assert.Equal(0, body.ValueAt(17, 10));
+        // 反过来,右出口的表左边不延伸
+        Assert.Equal(0, new GateBody(table, 3, 10, GateSide.Right).ValueAt(0, 10));
+        Assert.Equal(2, new GateBody(table, 3, 10, GateSide.Right).ValueAt(40, 10));   // 右出口:第 13 列的值(2)一直延伸出去
     }
 
     [Fact]

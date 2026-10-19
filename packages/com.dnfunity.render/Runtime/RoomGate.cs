@@ -231,12 +231,19 @@ namespace Dnf.Render
         /// <summary>出口的碰撞体(门框与墙);出口脚本没有 .til(上下出口)或读不到时为 null。</summary>
         public GateBody Body { get; private set; }
 
-        public RoomGate(DnfAssets assets, GateObject obj, GateSide side, int x, int y)
+        /// <summary>
+        /// 出口的识别矩形(证据 E-074,见 <see cref="GateAreas"/>):服务端用它校验过门时主角的位置,进房间的落点落在对侧出口的这个矩形里,
+        /// 上下出口的触发也要求主角在里面。造出口时没给就按缺省大小从出口位置算。
+        /// </summary>
+        public WorldRect Area { get; }
+
+        public RoomGate(DnfAssets assets, GateObject obj, GateSide side, int x, int y, WorldRect? area = null)
         {
             _object = obj ?? throw new ArgumentNullException(nameof(obj));
             Side = side;
             X = x;
             Y = y;
+            Area = area ?? GateAreas.For(side, x, y);
             Rank = TownScene.LayerRank(obj.Layer);
             foreach (GatePart part in obj.Parts)
             {
@@ -260,12 +267,12 @@ namespace Dnf.Render
         }
 
         /// <summary>
-        /// 给出口装上碰撞体:<paramref name="tile"/> 的通行格,出口位置落在它的 (<paramref name="anchorColumn"/>, <paramref name="anchorRow"/>) 格上,
-        /// 所以通行格的左上角在 (x − 列 × 16, y − 行 × 12)。证据 E-072。
+        /// 给出口装上碰撞体:<paramref name="tile"/> 的通行格,出口位置所在的那一格(出口 x / 16、y / 12 取整)落在它的 (<paramref name="anchorColumn"/>, <paramref name="anchorRow"/>) 格上,
+        /// 所以通行格左上角那一格是 (x / 16 − 列, y / 12 − 行)。证据 E-072、E-074(客户端 0x00A43770 先把出口坐标换成格子再对齐,不是像素对齐)。
         /// </summary>
         public void SetBody(TileFile tile, int anchorColumn, int anchorRow)
         {
-            Body = tile == null ? null : new GateBody(tile, X - anchorColumn * TileFile.CellWidth, Y - anchorRow * TileFile.CellHeight);
+            Body = tile == null ? null : new GateBody(tile, X / TileFile.CellWidth - anchorColumn, Y / TileFile.CellHeight - anchorRow, Side);
         }
 
         /// <summary>
@@ -314,42 +321,72 @@ namespace Dnf.Render
     }
 
     /// <summary>
-    /// 出口的碰撞体(证据 E-072):出口 .obj 自带的 .til 里通行值非 0 的格子,每格 16 × 12 像素(半开区间),通行格的左上角在 (<see cref="OriginX"/>, <see cref="OriginY"/>)。
-    /// 主角的占位盒是以脚下原点为中心的 [x − 26, x + 26) × [y − 5, y + 5)(半宽 26 由四个样本拟合,与 .chr 的 [width] 的关系没有研究),
-    /// 盒子压到任何一个挡路的格子就算撞上。门开着或关着碰撞体都在(开门只是换了图):关着的门挡路,开着的门洞是"楔形"的,
+    /// 出口的碰撞体(证据 E-072、E-074):出口 .obj 自带的 .til 的通行表,盖在舞台的格子上(客户端 0x00A43770):格子 16 × 12 像素,
+    /// 通行表左上角那一格是 (<see cref="OriginColumn"/>, <see cref="OriginRow"/>) = (出口 x / 16 − 锚点列, 出口 y / 12 − 锚点行),
+    /// 表里的值与舞台格子里原有的值取较大者;左出口的表第 0 列的值再沿用到地图左缘,右出口第 13 列的值沿用到地图右缘(<see cref="ValueAt"/>)。
+    /// 主角站不站得下由占位盒([width] 的宽与深,左右上下各取一半,边界像素算在内)覆盖到的格子有没有非 0 值决定(<see cref="Overlaps(int, int, int, int)"/>,
+    /// 与 <see cref="RoomGrid.IsFree"/> 同一个规则)。门开着或关着碰撞体都在(开门只是换了图):关着的门挡路,开着的门洞是"楔形"的,
     /// 主角顶着门洞的斜边走进去就触发换房间。
     /// </summary>
     public sealed class GateBody
     {
-        /// <summary>主角占位盒的半宽(像素;拟合值)。</summary>
-        public const double HeroHalfWidth = 26.0;
-
-        /// <summary>主角占位盒的半深(像素;假设,只有在门洞贴近上下沿时才起作用)。</summary>
-        public const double HeroHalfDepth = 5.0;
-
         public TileFile Tile { get; }
-        public int OriginX { get; }
-        public int OriginY { get; }
 
-        public GateBody(TileFile tile, int originX, int originY)
+        /// <summary>通行表左上角那一格的列(整张地图的格子坐标,可以为负)。</summary>
+        public int OriginColumn { get; }
+
+        /// <summary>通行表左上角那一格的行。</summary>
+        public int OriginRow { get; }
+
+        /// <summary>这个出口在房间的哪一侧(决定通行表的值往地图边缘延伸的方向:左出口向左、右出口向右)。</summary>
+        public GateSide Side { get; }
+
+        public GateBody(TileFile tile, int originColumn, int originRow, GateSide side)
         {
             Tile = tile ?? throw new ArgumentNullException(nameof(tile));
-            OriginX = originX;
-            OriginY = originY;
+            OriginColumn = originColumn;
+            OriginRow = originRow;
+            Side = side;
         }
 
-        /// <summary>主角脚下原点在 (<paramref name="x"/>, <paramref name="y"/>) 时,占位盒是否压到了挡路的格子。</summary>
-        public bool Overlaps(double x, double y)
+        /// <summary>
+        /// 门体盖在舞台格 (<paramref name="column"/>, <paramref name="row"/>) 上的值(0 = 没盖到或盖的是空格)。
+        /// 表内的格子取表里的值;表所在的行里,左出口表左边的格子取第 0 列的值、右出口表右边的格子取第 13 列的值(延伸到地图边缘)。
+        /// </summary>
+        public byte ValueAt(int column, int row)
         {
-            int c0 = (int)Math.Floor((x - HeroHalfWidth - OriginX) / TileFile.CellWidth);
-            int c1 = (int)Math.Ceiling((x + HeroHalfWidth - OriginX) / TileFile.CellWidth) - 1;
-            int r0 = (int)Math.Floor((y - HeroHalfDepth - OriginY) / TileFile.CellHeight);
-            int r1 = (int)Math.Ceiling((y + HeroHalfDepth - OriginY) / TileFile.CellHeight) - 1;
+            int r = row - OriginRow;
+            if (r < 0 || r >= Tile.Rows)
+            {
+                return 0;
+            }
+            int c = column - OriginColumn;
+            if (c < 0)
+            {
+                return Side == GateSide.Left && column >= 0 ? Tile.Pass[r * TileFile.Columns] : (byte)0;
+            }
+            if (c >= TileFile.Columns)
+            {
+                return Side == GateSide.Right ? Tile.Pass[r * TileFile.Columns + TileFile.Columns - 1] : (byte)0;
+            }
+            return Tile.Pass[r * TileFile.Columns + c];
+        }
+
+        /// <summary>
+        /// 占位盒 <paramref name="bodyWidth"/> × <paramref name="bodyDepth"/>、脚下原点在 (<paramref name="x"/>, <paramref name="y"/>) 时,盒子覆盖的格子里有没有被门体盖成非 0 的
+        /// (列 = 像素 / 16,行 = 像素 / 12,盒子左右各 宽 / 2、上下各 深 / 2,边界像素算在内)。
+        /// </summary>
+        public bool Overlaps(int x, int y, int bodyWidth, int bodyDepth)
+        {
+            int c0 = Math.Max((x - (bodyWidth >> 1)) / TileFile.CellWidth, 0);
+            int c1 = (x + (bodyWidth >> 1)) / TileFile.CellWidth;
+            int r0 = Math.Max((y - (bodyDepth >> 1)) / TileFile.CellHeight, 0);
+            int r1 = (y + (bodyDepth >> 1)) / TileFile.CellHeight;
             for (int r = r0; r <= r1; r++)
             {
                 for (int c = c0; c <= c1; c++)
                 {
-                    if (Tile.IsSolid(c, r))
+                    if (ValueAt(c, r) != 0)
                     {
                         return true;
                     }
@@ -357,15 +394,28 @@ namespace Dnf.Render
             }
             return false;
         }
+
+        /// <summary>同 <see cref="Overlaps(int, int, int, int)"/>,坐标取整(向下)。</summary>
+        public bool Overlaps(double x, double y, int bodyWidth, int bodyDepth)
+        {
+            return Overlaps((int)Math.Floor(x), (int)Math.Floor(y), bodyWidth, bodyDepth);
+        }
     }
 
     /// <summary>一个房间里所有出口的碰撞体,给主角当障碍(<see cref="TownHero.Blocker"/>)。<see cref="IHeroBlocker.BlockedBy"/> 返回压到的那个 <see cref="RoomGate"/>。</summary>
     public sealed class GateBodies : IHeroBlocker
     {
         private readonly List<RoomGate> _gates = new List<RoomGate>();
+        private readonly int _bodyWidth;
+        private readonly int _bodyDepth;
 
-        public GateBodies(IEnumerable<RoomGate> gates)
+        /// <param name="gates">房间里的出口(没有碰撞体的跳过)。</param>
+        /// <param name="bodyWidth">主角占位盒的宽(像素,<see cref="TownHero.BodyWidth"/>)。</param>
+        /// <param name="bodyDepth">主角占位盒的深(像素,<see cref="TownHero.BodyDepth"/>)。</param>
+        public GateBodies(IEnumerable<RoomGate> gates, int bodyWidth = TownHero.DefaultBodyWidth, int bodyDepth = TownHero.DefaultBodyDepth)
         {
+            _bodyWidth = bodyWidth;
+            _bodyDepth = bodyDepth;
             if (gates == null)
             {
                 return;
@@ -385,7 +435,7 @@ namespace Dnf.Render
         {
             foreach (RoomGate g in _gates)
             {
-                if (g.Body.Overlaps(x, y))
+                if (g.Body.Overlaps(x, y, _bodyWidth, _bodyDepth))
                 {
                     return g;
                 }

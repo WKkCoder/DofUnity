@@ -148,6 +148,7 @@ internal sealed class RoomFixture : IDisposable
                 .Tag("[ani info]").Tag("[filename]").Str("animation/mid.ani").Tag("[layer]").Str("[middleback]").Tag("[order]").Str("[below]").Tag("[/ani info]")
                 .Tag("[/background animation]")
                 .Tag("[pathgate pos]").Int(16, 120, 440, 130, 220, 60, 220, 190)
+                .Tag("[pathgate recognize range]").Int(100, 80, 0, 0, 0, 30, 90, 0)    // 左:100×80;右:缺省;上:宽缺省、高 30;下:宽 90、高缺省
                 .Tag("[dungeon start area]").Int(300, 100, 60, 40)
                 .Tag("[animation]").Str("animation/glow.ani", "[normal]").Int(100, 100, 0).Tag("[/animation]")
                 .Tag("[passive object]").Int(TreeId, 200, 40, 0, ParticleId, 150, 150, 0, 999, 10, 10, 0).Tag("[/passive object]")

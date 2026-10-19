@@ -24,6 +24,32 @@ namespace Dnf.Render
         public TownCamera Camera { get; }
         public int GroundY { get; }
 
+        private RoomGrid _grid;
+
+        /// <summary>
+        /// 舞台格:地图的瓦片通行表,再把每个出口的门体盖上去(证据 E-074)。进房间的落点用它判断主角站不站得下(<see cref="RoomArrival"/>)。
+        /// 出口在房间造好之后不再变,所以第一次用到时建一次。
+        /// </summary>
+        public RoomGrid Grid
+        {
+            get
+            {
+                if (_grid == null)
+                {
+                    var grid = new RoomGrid(Map);
+                    foreach (RoomGate gate in Content.Gates)
+                    {
+                        if (gate.Body != null)
+                        {
+                            grid.Stamp(gate.Body);
+                        }
+                    }
+                    _grid = grid;
+                }
+                return _grid;
+            }
+        }
+
         /// <summary>为 false 时不画主角(离屏渲染一帧与 CPU 合成逐字节对照时用)。</summary>
         public bool HeroVisible { get; set; } = true;
 
@@ -235,7 +261,7 @@ namespace Dnf.Render
                 GateObject obj = GateObject.Read(assets, catalog, id);
                 if (obj != null)
                 {
-                    gates.Add(new RoomGate(assets, obj, side, pos[0], pos[1]));
+                    gates.Add(new RoomGate(assets, obj, side, pos[0], pos[1], map.GateRects[(int)side]));
                 }
             }
             return gates;
@@ -261,7 +287,7 @@ namespace Dnf.Render
                 TownHero.TownRestTag);
             hero.LoadBattleRest(assets, DemoHero.SwordmanChrPath);
             hero.BattleStance = true;
-            hero.Blocker = new GateBodies(gates);   // 出口的门框与墙挡路(证据 E-072)
+            hero.Blocker = new GateBodies(gates, hero.BodyWidth, hero.BodyDepth);   // 出口的门框与墙挡路(证据 E-072、E-074)
             var camera = new TownCamera(0, map.MaxCameraX, hero.X);
             return new RoomSession(assets, content, hero, camera);
         }

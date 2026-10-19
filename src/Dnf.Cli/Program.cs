@@ -118,6 +118,18 @@ namespace Dnf.Cli
         /// <summary>dungeon-check --layout-only:只打印迷宫与每格选中的房间,不模拟。</summary>
         public bool LayoutOnly { get; set; }
 
+        /// <summary>arrival-check --hero-id:主角对象编号(进房间落点的随机种子 = 它 × 地图编号,证据 E-074);默认 <see cref="Dnf.Render.GateArrival.DefaultHeroObjectId"/>。</summary>
+        public int HeroId { get; set; } = Dnf.Render.GateArrival.DefaultHeroObjectId;
+
+        /// <summary>arrival-check --scan 起:止(不含):在这个编号范围里找满足所有 --expect 的主角编号。</summary>
+        public string? Scan { get; set; }
+
+        /// <summary>arrival-check --expect 房间:侧:x:y:容差,…(侧 = start|left|right|up|down;y 写 * 表示不限):--scan 要满足的落点。</summary>
+        public string? Expect { get; set; }
+
+        /// <summary>arrival-check --probe 房间:侧:y,…:在高度 y 上沿水平线找出口门体挡路的边界(从出口向房间里找第一个主角站得下的 x)。</summary>
+        public string? Probe { get; set; }
+
         /// <summary>render-town --scene --room:按副本房间合成(瓦片、视差背景),而不是城镇(证据 E-067)。</summary>
         public bool Room { get; set; }
 
@@ -188,6 +200,8 @@ namespace Dnf.Cli
             "      (副本房间里的战斗模拟:按时间表按键,打印命中与怪物状态,可在指定时刻输出 800×600 画面;证据 E-069)\n" +
             "  dnf dungeon-check [--dungeon <副本定义>] [--seed N] [--random-layout] [--bot [--explore] | --play 秒:动作,…] [--seconds N(默认 900)] [--frame-ms 毫秒] [--jitter 比例] [--shots-at 秒,…] [--png 前缀] [--layout-only]\n" +
             "      (整座副本:读迷宫、选每格的房间、打印布局;--bot 让自动机从起点打到首领清空,逐个房间打印进出与清房时刻;--shots-at 在指定时刻输出画面;--frame-ms、--jitter 改每帧的毫秒数与抖动,模拟帧率不固定的实时运行(自动机按固定心跳补步,不受影响;时间表按帧长取样);证据 E-070、E-072)\n" +
+            "  dnf arrival-check [--dungeon <副本定义>] [--hero-id N] [--scan 起:止 --expect 房间:侧:x:y:容差,…] [--probe 房间:侧:y,…]\n" +
+            "      (进房间的落点:对副本每个房间打印各出口的识别矩形与按客户端规则算出的落点(随机点、最终点);--scan 在主角编号范围里找同时满足所有 --expect 的编号,房间写地图文件名如 s3,侧为 start/left/right/up/down,y 写 * 不限;--probe 沿水平线 y 找出口门体挡路的边界(左右出口,y 写 * 表示出口矩形里每 6 像素一条);证据 E-074)\n" +
             "  dnf fit-sprite --shot <截图.png> --img <NPK 里的 IMG 路径,如 sprite/map/01tile03.img> [--frame N] [--pred x,y] [--fit-tol N] [--range-x N] [--range-y N] [--samples N]\n" +
             "      在截图里搜索某一张 IMG 帧的不透明像素在容差内一致最多的位置(以 --pred 为中心,默认 0,0),打印前几个峰;用来量地面瓦片、远景/中景与门的摆放。\n" +
             "  dnf sq-check [--json <文件>]\n" +
@@ -362,6 +376,18 @@ namespace Dnf.Cli
                     case "--layout-only":
                         opts.LayoutOnly = true;
                         break;
+                    case "--hero-id":
+                        opts.HeroId = int.TryParse(NextValue(args, ref i), out int heroId) ? heroId : throw new UserError("--hero-id 需要整数");
+                        break;
+                    case "--scan":
+                        opts.Scan = NextValue(args, ref i);
+                        break;
+                    case "--expect":
+                        opts.Expect = NextValue(args, ref i);
+                        break;
+                    case "--probe":
+                        opts.Probe = NextValue(args, ref i);
+                        break;
                     case "--explore":
                         opts.Explore = true;
                         opts.Bot = true;
@@ -482,6 +508,8 @@ namespace Dnf.Cli
                     return CombatCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "dungeon-check":
                     return DungeonCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "arrival-check":
+                    return ArrivalCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "sq-check":
                     return SquirrelCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "game-check":

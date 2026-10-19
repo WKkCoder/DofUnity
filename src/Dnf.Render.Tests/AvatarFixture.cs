@@ -17,12 +17,15 @@ internal sealed class AvatarFixture : IDisposable
     /// <summary>
     /// 带奔跑与跳跃的角色脚本:除了 <see cref="ChrPath"/> 有的之外,还有 [dash motion](四帧 × 100 毫秒、循环)、[dashattack motion](三帧 × 100 毫秒)、
     /// [jump motion](八帧:100、100、80、停留 10000、100、80、停留 10000、落地 50 毫秒)、[jumpattack motion](100、50、50 毫秒)、
-    /// [jump power] <see cref="JumpPowerStat"/>、[weight] <see cref="WeightStat"/> 与 [jump speed] <see cref="JumpSpeedStat"/>(纯属测试用的数)。
+    /// [jump power] <see cref="JumpPowerStat"/>、[weight] <see cref="WeightStat"/>、[jump speed] <see cref="JumpSpeedStat"/>
+    /// 与 [width] <see cref="BodyWidthStat"/> <see cref="BodyDepthStat"/>(纯属测试用的数)。
     /// </summary>
     public const string ActionChrPath = "character/test/action.chr";
     public const int JumpPowerStat = 400;
     public const int WeightStat = 60000;
     public const int JumpSpeedStat = 90;
+    public const int BodyWidthStat = 36;
+    public const int BodyDepthStat = 12;
     public const string DashAni = "character/test/animation/dash.ani";
     public const string DashAttackAni = "character/test/animation/dashattack.ani";
     public const string JumpAni = "character/test/animation/jump.ani";
@@ -171,6 +174,7 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[jump power]").Int(JumpPowerStat)
                 .Tag("[weight]").Int(WeightStat)
                 .Tag("[jump speed]").Int(JumpSpeedStat)
+                .Tag("[width]").Int(BodyWidthStat, BodyDepthStat)
                 .Tag("[attack motion]").Str("animation/attack1.ani").Str("Animation/Attack2.ani").Str("animation/attack3.ani").Build()),
             (EquipRoot + "/avatar/skin/askin_default.equ", NewScript()
                 .Tag("[equipment type]").Str("[skin avatar]")
