@@ -90,7 +90,7 @@ internal static class CombatCheck
                     + " (" + F(session.Hero.X) + "," + F(session.Hero.Y) + ") 朝" + (session.Hero.FacingLeft ? "左" : "右") + " 镜头 " + session.Camera.IntX);
                 lastState = state;
             }
-            if (opts.Trace && (long)(t / 250.0) != (long)((t - CombatScript.StepMs) / 250.0))
+            if (opts.Trace && (long)(t / 100.0) != (long)((t - CombatScript.StepMs) / 100.0))
             {
                 var tr = new StringBuilder("  [跟踪 " + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s] 主角 (" + F(session.Hero.X) + "," + F(session.Hero.Y) + ")");
                 foreach (MonsterActor m in session.Monsters)

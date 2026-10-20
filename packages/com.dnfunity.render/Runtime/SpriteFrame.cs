@@ -46,6 +46,32 @@ namespace Dnf.Render
             }
         }
 
+        private SpriteFrame _silhouette;
+
+        /// <summary>
+        /// 同一帧的纯白剪影:颜色全部取 255、alpha 不变(怪物死亡时的白闪,证据 E-084)。每帧只生成一次并缓存,
+        /// 所以 Unity 里按帧对象缓存的贴图不会随画面增长。
+        /// </summary>
+        public SpriteFrame Silhouette
+        {
+            get
+            {
+                if (_silhouette == null)
+                {
+                    var white = new byte[Rgba.Length];
+                    for (int i = 0; i < Rgba.Length; i += 4)
+                    {
+                        white[i] = 255;
+                        white[i + 1] = 255;
+                        white[i + 2] = 255;
+                        white[i + 3] = Rgba[i + 3];
+                    }
+                    _silhouette = new SpriteFrame(Width, Height, OffsetX, OffsetY, CanvasWidth, CanvasHeight, white);
+                }
+                return _silhouette;
+            }
+        }
+
         public SpriteFrame(int width, int height, int offsetX, int offsetY, int canvasWidth, int canvasHeight, byte[] rgba)
         {
             if (width < 0 || height < 0)

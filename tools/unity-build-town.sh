@@ -239,6 +239,27 @@ if [ "$platform" = "macos" ]; then
     grep -q -E 'DNF_TOWN_DEMO ran .* room=true monsters=[0-9]+/4 hits=[1-9][0-9]* .* casts=3 ' "$skill_log" \
       || { echo "实时放技能里 A、S、D 没有各放出一次、或没有命中过怪物(应有 casts=3 与 hits>=1):$skill_log" >&2; exit 1; }
 
+    # 死亡(证据 E-084):时间表是 "0.2 秒向左走、2.5 秒停下、2.6/3.3/4.0/4.7 秒各按一下攻击"。白闪与淡出从血量归零算起,腾空的尸体也是白的。
+    # 4.3 秒:第一只被打死的怪物纯白、还在飞;4.45 秒:它淡出到一半;5.0 秒:第二只被打死的怪物纯白、在主角左前方;5.2 秒:它淡出到一半、躺在地上。
+    # 剪影是缓存下来的白色副本帧(SpriteFrame.Silhouette),淡出走 Normal 混合的整体不透明度;播放器与命令行 combat-check 同一份时间表,逐字节对照。
+    death_play="0.2:left,2.5:none,2.6:attack,3.3:attack,4.0:attack,4.7:attack"
+    for at in 4.3 4.45 5.0 5.2; do
+      tag="room-death-$at"
+      ms="$(python3 -c "print(int(float('$at')*1000.0))")"
+      rm -f "out/town-demo-$tag.png" "out/town-cpu-room-death-$at.png"
+      set +e
+      "$app" -batchmode -logFile "$PWD/re/unity-run-town-$tag-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-$tag.png" \
+        -dnftime "$ms" -dnfmap map/lorien/s2.map -dnfautowalk "$death_play" -dnfplayat "$at"
+      rc=$?
+      set -e
+      echo "播放器退出码(离屏渲染 $tag): $rc"
+      grep -E 'DNF_TOWN_DEMO' "$PWD/re/unity-run-town-$tag-macos.log" || true
+      [ "$rc" -eq 0 ] || exit "$rc"
+      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play "$death_play" --seconds "$at" \
+        --shots-at "$at" --png "$PWD/out/town-cpu-room-death" >/dev/null
+      python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-room-death-$(printf '%.2f' "$at").png" --max-diff 0
+    done
+
     # 整座副本(证据 E-070):洛兰的迷宫,自动机(DungeonBot)打副本。
     # 播放器带 -dnfdungeon -dnfexplore(或 -dnfbot)-dnfplayat 时按固定 1/60 秒步长确定地打到指定时刻,再离屏渲染一帧;
     # 命令行 dungeon-check --bot(--explore)是同一局、同一时刻写 PNG,逐字节对照。

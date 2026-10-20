@@ -301,28 +301,136 @@ public class MonsterKnockdownTests
     }
 
     [Fact]
-    public void AMonsterKilledWhileFlyingKeepsItsPoseFallsToTheGroundAndThenVanishes()
+    public void AKillingBlowWithoutLiftLiesAtOnceFlashesWhiteFadesOutAndVanishes()
     {
         using var fx = new AvatarFixture();
         using DnfAssets assets = DnfAssets.Open(fx.Root);
         MonsterActor m = Boxed(assets, hp: 10);
-        Hit(m, damage: 3);
-        Run(m, 200);
-        double z = m.Z;
-        int frame = m.CurrentFrame;
-        Assert.True(z > 20);
-        Assert.True(Hit(m, damage: 50, knockDown: false, reactionDamage: true));
+        Assert.True(Hit(m, damage: 50, knockDown: false, push: 30, lift: 0, reactionDamage: true));
+        Assert.False(m.IsAlive);
+        Assert.True(m.IsKnockedDown);                                     // 已死而且有倒地动作:走倒地流程(E-079 第 3 步),阶段 0 在下一步落地
+        Assert.True(m.DeathSilhouette);                                   // 白闪从血量归零就开始
+        Assert.Equal(255, m.DeathTintAlpha);
+        Run(m, 10);                                                       // 没有抬升:这一帧落地,阶段 1 被强制成 2,已死 → 死亡(E-082)
         Assert.Equal((MonsterPhase.Dying, false), (m.Phase, m.IsKnockedDown));
-        Assert.Equal(z, m.Z, 9);
-        Assert.Equal(frame, m.CurrentFrame);                              // 动画停在被打死的那一帧
+        Assert.Equal(4, m.CurrentFrame);                                  // 躺着的那一帧
+        Assert.True(m.DeathSilhouette);
+        Assert.Equal(255, m.DeathTintAlpha);
         Assert.Empty(m.DamageBoxes());
-        Run(m, 400);                                                      // 带着速度落到地上
-        Assert.Equal(0.0, m.Z);
+        Run(m, 240);                                                      // 纯白剪影到血量归零后 250 毫秒
+        Assert.Equal(255, m.DeathTintAlpha);
+        Run(m, 125);                                                      // 375 毫秒:淡出到一半
+        Assert.InRange(m.DeathTintAlpha, 126, 129);
+        Assert.False(m.IsGone);
+        Run(m, 130);
+        Assert.True(m.IsGone);                                            // 血量归零后 500 毫秒消失
+        Assert.False(m.DeathSilhouette);
+    }
+
+    [Fact]
+    public void AKillingBlowWithAShortFlightDiesWhenTheMonsterLiesDownButTheClockStartedAtTheKill()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = Boxed(assets, hp: 10);
+        Assert.True(Hit(m, damage: 50, lift: 130));                       // 缩放后的抬升 247 → 高度约 18 像素:腾空 0.31 秒、颠一下 0.10 秒
+        Assert.False(m.IsAlive);
+        Assert.True(m.IsKnockedDown);
+        Assert.True(m.DeathSilhouette);
+        Assert.Empty(m.DamageBoxes());
+        Assert.False(Hit(m));                                             // 尸体不会再挨打
+        var stages = new List<int>();
+        int steps = 0;
+        while (m.Phase == MonsterPhase.Hurt && steps++ < 400)
+        {
+            Run(m, 10);
+            if (m.IsKnockedDown && (stages.Count == 0 || stages[stages.Count - 1] != m.DownStage))
+            {
+                stages.Add(m.DownStage);
+            }
+        }
+        Assert.Equal(new[] { 0, 1 }, stages.ToArray());                   // 腾空、颠一下;躺下的那一刻就死亡,没有躺地阶段
         Assert.Equal(MonsterPhase.Dying, m.Phase);
-        Assert.Equal(frame, m.CurrentFrame);
-        Assert.True(m.X > 400);
-        Run(m, 200);
+        Assert.Equal(0.0, m.Z);
+        Assert.Equal(4, m.CurrentFrame);
+        Assert.InRange(steps * 10, 380, 450);
+        Assert.InRange(m.DeathElapsedMs, 380, 450);                       // 死亡的时钟是从血量归零算的,不是从进入死亡算的
+        Run(m, 500 - m.DeathElapsedMs);
+        Assert.True(m.IsGone);                                            // 血量归零后 500 毫秒
+    }
+
+    [Fact]
+    public void AKillingBlowWithAHighLiftMakesTheCorpseFlashWhiteAndVanishInTheAir()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = Boxed(assets, hp: 10);
+        Assert.True(Hit(m, damage: 50));                                  // 默认一击:推力 212、抬升 215(类型 1):腾空 0.51 秒、颠一下 0.22 秒
+        Assert.Equal(Math.Sqrt(2.0 * 1500 * 49), m.VerticalSpeed, 2);     // 与活着时飞得一样
+        Assert.False(Hit(m));
+        Run(m, 250);
+        Assert.True(m.Z > 20);
+        Assert.True(m.DeathSilhouette);                                   // 腾空的尸体也是白的
+        Assert.Equal(255, m.DeathTintAlpha);
+        Run(m, 130);                                                      // 380 毫秒:淡出到一半以后,还在飞
+        Assert.InRange(m.DeathTintAlpha, 90, 160);
+        Assert.True(m.Z > 0 && m.IsKnockedDown);
+        Run(m, 130);                                                      // 510 毫秒:消失,没有落地、没有进入死亡
         Assert.True(m.IsGone);
+        Assert.False(m.IsKnockedDown && m.Phase == MonsterPhase.Dying);
+    }
+
+    [Fact]
+    public void AMonsterWithoutADownMotionJustDiesAtOnce()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = Boxed(assets, hp: 10, mob: "monster/blob/big.mob");
+        Assert.True(Hit(m, damage: 50));
+        Assert.Equal((MonsterPhase.Dying, false), (m.Phase, m.IsKnockedDown));
+        Assert.True(m.DeathSilhouette);
+        Run(m, 510);
+        Assert.True(m.IsGone);
+    }
+
+    [Fact]
+    public void AMonsterKilledWithTheOldSignatureStillDiesWhereItStands()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = Boxed(assets, hp: 10);
+        Assert.True(m.ApplyHit(50, true, 30, false));                     // 老签名没有倒地输入:直接死亡
+        Assert.Equal((MonsterPhase.Dying, false), (m.Phase, m.IsKnockedDown));
+        Run(m, 510);
+        Assert.True(m.IsGone);
+    }
+
+    [Fact]
+    public void TheDyingSpriteIsAWhiteSilhouetteThatFadesWithTheTintAlpha()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = Boxed(assets, hp: 10);
+        var projection = new TownProjection(0, 200);
+        SceneSprite alive = m.Sprite(assets, projection);
+        Assert.NotNull(alive);
+        Assert.Equal(255, alive.TintAlpha);
+        Hit(m, damage: 50, knockDown: false, push: 0, lift: 0, reactionDamage: true);
+        Run(m, 10);
+        SceneSprite white = m.Sprite(assets, projection);
+        Assert.NotNull(white);
+        Assert.NotSame(alive.Frame, white.Frame);
+        for (int i = 0; i < white.Frame.Rgba.Length; i += 4)
+        {
+            if (white.Frame.Rgba[i + 3] != 0)
+            {
+                Assert.Equal((255, 255, 255), (white.Frame.Rgba[i], white.Frame.Rgba[i + 1], white.Frame.Rgba[i + 2]));
+            }
+        }
+        Run(m, 365);                                                      // 血量归零后 375 毫秒
+        SceneSprite fading = m.Sprite(assets, projection);
+        Assert.InRange(fading.TintAlpha, 126, 129);
+        Assert.Same(white.Frame, fading.Frame);                           // 同一帧不会反复生成新的剪影(Unity 按帧对象缓存贴图)
     }
 
     [Fact]

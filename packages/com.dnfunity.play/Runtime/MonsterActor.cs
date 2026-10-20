@@ -20,7 +20,10 @@ namespace Dnf.Play
         /// <summary>受击硬直(受击动作一或二,被击倒时是倒地动作)。</summary>
         Hurt,
 
-        /// <summary>死亡:播倒地动作,<see cref="MonsterTuning.DeathMs"/> 之后消失。</summary>
+        /// <summary>
+        /// 死亡(DIE):停在躺着的那一帧。有倒地动作的怪物被打死时先走倒地流程(腾空、颠一下,仍是 <see cref="Hurt"/>),躺下的那一刻才进入这个阶段
+        /// (证据 E-082、E-084)。白闪、淡出与消失从血量归零算起(<see cref="MonsterTuning.DeathMs"/>),与倒地流程同时进行,不等它走完。
+        /// </summary>
         Dying,
 
         /// <summary>已经消失。</summary>
@@ -72,9 +75,16 @@ namespace Dnf.Play
         public const double KnockDownHoldMs = 900;
 
         /// <summary>
-        /// 从被杀到消失的时长。量法:基线连拍 S09 里最后一击后地精约 0.5 秒内消失(白闪加碎片特效,我们没有做特效);只有一个样本。
+        /// 从血量归零(被打死)到消失的时长,倒地流程没走完也一样。量法:基线连拍 S09 里最后一击后地精约 0.5 秒内消失;
+        /// 逐帧对照倒地动画的帧号:死亡的白色剪影在腾空的姿势上就出现了,不是落地之后(E-084);只有一个样本。碎片与血的粒子特效(.ptl)我们没有做。
         /// </summary>
         public const double DeathMs = 500;
+
+        /// <summary>
+        /// 被打死后精灵是纯白剪影的时长,之后线性淡出到消失。量法:基线连拍 S09 里被打死的地精,
+        /// 被打后 100、200 毫秒的两张是纯白剪影,300 毫秒时已淡到一半,400 毫秒只剩一点影子,500 毫秒没了(一个样本,分辨率 100 毫秒;E-084)。
+        /// </summary>
+        public const double DeathWhiteMs = 250;
 
         /// <summary>
         /// 击退按"先快后慢"走完:位移比例 = 1 − (1 − t / 时长)²。依据:S07 里一只地精被打后的位置依次相差 46、25、2、0 像素(间隔 100 毫秒),
@@ -124,6 +134,12 @@ namespace Dnf.Play
         private int _rollState;
         private int[] _holdFrames;
         private bool _dyingFromDown;
+
+        /// <summary>血已经没了、但还在走倒地流程(腾空、颠一下);躺下的那一刻转入死亡(证据 E-079 第 3 步、E-082、E-084)。</summary>
+        private bool _dead;
+
+        /// <summary>血量归零之后过去的毫秒数(命中停顿里不走);白闪、淡出、消失都按它算,不管这时还在倒地流程里还是已经进了死亡(证据 E-084)。</summary>
+        private double _deathMs;
 
         public int Index { get; }
         public int Code { get; }
@@ -181,6 +197,28 @@ namespace Dnf.Play
 
         public bool IsAlive => Hp > 0;
         public bool IsGone => Phase == MonsterPhase.Gone;
+
+        /// <summary>血量归零之后到消失之前,精灵画成纯白剪影(白闪;腾空的尸体也是白的,证据 E-084 的基线逐帧)。</summary>
+        public bool DeathSilhouette => !IsAlive && Phase != MonsterPhase.Gone;
+
+        /// <summary>
+        /// 整张精灵的不透明度(0 到 255):血量归零后前 <see cref="MonsterTuning.DeathWhiteMs"/> 毫秒不透明,之后线性淡到消失(证据 E-084);活着时 255。
+        /// </summary>
+        public int DeathTintAlpha
+        {
+            get
+            {
+                if (IsAlive || _deathMs <= MonsterTuning.DeathWhiteMs)
+                {
+                    return 255;
+                }
+                double fade = (MonsterTuning.DeathMs - _deathMs) / (MonsterTuning.DeathMs - MonsterTuning.DeathWhiteMs);
+                return (int)Math.Round(255.0 * Math.Max(0.0, Math.Min(1.0, fade)));
+            }
+        }
+
+        /// <summary>血量归零之后过去的毫秒数;活着时 0。</summary>
+        public long DeathElapsedMs => (long)_deathMs;
 
         /// <summary>当前阶段已经过去的毫秒数。</summary>
         public long PhaseMs => (long)_phaseMs;
@@ -302,6 +340,10 @@ namespace Dnf.Play
                 }
             }
             _phaseMs += deltaMs;
+            if (Hp <= 0)
+            {
+                _deathMs += deltaMs;
+            }
             if (_cooldownMs > 0)
             {
                 _cooldownMs -= deltaMs;
@@ -323,10 +365,6 @@ namespace Dnf.Play
                 case MonsterPhase.Dying:
                     FallWhileDying(deltaMs, walk);
                     ApplyPush(deltaMs, walk);
-                    if (_phaseMs >= MonsterTuning.DeathMs)
-                    {
-                        EnterPhase(MonsterPhase.Gone);
-                    }
                     break;
                 case MonsterPhase.Attack:
                     if (_phaseMs * AttackRate >= Duration(CurrentAni))
@@ -338,6 +376,11 @@ namespace Dnf.Play
                 default:
                     Think(deltaMs, heroX, heroY, heroPresent, walk);
                     break;
+            }
+            if (Hp <= 0 && Phase != MonsterPhase.Gone && _deathMs >= MonsterTuning.DeathMs)
+            {
+                // 从血量归零算起 DeathMs 后消失:倒地流程还没走完(尸体还在空中)也一样(证据 E-084 的基线逐帧)
+                EnterPhase(MonsterPhase.Gone);
             }
         }
 
@@ -527,6 +570,25 @@ namespace Dnf.Play
             }
             _downActive = true;
             EnterPhase(MonsterPhase.Hurt);
+            if (_dead && launch.Stage >= 2)
+            {
+                EnterDie();
+            }
+        }
+
+        /// <summary>
+        /// 死亡(DIE)开始(0x00837612,E-084):水平速度清零,停在刚跳到的躺着那一帧。
+        /// 原版的 DIE 开始还会换死亡动画、停掉附着的效果;DIE 的每帧函数几乎是空的(只对一类对象清 z 速度),白闪、淡出与消失的时机在别处,没读到,
+        /// 这里按基线录像从血量归零算起(<see cref="MonsterTuning.DeathWhiteMs"/>、<see cref="MonsterTuning.DeathMs"/>),与进入 DIE 的早晚无关。
+        /// </summary>
+        private void EnterDie()
+        {
+            _vx = 0;
+            _vz = 0;
+            Z = 0;
+            _dyingFromDown = true;
+            _downActive = false;
+            EnterPhase(MonsterPhase.Dying);
         }
 
         /// <summary>
@@ -752,7 +814,8 @@ namespace Dnf.Play
         /// 同上,另外带上倒地输入(<see cref="KnockdownInput"/>;证据 E-082、E-083)。输入有效、怪物有倒地动作、而且这一击是倒地攻击
         /// (或是普通受击但怪物已在空中、已在倒地中,E-079 第 6' 步)时,进入倒地状态机:按体重缩放的击飞、z 抛物线、落地后颠一下再躺下;
         /// 这时 <paramref name="pushPixels"/> 是 [push aside](水平初速的来源,像素/秒的量纲,不再是总位移)。
-        /// 死亡的那一击仍走占位的死亡流程(已死怪物走倒地再死,E-079 第 3 步,与基线的"白闪后消失"是否冲突没查清);在空中被打死时带着当前速度落地。
+        /// 死亡的那一击:怪物有倒地动作而且给了倒地输入时,走倒地流程(请求用这一击自己的推力与抬升,E-079 第 3 步),躺下的那一刻转入死亡、
+        /// 白闪淡出后消失(E-082、E-084);否则直接死亡(在空中被打死时带着当前速度落地)。
         /// </summary>
         public bool ApplyHit(int damage, bool knockDown, double pushPixels, bool pushToLeft, HitStunInput stun, KnockdownInput down)
         {
@@ -767,7 +830,18 @@ namespace Dnf.Play
             _pushMs = 0;
             if (Hp == 0)
             {
-                // 倒地中(含腾空)被打死:动画停在当前帧,带着当前的速度落到地上
+                if (down.IsSet && _model.Down != null)
+                {
+                    // 已死而且有倒地动作:请求倒地(E-079 第 3 步),列表是这一击自己的推力与抬升,阶段 0;
+                    // 倒地流程照常走(腾空、颠一下),躺下的那一刻已死 → 进入死亡(E-082 阶段 2),白闪淡出后消失(E-084)
+                    _dead = true;
+                    _rollState = unchecked(down.RollHorizontal * 1000 + down.RollHeight + 7);
+                    _pushTotal = 0;
+                    BeginDown(new KnockdownRequest(0, Knockdown.TypeOf(down.Bounce, down.IgnoreWeight, 0), (int)pushPixels, down.LiftUp),
+                        down.RollHorizontal, down.RollHeight, pushToLeft);
+                    return true;
+                }
+                // 没有倒地动作(或调用方没给倒地输入):直接死亡;倒地中(含腾空)被打死时动画停在当前帧,带着当前的速度落到地上
                 _dyingFromDown = _downActive;
                 _downActive = false;
                 EnterPhase(MonsterPhase.Dying);
@@ -885,7 +959,7 @@ namespace Dnf.Play
                 return null;
             }
             return MonsterSprites.SpriteAt(assets, ani, _model.PathOf(ani), frame, projection, (int)Math.Floor(X), (int)Math.Floor(Y), (int)Math.Floor(Z),
-                !FacingLeft, MonsterSprites.ObjectIdBase + Index);
+                !FacingLeft, MonsterSprites.ObjectIdBase + Index, DeathSilhouette, DeathTintAlpha);
         }
     }
 }

@@ -190,8 +190,10 @@ namespace Dnf.Render
         /// 动画 <paramref name="ani"/> 第 <paramref name="aniFrame"/> 帧的精灵。地精的原图头朝右(证据 E-069:连拍里朝左的地精与翻转后的原图逐像素一致),
         /// 所以朝左时水平镜像;帧自己的 x 缩放为负时再翻一次(同 NPC,证据 E-029)。该帧没有图或图缺失时返回 null。
         /// </summary>
+        /// <param name="silhouette">画成纯白剪影(怪物死亡的白闪,证据 E-084)。</param>
+        /// <param name="tintAlpha">整张精灵的不透明度(0 到 255),死亡淡出用;普通混合下它就是整体的透明度(证据 E-071)。</param>
         public static SceneSprite SpriteAt(DnfAssets assets, AniFile ani, string animationPath, int aniFrame, TownProjection projection,
-            int worldX, int worldY, int worldZ, bool facingRight, int objectId)
+            int worldX, int worldY, int worldZ, bool facingRight, int objectId, bool silhouette = false, int tintAlpha = 255)
         {
             if (ani == null || (uint)aniFrame >= (uint)ani.Frames.Length)
             {
@@ -209,7 +211,8 @@ namespace Dnf.Render
             }
             bool mirrored = !facingRight ^ (f.TryGetScale(out float scaleX, out _) && scaleX < 0f);
             projection.TopLeft(worldX, worldY, worldZ, f.X, f.Y, sprite.OffsetX, sprite.OffsetY, sprite.Width, mirrored, out int sx, out int sy);
-            return new SceneSprite(sprite, sx, sy, worldY, objectId, animationPath, aniFrame, mirrored);
+            return new SceneSprite(silhouette ? sprite.Silhouette : sprite, sx, sy, worldY, objectId, animationPath, aniFrame, mirrored,
+                SpriteBlend.Normal, tintAlpha);
         }
     }
 }
