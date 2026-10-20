@@ -72,6 +72,28 @@ public class DungeonSessionTests
         return DungeonLayout.Create(maze, pool);
     }
 
+    /// <summary>
+    /// 一横排两格的副本:(0,0) 起点、只有右出口(B);(1,0) 首领格、只有左出口(E)。出口码:右 1、上 2、左 4、下 8。
+    /// 起点与首领不能是同一格,所以一个格的副本造不出首领;这里两格都没有怪物,向右走进首领格的那一刻首领格就清空了。
+    /// </summary>
+    private static DungeonLayout TwoRoomBossLayout()
+    {
+        var doc = new[]
+        {
+            Line("[size]", 2, 1),
+            new ScriptLine("[greed]", new[] { new ScriptValue(ScriptValueKind.String, 0, "BBEE") }),
+            Line("[start map]", 0, 0, 0, 0),
+            Line("[boss map]", 1, 0, 1, 0),
+        };
+        DungeonMaze maze = DungeonMaze.Parse("dungeon/test/tworoom.dgn", doc)!;
+        var pool = new DungeonRoomPool(new[]
+        {
+            new RoomCandidate("map/t/start.map", 1, 1, 1, false, true),
+            new RoomCandidate("map/t/boss.map", 2, 4, 4, true, false),
+        });
+        return DungeonLayout.Create(maze, pool);
+    }
+
     /// <summary>用夹具造出每一格的迷你房间;<paramref name="monstersOf"/> 给每一格的怪物位置。</summary>
     private sealed class Dungeon : IDisposable
     {
@@ -103,7 +125,7 @@ public class DungeonSessionTests
             _bodies = bodies;
             _vitalsOf = vitalsOf;
             _soundsOf = soundsOf;
-            Session = new DungeonSession(layout, Build, heroObjectId);
+            Session = new DungeonSession(layout, Build, heroObjectId, Assets);
         }
 
         /// <summary>整个房间高(30 行,y 从 0 到 360)的墙:左边的墙占前 <see cref="LeftWedgeColumns"/> 列,右边的墙占最后 <see cref="RightWedgeColumns"/> 列。</summary>
@@ -824,6 +846,183 @@ public class DungeonSessionTests
         Assert.Equal(0, bot2.Advance(d2.Session, 0));                                    // 其余的丢掉了,下一帧不会接着补
         Assert.Equal(0, bot2.Advance(d2.Session, -50));                                  // 负的时间当 0
         Assert.Throws<ArgumentNullException>(() => bot2.Advance(null!, 16));
+    }
+
+    [Fact]
+    public void TheBotStopsWhenTheDungeonIsDoneUnlessAskedToKeepTheClockRunningSoTheSettlementCanAppear()
+    {
+        (int X, int Y)[] Monsters(int cx, int cy)
+        {
+            return cx == 0 && cy == 0 ? new[] { (340, 100), (420, 120) }
+                : cx == 1 && cy == 0 ? new[] { (300, 200) }
+                : cx == 1 && cy == 1 ? new[] { (400, 150), (500, 180) }
+                : None();
+        }
+
+        // 默认:副本走完就停(命令行 dungeon-check 与播放器离屏渲染对拍的老规则)
+        using var a = new Dungeon(RingLayout(), Monsters, hp: 40);
+        double stopped = new DungeonBot(true).RunUntil(a.Session, 600_000);
+        Assert.True(a.Session.BossCleared);
+        Assert.False(a.Session.SettlementActive);
+
+        // 带"清空之后再走多久":主角站着不动,时间照走,结算随之开始(清空后 3 秒)
+        using var b = new Dungeon(RingLayout(), Monsters, hp: 40);
+        double end = new DungeonBot(true).RunUntil(b.Session, 600_000, 4000);
+        Assert.True(b.Session.SettlementActive);
+        Assert.InRange(end - stopped, 4000 - 1, 4000 + CombatScript.StepMs);   // 从走完那一步起算 4 秒,按 1/60 秒的步长凑整
+        Assert.InRange(b.Session.ClockMs - b.Session.BossClearedAtMs, 4000 - CombatScript.StepMs, 4000 + CombatScript.StepMs);
+        Assert.Equal(a.Session.BossClearedAtMs, b.Session.BossClearedAtMs, 6);   // 打到清空为止与默认那一局完全一样
+        Assert.Equal((a.Session.Hits, a.Session.Kills, a.Session.Hero.X, a.Session.Hero.Y), (b.Session.Hits, b.Session.Kills, b.Session.Hero.X, b.Session.Hero.Y));
+
+        // 总时限先到就停在总时限(此时结算还没开始)
+        using var c = new Dungeon(RingLayout(), Monsters, hp: 40);
+        double early = new DungeonBot(true).RunUntil(c.Session, stopped + 1000, 4000);
+        Assert.InRange(early, stopped + 1000, stopped + 1000 + CombatScript.StepMs);
+        Assert.True(c.Session.BossCleared);
+        Assert.False(c.Session.SettlementActive);
+
+        // 负数与 0 的"清空之后"都当没有
+        using var d = new Dungeon(RingLayout(), Monsters, hp: 40);
+        Assert.Equal(stopped, new DungeonBot(true).RunUntil(d.Session, 600_000, -5), 3);
+    }
+
+    [Fact]
+    public void TheSettlementStartsThreeSecondsAfterTheBossIsClearedAndSwapsTheMiniMapForTheDimmedSceneTheCampAndTheMenu()
+    {
+        using var d = new Dungeon(TwoRoomBossLayout(), (cx, cy) => None());
+        DungeonSession s = d.Session;
+        Assert.False(s.BossCleared);
+        Assert.Equal(-1.0, s.BossClearedAtMs);
+        RunUntil(s, () => s.BossCleared, 1, 0);                          // 向右走进首领格:房间里没有怪物,进来就清空
+        Assert.Equal((1, 0), (s.CellX, s.CellY));
+        Assert.Equal(s.ClockMs, s.BossClearedAtMs, 6);
+        Assert.False(s.SettlementActive);
+        Assert.Equal((0, 0.0), (s.SettlementDim, s.SettlementAgeMs));
+        Assert.Null(s.Camp);
+        List<SceneSprite> before = s.Build(0);
+        Assert.Contains(before, x => x.AnimationPath == "minimap");
+        Assert.Contains(before, x => x.AnimationPath == "clear");        // 结算之前先是占位的 CLEAR 字样
+        Assert.DoesNotContain(before, x => x.AnimationPath.StartsWith("settle"));
+
+        Run(s, 2990);
+        Assert.False(s.SettlementActive);
+        Assert.Null(s.Camp);
+        Run(s, 10);                                                       // 3000 毫秒整
+        Assert.True(s.SettlementActive);
+        Assert.Equal(0.0, s.SettlementAgeMs, 6);
+        Assert.Equal(0, s.SettlementDim);                                 // 刚开始还没变暗
+        Assert.NotNull(s.Camp);
+        Assert.Equal((s.Hero.X, s.Hero.Y), (s.Camp.X, s.Camp.Y));         // 营火生在主角脚下
+        Assert.Equal(3, s.Camp.FireLayers);                               // 夹具里有营火动作脚本;房间地图不在 PVF 里,没有 NPC
+        Assert.Equal(0, s.Camp.NpcCount);
+
+        Run(s, 250);
+        Assert.Equal(250.0, s.SettlementAgeMs, 6);
+        Assert.Equal(DungeonSession.SettlementDimAlpha / 2, s.SettlementDim);   // 淡入 500 毫秒线性升到每层 56:一半
+        Run(s, 250);
+        Assert.Equal(DungeonSession.SettlementDimAlpha, s.SettlementDim);
+        Run(s, 2000);
+        Assert.Equal(DungeonSession.SettlementDimAlpha, s.SettlementDim);       // 之后保持
+        Assert.Equal(2500.0, s.Camp.AgeMs, 6);                            // 营地从结算开始起播放
+
+        List<SceneSprite> after = s.Build(9000);
+        Assert.DoesNotContain(after, x => x.AnimationPath == "minimap" || x.AnimationPath == "minimap-count" || x.AnimationPath == "clear");
+        // 两层相同的黑幕:一层在地图图层之上、物件之下,一层在物件之上、界面之下;每层 alpha 56,叠起来 ×0.609(基线上量到地图图层 ×0.61)
+        SceneSprite dim = after.Single(x => x.AnimationPath == "settle-dim");
+        SceneSprite back = after.Single(x => x.AnimationPath == "settle-dim-back");
+        Assert.Equal((OverlayArt.DimRank, 56, 800, 600, 0, 0), (dim.LayerRank, dim.TintAlpha, dim.Frame.Width, dim.Frame.Height, dim.ScreenX, dim.ScreenY));
+        Assert.Equal((OverlayArt.BackDimRank, 56, 800, 600, 0, 0), (back.LayerRank, back.TintAlpha, back.Frame.Width, back.Frame.Height, back.ScreenX, back.ScreenY));
+        double both = (1 - 56 / 255.0) * (1 - 56 / 255.0);
+        Assert.InRange(both, 0.605, 0.612);
+        int dimAt = after.IndexOf(dim);
+        int backAt = after.IndexOf(back);
+        Assert.True(backAt < dimAt);
+        // 第一层黑幕盖在全部地图图层(大类 0 到 3)之后、物件(主角)之前;第二层黑幕盖在物件之后
+        Assert.All(after.Where(x => x.LayerRank <= OverlayArt.BackDimRank && x != back), x => Assert.True(after.IndexOf(x) < backAt));
+        List<SceneSprite> objects = after.Where(x => x.LayerRank == TownScene.NormalRank).ToList();
+        Assert.NotEmpty(objects);                                          // 至少有主角
+        Assert.All(objects, x => Assert.True(after.IndexOf(x) > backAt && after.IndexOf(x) < dimAt));
+        // 营火三层不被压暗:大类与第二层黑幕相同、在它之后;菜单(夹具里没有 eplpnew.img,退回占位面板)在界面大类
+        var fire = after.Where(x => x.AnimationPath == AvatarFixture.CampBaseAni || x.AnimationPath == AvatarFixture.CampGlowAni).ToList();
+        Assert.Equal(3, fire.Count);
+        Assert.All(fire, x => Assert.Equal(OverlayArt.DimRank, x.LayerRank));
+        Assert.All(fire, x => Assert.True(after.IndexOf(x) > dimAt));
+        SceneSprite panel = after.Single(x => x.AnimationPath == "settle-fallback");
+        Assert.True(after.IndexOf(panel) > after.IndexOf(fire[^1]));
+        Assert.Equal(OverlayArt.UiRank, panel.LayerRank);
+    }
+
+    [Fact]
+    public void TheMenuChoiceIsOnlyAcceptedOnceAfterTheSettlementStartsAndOnlyForEnabledRows()
+    {
+        using var d = new Dungeon(TwoRoomBossLayout(), (cx, cy) => None());
+        DungeonSession s = d.Session;
+        RunUntil(s, () => s.BossCleared, 1, 0);
+        // 结算开始之前什么都选不了,鼠标也没有悬停
+        Assert.False(s.Choose(SettlementChoice.Retry));
+        Assert.Equal(SettlementChoice.None, s.Click(600, 80));
+        s.SetPointer(600, 80);
+        Assert.Equal(-1, s.HoverRow);
+
+        Run(s, 3000);
+        Assert.True(s.SettlementActive);
+        s.SetPointer(600, 80);
+        Assert.Equal(0, s.HoverRow);
+        s.SetPointer(600, 110);
+        Assert.Equal(1, s.HoverRow);
+        s.SetPointer(10, 10);
+        Assert.Equal(-1, s.HoverRow);
+        s.SetPointer(600, 190);
+        Assert.Equal(3, s.HoverRow);
+        s.ClearPointer();
+        Assert.Equal(-1, s.HoverRow);
+
+        // 快速组队没有:选不了、点不了;点在菜单外也没反应
+        Assert.False(s.Choose(SettlementChoice.QuickParty));
+        Assert.False(s.Choose(SettlementChoice.None));
+        Assert.Equal(SettlementChoice.None, s.Click(600, 110));
+        Assert.Equal(SettlementChoice.None, s.Click(10, 10));
+        Assert.Equal(SettlementChoice.None, s.Choice);
+
+        s.SetPointer(600, 190);
+        Assert.Equal(SettlementChoice.ReturnToTown, s.Click(600, 190));
+        Assert.Equal(SettlementChoice.ReturnToTown, s.Choice);
+        Assert.Equal(-1, s.HoverRow);                                     // 选定之后不再悬停
+        // 只接受第一次
+        Assert.False(s.Choose(SettlementChoice.Retry));
+        Assert.Equal(SettlementChoice.None, s.Click(600, 80));
+        Assert.Equal(SettlementChoice.ReturnToTown, s.Choice);
+    }
+
+    [Fact]
+    public void EachEnabledChoiceCanBeMadeByItsHotkeyPathAndALongFrameStartsTheSettlementLikeManyShortOnes()
+    {
+        foreach (SettlementChoice choice in new[] { SettlementChoice.Retry, SettlementChoice.SelectDungeon, SettlementChoice.ReturnToTown })
+        {
+            using var d = new Dungeon(TwoRoomBossLayout(), (cx, cy) => None());
+            DungeonSession s = d.Session;
+            RunUntil(s, () => s.BossCleared, 1, 0);
+            s.Update(5000, 0, 0);                                         // 一帧 5 秒:切成小步,结算照样在 3 秒处开始
+            Assert.True(s.SettlementActive);
+            Assert.Equal(DungeonSession.SettlementDimAlpha, s.SettlementDim);
+            Assert.NotNull(s.Camp);
+            Assert.True(s.Choose(choice));
+            Assert.Equal(choice, s.Choice);
+        }
+    }
+
+    [Fact]
+    public void TheSettlementNeverStartsBeforeTheBossRoomIsCleared()
+    {
+        using var d = new Dungeon(RingLayout(), OneWeakAtStart);
+        DungeonSession s = d.Session;
+        Run(s, 6000);                                                     // 起点格有一只没打的怪物,首领格还远着
+        Assert.False(s.BossCleared);
+        Assert.Equal(-1.0, s.BossClearedAtMs);
+        Assert.False(s.SettlementActive);
+        Assert.Null(s.Camp);
+        Assert.False(s.Choose(SettlementChoice.Retry));
+        Assert.Contains(s.Build(0), x => x.AnimationPath == "minimap");
     }
 
     [Fact]

@@ -81,4 +81,40 @@ public class AnimatedEffectTests
         Assert.Null(AnimatedEffect.Create(assets, null, 0, 0, 0, false));
         Assert.Null(AnimatedEffect.Create(null, AvatarFixture.HardAttackEffect1, 0, 0, 0, false));
     }
+
+    [Fact]
+    public void APersistentEffectNeverFinishesAndHoldsTheLastFrameOfANonLoopingAnimationOrLoopsForever()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        var projection = new TownProjection(0, 200);
+        // 木柴:两帧各 100 毫秒、不循环(皮肤 IMG 第 0、1 帧);光晕:同样两帧但循环
+        AnimatedEffect once = AnimatedEffect.Create(assets, AvatarFixture.CampBaseAni, 100, 50, 0, false);
+        AnimatedEffect held = AnimatedEffect.Create(assets, AvatarFixture.CampBaseAni, 100, 50, 0, false, persistent: true);
+        AnimatedEffect loop = AnimatedEffect.Create(assets, AvatarFixture.CampGlowAni, 100, 50, 0, false, persistent: true);
+        Assert.False(once.Persistent);
+        Assert.True(held.Persistent);
+
+        foreach (AnimatedEffect e in new[] { once, held, loop })
+        {
+            e.Advance(150);
+        }
+        Assert.Equal(201, once.Sprite(assets, projection).Frame.Rgba[0]);   // 第 1 帧(红色通道 = 200 + 帧号)
+        Assert.Equal(201, held.Sprite(assets, projection).Frame.Rgba[0]);
+        Assert.Equal(201, loop.Sprite(assets, projection).Frame.Rgba[0]);
+
+        foreach (AnimatedEffect e in new[] { once, held, loop })
+        {
+            e.Advance(5000);                                                // 总共 5150 毫秒
+        }
+        Assert.True(once.Finished);                                         // 一次性的播完就没了
+        Assert.Null(once.Sprite(assets, projection));
+        Assert.False(held.Finished);                                        // 常驻的不消失,不循环的停在最后一帧
+        Assert.Equal(201, held.Sprite(assets, projection).Frame.Rgba[0]);
+        Assert.False(loop.Finished);                                        // 循环的继续循环:5150 mod 200 = 150 → 第 1 帧
+        Assert.Equal(201, loop.Sprite(assets, projection).Frame.Rgba[0]);
+        loop.Advance(50);                                                   // 5200 mod 200 = 0 → 回到第 0 帧
+        Assert.False(loop.Finished);
+        Assert.Equal(200, loop.Sprite(assets, projection).Frame.Rgba[0]);
+    }
 }

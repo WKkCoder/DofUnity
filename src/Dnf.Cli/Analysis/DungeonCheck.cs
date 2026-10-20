@@ -65,7 +65,10 @@ internal static class DungeonCheck
         int lastCell = session.CellY * maze.Cols + session.CellX;
         int lastCleared = session.RoomsCleared;
         string lastClearText = string.Empty;
-        while (t < totalMs && !session.Finished)
+        double afterClearMs = opts.AfterClearSeconds * 1000.0;
+        double finishedAt = -1;
+        bool settleLogged = false;
+        while (t < totalMs && (!session.Finished || (finishedAt >= 0 && t - finishedAt < afterClearMs)))
         {
             int fromX = session.CellX, fromY = session.CellY;
             double fromHeroY = session.Hero.Y;
@@ -73,7 +76,12 @@ internal static class DungeonCheck
             {
                 frameMs = baseFrameMs * (1.0 + opts.Jitter * (jitterRandom.NextDouble() * 2.0 - 1.0));
             }
-            if (opts.Bot)
+            if (session.Finished)
+            {
+                // 清空之后(--after-clear):主角站着不动,只让时间走,结算画面随之出现
+                session.Update(frameMs, 0, 0);
+            }
+            else if (opts.Bot)
             {
                 // 与播放器同一个办法:自动机按固定的 1/60 秒心跳补步,所以 --frame-ms、--jitter 不会改变它打出的这一局
                 bot.Advance(session, frameMs);
@@ -84,6 +92,17 @@ internal static class DungeonCheck
                 session.Update(frameMs, dx, dy, attack, jump, skills);
             }
             t += frameMs;
+            if (session.Finished && finishedAt < 0)
+            {
+                finishedAt = t;
+            }
+            if (session.SettlementActive && !settleLogged)
+            {
+                settleLogged = true;
+                ClearCamp? camp = session.Camp;
+                Console.WriteLine("  t=" + Sec(t) + "s  结算开始(首领清空后 " + Sec(session.ClockMs - session.BossClearedAtMs) + " 秒):营火 " + (camp?.FireLayers ?? 0)
+                    + " 层动画、站着的 NPC " + (camp?.NpcCount ?? 0) + " 个");
+            }
 
             if (session.HeroDead)
             {

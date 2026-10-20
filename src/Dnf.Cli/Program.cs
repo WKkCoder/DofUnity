@@ -118,6 +118,9 @@ namespace Dnf.Cli
         /// <summary>dungeon-check --jitter:每一帧的毫秒数在 ±这个比例内随机浮动(0 到 0.9,随机数由 --seed 决定);模拟播放器里帧时间的抖动。</summary>
         public double Jitter { get; set; }
 
+        /// <summary>dungeon-check --after-clear:首领清空之后再空转多少秒(主角不动),让结算画面出现;--shots-at 可以取这段时间里的画面。</summary>
+        public double AfterClearSeconds { get; set; }
+
         /// <summary>dungeon-check --layout-only:只打印迷宫与每格选中的房间,不模拟。</summary>
         public bool LayoutOnly { get; set; }
 
@@ -201,8 +204,8 @@ namespace Dnf.Cli
             "      对地图 [animation] 里每个动画的每一帧,在截图里搜索不透明像素在容差内一致最多的位置,并与位置模型的预测比较(证据 E-030)。\n" +
             "  dnf combat-check --map <房间地图> [--start x,y,left|right] [--play 秒:动作,…] [--seconds N] [--shots-at 秒,…] [--png 前缀] [--no-damage]\n" +
             "      (副本房间里的战斗模拟:按时间表按键,打印命中与怪物状态,可在指定时刻输出 800×600 画面;证据 E-069。怪物会还手(E-086),--no-damage 让主角没有生命值、打不到,回到还手功能加入之前的行为)\n" +
-            "  dnf dungeon-check [--dungeon <副本定义>] [--seed N] [--random-layout] [--bot [--explore] | --play 秒:动作,…] [--seconds N(默认 900)] [--frame-ms 毫秒] [--jitter 比例] [--shots-at 秒,…] [--png 前缀] [--layout-only] [--no-damage]\n" +
-            "      (整座副本:读迷宫、选每格的房间、打印布局;--bot 让自动机从起点打到首领清空,逐个房间打印进出与清房时刻;--shots-at 在指定时刻输出画面;--frame-ms、--jitter 改每帧的毫秒数与抖动,模拟帧率不固定的实时运行(自动机按固定心跳补步,不受影响;时间表按帧长取样);证据 E-070、E-072)\n" +
+            "  dnf dungeon-check [--dungeon <副本定义>] [--seed N] [--random-layout] [--bot [--explore] | --play 秒:动作,…] [--seconds N(默认 900)] [--frame-ms 毫秒] [--jitter 比例] [--shots-at 秒,…] [--png 前缀] [--layout-only] [--no-damage] [--after-clear 秒]\n" +
+            "      (整座副本:读迷宫、选每格的房间、打印布局;--bot 让自动机从起点打到首领清空,逐个房间打印进出与清房时刻;--after-clear 清空之后再空转几秒(看结算画面);--shots-at 在指定时刻输出画面;--frame-ms、--jitter 改每帧的毫秒数与抖动,模拟帧率不固定的实时运行(自动机按固定心跳补步,不受影响;时间表按帧长取样);证据 E-070、E-072)\n" +
             "  dnf arrival-check [--dungeon <副本定义>] [--hero-id N] [--scan 起:止 --expect 房间:侧:x:y:容差,…] [--probe 房间:侧:y,…]\n" +
             "      (进房间的落点:对副本每个房间打印各出口的识别矩形与按客户端规则算出的落点(随机点、最终点);--scan 在主角编号范围里找同时满足所有 --expect 的编号,房间写地图文件名如 s3,侧为 start/left/right/up/down,y 写 * 不限;--probe 沿水平线 y 找出口门体挡路的边界(左右出口,y 写 * 表示出口矩形里每 6 像素一条);证据 E-074)\n" +
             "  dnf fit-sprite --shot <截图.png> --img <NPK 里的 IMG 路径,如 sprite/map/01tile03.img> [--frame N] [--pred x,y] [--fit-tol N] [--range-x N] [--range-y N] [--samples N]\n" +
@@ -413,6 +416,11 @@ namespace Dnf.Cli
                         opts.Jitter = double.TryParse(NextValue(args, ref i), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double jitter) && jitter >= 0 && jitter <= 0.9
                             ? jitter
                             : throw new UserError("--jitter 需要 0 到 0.9 之间的小数");
+                        break;
+                    case "--after-clear":
+                        opts.AfterClearSeconds = double.TryParse(NextValue(args, ref i), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double afterClear) && afterClear >= 0
+                            ? afterClear
+                            : throw new UserError("--after-clear 需要不小于 0 的秒数");
                         break;
                     case "--hero-weapon":
                         opts.HeroWeapon = NextValue(args, ref i);

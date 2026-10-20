@@ -310,16 +310,23 @@ if [ "$platform" = "macos" ]; then
     # 按时刻对拍的这几帧带 -dnfnodamage(命令行 --no-damage):怪物还手会让清房的时刻后移,选好的时刻就不再对应原来的画面;
     # 下面实时跑的一整局是带伤害的,检查主角活到了最后(生命随人带进每个房间)。
     dungeon=dungeon/act1/lorien.dgn
-    for spec in "explore:6.8" "explore:9.83" "explore:10.0" "explore:10.2" "explore:21.0" "explore:48.0" "explore:59.7" "bot:14.0" "bot:14.6"; do
-      mode="${spec%%:*}"; at="${spec#*:}"
+    # 结算画面(证据 E-091):直奔首领的路线在 27.93 秒清空首领房、30.93 秒出结算;规格最后一段是"清空之后再让时间走多少秒"(命令行 --after-clear、播放器 -dnfafterclear):
+    # 31.2 秒(黑幕淡入刚开始,两层黑幕各 alpha 约 30)、33.0 秒(营火生起、德利拉站在旁边、黑幕接近全浓)、36.0 秒(黑幕全浓、营火循环到别的帧)。
+    for spec in "explore:6.8" "explore:9.83" "explore:10.0" "explore:10.2" "explore:21.0" "explore:48.0" "explore:59.7" "bot:14.0" "bot:14.6" "bot:31.2:9" "bot:33.0:9" "bot:36.0:9"; do
+      IFS=: read -r mode at after <<< "$spec"
       tag="dungeon-$mode-$at"
       ms="$(python3 -c "print(int(float('$at')*1000.0))")"
       rm -f "out/town-demo-$tag.png" "out/town-cpu-dungeon-$mode-$(printf '%.2f' "$at").png"
       cli_args=(--dungeon "$dungeon" --bot --no-damage --seconds "$at" --shots-at "$at" --png "$PWD/out/town-cpu-dungeon-$mode")
       [ "$mode" = "explore" ] && cli_args+=(--explore)
+      player_extra=()
+      if [ -n "${after:-}" ]; then
+        cli_args+=(--after-clear "$after")
+        player_extra=(-dnfafterclear "$after")
+      fi
       set +e
       "$app" -batchmode -logFile "$PWD/re/unity-run-town-$tag-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-$tag.png" \
-        -dnftime "$ms" -dnfdungeon "$dungeon" "-dnf$mode" -dnfnodamage -dnfplayat "$at"
+        -dnftime "$ms" -dnfdungeon "$dungeon" "-dnf$mode" -dnfnodamage -dnfplayat "$at" ${player_extra[@]+"${player_extra[@]}"}
       rc=$?
       set -e
       echo "播放器退出码(离屏渲染 $tag): $rc"
@@ -347,6 +354,9 @@ if [ "$platform" = "macos" ]; then
       || { echo "实时打副本没有走完(应进过 6 个房间、清空 6 个、首领清空):$dungeon_log" >&2; exit 1; }
     grep -q -E 'DNF_TOWN_DEMO ran .* dungeon=.* heroHits=[0-9]+ heroHp=[1-9][0-9]*/[0-9]+' "$dungeon_log" \
       || { echo "实时打副本结束时主角应还活着(heroHp 不为 0,日志里要有 heroHits 与 heroHp):$dungeon_log" >&2; exit 1; }
+    # 首领清空 3 秒后进结算:营火生起(camp=层数/NPC 数,至少一层火),没有人选菜单所以 choice=None(证据 E-091)
+    grep -q -E 'DNF_TOWN_DEMO ran .* settlement=True camp=[1-9][0-9]*/[0-9]+ choice=None' "$dungeon_log" \
+      || { echo "实时打副本没有进到结算(应有 settlement=True、营火至少一层、choice=None):$dungeon_log" >&2; exit 1; }
     # 声音(证据 E-089、E-090):带 -batchmode 的运行默认静音,但整条链路照跑(提示 → 调度 → 读剪辑 → 放),所以能查计数器:
     # 收到过提示、真的开始放过、读成功过剪辑、没有读失败的文件;不对具体数字下结论(帧率不固定,放的次数会变)
     grep -q -E 'DNF_AUDIO ready ' "$dungeon_log" \

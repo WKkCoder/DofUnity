@@ -28,7 +28,7 @@ namespace Dnf.Client
     /// 命令行:-dnfdir &lt;目录&gt; -dnfmap &lt;PVF 内地图路径&gt; [-dnfshot &lt;输出.png&gt; [-dnftime &lt;毫秒&gt;]] [-dnfquitafter &lt;秒&gt;]
     ///         [-dnfnohero] [-dnfhero x,y,left|right,rest|move,毫秒[,镜头x]] [-dnfautowalk 秒:动作,…]
     ///         [-dnfmonsters | -dnfnomonsters] [-dnfnodamage] [-dnfplayat &lt;秒&gt;] [-dnfnosound | -dnfsound]
-    ///         [-dnfdungeon &lt;副本定义路径&gt; [-dnfbot | -dnfexplore] [-dnfseed &lt;整数&gt;] [-dnfrandomlayout]]
+    ///         [-dnfdungeon &lt;副本定义路径&gt; [-dnfbot | -dnfexplore] [-dnfseed &lt;整数&gt;] [-dnfrandomlayout] [-dnfafterclear &lt;秒&gt;]]
     /// 带 -dnfshot 时只离屏渲染一帧写成 PNG 就退出(用来和 CPU 合成器逐字节对照,见 tools/unity-build-town.sh);
     /// 这时默认不画主角,带 -dnfhero 才把主角摆到指定的位置、朝向与动作进度(与 dnf render-town --scene --hero 同一写法)。
     /// 带 -dnfquitafter 时实时运行指定秒数后退出,并在日志里留一行 DNF_TOWN_DEMO ran …(用来在无窗口的环境里检查实时循环)。
@@ -39,7 +39,10 @@ namespace Dnf.Client
     /// 按时刻对拍的回归检查用它,免得还手改变事件的时刻。
     /// 带 -dnfplayat &lt;秒&gt; 与 -dnfshot 时,离屏渲染前先让房间战斗按 -dnfautowalk 的时间表以固定 1/60 秒步长确定地模拟到这一刻(此时自动带怪物与主角),
     /// 与命令行 combat-check 同一份模拟,用来把战斗中的一帧与 CPU 合成逐字节对照(见 tools/unity-build-town.sh)。
-    /// 副本同理:-dnfdungeon -dnfbot -dnfplayat &lt;秒&gt; -dnfshot 先让自动机按固定 1/60 秒步长打到这一刻,与命令行 dungeon-check --bot --shots-at 对照。
+    /// 副本同理:-dnfdungeon -dnfbot -dnfplayat &lt;秒&gt; -dnfshot 先让自动机按固定 1/60 秒步长打到这一刻,与命令行 dungeon-check --bot --shots-at 对照;
+    /// 再带 -dnfafterclear &lt;秒&gt; 时,副本走完(首领清空)之后主角站着不动、时间再走这么久(结算画面就这样出现),与命令行 --after-clear 同一个规则。
+    /// 首领清空 3 秒后出结算菜单(再次挑战 F13、选择其它地下城 F11、返回城镇 F12,笔记本键盘用 1、2、3;或者点菜单行,触摸也行;
+    /// 选定时日志里留一行 DNF_SETTLE choice=…,流程由外面接,证据 E-091)。
     /// 按键(副本房间里的主角,按原版默认键位,证据 E-072、E-076):方向键 走动(按住;同方向再按一下接着按住 = 奔跑);X 普攻(连按接下一段);C 跳跃;
     /// A S D 前三个技能快捷槽(新建的剑士是鬼斩、上挑、后跳,各有冷却);Z 与原版的另一个快捷槽没有确认绑什么,不响应。
     /// 空格 暂停/继续;暂停时左右方向键按 50 毫秒步进动画时间;H 显示/隐藏文字;Esc 退出;点击/触摸 暂停/继续。
@@ -82,6 +85,8 @@ namespace Dnf.Client
         private bool? _monsters;
         private bool _noDamage;
         private double _playAtSeconds = -1.0;
+        private double _afterClearSeconds;
+        private SettlementChoice _loggedChoice;
         private string _dungeonPath;
         private DungeonBot _bot;
         private bool _botExplore;
@@ -172,6 +177,10 @@ namespace Dnf.Client
                     case "-dnfplayat":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
                                 System.Globalization.CultureInfo.InvariantCulture, out double pa)) { _playAtSeconds = pa; i++; }
+                        break;
+                    case "-dnfafterclear":
+                        if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out double ac)) { _afterClearSeconds = ac; i++; }
                         break;
                     case "-dnfdungeon":
                         if (value != null) { _dungeonPath = value; i++; }
@@ -344,7 +353,7 @@ namespace Dnf.Client
                 {
                     if (_bot != null)
                     {
-                        _bot.RunUntil(dungeon, _playAtSeconds * 1000.0);
+                        _bot.RunUntil(dungeon, _playAtSeconds * 1000.0, _afterClearSeconds * 1000.0);
                     }
                     else
                     {
@@ -452,6 +461,7 @@ namespace Dnf.Client
                 + (_session is DungeonSession d
                     ? " dungeon=" + _dungeonPath + " cell=(" + d.CellX + "," + d.CellY + ") map=" + d.MapPath + " entered=" + d.RoomsEntered + " cleared=" + d.RoomsCleared
                         + " transitions=" + d.Transitions + " bossCleared=" + d.BossCleared + " exitReached=" + d.ExitReached
+                        + " settlement=" + d.SettlementActive + " camp=" + (d.Camp != null ? d.Camp.FireLayers + "/" + d.Camp.NpcCount : "none") + " choice=" + d.Choice
                         + " monsters=" + d.Current.AliveCount + "/" + d.Current.Monsters.Count + " hits=" + d.Hits + " kills=" + d.Kills + " damage=" + d.TotalDamage
                         + (d.Vitals != null ? " heroHits=" + d.HeroHits + " heroHp=" + d.Vitals.Hp + "/" + d.Vitals.HpMax + " heroMp=" + d.Vitals.Mp + "/" + d.Vitals.MpMax : string.Empty)
                     : string.Empty);
@@ -526,7 +536,15 @@ namespace Dnf.Client
                     {
                         // 自动机按固定的 1/60 秒"心跳"决策并推进(与命令行 dungeon-check --bot 同一局):帧率抖动、卡顿只会让一帧里多补或少补几个心跳,
                         // 不会改变它的路线。它的走位、出手间隔都是按心跳数写的,按可变的帧长喂给它会在怪物旁来回晃(证据 E-072 的实时运行里出现过)。
-                        _bot.Advance(botDungeon, deltaMs);
+                        if (botDungeon.Finished)
+                        {
+                            // 副本走完(首领清空):主角站着不动,只让时间走,结算画面随之出现;自动机不再决策
+                            botDungeon.Update(deltaMs, 0, 0);
+                        }
+                        else
+                        {
+                            _bot.Advance(botDungeon, deltaMs);
+                        }
                     }
                     else
                     {
@@ -552,6 +570,7 @@ namespace Dnf.Client
                     }
                     // 声音:取走这一步发出的提示、推进调度器、执行命令(不碰画面与游戏状态)
                     _audio?.Tick(deltaMs, _session as ISoundSource);
+                    UpdateSettlement();
                 }
                 _spriteCount = _view.ShowAt((long)_clockMs).Count;
                 _frames++;
@@ -738,11 +757,96 @@ namespace Dnf.Client
                     case KeyCode.Escape:
                         Quit();
                         break;
+                    // 副本结算菜单的热键(原版界面上写的是 F13 再次挑战、F11 选择其它地下城、F12 返回城镇,证据 E-091);
+                    // 笔记本键盘没有 F13,所以数字键 1、2、3 也行(这是本演示加的,原版没有)
+                    case KeyCode.F13:
+                    case KeyCode.Alpha1:
+                        ChooseSettlement(SettlementChoice.Retry);
+                        break;
+                    case KeyCode.F11:
+                    case KeyCode.Alpha2:
+                        ChooseSettlement(SettlementChoice.SelectDungeon);
+                        break;
+                    case KeyCode.F12:
+                    case KeyCode.Alpha3:
+                        ChooseSettlement(SettlementChoice.ReturnToTown);
+                        break;
                 }
             }
             else if (e.type == EventType.MouseDown && e.button == 0)
             {
-                TogglePause(); // 触摸屏上没有空格键
+                if (_session is DungeonSession settling && settling.SettlementActive)
+                {
+                    // 结算时点击(触摸)只用来点菜单行;点在别处没有反应,不当成暂停
+                    if (TryGetCanvasPoint(Input.mousePosition, out int cx, out int cy))
+                    {
+                        settling.Click(cx, cy);
+                    }
+                }
+                else
+                {
+                    TogglePause(); // 触摸屏上没有空格键
+                }
+            }
+        }
+
+        private void ChooseSettlement(SettlementChoice choice)
+        {
+            if (_session is DungeonSession dungeon)
+            {
+                dungeon.Choose(choice);
+            }
+        }
+
+        /// <summary>
+        /// 屏幕(窗口像素,原点在左下)上的一点换算成 800×600 画布上的坐标(原点在左上);不在舞台视口里返回 false。
+        /// 舞台是整数倍放大、居中、留黑边的(<see cref="LateUpdate"/>),所以按舞台相机的视口算。
+        /// </summary>
+        private bool TryGetCanvasPoint(Vector3 screen, out int x, out int y)
+        {
+            x = 0;
+            y = 0;
+            if (_view == null)
+            {
+                return false;
+            }
+            Rect r = _view.Stage.Camera.pixelRect;
+            if (r.width <= 0f || r.height <= 0f)
+            {
+                return false;
+            }
+            float fx = (screen.x - r.x) / r.width * PixelScreen.Width;
+            float fy = (r.yMax - screen.y) / r.height * PixelScreen.Height;
+            if (fx < 0f || fy < 0f || fx >= PixelScreen.Width || fy >= PixelScreen.Height)
+            {
+                return false;
+            }
+            x = (int)fx;
+            y = (int)fy;
+            return true;
+        }
+
+        /// <summary>
+        /// 结算菜单:鼠标(触摸)停在哪一行就让那一行亮;菜单上选定的那一刻在日志里留一行 DNF_SETTLE(无人值守的检查读它)。
+        /// </summary>
+        private void UpdateSettlement()
+        {
+            if (!(_session is DungeonSession dungeon))
+            {
+                return;
+            }
+            if (dungeon.SettlementActive && dungeon.Choice == SettlementChoice.None && TryGetCanvasPoint(Input.mousePosition, out int cx, out int cy))
+            {
+                dungeon.SetPointer(cx, cy);
+            }
+            else
+            {
+                dungeon.ClearPointer();
+            }
+            if (dungeon.Choice != _loggedChoice)
+            {
+                _loggedChoice = dungeon.Choice;
+                Debug.Log("DNF_SETTLE choice=" + dungeon.Choice + " clockMs=" + (long)dungeon.ClockMs);
             }
         }
 
@@ -788,7 +892,11 @@ namespace Dnf.Client
                 if (_session is DungeonSession dungeon)
                 {
                     hero += "cell (" + dungeon.CellX + ", " + dungeon.CellY + ")   rooms entered " + dungeon.RoomsEntered + "  cleared " + dungeon.RoomsCleared
-                        + "/" + (dungeon.Maze.Cols * dungeon.Maze.Rows) + "  moves " + dungeon.Transitions + (dungeon.BossCleared ? "   BOSS ROOM CLEARED" : "") + "\n"
+                        + "/" + (dungeon.Maze.Cols * dungeon.Maze.Rows) + "  moves " + dungeon.Transitions + (dungeon.BossCleared ? "   BOSS ROOM CLEARED" : "")
+                        + (dungeon.SettlementActive
+                            ? (dungeon.Choice == SettlementChoice.None ? "   SETTLEMENT: F13 or 1 = retry, F11 or 2 = select dungeon, F12 or 3 = town (or click the menu)" : "   CHOICE: " + dungeon.Choice)
+                            : string.Empty)
+                        + "\n"
                         + "monsters alive " + dungeon.Current.AliveCount + "/" + dungeon.Current.Monsters.Count + "  hits " + dungeon.Hits + "  kills " + dungeon.Kills
                         + "  damage " + dungeon.TotalDamage + "\n";
                 }

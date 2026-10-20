@@ -21,8 +21,11 @@ namespace Dnf.Play
     ///     房间会话按格缓存,回去时怪物不会复活(基线上走回第一个房间时就是清空的)。
     ///   · 首领格清空 → <see cref="BossCleared"/>;迷宫外的出口(只有单格副本的右边有)走进去 → <see cref="ExitReached"/>。
     ///   · 屏幕右上角的占位小地图。
+    ///   · 首领清空 <see cref="SettlementDelayMs"/> 之后进入结算(证据 E-091):场景压暗(两层黑幕)、主角脚下生营火(<see cref="ClearCamp"/>)、
+    ///     右上角出原版的"是否继续?"菜单(<see cref="SettlementArt"/>;再次挑战、选择其它地下城、返回城镇,快速组队没做);选择由 <see cref="Choose"/>、<see cref="Click"/> 记下,
+    ///     <see cref="Choice"/> 之后外面决定去哪(流程在 <see cref="DungeonSession"/> 之外)。
     /// 没做 / 没量过:客户端"走进出口就换房间"的触发代码(没有读到,触发条件是推断)、主角对象编号的来源(<see cref="HeroObjectId"/>)、淡入期间是否接受操作(现在接受)、
-    /// 转场时怪物是否冻结(现在不冻结)、清房时站姿切换的确切时刻、结算界面。
+    /// 转场时怪物是否冻结(现在不冻结)、清房时站姿切换的确切时刻、结算的时机与过程(清空到结算菜单之间的 3 秒是占位,掉落、评分、经验结算没读到)、掉落物。
     /// </summary>
     public sealed class DungeonSession : ISkillSession, ISoundSource
     {
@@ -37,6 +40,23 @@ namespace Dnf.Play
 
         public const double BlackMs = 130;
         public const double FadeInMs = 250;
+
+        /// <summary>
+        /// 首领清空到结算(营地与菜单)出现隔多久(毫秒):<b>占位</b>——基线里清空到结算之间有一段 38.5 秒没有拍到的空档,时机与过程(掉落、评分)没有读到。
+        /// </summary>
+        public const double SettlementDelayMs = 3000;
+
+        /// <summary>结算开始时场景变暗的淡入时长(毫秒;占位)。</summary>
+        public const double SettlementDimMs = 500;
+
+        /// <summary>
+        /// 结算时每一层黑幕的不透明度(0 到 255)。观察(证据 E-092):基线结算帧上地图图层(远景、中景、近景背景、树桩)整体变成原来的 ×0.61、
+        /// 德利拉约 ×0.76 到 ×0.78(取不受加法光晕干扰的蓝色通道、她左半身回归,误差 ±0.02 量级)、火芯没有被压暗(亮到 255)。
+        /// 推断:盖了两层相同的黑幕——一层在地图图层之上、物件之下(<see cref="OverlayArt.BackDimRank"/>),一层在物件之上、界面之下(<see cref="OverlayArt.DimRank"/>),
+        /// 营火画在第二层之上;每层 alpha 56 即 ×0.780,两层叠起来 ×0.609,恰好是量到的两个数。物件(主角、怪物)与近景图层是不是 ×0.78 没有量到。
+        /// 面板与界面不被盖住。
+        /// </summary>
+        public const int SettlementDimAlpha = 56;
 
         public const int ScreenWidth = 800;
         public const int ScreenHeight = 600;
@@ -77,6 +97,9 @@ namespace Dnf.Play
         private Phase _phase;
         private double _phaseMs;
         private GateSide _pendingSide;
+        private double _bossClearedAtMs;
+        private ClearCamp _camp;
+        private int _hoverRow = -1;
 
         public DungeonLayout Layout => _layout;
         public DungeonMaze Maze => _layout.Maze;
@@ -94,6 +117,44 @@ namespace Dnf.Play
 
         /// <summary>首领格的房间已经清空。</summary>
         public bool BossCleared { get; private set; }
+
+        /// <summary>造营地(<see cref="ClearCamp"/>)与结算菜单要用的图包;可以是 null(没有图包时营地是空的,菜单退回像素字的占位面板)。</summary>
+        public DnfAssets Assets { get; }
+
+        /// <summary>首领清空时的副本时钟(毫秒);没清空时为 -1。</summary>
+        public double BossClearedAtMs => BossCleared ? _bossClearedAtMs : -1;
+
+        /// <summary>
+        /// 结算已经开始:首领清空后过了 <see cref="SettlementDelayMs"/>。此后画面里是变暗的场景、营地与右上角的结算菜单(<see cref="SettlementArt"/>),
+        /// 小地图与 CLEAR 字样撤掉;主角仍可操作。菜单由 <see cref="Choose"/>、<see cref="Click"/> 选择,选定之后 <see cref="Choice"/> 不再是 None,由外面决定下一步。
+        /// </summary>
+        public bool SettlementActive => BossCleared && _clockMs - _bossClearedAtMs >= SettlementDelayMs;
+
+        /// <summary>结算开始之后过了多久(毫秒);没开始为 0。</summary>
+        public double SettlementAgeMs => SettlementActive ? _clockMs - _bossClearedAtMs - SettlementDelayMs : 0.0;
+
+        /// <summary>此刻每一层黑幕的不透明度:结算开始后在 <see cref="SettlementDimMs"/> 里线性升到 <see cref="SettlementDimAlpha"/>(淡入时长是占位)。</summary>
+        public int SettlementDim
+        {
+            get
+            {
+                if (!SettlementActive)
+                {
+                    return 0;
+                }
+                double t = SettlementAgeMs / SettlementDimMs;
+                return (int)Math.Round(SettlementDimAlpha * (t >= 1.0 ? 1.0 : t), MidpointRounding.AwayFromZero);
+            }
+        }
+
+        /// <summary>结算营地;结算没开始时为 null。</summary>
+        public ClearCamp Camp => _camp;
+
+        /// <summary>结算菜单上选了什么;还没选是 <see cref="SettlementChoice.None"/>。</summary>
+        public SettlementChoice Choice { get; private set; }
+
+        /// <summary>鼠标此刻停在结算菜单的哪一行(0 到 3);不在菜单上为 -1。</summary>
+        public int HoverRow => SettlementActive && Choice == SettlementChoice.None ? _hoverRow : -1;
 
         /// <summary>主角走进了迷宫外的出口(只有单格副本右边有这样的出口)。</summary>
         public bool ExitReached { get; private set; }
@@ -222,11 +283,12 @@ namespace Dnf.Play
         /// </summary>
         public int HeroObjectId { get; }
 
-        public DungeonSession(DungeonLayout layout, DungeonRoomFactory factory, int heroObjectId = GateArrival.DefaultHeroObjectId)
+        public DungeonSession(DungeonLayout layout, DungeonRoomFactory factory, int heroObjectId = GateArrival.DefaultHeroObjectId, DnfAssets assets = null)
         {
             _layout = layout ?? throw new ArgumentNullException(nameof(layout));
             _factory = factory ?? throw new ArgumentNullException(nameof(factory));
             HeroObjectId = heroObjectId;
+            Assets = assets;
             _cells = new CellState[layout.Maze.Cols * layout.Maze.Rows];
             for (int y = 0; y < layout.Maze.Rows; y++)
             {
@@ -250,7 +312,7 @@ namespace Dnf.Play
             DungeonRoomPool pool = DungeonRoomPool.Read(assets, DungeonRoomPool.FolderFor(dungeonPath));
             DungeonLayout layout = DungeonLayout.Create(maze, pool, randomLayout ? new Random(seed) : null);
             AvatarOutfit outfit = DemoRoom.DefaultOutfit(assets, weaponEqu);
-            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals), heroObjectId);
+            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals), heroObjectId, assets);
         }
 
         /// <summary>
@@ -337,6 +399,18 @@ namespace Dnf.Play
             {
                 MarkCleared(cell, false);
             }
+            if (SettlementActive && _layout.IsBossCell(cell.X, cell.Y))
+            {
+                if (_camp == null)
+                {
+                    // 营火生在主角脚下(推断,见 ClearCamp);营地从这一刻开始播放
+                    _camp = ClearCamp.Create(Assets, cell.Session.MapPath, cell.Session.Hero.X, cell.Session.Hero.Y);
+                }
+                else
+                {
+                    _camp.Advance(stepMs);
+                }
+            }
             if (cell.Cleared && !ExitReached && !inTransition)
             {
                 CheckGates(cell);
@@ -388,9 +462,10 @@ namespace Dnf.Play
             cell.Settled = settled;
             cell.ClearedAtMs = _clockMs;
             RoomsCleared++;
-            if (_layout.IsBossCell(cell.X, cell.Y))
+            if (_layout.IsBossCell(cell.X, cell.Y) && !BossCleared)
             {
                 BossCleared = true;
+                _bossClearedAtMs = _clockMs;
             }
         }
 
@@ -503,11 +578,43 @@ namespace Dnf.Play
             session.Camera.Follow(session.Hero.X);
         }
 
+        /// <summary>
+        /// 选结算菜单上的一项(热键 F13 / F11 / F12 或点击都走这里)。结算还没开始、已经选过、选项不可用(快速组队)时返回 false,什么也不变。
+        /// </summary>
+        public bool Choose(SettlementChoice choice)
+        {
+            if (!SettlementActive || Choice != SettlementChoice.None || !SettlementArt.IsEnabled(choice))
+            {
+                return false;
+            }
+            Choice = choice;
+            return true;
+        }
+
+        /// <summary>鼠标移到屏幕坐标 (<paramref name="x"/>, <paramref name="y"/>)(800×600 的画面坐标):菜单上对应的那一行亮起。</summary>
+        public void SetPointer(int x, int y)
+        {
+            _hoverRow = SettlementArt.HitRow(x, y);
+        }
+
+        /// <summary>鼠标离开画面。</summary>
+        public void ClearPointer()
+        {
+            _hoverRow = -1;
+        }
+
+        /// <summary>在屏幕坐标 (<paramref name="x"/>, <paramref name="y"/>) 点了一下:点中可用的菜单行就选上并返回这一项,否则返回 <see cref="SettlementChoice.None"/>。</summary>
+        public SettlementChoice Click(int x, int y)
+        {
+            SettlementChoice choice = SettlementArt.HitTest(x, y);
+            return choice != SettlementChoice.None && Choose(choice) ? choice : SettlementChoice.None;
+        }
+
         public List<SceneSprite> Build(long timeMs)
         {
             CellState cell = _cells[CellY * Maze.Cols + CellX];
             OpenPendingGates(cell, timeMs);
-            return cell.Session.Build(timeMs, BuildHud());
+            return cell.Session.Build(timeMs, BuildHud(cell));
         }
 
         /// <summary>清房之后第一次出画面时,让出口开始打开;开的时刻按"清房到现在过了多久"倒推到 <paramref name="timeMs"/> 的时间线上。</summary>
@@ -558,9 +665,29 @@ namespace Dnf.Play
             return MiniMapState.Hidden;
         }
 
-        private List<SceneSprite> BuildHud()
+        private List<SceneSprite> BuildHud(CellState cell)
         {
-            var hud = new List<SceneSprite>(5);
+            var hud = new List<SceneSprite>(12);
+            if (SettlementActive)
+            {
+                AddSettlement(hud, cell);
+            }
+            else
+            {
+                AddMiniMap(hud);
+            }
+            int fade = FadeAlpha;
+            if (fade > 0)
+            {
+                // 转场的黑幕盖在所有东西(含小地图)上面
+                hud.Add(OverlayArt.Place(_art.Solid(ScreenWidth, ScreenHeight, OverlayArt.Black), 0, 0, 3, "fade", fade));
+            }
+            return hud;
+        }
+
+        /// <summary>右上角的占位小地图、清房数,首领清空之后(结算开始之前)加一个大号的 CLEAR 字样。</summary>
+        private void AddMiniMap(List<SceneSprite> hud)
+        {
             int cols = Maze.Cols, rows = Maze.Rows;
             var cells = new MiniMapCell[cols * rows];
             for (int y = 0; y < rows; y++)
@@ -581,13 +708,36 @@ namespace Dnf.Play
                 SpriteFrame clear = _art.Text("CLEAR", 8, OverlayArt.Yellow);
                 hud.Add(OverlayArt.Place(clear, 400 - clear.Width / 2, 190, 2, "clear"));
             }
-            int fade = FadeAlpha;
-            if (fade > 0)
+        }
+
+        /// <summary>
+        /// 结算画面(证据 E-091),从下到上:地图图层、第一层黑幕(<see cref="OverlayArt.BackDimRank"/>)、物件(主角、营地 NPC)、第二层黑幕(<see cref="OverlayArt.DimRank"/>)、
+        /// 营火各层(不被压暗)、右上角的结算菜单。小地图在结算时撤掉(基线结算帧右上角只有菜单)。营地只画在首领格里。
+        /// 两层黑幕与营火同在这份列表里:房间场景把它排在地图图层之后,同大类按列表顺序,所以第二层黑幕要先于营火加进来。
+        /// </summary>
+        private void AddSettlement(List<SceneSprite> hud, CellState cell)
+        {
+            int order = 0;
+            int dim = SettlementDim;
+            if (dim > 0)
             {
-                // 转场的黑幕盖在所有东西(含小地图)上面
-                hud.Add(OverlayArt.Place(_art.Solid(ScreenWidth, ScreenHeight, OverlayArt.Black), 0, 0, 3, "fade", fade));
+                SpriteFrame black = _art.Solid(ScreenWidth, ScreenHeight, OverlayArt.Black);
+                hud.Add(OverlayArt.PlaceDim(black, dim, order++, "settle-dim-back", OverlayArt.BackDimRank));
+                hud.Add(OverlayArt.PlaceDim(black, dim, order++, "settle-dim"));
             }
-            return hud;
+            if (_camp != null && _layout.IsBossCell(cell.X, cell.Y))
+            {
+                _camp.AddSprites(hud, Assets, cell.Session.Room.Projection);
+            }
+            SettlementArt art = SettlementArt.For(Assets);
+            if (art != null)
+            {
+                art.Build(hud, ref order, _art, HoverRow);
+            }
+            else
+            {
+                SettlementArt.BuildFallback(hud, ref order, _art, HoverRow);
+            }
         }
     }
 }

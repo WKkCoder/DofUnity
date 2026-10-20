@@ -55,19 +55,26 @@ namespace Dnf.Play
         /// <summary>
         /// 从时刻 0 起按固定的 1/60 秒步长让自动机打副本,一直推进到模拟时刻不早于 <paramref name="toMs"/>,或者副本走完(首领清空 / 走出迷宫)为止;
         /// 返回停下时的模拟时刻(毫秒)。命令行 dungeon-check --bot 与播放器的 -dnfbot -dnfplayat 都是这一局,所以两边能逐帧对拍。
+        /// <paramref name="afterClearMs"/> 大于 0 时,副本走完之后再让时间走这么久(主角站着不动,自动机不再决策)才停,结算画面(<see cref="DungeonSession.SettlementActive"/>)就是这样出现的;
+        /// 与命令行 dungeon-check 的 --after-clear 同一个规则(走完那一步的时刻起算)。
         /// </summary>
-        public double RunUntil(DungeonSession session, double toMs)
+        public double RunUntil(DungeonSession session, double toMs, double afterClearMs = 0.0)
         {
             if (session == null)
             {
                 throw new ArgumentNullException(nameof(session));
             }
             double t = 0;
-            while (t < toMs && !session.Finished)
+            double finishedAt = -1;
+            while (t < toMs && (!session.Finished || (finishedAt >= 0 && t - finishedAt < afterClearMs)))
             {
-                bool attack = Next(session, out int dx, out int dy);
+                bool attack = Next(session, out int dx, out int dy);   // 走完之后全是 0 / false:只让时间走
                 session.Update(CombatScript.StepMs, dx, dy, attack);
                 t += CombatScript.StepMs;
+                if (session.Finished && finishedAt < 0)
+                {
+                    finishedAt = t;
+                }
             }
             return t;
         }

@@ -65,6 +65,23 @@ internal sealed class AvatarFixture : IDisposable
     public const string HardAttackEffect1 = "character/test/effect/animation/hardattack1.ani";
     public const string HardAttackEffect2 = "character/test/effect/animation/hardattack2.ani";
     public const int EffectDurationMs = 350;
+
+    /// <summary>
+    /// 通关营地的合成数据(<c>ClearCamp</c>):营火动作脚本(一个 [MOTION],[BASE ANI] 是 200 毫秒不循环的木柴、[SUB ANI] 两层:偏移 (10, −5) 的循环光晕与偏移 (0, 0) 的同一块木柴)、
+    /// NPC 目录(编号 <see cref="CampKeeperId"/>、<see cref="CampGuestId"/> 带 [visible on dungeon clear] 1,<see cref="CampPlainId"/> 没有)、一张 [NPC] 里依次写这三个的地图
+    /// (守卫坐标 (0, 0, 0) 朝 [left],客人写明 (500, 60, 0) 朝 [right],普通 NPC 写 (0, 0, 0))。动画用皮肤 IMG 的第 0、1 帧(循环的各 100 毫秒)。
+    /// </summary>
+    public const string CampfireAct = "passiveobject/actionobject/common/action/campfire.act";
+    public const string CampBaseAni = "passiveobject/actionobject/common/animation/campbase.ani";
+    public const string CampGlowAni = "passiveobject/actionobject/common/animation/campglow.ani";
+    public const string CampMapPath = "map/test/camp.map";
+    public const int CampKeeperId = 7001;
+    public const int CampGuestId = 7002;
+    public const int CampPlainId = 7003;
+    public const string CampKeeperScript = "npc/camp/keeper.npc";
+    public const string CampKeeperAni = "npc/camp/animation/keeper.ani";
+    public const string CampGuestAni = "npc/camp/animation/guest.ani";
+    public const string CampPlainScript = "npc/camp/plain.npc";
     public const string DashAni = "character/test/animation/dash.ani";
     public const string DashAttackAni = "character/test/animation/dashattack.ani";
     public const string JumpAni = "character/test/animation/jump.ani";
@@ -341,6 +358,28 @@ internal sealed class AvatarFixture : IDisposable
             ("character/test/animation/guard.ani", BuildBoxAni((0, 100, null))),
             (HardAttackEffect1, BuildEffectAni(false)),
             (HardAttackEffect2, BuildEffectAni(true)),
+            // 通关营地:营火动作脚本(相对路径故意混着大小写)与两层动画、NPC 目录与三个 NPC、带 [NPC] 的地图
+            (CampfireAct, NewScript()
+                .Tag("[MOTION]")
+                .Tag("[BASE ANI]").Str("../animation/CampBase.ani")
+                .Tag("[SUB ANI]").Str("../animation/campglow.ani").Int(10, -5).Str("../animation/campbase.ani").Int(0, 0)
+                .Tag("[/MOTION]").Build()),
+            (CampBaseAni, BuildBoxAni((0, 100, null), (1, 100, null))),
+            (CampGlowAni, BuildAni(new[] { (0, 100), (1, 100) })),
+            ("npc/npc.lst", NewScript()
+                .Int(CampKeeperId).Str("camp/keeper.npc").Int(CampGuestId).Str("camp\\guest.npc").Int(CampPlainId).Str("camp/plain.npc").Build()),
+            (CampKeeperScript, NewScript().Tag("[field animation]").Str("animation/keeper.ani").Tag("[visible on dungeon clear]").Int(1).Build()),
+            ("npc/camp/guest.npc", NewScript().Tag("[field animation]").Str("animation/guest.ani").Tag("[visible on dungeon clear]").Int(1).Build()),
+            (CampPlainScript, NewScript().Tag("[field animation]").Str("animation/plain.ani").Tag("[visible on dungeon clear]").Int(0).Build()),
+            (CampKeeperAni, BuildAni(new[] { (0, 100), (1, 100) })),
+            (CampGuestAni, BuildAni(new[] { (1, 100), (0, 100) })),
+            ("npc/camp/animation/plain.ani", BuildAni(new[] { (0, 100) })),
+            (CampMapPath, NewScript()
+                .Tag("[NPC]")
+                .Int(CampKeeperId).Str("[left]").Int(0, 0, 0)
+                .Int(CampGuestId).Str("[right]").Int(500, 60, 0)
+                .Int(CampPlainId).Str("[right]").Int(0, 0, 0)
+                .Tag("[/NPC]").Build()),
             (HardAttackAni, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }),
                 (1, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }), (0, 200, null))),
             (WeaponLayerB + "/attack1.ani", BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, new[] { ((ushort)15, new[] { 10, -10, 0, 50, 20, 60 }) }), (1, 100, null))),
@@ -392,7 +431,6 @@ internal sealed class AvatarFixture : IDisposable
                 (2, 80, new[] { BlobHurtBox, BlobStrikeBox }), (3, 80, new[] { BlobHurtBox }))),
             // 可走区域:两个矩形 (10,20,100,50) 与 (100,60,30,40),拼成一个 L 形
             (AreaMap, NewScript().Tag("[virtual movable area]").Int(10, 20, 100, 50, 100, 60, 30, 40).Build()),
-            ("npc/npc.lst", NewScript().Build()),
         };
 
         var files = new List<TestData.PvfFileSpec>();

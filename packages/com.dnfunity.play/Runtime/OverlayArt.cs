@@ -36,8 +36,20 @@ namespace Dnf.Play
     /// </summary>
     public sealed class OverlayArt
     {
-        /// <summary>叠加层的图层大类:排在所有地图图层之后(<see cref="TownScene.SortByDepth"/> 按大类升序画,同大类保持列表顺序)。</summary>
-        public const int UiRank = 6;
+        /// <summary>
+        /// 整屏变暗用的图层大类:盖在所有地图图层(含 [close] 近景)与场景里的精灵上面、界面(<see cref="UiRank"/>)下面
+        /// (结算时场景变暗而底栏与面板不变暗,证据 E-091)。同大类里按列表顺序画,所以要被它盖住的先加、不被盖住的(营火)后加。
+        /// </summary>
+        public const int DimRank = 6;
+
+        /// <summary>
+        /// 只压暗地图图层、不压暗物件的变暗层:放在 bottom(大类 3)里,在 normal(大类 4,主角、怪物、NPC)之下。
+        /// 房间场景把外面传进来的精灵(含这一层)追加在地图图层之后再稳定排序,所以它在同大类的图层精灵之后画,盖住大类 0 到 3 的全部图层。
+        /// </summary>
+        public const int BackDimRank = TownScene.NormalRank - 1;
+
+        /// <summary>叠加层的图层大类:排在所有地图图层与变暗层之后(<see cref="TownScene.SortByDepth"/> 按大类升序画,同大类保持列表顺序)。</summary>
+        public const int UiRank = 7;
 
         public const int GlyphWidth = 5;
         public const int GlyphHeight = 7;
@@ -75,6 +87,15 @@ namespace Dnf.Play
             ['D'] = new[] { "####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####." },
             ['R'] = new[] { "####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#" },
             ['S'] = new[] { ".####", "#....", "#....", ".###.", "....#", "....#", "####." },
+            ['F'] = new[] { "#####", "#....", "#....", "####.", "#....", "#....", "#...." },
+            ['N'] = new[] { "#...#", "##..#", "#.#.#", "#.#.#", "#..##", "#...#", "#...#" },
+            ['U'] = new[] { "#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###." },
+            ['W'] = new[] { "#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#" },
+            ['Y'] = new[] { "#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.." },
+            ['('] = new[] { "..#..", ".#...", "#....", "#....", "#....", ".#...", "..#.." },
+            [')'] = new[] { "..#..", "...#.", "....#", "....#", "....#", "...#.", "..#.." },
+            ['?'] = new[] { ".###.", "#...#", "....#", "...#.", "..#..", ".....", "..#.." },
+            ['-'] = new[] { ".....", ".....", ".....", "#####", ".....", ".....", "....." },
             ['.'] = new[] { ".....", ".....", ".....", ".....", ".....", ".##..", ".##.." },
             ['!'] = new[] { "..#..", "..#..", "..#..", "..#..", "..#..", ".....", "..#.." },
             ['/'] = new[] { "....#", "....#", "...#.", "..#..", ".#...", "#....", "#...." },
@@ -350,6 +371,16 @@ namespace Dnf.Play
         public static SceneSprite Place(SpriteFrame frame, int x, int y, int order = 0, string tag = "overlay", int tintAlpha = 255)
         {
             return new SceneSprite(frame, x, y, order, -3, tag, 0, false, SpriteBlend.Normal, tintAlpha, UiRank);
+        }
+
+        /// <summary>
+        /// 整屏变暗层的精灵:<paramref name="frame"/>(通常是整屏的纯黑块)按 <paramref name="tintAlpha"/> 盖在场景上,
+        /// 大类默认 <see cref="DimRank"/>(盖住全部图层与物件、在界面 <see cref="UiRank"/> 之下);
+        /// 传 <see cref="BackDimRank"/> 则只盖地图图层。
+        /// </summary>
+        public static SceneSprite PlaceDim(SpriteFrame frame, int tintAlpha, int order = 0, string tag = "dim", int rank = DimRank)
+        {
+            return new SceneSprite(frame, 0, 0, order, -3, tag, 0, false, SpriteBlend.Normal, tintAlpha, rank);
         }
 
         /// <summary>一整块纯色的不透明块(<paramref name="rgb"/> 是 0xRRGGBB)。同样的参数总是返回同一个对象。</summary>
