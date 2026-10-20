@@ -71,6 +71,8 @@ namespace Dnf.Play
             ['E'] = new[] { "#####", "#....", "#....", "####.", "#....", "#....", "#####" },
             ['M'] = new[] { "#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#" },
             ['O'] = new[] { ".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###." },
+            ['P'] = new[] { "####.", "#...#", "#...#", "####.", "#....", "#....", "#...." },
+            ['D'] = new[] { "####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####." },
             ['R'] = new[] { "####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#" },
             ['S'] = new[] { ".####", "#....", "#....", ".###.", "....#", "....#", "####." },
             ['.'] = new[] { ".....", ".....", ".....", ".....", ".....", ".##..", ".##.." },
@@ -80,7 +82,7 @@ namespace Dnf.Play
         };
 
         private readonly Dictionary<string, SpriteFrame> _texts = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
-        private readonly Dictionary<long, SpriteFrame> _bars = new Dictionary<long, SpriteFrame>();
+        private readonly Dictionary<string, SpriteFrame> _bars = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
         private readonly Dictionary<string, SpriteFrame> _maps = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
         private readonly Dictionary<string, SpriteFrame> _solids = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
 
@@ -179,13 +181,27 @@ namespace Dnf.Play
         /// </summary>
         public SpriteFrame Bar(int width, int height, int filled)
         {
+            return Bar(width, height, filled, RedBright, RedDark, RedBack);
+        }
+
+        /// <summary>血条与魔法条的红、蓝两套颜色(上半亮、下半稍暗、底色)。</summary>
+        public const uint RedBright = 0xE23030u;
+        public const uint RedDark = 0xB01818u;
+        public const uint RedBack = 0x3A0808u;
+        public const uint BlueBright = 0x3C78F0u;
+        public const uint BlueDark = 0x2450B8u;
+        public const uint BlueBack = 0x081A3Au;
+
+        /// <summary>同 <see cref="Bar(int, int, int)"/>,颜色自选(<paramref name="bright"/> 上半、<paramref name="dark"/> 下半、<paramref name="back"/> 空的部分)。</summary>
+        public SpriteFrame Bar(int width, int height, int filled, uint bright, uint dark, uint back)
+        {
             if (width < 3 || height < 3)
             {
                 throw new ArgumentOutOfRangeException(nameof(width));
             }
             int inner = width - 2;
             filled = filled < 0 ? 0 : (filled > inner ? inner : filled);
-            long key = ((long)width << 40) | ((long)height << 20) | (uint)filled;
+            string key = width + "x" + height + ":" + filled + ":" + bright + ":" + dark + ":" + back;
             if (_bars.TryGetValue(key, out SpriteFrame cached))
             {
                 return cached;
@@ -203,11 +219,11 @@ namespace Dnf.Play
                     else if (x - 1 < filled)
                     {
                         // 上半亮、下半稍暗,做一点立体感
-                        color = y - 1 < (height - 2 + 1) / 2 ? 0xE23030u : 0xB01818u;
+                        color = y - 1 < (height - 2 + 1) / 2 ? bright : dark;
                     }
                     else
                     {
-                        color = 0x3A0808u;
+                        color = back;
                     }
                     Put(rgba, width, height, x, y, color);
                 }

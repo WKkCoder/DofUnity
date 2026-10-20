@@ -79,6 +79,7 @@ public class DungeonSessionTests
         private readonly Func<int, int, (int X, int Y)[]> _monstersOf;
         private readonly int _hp;
         private readonly bool _bodies;
+        private readonly Func<HeroVitals> _vitalsOf;
 
         public DnfAssets Assets { get; }
         public DungeonLayout Layout { get; }
@@ -91,13 +92,15 @@ public class DungeonSessionTests
         /// <paramref name="bodies"/> 为真时给左右出口装上合成的碰撞体:左边是 4 列宽的墙(x 从 16 到 80),右边是 3 列宽的墙(x 从 1072 到 1120),行数覆盖整个房间;
         /// 为假时左右出口没有碰撞体(退回近似的触发)。
         /// </summary>
-        public Dungeon(DungeonLayout layout, Func<int, int, (int X, int Y)[]> monstersOf, int hp = 10, bool bodies = false, int heroObjectId = TestHeroId)
+        public Dungeon(DungeonLayout layout, Func<int, int, (int X, int Y)[]> monstersOf, int hp = 10, bool bodies = false, int heroObjectId = TestHeroId,
+            Func<HeroVitals> vitalsOf = null)
         {
             Assets = DnfAssets.Open(_fx.Root);
             Layout = layout;
             _monstersOf = monstersOf;
             _hp = hp;
             _bodies = bodies;
+            _vitalsOf = vitalsOf;
             Session = new DungeonSession(layout, Build, heroObjectId);
         }
 
@@ -160,7 +163,7 @@ public class DungeonSessionTests
                 actors.Add(new MonsterActor(i, spawn, model, 1, _hp, 222.5, 1500, 0));
             }
             var strikes = new[] { new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false) };
-            var session = new RoomCombatSession(Assets, room, actors, strikes, 1 + cy * 2 + cx);
+            var session = new RoomCombatSession(Assets, room, actors, strikes, 1 + cy * 2 + cx, vitals: _vitalsOf?.Invoke());
             Rooms[(cx, cy)] = session;
             return session;
         }
@@ -344,6 +347,37 @@ public class DungeonSessionTests
         Assert.False(hero.BattleStance);
         Assert.Equal(GateState.Open, GateOf(s, GateSide.Right).State);   // 出口一直开着
         Assert.Equal((2, 2), (s.RoomsEntered, s.RoomsCleared));          // 回来不重复计数
+    }
+
+    [Fact]
+    public void TheHeroesLifeAndManaTravelWithTheHeroFromRoomToRoomAndBack()
+    {
+        using var d = new Dungeon(RingLayout(), OneWeakAtStart, vitalsOf: () => new HeroVitals(1, 100, 50, 0, 0, 0));
+        DungeonSession s = d.Session;
+        HeroVitals first = s.Vitals!;
+        Assert.Equal((100, 50, false), (first.Hp, first.Mp, s.HeroDead));
+        Run(s, 1000, 0, 0, true);                                        // 杀掉怪物,清房
+        first.Damage(35);                                                // 在起点格受了伤
+        RunUntil(s, () => s.CellX == 1, 1, 0);
+        Assert.NotSame(first, s.Vitals);                                 // 新房间的会话有自己的一份……
+        Assert.Equal((65, 50), (s.Vitals!.Hp, s.Vitals.Mp));             // ……当前值跟着人走,不是回满
+        s.Vitals.Damage(20);
+        RunUntil(s, () => s.CellX == 0, -1, 0);                          // 走回去:起点格那一份也同步到最新
+        Assert.Same(first, s.Vitals);
+        Assert.Equal((45, false), (first.Hp, s.HeroDead));
+    }
+
+    [Fact]
+    public void TheHeroDeadFlagFollowsTheCurrentRoomsVitalsAndIsFalseWithoutVitals()
+    {
+        using var withVitals = new Dungeon(RingLayout(), OneWeakAtStart, vitalsOf: () => new HeroVitals(1, 10, 0, 0, 0, 0));
+        withVitals.Session.Vitals!.Damage(10);
+        Assert.True(withVitals.Session.HeroDead);
+
+        using var without = new Dungeon(RingLayout(), OneWeakAtStart);
+        Assert.Null(without.Session.Vitals);
+        Assert.False(without.Session.HeroDead);
+        Assert.Equal(0, without.Session.HeroHits);
     }
 
     [Fact]

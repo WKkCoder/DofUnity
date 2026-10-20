@@ -27,7 +27,7 @@ namespace Dnf.Client
     ///
     /// 命令行:-dnfdir &lt;目录&gt; -dnfmap &lt;PVF 内地图路径&gt; [-dnfshot &lt;输出.png&gt; [-dnftime &lt;毫秒&gt;]] [-dnfquitafter &lt;秒&gt;]
     ///         [-dnfnohero] [-dnfhero x,y,left|right,rest|move,毫秒[,镜头x]] [-dnfautowalk 秒:动作,…]
-    ///         [-dnfmonsters | -dnfnomonsters] [-dnfplayat &lt;秒&gt;]
+    ///         [-dnfmonsters | -dnfnomonsters] [-dnfnodamage] [-dnfplayat &lt;秒&gt;]
     ///         [-dnfdungeon &lt;副本定义路径&gt; [-dnfbot | -dnfexplore] [-dnfseed &lt;整数&gt;] [-dnfrandomlayout]]
     /// 带 -dnfshot 时只离屏渲染一帧写成 PNG 就退出(用来和 CPU 合成器逐字节对照,见 tools/unity-build-town.sh);
     /// 这时默认不画主角,带 -dnfhero 才把主角摆到指定的位置、朝向与动作进度(与 dnf render-town --scene --hero 同一写法)。
@@ -35,6 +35,8 @@ namespace Dnf.Client
     /// 带 -dnfautowalk 时不读键盘,按"开始运行后第几秒:动作"的时间表替主角按键(方向 left、right、up、down、none,可用 + 组合,再加 attack、jump 表示按一下攻击、跳跃键,a、s、d 表示按一下技能键;
     /// 见 <see cref="CombatScript"/>),用来无人值守地验证走动、撞墙、镜头跟随与挥击(例如 -dnfautowalk 0.5:left,3:none,3.2:attack)。-dnfnohero 完全不带主角。
     /// 副本房间默认带怪物(-dnfnomonsters 去掉);离屏渲染一帧时默认不带(与 CPU 合成的参照一致),带 -dnfmonsters 才画。
+    /// 怪物会还手(E-086):主角有生命值、被打中会受击硬直、屏幕左下角有血条;-dnfnodamage 让主角没有生命值、打不到(与命令行 combat-check --no-damage 一致),
+    /// 按时刻对拍的回归检查用它,免得还手改变事件的时刻。
     /// 带 -dnfplayat &lt;秒&gt; 与 -dnfshot 时,离屏渲染前先让房间战斗按 -dnfautowalk 的时间表以固定 1/60 秒步长确定地模拟到这一刻(此时自动带怪物与主角),
     /// 与命令行 combat-check 同一份模拟,用来把战斗中的一帧与 CPU 合成逐字节对照(见 tools/unity-build-town.sh)。
     /// 副本同理:-dnfdungeon -dnfbot -dnfplayat &lt;秒&gt; -dnfshot 先让自动机按固定 1/60 秒步长打到这一刻,与命令行 dungeon-check --bot --shots-at 对照。
@@ -76,6 +78,7 @@ namespace Dnf.Client
         private bool _heroInput = true;
         private string _heroSpec;
         private bool? _monsters;
+        private bool _noDamage;
         private double _playAtSeconds = -1.0;
         private string _dungeonPath;
         private DungeonBot _bot;
@@ -157,6 +160,9 @@ namespace Dnf.Client
                         break;
                     case "-dnfnomonsters":
                         _monsters = false;
+                        break;
+                    case "-dnfnodamage":
+                        _noDamage = true;
                         break;
                     case "-dnfplayat":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
@@ -291,7 +297,7 @@ namespace Dnf.Client
             {
                 // 整座副本:自动机(或 -dnfautowalk 的时间表)在离屏渲染前先按固定 1/60 秒步长确定地打到指定时刻,与命令行 dungeon-check 同一局
                 bool shot = !string.IsNullOrEmpty(_shotPath);
-                DungeonSession dungeon = DungeonSession.Create(_assets, _dungeonPath, _seed, _randomLayout);
+                DungeonSession dungeon = DungeonSession.Create(_assets, _dungeonPath, _seed, _randomLayout, heroVitals: !_noDamage);
                 _heroInput = true;
                 if (_useBot)
                 {
@@ -316,7 +322,7 @@ namespace Dnf.Client
                 bool simulate = shot && _playAtSeconds >= 0.0;
                 // 实时运行默认带怪物;离屏渲染一帧默认不带(与 CPU 合成的参照一致),要么带 -dnfmonsters,要么用 -dnfplayat 模拟一段战斗
                 bool combat = _monsters ?? (!shot || simulate);
-                RoomCombatSession fight = combat ? DemoCombat.CreateSession(_assets, mapPath) : null;
+                RoomCombatSession fight = combat ? DemoCombat.CreateSession(_assets, mapPath, DemoHero.StarterWeapon, 1, !_noDamage) : null;
                 RoomSession room = fight != null ? fight.Room : DemoRoom.CreateSession(_assets, mapPath);
                 room.HeroVisible = !_noHero && (_heroSpec != null || simulate || !shot);
                 if (_heroSpec != null)
@@ -404,11 +410,13 @@ namespace Dnf.Client
                 + (_session is RoomCombatSession fight
                     ? " monsters=" + fight.AliveCount + "/" + fight.Monsters.Count + " hits=" + fight.Hits + " kills=" + fight.Kills + " combo=" + fight.Combo
                         + " casts=" + fight.SkillCasts + " stage=" + (h.IsAttacking ? h.AttackStage + 1 : 0)
+                        + (fight.Vitals != null ? " heroHits=" + fight.HeroHits + " heroHp=" + fight.Vitals.Hp + "/" + fight.Vitals.HpMax : string.Empty)
                     : string.Empty)
                 + (_session is DungeonSession d
                     ? " dungeon=" + _dungeonPath + " cell=(" + d.CellX + "," + d.CellY + ") map=" + d.MapPath + " entered=" + d.RoomsEntered + " cleared=" + d.RoomsCleared
                         + " transitions=" + d.Transitions + " bossCleared=" + d.BossCleared + " exitReached=" + d.ExitReached
                         + " monsters=" + d.Current.AliveCount + "/" + d.Current.Monsters.Count + " hits=" + d.Hits + " kills=" + d.Kills + " damage=" + d.TotalDamage
+                        + (d.Vitals != null ? " heroHits=" + d.HeroHits + " heroHp=" + d.Vitals.Hp + "/" + d.Vitals.HpMax : string.Empty)
                     : string.Empty);
         }
 

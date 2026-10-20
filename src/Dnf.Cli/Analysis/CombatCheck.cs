@@ -31,7 +31,7 @@ internal static class CombatCheck
         }
 
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
-        RoomCombatSession session = DemoCombat.CreateSession(assets, opts.MapPath, opts.HeroWeapon ?? DemoHero.StarterWeapon);
+        RoomCombatSession session = DemoCombat.CreateSession(assets, opts.MapPath, opts.HeroWeapon ?? DemoHero.StarterWeapon, 1, !opts.NoDamage);
         if (opts.Start != null)
         {
             string[] p = opts.Start.Split(',');
@@ -47,7 +47,10 @@ internal static class CombatCheck
         Console.WriteLine("房间 " + opts.MapPath + ":怪物 " + session.Monsters.Count + " 个,主角连招 " + session.Hero.AttackCount + " 段,出生 ("
             + F(session.Hero.X) + "," + F(session.Hero.Y) + ") 朝" + (session.Hero.FacingLeft ? "左" : "右") + ",镜头 x " + session.Camera.IntX
             + ",主角脚本 [move speed] " + session.Hero.MoveSpeedStat + ",武器命中停顿 " + (session.WeaponStunMs > 0 ? "有" : "无") + "(E-077)"
-            + ",受击硬直 " + (session.StunTable != null ? "按客户端公式" : "占位值") + "(E-080),倒地 按客户端的开始处理与三阶段(E-083)");
+            + ",受击硬直 " + (session.StunTable != null ? "按客户端公式" : "占位值") + "(E-080),倒地 按客户端的开始处理与三阶段(E-083)"
+            + (session.Vitals != null
+                ? ",怪物还手(E-086):主角生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax + ",伤害 " + (session.HasDamageConstants ? "按原版公式(输入是推断)" : "占位")
+                : ",怪物不还手(--no-damage)"));
         foreach (MonsterActor m in session.Monsters)
         {
             Console.WriteLine("  怪物 " + m.Index + ":编号 " + m.Code + (m.IsBoss ? "(首领)" : string.Empty) + " 等级 " + m.Level + " 生命 " + m.HpMax
@@ -57,6 +60,7 @@ internal static class CombatCheck
         double totalMs = opts.Seconds * 1000.0;
         int shotIndex = 0;
         int lastHits = 0;
+        int lastHeroHits = 0;
         double t = 0;
         string lastState = string.Empty;
         while (script.TimeMs < totalMs)
@@ -80,6 +84,14 @@ internal static class CombatCheck
                 }
                 Console.WriteLine(sb.ToString());
                 lastHits = session.Hits;
+            }
+            if (session.HeroHits != lastHeroHits)
+            {
+                Console.WriteLine("  t=" + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s  主角被打中 +" + (session.HeroHits - lastHeroHits) + "  累计 "
+                    + session.HeroHits + " 次,共 " + session.HeroDamageTaken + " 点  生命 " + session.Vitals!.Hp + "/" + session.Vitals.HpMax
+                    + "  受击硬直 " + F(session.Hero.HurtSpanMs) + " 毫秒" + (session.HeroDead ? "  主角死亡" : string.Empty)
+                    + (session.HeroPauseMs > 0 ? "  定住 " + F(session.HeroPauseMs) + " 毫秒" : string.Empty));
+                lastHeroHits = session.HeroHits;
             }
             string state = session.Hero.Motion + "/" + session.Hero.AttackStage;
             if (state != lastState)
@@ -108,7 +120,11 @@ internal static class CombatCheck
 
         Console.WriteLine();
         Console.WriteLine("结束:主角 (" + F(session.Hero.X) + "," + F(session.Hero.Y) + "),命中 " + session.Hits + " 次,放技能 " + session.SkillCasts + " 次,击杀 " + session.Kills + " 个,总伤害 " + session.TotalDamage
-            + ",剩余 " + session.AliveCount + " 个");
+            + ",剩余 " + session.AliveCount + " 个"
+            + (session.Vitals != null
+                ? ",主角被打中 " + session.HeroHits + " 次(共 " + session.HeroDamageTaken + " 点),生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax
+                    + ",动作 " + session.Hero.Motion
+                : string.Empty));
         foreach (MonsterActor m in session.Monsters)
         {
             Console.WriteLine("  怪物 " + m.Index + ":" + m.Phase + " 血 " + m.Hp + "/" + m.HpMax + " 位置 (" + F(m.X) + "," + F(m.Y) + ") 朝" + (m.FacingLeft ? "左" : "右"));

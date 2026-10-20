@@ -127,20 +127,22 @@ if [ "$platform" = "macos" ]; then
       python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-$tag.png" --max-diff 0
     done
     # 房间里实时运行并自动走:向左走到房间左边(被左边那面墙的门体挡住,镜头 0),再向下走到通行带的下沿(y 取整显示 348.0)。
-    # 最后停在哪儿由门体的碰撞形状决定(证据 E-072),所以不写死数字,和命令行 combat-check 同一份时间表的结果比:位置、朝向、站立、镜头都要一致。
+    # 最后停在哪儿由门体的碰撞形状决定(证据 E-072),所以不写死数字,和命令行 combat-check 同一份时间表的结果比:位置、朝向、镜头都要一致。
+    # 怪物会还手(E-086):这类按时刻比事件的回归检查一律带 -dnfnodamage(命令行 --no-damage),让主角打不到、事件的时刻不被受击硬直改变;
+    # 怪物还手与主角受击另有专门的检查(见下面"怪物还手")。
     room_walk_log="$PWD/re/unity-run-town-room-walk-macos.log"
     rm -f "$room_walk_log"
     set +e
-    "$app" -batchmode -logFile "$room_walk_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 7 -dnfautowalk 0.5:left,5:down,6.5:none
+    "$app" -batchmode -logFile "$room_walk_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 7 -dnfnodamage -dnfautowalk 0.5:left,5:down,6.5:none
     rc=$?
     set -e
     echo "播放器退出码(房间里自动行走): $rc"
     grep -E 'DNF_TOWN_DEMO' "$room_walk_log" || true
     [ "$rc" -eq 0 ] || exit "$rc"
-    cli_hero="$(dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play 0.5:left,5:down,6.5:none --seconds 7 \
+    cli_hero="$(dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play 0.5:left,5:down,6.5:none --seconds 7 --no-damage \
       | sed -n 's/^结束:主角 (\([0-9.]*,[0-9.]*\)),.*/\1/p')"
     [ -n "$cli_hero" ] || { echo "命令行 combat-check 没有给出主角的最终位置" >&2; exit 1; }
-    grep -q "DNF_TOWN_DEMO ran .* hero=(${cli_hero}) facing=left motion=Rest cameraX=0 .*room=true" "$room_walk_log" \
+    grep -q -E "DNF_TOWN_DEMO ran .* hero=\(${cli_hero}\) facing=left motion=Rest cameraX=0 .*room=true" "$room_walk_log" \
       || { echo "房间里自动行走后主角不在命令行算出的位置 (${cli_hero}) 朝左、站立、镜头 0:$room_walk_log" >&2; exit 1; }
     case "$cli_hero" in *,348.0) ;; *) echo "主角应走到通行带的下沿(y = 348.0),命令行给出 ${cli_hero}" >&2; exit 1 ;; esac
 
@@ -154,13 +156,13 @@ if [ "$platform" = "macos" ]; then
       rm -f "out/town-demo-$tag.png" "out/town-cpu-room-fight-$at.png"
       set +e
       "$app" -batchmode -logFile "$PWD/re/unity-run-town-$tag-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-$tag.png" \
-        -dnftime "$ms" -dnfmap map/lorien/s2.map -dnfautowalk "$fight_play" -dnfplayat "$at"
+        -dnftime "$ms" -dnfmap map/lorien/s2.map -dnfnodamage -dnfautowalk "$fight_play" -dnfplayat "$at"
       rc=$?
       set -e
       echo "播放器退出码(离屏渲染 $tag): $rc"
       grep -E 'DNF_TOWN_DEMO' "$PWD/re/unity-run-town-$tag-macos.log" || true
       [ "$rc" -eq 0 ] || exit "$rc"
-      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play "$fight_play" --seconds "$at" \
+      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play "$fight_play" --seconds "$at" --no-damage \
         --shots-at "$at" --png "$PWD/out/town-cpu-room-fight" >/dev/null
       python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-room-fight-$(printf '%.2f' "$at").png" --max-diff 0
     done
@@ -168,7 +170,7 @@ if [ "$platform" = "macos" ]; then
     fight_log="$PWD/re/unity-run-town-room-fight-macos.log"
     rm -f "$fight_log"
     set +e
-    "$app" -batchmode -logFile "$fight_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 6 -dnfautowalk "$fight_play"
+    "$app" -batchmode -logFile "$fight_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 6 -dnfnodamage -dnfautowalk "$fight_play"
     rc=$?
     set -e
     echo "播放器退出码(房间里实时战斗): $rc"
@@ -191,13 +193,13 @@ if [ "$platform" = "macos" ]; then
       rm -f "out/town-demo-$tag.png" "out/town-cpu-room-action-$at.png"
       set +e
       "$app" -batchmode -logFile "$PWD/re/unity-run-town-$tag-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-$tag.png" \
-        -dnftime "$ms" -dnfmap map/lorien/s2.map -dnfautowalk "$action_play" -dnfplayat "$at"
+        -dnftime "$ms" -dnfmap map/lorien/s2.map -dnfnodamage -dnfautowalk "$action_play" -dnfplayat "$at"
       rc=$?
       set -e
       echo "播放器退出码(离屏渲染 $tag): $rc"
       grep -E 'DNF_TOWN_DEMO' "$PWD/re/unity-run-town-$tag-macos.log" || true
       [ "$rc" -eq 0 ] || exit "$rc"
-      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play "$action_play" --seconds "$at" \
+      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play "$action_play" --seconds "$at" --no-damage \
         --shots-at "$at" --png "$PWD/out/town-cpu-room-action" >/dev/null
       python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-room-action-$(printf '%.2f' "$at").png" --max-diff 0
     done
@@ -213,20 +215,20 @@ if [ "$platform" = "macos" ]; then
       rm -f "out/town-demo-$tag.png" "out/town-cpu-room-skill-$at.png"
       set +e
       "$app" -batchmode -logFile "$PWD/re/unity-run-town-$tag-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-$tag.png" \
-        -dnftime "$ms" -dnfmap map/lorien/s2.map -dnfautowalk "$skill_play" -dnfplayat "$at"
+        -dnftime "$ms" -dnfmap map/lorien/s2.map -dnfnodamage -dnfautowalk "$skill_play" -dnfplayat "$at"
       rc=$?
       set -e
       echo "播放器退出码(离屏渲染 $tag): $rc"
       grep -E 'DNF_TOWN_DEMO' "$PWD/re/unity-run-town-$tag-macos.log" || true
       [ "$rc" -eq 0 ] || exit "$rc"
-      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play "$skill_play" --seconds "$at" \
+      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play "$skill_play" --seconds "$at" --no-damage \
         --shots-at "$at" --png "$PWD/out/town-cpu-room-skill" >/dev/null
       python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-room-skill-$(printf '%.2f' "$at").png" --max-diff 0
     done
     skill_log="$PWD/re/unity-run-town-room-skill-macos.log"
     rm -f "$skill_log"
     set +e
-    "$app" -batchmode -logFile "$skill_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 8 -dnfautowalk "$skill_play"
+    "$app" -batchmode -logFile "$skill_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 8 -dnfnodamage -dnfautowalk "$skill_play"
     rc=$?
     set -e
     echo "播放器退出码(房间里实时放技能): $rc"
@@ -249,16 +251,53 @@ if [ "$platform" = "macos" ]; then
       rm -f "out/town-demo-$tag.png" "out/town-cpu-room-death-$at.png"
       set +e
       "$app" -batchmode -logFile "$PWD/re/unity-run-town-$tag-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-$tag.png" \
-        -dnftime "$ms" -dnfmap map/lorien/s2.map -dnfautowalk "$death_play" -dnfplayat "$at"
+        -dnftime "$ms" -dnfmap map/lorien/s2.map -dnfnodamage -dnfautowalk "$death_play" -dnfplayat "$at"
       rc=$?
       set -e
       echo "播放器退出码(离屏渲染 $tag): $rc"
       grep -E 'DNF_TOWN_DEMO' "$PWD/re/unity-run-town-$tag-macos.log" || true
       [ "$rc" -eq 0 ] || exit "$rc"
-      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play "$death_play" --seconds "$at" \
+      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play "$death_play" --seconds "$at" --no-damage \
         --shots-at "$at" --png "$PWD/out/town-cpu-room-death" >/dev/null
       python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-room-death-$(printf '%.2f' "$at").png" --max-diff 0
     done
+
+    # 怪物还手(证据 E-086):时间表是 "0.2 秒起向左走、3.5 秒停下",主角不出手,站在房间左端等怪物走过来打他。
+    # 4.8 秒:第一下刚打中(受击姿势、左下角生命条掉了一截、头顶红色伤害数字);5.3 秒:第二下刚打中(第一个数字已经飘上去一段)。
+    # 播放器与命令行 combat-check 同一份时间表、同一个模拟类,逐字节对照(怪物和主角的受击框、出招、伤害、硬直与击退全在里面);
+    # 再实时跑 8 秒,检查日志里主角确实被打中过(heroHits >= 1)且没有异常。时刻跟着怪物走过来的节奏,改了怪物行为要重选。
+    hurt_play="0.2:left,3.5:none"
+    for at in 4.8 5.3; do
+      tag="room-hurt-$at"
+      ms="$(python3 -c "print(int(float('$at')*1000.0))")"
+      rm -f "out/town-demo-$tag.png" "out/town-cpu-room-hurt-$at.png"
+      set +e
+      "$app" -batchmode -logFile "$PWD/re/unity-run-town-$tag-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-$tag.png" \
+        -dnftime "$ms" -dnfmap map/lorien/s2.map -dnfautowalk "$hurt_play" -dnfplayat "$at"
+      rc=$?
+      set -e
+      echo "播放器退出码(离屏渲染 $tag): $rc"
+      grep -E 'DNF_TOWN_DEMO' "$PWD/re/unity-run-town-$tag-macos.log" || true
+      [ "$rc" -eq 0 ] || exit "$rc"
+      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play "$hurt_play" --seconds "$at" \
+        --shots-at "$at" --png "$PWD/out/town-cpu-room-hurt" >/dev/null
+      python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-room-hurt-$(printf '%.2f' "$at").png" --max-diff 0
+    done
+    hurt_log="$PWD/re/unity-run-town-room-hurt-macos.log"
+    rm -f "$hurt_log"
+    set +e
+    "$app" -batchmode -logFile "$hurt_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 8 -dnfautowalk "$hurt_play"
+    rc=$?
+    set -e
+    echo "播放器退出码(房间里实时挨打): $rc"
+    grep -E 'DNF_TOWN_DEMO' "$hurt_log" || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$hurt_log"; then
+      echo "实时挨打的日志里有异常:$hurt_log" >&2
+      exit 1
+    fi
+    grep -q -E 'DNF_TOWN_DEMO ran .* room=true monsters=[0-9]+/4 .* heroHits=[1-9][0-9]* heroHp=[0-9]+/[0-9]+' "$hurt_log" \
+      || { echo "实时挨打里主角没有被打中过(应有 heroHits>=1):$hurt_log" >&2; exit 1; }
 
     # 整座副本(证据 E-070):洛兰的迷宫,自动机(DungeonBot)打副本。
     # 播放器带 -dnfdungeon -dnfexplore(或 -dnfbot)-dnfplayat 时按固定 1/60 秒步长确定地打到指定时刻,再离屏渲染一帧;
@@ -267,17 +306,19 @@ if [ "$platform" = "macos" ]; then
     # 10.2 秒(黑幕淡入到一半)、21.0 秒(已来回换过房间)、48.0 秒(刚进首领房)、59.7 秒(首领房清空:CLEAR 横幅与完整小地图);
     # 直奔首领的最短路线:14.0 秒(刚进首领房,黑幕淡入快结束)、14.6 秒(首领房的第一帧清晰画面)。
     # 这些时刻跟着出门的节奏走(证据 E-072:淡出 250 毫秒、全黑 130 毫秒、淡入 250 毫秒);节奏改了要重选时刻。
+    # 按时刻对拍的这几帧带 -dnfnodamage(命令行 --no-damage):怪物还手会让清房的时刻后移,选好的时刻就不再对应原来的画面;
+    # 下面实时跑的一整局是带伤害的,检查主角活到了最后(生命随人带进每个房间)。
     dungeon=dungeon/act1/lorien.dgn
     for spec in "explore:6.8" "explore:9.83" "explore:10.0" "explore:10.2" "explore:21.0" "explore:48.0" "explore:59.7" "bot:14.0" "bot:14.6"; do
       mode="${spec%%:*}"; at="${spec#*:}"
       tag="dungeon-$mode-$at"
       ms="$(python3 -c "print(int(float('$at')*1000.0))")"
       rm -f "out/town-demo-$tag.png" "out/town-cpu-dungeon-$mode-$(printf '%.2f' "$at").png"
-      cli_args=(--dungeon "$dungeon" --bot --seconds "$at" --shots-at "$at" --png "$PWD/out/town-cpu-dungeon-$mode")
+      cli_args=(--dungeon "$dungeon" --bot --no-damage --seconds "$at" --shots-at "$at" --png "$PWD/out/town-cpu-dungeon-$mode")
       [ "$mode" = "explore" ] && cli_args+=(--explore)
       set +e
       "$app" -batchmode -logFile "$PWD/re/unity-run-town-$tag-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-$tag.png" \
-        -dnftime "$ms" -dnfdungeon "$dungeon" "-dnf$mode" -dnfplayat "$at"
+        -dnftime "$ms" -dnfdungeon "$dungeon" "-dnf$mode" -dnfnodamage -dnfplayat "$at"
       rc=$?
       set -e
       echo "播放器退出码(离屏渲染 $tag): $rc"
@@ -303,6 +344,8 @@ if [ "$platform" = "macos" ]; then
     fi
     grep -q -E 'DNF_TOWN_DEMO ran .* dungeon=.* entered=6 cleared=6 .* bossCleared=True' "$dungeon_log" \
       || { echo "实时打副本没有走完(应进过 6 个房间、清空 6 个、首领清空):$dungeon_log" >&2; exit 1; }
+    grep -q -E 'DNF_TOWN_DEMO ran .* dungeon=.* heroHits=[0-9]+ heroHp=[1-9][0-9]*/[0-9]+' "$dungeon_log" \
+      || { echo "实时打副本结束时主角应还活着(heroHp 不为 0,日志里要有 heroHits 与 heroHp):$dungeon_log" >&2; exit 1; }
   else
     echo "没有设置 DNF_DIR:跳过离屏渲染校验"
   fi

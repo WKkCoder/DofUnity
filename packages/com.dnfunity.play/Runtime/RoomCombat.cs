@@ -158,13 +158,75 @@ namespace Dnf.Play
         public int Z { get; }
         public double AgeMs { get; set; }
 
-        public HitPopup(string text, double worldX, double worldY, int z)
+        /// <summary>主角挨的伤害(画成红色);否则是怪物挨的(画成黄色)。</summary>
+        public bool OnHero { get; }
+
+        public HitPopup(string text, double worldX, double worldY, int z, bool onHero = false)
         {
             Text = text;
             WorldX = worldX;
             WorldY = worldY;
             Z = z;
+            OnHero = onHero;
         }
+    }
+
+    /// <summary>
+    /// 主角的受击框:基础动作 .ani 当前帧里的类型 14 框(基础动作的 .ani 只有受击框,攻击框在武器图层里,证据 E-069),换成世界坐标;
+    /// 朝向与离地高度都算进去。受击姿势(受击动作)的帧也有自己的受击框。
+    /// </summary>
+    public static class HeroHurtBoxes
+    {
+        public static List<Aabb> At(TownHero hero)
+        {
+            var result = new List<Aabb>();
+            if (hero == null)
+            {
+                return result;
+            }
+            AniFile ani = hero.CurrentAni;
+            int frame = hero.CurrentFrame;
+            if (ani == null || (uint)frame >= (uint)ani.Frames.Length)
+            {
+                return result;
+            }
+            int direction = hero.FacingLeft ? Direction.Left : Direction.Right;
+            int wx = (int)Math.Floor(hero.X), wy = (int)Math.Floor(hero.Y), wz = (int)Math.Round(hero.Z);
+            foreach (AniBox box in ani.Frames[frame].Boxes)
+            {
+                if (box.Type == AniBoxType.Damage)
+                {
+                    result.Add(Combat.ToWorld(box, wx, wy, wz, direction));
+                }
+            }
+            return result;
+        }
+
+        /// <summary>头顶的世界高度(受击框的最高点);没有受击框时用 <paramref name="fallback"/>。</summary>
+        public static int HeadHeight(TownHero hero, int fallback)
+        {
+            int top = int.MinValue;
+            foreach (Aabb b in At(hero))
+            {
+                top = Math.Max(top, b.MaxZ);
+            }
+            return top == int.MinValue ? fallback : top;
+        }
+    }
+
+    /// <summary>主角受击的几个占位值:没有受击硬直表(Etc/EtcParameter.etc)时用。有表时硬直与击退都按客户端的公式算(<see cref="HitStun"/>,证据 E-080)。</summary>
+    public static class HeroHurtTuning
+    {
+        /// <summary>没有硬直表时的受击硬直(毫秒,未量)。</summary>
+        public const int FallbackStunMs = 350;
+
+        /// <summary>没有硬直表时的击退(像素与毫秒,取公式默认值的量级)。</summary>
+        public const int FallbackKnockPixels = 30;
+
+        public const int FallbackKnockMs = 150;
+
+        /// <summary>主角被打死后停在受击姿势上的"硬直"(毫秒):实际上是永远。</summary>
+        public const double DeadHoldMs = 1.0e12;
     }
 
     /// <summary>
@@ -246,10 +308,15 @@ namespace Dnf.Play
     /// 一场能打的副本房间:房间场景 + 主角 + 房间地图 [monster] 里的怪物。每帧 <see cref="Update"/> 推进主角、怪物与命中判定,
     /// <see cref="Build"/> 把怪物、受击对象的血条、伤害数字与连击数叠进绘制列表。
     /// 已做:主角三段普攻(.chr [attack motion])的攻击框与怪物受击框相交判定(同一击对同一怪只算一次)、
-    /// 怪物生命值取自 <see cref="MonsterAbility"/>、受击硬直与击退、死亡、简易追击与出招(出招不伤害主角)。
+    /// 怪物生命值取自 <see cref="MonsterAbility"/>、受击硬直与击退(E-080)、倒地(E-082、E-083)、死亡(E-084)、命中停顿(E-077)。
     /// 技能(证据 E-076):A 鬼斩、S 上挑、D 后跳三个快捷槽(<see cref="Skills"/>),冷却取自技能脚本;鬼斩与上挑能打中怪物,后跳是位移;
     /// 鬼斩放出来时还有两层斩击光影(<see cref="Effects"/>,<see cref="AnimatedEffect"/>)。
-    /// 没做:真实伤害公式(用 <see cref="PlaceholderDamage"/>)、耗蓝、命中停顿、技能音效与语音、主角受伤、掉落、出口开关与换房间。证据 E-069。
+    /// 怪物还手(证据 E-086):怪物追到"这一招的攻击框够得着主角受击框"的位置再出招,招式动画里的攻击框(类型 15)与主角当前动作的受击框(类型 14)相交就算打中,
+    /// 一次挥击只打一下;伤害交给原版公式(<see cref="DamageFormula"/>,输入是占位值,见 <see cref="MonsterDamage"/>);主角有生命与魔法(<see cref="Vitals"/>)、
+    /// 受击硬直与击退、左下角的占位血条、红色伤害数字;生命归零后主角停在受击姿势、画面上显示 DEAD,不再接受输入。
+    /// 构造时不给 <see cref="Vitals"/> 就是旧的行为:主角打不到、怪物按固定距离出招、没有血条(命令行 --no-damage、播放器 -dnfnodamage 用它,按时刻对拍的回归检查靠它保持原来的时刻)。
+    /// 没做:主角打怪的真实伤害公式(仍用 <see cref="PlaceholderDamage"/>)、主角的真实面板(等级、装备、成长)、耗蓝与魔法恢复、主角倒地起身与空中受击、
+    /// 复活与结算、技能音效与语音、掉落。出口开关与换房间在 <see cref="DungeonSession"/>。证据 E-069。
     /// </summary>
     public sealed class RoomCombatSession : ISkillSession
     {
@@ -278,6 +345,10 @@ namespace Dnf.Play
         private readonly List<AnimatedEffect> _effects = new List<AnimatedEffect>();
         private readonly HashSet<MonsterActor> _hitThisSwing = new HashSet<MonsterActor>();
         private readonly Random _random;
+
+        /// <summary>怪物打主角的伤害种子用的随机数,与主角打怪物的伤害序列分开,免得互相改变对方的序列。</summary>
+        private readonly Random _monsterRandom;
+        private readonly DamageConstants _damageConstants;
 
         /// <summary>倒地的随机抖动(水平量 ±20%、高度 ±10%;E-083)用的随机数,与伤害的随机数分开,免得改变伤害序列。</summary>
         private readonly Random _physicsRandom;
@@ -354,14 +425,34 @@ namespace Dnf.Play
         /// <summary>主角还要定住多少毫秒(命中停顿,证据 E-077);0 表示没在停顿。</summary>
         public double HeroPauseMs => _heroPauseMs;
 
+        /// <summary>
+        /// 主角的生命与魔法(占位,<see cref="HeroVitals"/>)。为 null 时主角不会受伤、怪物只按固定距离出招、没有血条(旧的行为)。
+        /// </summary>
+        public HeroVitals Vitals { get; }
+
+        /// <summary>主角被怪物打中的次数(不含被挡住的)。</summary>
+        public int HeroHits { get; private set; }
+
+        /// <summary>主角累计挨的伤害。</summary>
+        public long HeroDamageTaken { get; private set; }
+
+        /// <summary>主角已经被打死(血量归零)。死后不再接受输入,怪物待机。</summary>
+        public bool HeroDead => Vitals != null && !Vitals.IsAlive;
+
+        /// <summary>伤害按原版公式算(读到了 Etc/EtcParameter.etc 的公式常量);否则用占位的"攻击力 × 加成"。</summary>
+        public bool HasDamageConstants => _damageConstants != null;
+
         public RoomCombatSession(DnfAssets assets, RoomSession room, IReadOnlyList<MonsterActor> monsters, IReadOnlyList<HeroStrikeInfo> strikes, int seed = 1,
             HeroStrikeInfo dashStrike = default, HeroStrikeInfo jumpStrike = default, HeroSkills skills = null, int weaponStunMs = 0,
-            float weaponDelayRate = -1f, HitStunTable stunTable = null)
+            float weaponDelayRate = -1f, HitStunTable stunTable = null, HeroVitals vitals = null, DamageConstants damageConstants = null)
         {
             Skills = skills ?? new HeroSkills(new HeroSkillSlot[0]);
             WeaponStunMs = weaponStunMs;
             WeaponDelayRate = weaponDelayRate;
             StunTable = stunTable;
+            Vitals = vitals;
+            _damageConstants = damageConstants;
+            _monsterRandom = new Random(unchecked(seed * 131 + 29));
             _assets = assets ?? throw new ArgumentNullException(nameof(assets));
             _room = room ?? throw new ArgumentNullException(nameof(room));
             _monsters = new List<MonsterActor>(monsters ?? new List<MonsterActor>());
@@ -391,8 +482,9 @@ namespace Dnf.Play
         /// 为房间造出怪物与普攻数据:怪物按地图 [monster] 在出生点摆好(朝左,与原版进图画面一致,证据 E-069),
         /// 等级取 .mob 的 [level] 第一个数,生命值由 <see cref="MonsterAbility.Compute"/> 算(首领按首领种类);
         /// 普攻数据读 swordman 的 .chr [attack info]。缺图或缺脚本的怪物跳过。
+        /// <paramref name="heroVitals"/> 为假时主角没有生命值(<see cref="Vitals"/> 为 null):怪物照样走近、出招,但打不到主角,没有血条(自动化检查用)。
         /// </summary>
-        public static RoomCombatSession Create(DnfAssets assets, RoomSession room, int seed = 1)
+        public static RoomCombatSession Create(DnfAssets assets, RoomSession room, int seed = 1, bool heroVitals = true)
         {
             var data = new GameData(new PvfScriptSource(assets.Pvf));
             var strikes = new List<HeroStrikeInfo>();
@@ -427,14 +519,22 @@ namespace Dnf.Play
                 MonsterStats stats = MonsterAbility.Compute(def, data.MonsterBaseTables, data.GetMonsterOwnTable(def), level, 0, kind);
                 var actor = new MonsterActor(index++, spawn, model, level, stats.HpMax, WalkSpeed(room.Hero, stats.MoveSpeed > 0 ? stats.MoveSpeed : def.Tags.IntOr("[move speed]", 0)),
                     def.Tags.IntOr("[attack delay]", 0), def.Tags.IntOr("[attack speed]", 0), stats.HitRecovery, stats.Weight);
+                // 出招的攻击信息:[attack info] 与 [attack motion] 同下标,出招固定用第 0 个动作(证据 E-086)
+                actor.Strike = model.AttackInfoPaths.Count > 0 && !string.IsNullOrEmpty(model.AttackInfoPaths[0])
+                    ? HeroStrikeInfo.Read(data, model.AttackInfoPaths[0])
+                    : new HeroStrikeInfo(0, 0, false);
+                actor.PhysicalAttack = stats.PhysicalAttack;
+                actor.MagicalAttack = stats.MagicalAttack;
                 actors.Add(actor);
             }
             // 受击硬直的三张表:Etc/EtcParameter.etc(证据 E-080);读不到就退回占位硬直
             ScriptLine[] etc = data.ReadScript(HitStunTablePath);
             HitStunTable stunTable = etc == null ? null : HitStunTable.FromEtcParameter(new TagTable(etc));
             bool hasWeapon = TryWeaponHit(chr, room.Hero, out WeaponHitInfo weapon);
+            // 主角的生命值:没有就是旧行为(怪物只按固定距离出招、打不到主角、没有血条)——自动化检查里需要"不会被打"的主角时用
+            HeroVitals vitals = heroVitals && chr != null ? HeroVitals.FromChr(chr) : null;
             return new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, HeroSkills.Create(data, chr, 0), hasWeapon ? weapon.StunMs : 0,
-                hasWeapon ? weapon.DelayRate : -1f, stunTable);
+                hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null);
         }
 
         /// <summary>受击硬直的三张表所在的脚本(证据 E-080)。</summary>
@@ -523,6 +623,19 @@ namespace Dnf.Play
         {
             Skills.Advance(deltaMs);
 
+            if (HeroDead)
+            {
+                // 主角死了:不再接受任何输入(占位:没有复活与结算)
+                dirX = 0;
+                dirY = 0;
+                attackPressed = false;
+                jumpPressed = false;
+                skillsPressed = SkillKeys.None;
+                _bufferedAttack = false;
+                _bufferedJump = false;
+                _bufferedSkills = SkillKeys.None;
+            }
+
             // 命中停顿(证据 E-077):主角被定住时,他自己、他的技能特效的时间都不走;冷却、伤害数字、连击计时是墙钟,照常走。
             // 这一小步里停顿结束的话,剩下的时间照常推进。定住期间按下的键存起来,停顿一结束就生效(假设,原版的输入缓冲没读)。
             double heroDelta = deltaMs;
@@ -533,6 +646,8 @@ namespace Dnf.Play
                 _heroPauseMs -= used;
                 heroDelta = deltaMs - used;
                 heroFrozen = heroDelta <= 0;
+                // 受击硬直是不被停顿冻结的秒表(与怪物一样,证据 E-080)
+                _room.Hero.AddHurtClock(used);
             }
             if (heroFrozen)
             {
@@ -559,11 +674,15 @@ namespace Dnf.Play
                 _room.Update(heroDelta, dirX, dirY, attackPressed, jumpPressed);
             }
             TownHero hero = _room.Hero;
+            // 有主角的生命值时,怪物按"这一击能不能打到主角的受击框"决定靠近与出招,主角死了就待机;没有时按固定距离(旧行为)
+            bool heroAlive = !HeroDead;
+            List<Aabb> heroBoxes = Vitals == null ? null : HeroHurtBoxes.At(hero);
             foreach (MonsterActor m in _monsters)
             {
-                m.Update(deltaMs, hero.X, hero.Y, true, hero.Walk);
+                m.Update(deltaMs, hero.X, hero.Y, heroAlive, hero.Walk, heroBoxes);
             }
             ResolveHits();
+            ResolveMonsterHits();
             SyncStance();
             for (int i = _popups.Count - 1; i >= 0; i--)
             {
@@ -722,6 +841,80 @@ namespace Dnf.Play
             _popups.Add(new HitPopup(damage.ToString(System.Globalization.CultureInfo.InvariantCulture), monster.X, monster.Y, monster.HeadHeight()));
         }
 
+        // ------------------------------------------------------------------ 怪物打主角(P5.M5,证据 E-086)
+
+        /// <summary>
+        /// 怪物出招时,出招动画每一帧的攻击框与主角此刻的受击框相交判定(与主角打怪物同一套相交盒规则);
+        /// 同一次出招只打中一次,按"上次判到哪一帧"补判中间跳过的帧。
+        /// </summary>
+        private void ResolveMonsterHits()
+        {
+            if (Vitals == null || !Vitals.IsAlive)
+            {
+                return;
+            }
+            TownHero hero = _room.Hero;
+            foreach (MonsterActor m in _monsters)
+            {
+                if (!m.IsAlive || m.Phase != MonsterPhase.Attack)
+                {
+                    continue;
+                }
+                int frame = m.CurrentFrame;
+                for (int f = m.AttackEvalFrame + 1; f <= frame && !m.HitHeroThisSwing; f++)
+                {
+                    List<Aabb> strike = m.AttackBoxesAt(f);
+                    if (strike.Count > 0 && Touches(strike, HeroHurtBoxes.At(hero)))
+                    {
+                        m.HitHeroThisSwing = true;
+                        StrikeHero(m, hero);
+                    }
+                }
+                if (frame > m.AttackEvalFrame)
+                {
+                    m.AttackEvalFrame = frame;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 怪物这一击打中了主角:伤害按 <see cref="MonsterDamage"/>(原版公式,输入是推断)、扣血、飘红字;
+        /// 主角进受击硬直(硬直与击退按客户端的公式,受击方是主角,攻击方没有所属者所以攻击方恢复项为 0;命中模式 [burn] 不击退,证据 E-080),
+        /// 命中停顿按攻击信息的 [hit info] 整数(怪物没有武器表,没写就是 0,不停顿,证据 E-077);血量归零主角停在受击姿势上(占位的死亡)。
+        /// 倒地类的攻击(<see cref="HeroStrikeInfo.KnockDown"/>)打主角的倒地流程还没做,这里与普通受击一样处理。
+        /// </summary>
+        private void StrikeHero(MonsterActor monster, TownHero hero)
+        {
+            HeroStrikeInfo info = monster.Strike;
+            int attack = info.Magical ? monster.MagicalAttack : monster.PhysicalAttack;
+            int damage = _damageConstants != null
+                ? MonsterDamage.Roll(info, monster.Level, attack, Vitals, _damageConstants, unchecked((uint)_monsterRandom.Next()))
+                : Math.Max(1, (int)Math.Round(attack * (100.0 + info.DamageBonus) / 100.0));
+            bool killed = Vitals.Damage(damage);
+            HeroHits++;
+            HeroDamageTaken += damage;
+            double stunMs = HeroHurtTuning.FallbackStunMs, knockPixels = HeroHurtTuning.FallbackKnockPixels, knockMs = HeroHurtTuning.FallbackKnockMs;
+            if (StunTable != null)
+            {
+                float rate = HitStun.Rate(info.HitScale, -1f, info.UseWeaponHitDelayRate, info.Magical);
+                HitStunResult r = HitStun.Damage(StunTable, Vitals.HitRecovery, 0, rate, info.ForceHitStunMs, info.KnockBackType, info.NoKnockBack);
+                stunMs = r.StunMs;
+                knockPixels = r.KnockPixels;
+                knockMs = r.KnockMs;
+            }
+            hero.BeginHurt(killed ? HeroHurtTuning.DeadHoldMs : stunMs, knockPixels, knockMs, monster.FacingLeft);
+            int pause = HitStop.StunMs(info.HitValue, info.UseWeaponHitDelayRate, 0);
+            if (pause > 0)
+            {
+                monster.Pause(pause);
+                if (pause > _heroPauseMs)
+                {
+                    _heroPauseMs = pause;
+                }
+            }
+            _popups.Add(new HitPopup(damage.ToString(System.Globalization.CultureInfo.InvariantCulture), hero.X, hero.Y, HeroHurtBoxes.HeadHeight(hero, 80), true));
+        }
+
         /// <summary>这一击的倒地输入(证据 E-083):攻击信息的抬升、弹起、不受体重,外加两个抖动用的随机数。</summary>
         private KnockdownInput DownInput(HeroStrikeInfo info)
         {
@@ -793,9 +986,13 @@ namespace Dnf.Play
                     2, OverlayArt.White);
                 into.Add(OverlayArt.Place(label, TargetBarX, TargetBarY - OverlayArt.TextHeight(2) - 2, order++, "target-label"));
             }
+            if (Vitals != null)
+            {
+                AddHeroBars(into, ref order);
+            }
             foreach (HitPopup p in _popups)
             {
-                SpriteFrame text = _art.Text(p.Text, 3, OverlayArt.Yellow);
+                SpriteFrame text = _art.Text(p.Text, 3, p.OnHero ? HeroPopupColor : OverlayArt.Yellow);
                 double rise = PopupRisePixels * Math.Min(1.0, p.AgeMs / (PopupMs * 0.5));
                 int sx = (int)Math.Floor(p.WorldX) - projection.CameraX - text.Width / 2;
                 int sy = (int)Math.Floor(p.WorldY) + projection.GroundY - p.Z - text.Height - 6 - (int)rise;
@@ -807,15 +1004,55 @@ namespace Dnf.Play
                 into.Add(OverlayArt.Place(combo, 800 - combo.Width - 24, 236, order++, "combo"));
             }
         }
+
+        /// <summary>主角受伤飘字的颜色(红)。</summary>
+        public const uint HeroPopupColor = 0xFF5050u;
+
+        /// <summary>主角生命条与魔法条(占位的叠加层,不是原版的界面):屏幕左下角,红色与蓝色,上面各一行 "HP 当前/上限"。死后居中显示 DEAD。</summary>
+        public const int HeroBarX = 24;
+        public const int HeroBarY = 540;
+        public const int HeroBarWidth = 180;
+        public const int HeroBarHeight = 12;
+
+        private void AddHeroBars(List<SceneSprite> into, ref int order)
+        {
+            HeroVitals v = Vitals;
+            int hpFill = FilledWidth(v.Hp, v.HpMax);
+            into.Add(OverlayArt.Place(_art.Bar(HeroBarWidth, HeroBarHeight, hpFill), HeroBarX, HeroBarY, order++, "hero-hp"));
+            SpriteFrame hpLabel = _art.Text("HP " + v.Hp.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/"
+                + v.HpMax.ToString(System.Globalization.CultureInfo.InvariantCulture), 2, OverlayArt.White);
+            into.Add(OverlayArt.Place(hpLabel, HeroBarX, HeroBarY - OverlayArt.TextHeight(2) - 2, order++, "hero-hp-label"));
+            if (v.MpMax > 0)
+            {
+                int mpY = HeroBarY + HeroBarHeight + 14;
+                into.Add(OverlayArt.Place(_art.Bar(HeroBarWidth, HeroBarHeight, FilledWidth(v.Mp, v.MpMax), OverlayArt.BlueBright, OverlayArt.BlueDark, OverlayArt.BlueBack),
+                    HeroBarX, mpY, order++, "hero-mp"));
+                SpriteFrame mpLabel = _art.Text("MP " + v.Mp.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/"
+                    + v.MpMax.ToString(System.Globalization.CultureInfo.InvariantCulture), 2, OverlayArt.White);
+                into.Add(OverlayArt.Place(mpLabel, HeroBarX, mpY - OverlayArt.TextHeight(2) - 2, order++, "hero-mp-label"));
+            }
+            if (!v.IsAlive)
+            {
+                SpriteFrame dead = _art.Text("DEAD", 8, HeroPopupColor);
+                into.Add(OverlayArt.Place(dead, (800 - dead.Width) / 2, 220, order++, "hero-dead"));
+            }
+        }
+
+        private static int FilledWidth(int value, int max)
+        {
+            int filled = (int)Math.Round((double)(HeroBarWidth - 2) * value / Math.Max(1, max));
+            return value > 0 && filled < 1 ? 1 : filled;
+        }
     }
 
     /// <summary>演示用的房间战斗:在 <see cref="DemoRoom"/> 的房间上摆怪物。</summary>
     public static class DemoCombat
     {
-        public static RoomCombatSession CreateSession(DnfAssets assets, string mapPath, string weaponEqu = DemoHero.StarterWeapon, int seed = 1)
+        public static RoomCombatSession CreateSession(DnfAssets assets, string mapPath, string weaponEqu = DemoHero.StarterWeapon, int seed = 1,
+            bool heroVitals = true)
         {
             RoomSession room = DemoRoom.CreateSession(assets, mapPath, weaponEqu);
-            return RoomCombatSession.Create(assets, room, seed);
+            return RoomCombatSession.Create(assets, room, seed, heroVitals);
         }
     }
 }

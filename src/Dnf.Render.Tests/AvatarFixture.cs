@@ -89,6 +89,16 @@ internal sealed class AvatarFixture : IDisposable
     public const string Attack2Ani = "character/test/animation/attack2.ani";
     public const string Attack3Ani = "character/test/animation/attack3.ani";
 
+    /// <summary>
+    /// 受击动作(<see cref="ActionChrPath"/> 的 [damage motion 1]、[damage motion 2]):各一帧、停留 10000 毫秒(与原版的受击动画同形,停多久由游戏逻辑决定);
+    /// 皮肤 IMG 的帧号分别是 0 与 1(两段的路径不同,用路径分辨放的是哪一段)。
+    /// </summary>
+    public const string Damage1Ani = "character/test/animation/damage1.ani";
+    public const string Damage2Ani = "character/test/animation/damage2.ani";
+
+    /// <summary>主角基础动作(站立、等待、行走、受击)每一帧的受击框(类型 14):x 从 −12 起宽 24,y 从 −6 起深 12,z 从 0 起高 80(纯属测试用的数)。</summary>
+    public static readonly (ushort Type, int[] Values) HeroHurtBox = ((ushort)14, new[] { -12, -6, 0, 24, 12, 80 });
+
     /// <summary>武器图层 swordb、swordc 的动作动画所在目录(装备脚本所在目录下的 &lt;层名&gt;/)。</summary>
     public const string WeaponLayerB = EquipRoot + "/weapon/sword/swordb";
     public const string WeaponLayerC = EquipRoot + "/weapon/sword/swordc";
@@ -105,6 +115,19 @@ internal sealed class AvatarFixture : IDisposable
 
     /// <summary>倒地动作是一段没有长停留帧的短动画(三帧各 80 毫秒):倒地状态机只能靠时间走完。</summary>
     public const string BlobShortDownMobPath = "monster/blob/short.mob";
+
+    /// <summary>
+    /// 会伤人的迷你怪物:出招动画 <see cref="BlobStrikeAni"/> 四帧各 80 毫秒,第 2 帧(160 到 240 毫秒)带一个攻击框(类型 15):
+    /// x 从 +10 起宽 40,y 从 −10 起深 20,z 从 0 起高 50(纯属测试用的数);出招的攻击信息 <see cref="BlobStrikerAtk"/> 是 [damage bonus]
+    /// <see cref="StrikerDamageBonus"/>、普通受击([damage reaction] [damage])。其余动作与 <see cref="BlobMobPath"/> 相同。
+    /// </summary>
+    public const string BlobStrikerMobPath = "monster/blob/striker.mob";
+    public const string BlobStrikerAtk = "monster/blob/attackinfo/striker.atk";
+    public const string BlobStrikeAni = "monster/blob/animation_blob/strike.ani";
+    public const int StrikerDamageBonus = 25;
+
+    /// <summary>出招攻击框(类型 15)的数。</summary>
+    public static readonly (ushort Type, int[] Values) BlobStrikeBox = ((ushort)15, new[] { 10, -10, 0, 40, 20, 50 });
     public const string BlobAnimationDir = "monster/blob/animation_blob";
     public const string BlobImage = "sprite/monster/blob/blob.img";
 
@@ -217,6 +240,8 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[waiting motion]").Str("animation/wait.ani")
                 .Tag("[move motion]").Str("animation/move.ani")
                 .Tag("[move speed]").Float(MoveSpeedStat)
+                .Tag("[damage motion 1]").Str("animation/damage1.ani")
+                .Tag("[damage motion 2]").Str("Animation/Damage2.ani")
                 .Tag("[dash motion]").Str("animation/dash.ani")
                 .Tag("[dashattack motion]").Str("Animation/DashAttack.ani")
                 .Tag("[jump motion]").Str("animation/jump.ani")
@@ -294,9 +319,11 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[animation job]").Str("[other]")
                 .Tag("[variation]").Int(1, 1)
                 .Tag("[layer variation]").Int(2150).Str("cap_a").Build()),
-            (RestAni, BuildAni(new[] { (0, 100), (1, 300) })),
-            (MoveAni, BuildAni(new[] { (0, 100), (1, 100), (0, 100) })),
-            (WaitAni, BuildAni(new[] { (1, 100), (0, 100) })),
+            (RestAni, BuildAni(new[] { (0, 100), (1, 300) }, true)),
+            (MoveAni, BuildAni(new[] { (0, 100), (1, 100), (0, 100) }, true)),
+            (WaitAni, BuildAni(new[] { (1, 100), (0, 100) }, true)),
+            (Damage1Ani, BuildBoxAni((0, 10000, new[] { HeroHurtBox }))),
+            (Damage2Ani, BuildBoxAni((1, 10000, new[] { HeroHurtBox }))),
             // 奔跑(循环)、奔跑攻击;跳跃动画有两个停留帧(最高点与落地前,各 10000 毫秒),最后一帧是 50 毫秒的落地帧;空中攻击 200 毫秒
             (DashAni, BuildAni(new[] { (0, 100), (1, 100), (0, 100), (1, 100) })),
             // 奔跑攻击在第 1 帧(100 到 200 毫秒)、空中攻击在第 1 帧(100 到 150 毫秒)各有一个攻击框:x 从 +20 起宽 40,y 从 −10 起深 20,z 从 0 起高 50
@@ -327,6 +354,15 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[down motion]").Str("Animation_Blob/Down.ani")
                 .Tag("[attack motion]").Str("Animation_Blob/Attack1.ani")
                 .Tag("[attack info]").Str("AttackInfo/Attack1.atk").Str("").Build()),
+            (BlobStrikerMobPath, NewScript()
+                .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
+                .Tag("[move motion]").Str("Animation_Blob/Move.ani")
+                .Tag("[damage motion 1]").Str("Animation_Blob/Damage1.ani")
+                .Tag("[damage motion 2]").Str("Animation_Blob/Damage2.ani")
+                .Tag("[down motion]").Str("Animation_Blob/Down.ani")
+                .Tag("[attack motion]").Str("Animation_Blob/Strike.ani")
+                .Tag("[attack info]").Str("AttackInfo/Striker.atk").Build()),
+            (BlobStrikerAtk, NewScript().Tag("[damage bonus]").Int(StrikerDamageBonus).Tag("[damage reaction]").Tag("[damage]").Build()),
             (BlobBoxedDownMobPath, NewScript()
                 .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
                 .Tag("[move motion]").Str("Animation_Blob/Move.ani")
@@ -349,6 +385,8 @@ internal sealed class AvatarFixture : IDisposable
             (BlobAnimationDir + "/downboxed.ani", BuildBlobAni(false, (6, 80, BlobHurtBox), (7, 80, BlobHurtBox), (7, 10000, BlobHurtBox), (8, 10000, BlobHurtBox),
                 (8, 500, BlobHurtBox))),
             (BlobAnimationDir + "/attack1.ani", BuildBlobAni(false, (0, 80, BlobHurtBox), (1, 80, BlobHurtBox), (2, 80, BlobHurtBox))),
+            (BlobStrikeAni, BuildBlobBoxesAni(false, (0, 80, new[] { BlobHurtBox }), (1, 80, new[] { BlobHurtBox }),
+                (2, 80, new[] { BlobHurtBox, BlobStrikeBox }), (3, 80, new[] { BlobHurtBox }))),
             // 可走区域:两个矩形 (10,20,100,50) 与 (100,60,30,40),拼成一个 L 形
             (AreaMap, NewScript().Tag("[virtual movable area]").Int(10, 20, 100, 50, 100, 60, 30, 40).Build()),
             ("npc/npc.lst", NewScript().Build()),
@@ -446,6 +484,24 @@ internal sealed class AvatarFixture : IDisposable
         return TestData.BuildAni(new[] { "Monster/Blob/Blob.img" }, globals, specs);
     }
 
+    /// <summary>同 <see cref="BuildBlobAni(bool, ValueTuple{int, int, ValueTuple{ushort, int[]}}[])"/>,每一帧可以带多个判定框(受击框加攻击框)。</summary>
+    private static byte[] BuildBlobBoxesAni(bool loop, params (int FrameIndex, int DelayMs, (ushort Type, int[] Values)[] Boxes)[] frames)
+    {
+        var specs = new List<TestData.AniFrameSpec>();
+        foreach ((int frameIndex, int delay, (ushort Type, int[] Values)[] boxes) in frames)
+        {
+            var f = new TestData.AniFrameSpec { ImageIndex = 0, FrameIndex = frameIndex, X = -10, Y = -20 };
+            f.Props.Add((12, TestData.LE32(delay)));
+            if (boxes != null)
+            {
+                f.Boxes.AddRange(boxes);
+            }
+            specs.Add(f);
+        }
+        var globals = loop ? new (ushort, byte[])[] { (0, new byte[] { 1 }) } : new (ushort, byte[])[0];
+        return TestData.BuildAni(new[] { "Monster/Blob/Blob.img" }, globals, specs);
+    }
+
     /// <summary>迷你怪物的 IMG:十帧,每帧 6×8 不透明,帧头偏移 (-3, -8),绿色通道 = 帧号,红色通道 = 100 + 帧号。</summary>
     private static byte[] BuildBlobImg()
     {
@@ -470,14 +526,18 @@ internal sealed class AvatarFixture : IDisposable
         return TestData.BuildImg(frames);
     }
 
-    /// <summary>每个 (IMG 帧号, 时长毫秒) 一帧;.ani 帧偏移 (-5, -8);循环。</summary>
-    private static byte[] BuildAni((int FrameIndex, int DelayMs)[] frames)
+    /// <summary>每个 (IMG 帧号, 时长毫秒) 一帧;.ani 帧偏移 (-5, -8);循环。<paramref name="hurtBox"/> 为真时每帧带一个主角受击框(<see cref="HeroHurtBox"/>)。</summary>
+    private static byte[] BuildAni((int FrameIndex, int DelayMs)[] frames, bool hurtBox = false)
     {
         var specs = new List<TestData.AniFrameSpec>();
         foreach ((int frameIndex, int delay) in frames)
         {
             var f = new TestData.AniFrameSpec { ImageIndex = 0, FrameIndex = frameIndex, X = -5, Y = -8 };
             f.Props.Add((12, TestData.LE32(delay)));
+            if (hurtBox)
+            {
+                f.Boxes.Add(HeroHurtBox);
+            }
             specs.Add(f);
         }
         return TestData.BuildAni(new[] { "Character/Test/Equipment/Avatar/skin/tt_body0000.img" },

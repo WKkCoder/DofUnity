@@ -179,6 +179,15 @@ namespace Dnf.Play
 
         public string MapPath => Current.MapPath;
         public TownHero Hero => Current.Hero;
+
+        /// <summary>主角的生命与魔法(当前房间会话的那一份,换房间时抄过去,见 <see cref="Travel"/>);没有时为 null。</summary>
+        public HeroVitals Vitals => Current.Vitals;
+
+        /// <summary>主角已经死了(占位:没有复活与结算)。</summary>
+        public bool HeroDead => Current.HeroDead;
+
+        /// <summary>整座副本里主角被怪物打中的总次数。</summary>
+        public int HeroHits => Sum(s => s.HeroHits);
         public TownCamera Camera => Current.Camera;
         public int LayerCount => Current.LayerCount;
         public int NpcCount => Current.NpcCount;
@@ -210,14 +219,14 @@ namespace Dnf.Play
         /// 否则取候选里最前面的(基线上就是这样,证据 E-070)。<paramref name="seed"/> 同时是各房间战斗的随机种子。
         /// </summary>
         public static DungeonSession Create(DnfAssets assets, string dungeonPath, int seed = 1, bool randomLayout = false,
-            string weaponEqu = DemoHero.StarterWeapon, int heroObjectId = GateArrival.DefaultHeroObjectId)
+            string weaponEqu = DemoHero.StarterWeapon, int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true)
         {
             DungeonMaze maze = DungeonMaze.Read(assets, dungeonPath)
                 ?? throw new DnfFormatException("副本定义里没有可用的迷宫: " + dungeonPath);
             DungeonRoomPool pool = DungeonRoomPool.Read(assets, DungeonRoomPool.FolderFor(dungeonPath));
             DungeonLayout layout = DungeonLayout.Create(maze, pool, randomLayout ? new Random(seed) : null);
             AvatarOutfit outfit = DemoRoom.DefaultOutfit(assets, weaponEqu);
-            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId), heroObjectId);
+            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals), heroObjectId);
         }
 
         /// <summary>
@@ -226,7 +235,7 @@ namespace Dnf.Play
         /// 换房间时再按出口重新摆),怪物按地图 [monster] 摆。
         /// </summary>
         public static DungeonRoomFactory CreateAssetFactory(DnfAssets assets, DungeonLayout layout, AvatarOutfit outfit, int seed,
-            int heroObjectId = GateArrival.DefaultHeroObjectId)
+            int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true)
         {
             return (cx, cy) =>
             {
@@ -251,7 +260,7 @@ namespace Dnf.Play
                 {
                     RoomArrival.PlaceAtStart(room, cand.MapId, heroObjectId);
                 }
-                return RoomCombatSession.Create(assets, room, seed + cy * layout.Maze.Cols + cx);
+                return RoomCombatSession.Create(assets, room, seed + cy * layout.Maze.Cols + cx, heroVitals);
             };
         }
 
@@ -416,9 +425,14 @@ namespace Dnf.Play
         {
             TownHero hero = Current.Hero;
             HeroSkills carried = Current.Skills;
+            HeroVitals carriedVitals = Current.Vitals;
             Maze.TryNeighbor(CellX, CellY, side, out int nx, out int ny);
             Enter(nx, ny, true, ExitBits.Opposite(side), hero.FacingLeft);
             Current.Skills.CopyCooldownsFrom(carried);   // 技能冷却不因换房间清零
+            if (carriedVitals != null && Current.Vitals != null && !ReferenceEquals(carriedVitals, Current.Vitals))
+            {
+                Current.Vitals.CopyStateFrom(carriedVitals);   // 生命与魔法也跟着人走
+            }
             Transitions++;
         }
 

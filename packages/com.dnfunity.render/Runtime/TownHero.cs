@@ -121,6 +121,12 @@ namespace Dnf.Render
         /// 另有"先挥普攻、播到指定帧再换成技能动画、可以滑行"的通用写法(<see cref="TownHero.BeginSkillWindup"/>、<see cref="TownHero.SkillSlideSpeed"/>),留给持别的武器时的上挑和以后的技能。
         /// </summary>
         Skill,
+
+        /// <summary>
+        /// 受击硬直(.chr 的 [damage motion 1]、[damage motion 2],交替播):被怪物打中后定在原地,硬直时间由调用方按受击公式算好后给
+        /// (<see cref="TownHero.BeginHurt"/>),期间被往后推一小段,硬直一到回到站立。
+        /// </summary>
+        Hurt,
     }
 
     /// <summary>当前这一击属于哪一类:连招里的普攻、奔跑攻击、跳跃攻击、技能。</summary>
@@ -344,6 +350,25 @@ namespace Dnf.Render
         private double _skillSlideV0;
         private double _skillSlideAccel;
         private double _skillSlideV;
+
+        // 受击:[damage motion 1]、[damage motion 2](没写就是 null,对应的受击不生效),当前播的那一段,硬直与击退的进度
+        private AniFile _damage1;
+        private string _damage1Path;
+        private AniTimeline _damage1Timeline;
+        private AniFile _damage2;
+        private string _damage2Path;
+        private AniTimeline _damage2Timeline;
+        private AniFile _hurtAni;
+        private string _hurtPath;
+        private AniTimeline _hurtTimeline;
+        private int _hurtCount;
+        private double _hurtSpanMs;
+        private double _hurtClockMs;
+        private int _hurtPushDir;
+        private double _hurtPushTotal;
+        private double _hurtPushDone;
+        private double _hurtPushMs;
+        private double _hurtPushEaseMs;
 
         // 双击检测:上一帧的水平方向、最近一次按下的方向与距今的时间;本次更新里刚好完成了一次双击(只在这一次更新里有效)
         private int _prevDirX;
@@ -625,6 +650,7 @@ namespace Dnf.Render
             hero.LoadDashMotions(assets, chrPath);
             hero.LoadJumpMotions(assets, chrPath);
             hero.LoadEtcMotions(assets, chrPath);
+            hero.LoadHurtMotions(assets, chrPath);
             return hero;
         }
 
@@ -640,6 +666,7 @@ namespace Dnf.Render
             hero.LoadDashMotions(assets, chrPath);
             hero.LoadJumpMotions(assets, chrPath);
             hero.LoadEtcMotions(assets, chrPath);
+            hero.LoadHurtMotions(assets, chrPath);
             return hero;
         }
 
@@ -696,6 +723,9 @@ namespace Dnf.Render
                     break;
                 case HeroMotion.Skill:
                     Motion = HeroMotion.Rest;   // 技能要指明是哪一段动画,见 PlaceSkillMotion
+                    break;
+                case HeroMotion.Hurt:
+                    Motion = HeroMotion.Rest;   // 受击带着硬直与击退的进度,要用 BeginHurt 进入
                     break;
                 default:
                     Motion = motion;
@@ -854,7 +884,7 @@ namespace Dnf.Render
         /// </summary>
         public bool BeginSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel)
         {
-            if (IsAirborne || IsAttacking)
+            if (IsAirborne || IsAttacking || IsHurt)
             {
                 return false;
             }
@@ -874,7 +904,7 @@ namespace Dnf.Render
         /// </summary>
         public bool BeginSkillWindup(int skillId, int windupStage, int untilFrame, int thenEtcIndex, double slideSpeed, double slideAccel)
         {
-            if (IsAirborne || IsAttacking || (uint)windupStage >= (uint)_attacks.Length)
+            if (IsAirborne || IsAttacking || IsHurt || (uint)windupStage >= (uint)_attacks.Length)
             {
                 return false;
             }
@@ -894,7 +924,7 @@ namespace Dnf.Render
         /// </summary>
         public bool BeginSkillStrike(int skillId, int stage)
         {
-            if (IsAirborne || IsAttacking || (uint)stage >= (uint)_attacks.Length)
+            if (IsAirborne || IsAttacking || IsHurt || (uint)stage >= (uint)_attacks.Length)
             {
                 return false;
             }
@@ -926,7 +956,7 @@ namespace Dnf.Render
         /// </summary>
         public bool BeginBackStep(int skillId, double power)
         {
-            if (_jump == null || IsAirborne || IsAttacking)
+            if (_jump == null || IsAirborne || IsAttacking || IsHurt)
             {
                 return false;
             }
@@ -1282,6 +1312,111 @@ namespace Dnf.Render
             LoadMotion(assets, chrPath, doc, "[dashattack motion]", out _dashAttack, out _dashAttackPath, out _dashAttackTimeline);
         }
 
+        /// <summary>读 .chr 的 [damage motion 1] 与 [damage motion 2](相对角色脚本所在目录)。两个都没有时 <see cref="CanBeHurt"/> 为假。</summary>
+        public void LoadHurtMotions(DnfAssets assets, string chrPath)
+        {
+            ScriptLine[] doc = ReadChr(assets, chrPath);
+            LoadMotion(assets, chrPath, doc, "[damage motion 1]", out _damage1, out _damage1Path, out _damage1Timeline);
+            LoadMotion(assets, chrPath, doc, "[damage motion 2]", out _damage2, out _damage2Path, out _damage2Timeline);
+        }
+
+        /// <summary>有受击动作([damage motion 1] 或 [damage motion 2])。</summary>
+        public bool CanBeHurt => _damage1 != null || _damage2 != null;
+
+        /// <summary>正在受击硬直里。</summary>
+        public bool IsHurt => Motion == HeroMotion.Hurt;
+
+        /// <summary>这一次受击硬直的总毫秒数;不在受击中时是上一次的值。</summary>
+        public double HurtSpanMs => _hurtSpanMs;
+
+        /// <summary>这一次受击硬直已经过去的毫秒数(命中停顿里也在走,见 <see cref="AddHurtClock"/>)。</summary>
+        public double HurtClockMs => _hurtClockMs;
+
+        /// <summary>从开始玩起受击的次数(每次 <see cref="BeginHurt"/> 成功加 1)。</summary>
+        public int HurtCount => _hurtCount;
+
+        /// <summary>
+        /// 被打中:放受击动作(第一次放 [damage motion 1],之后与 [damage motion 2] 交替),硬直 <paramref name="stunMs"/> 毫秒,
+        /// 期间往 <paramref name="pushToLeft"/> 的方向被推 <paramref name="pushPixels"/> 像素(先快后慢,<paramref name="pushMs"/> 毫秒内推完,走不过可走区域与障碍)。
+        /// 正在挥击、放技能、奔跑里被打会被打断;已经在受击里再被打,换另一段动作、硬直与击退重新计时(与怪物挨打一致)。
+        /// 腾空中或者没有受击动作时什么也不做并返回 false(腾空被打的倒地流程还没做)。受击不转向:朝向保持不变。
+        /// </summary>
+        public bool BeginHurt(double stunMs, double pushPixels, double pushMs, bool pushToLeft)
+        {
+            if (IsAirborne || !CanBeHurt)
+            {
+                return false;
+            }
+            bool first = _hurtCount++ % 2 == 0;
+            if ((first && _damage1 != null) || _damage2 == null)
+            {
+                _hurtAni = _damage1;
+                _hurtPath = _damage1Path;
+                _hurtTimeline = _damage1Timeline;
+            }
+            else
+            {
+                _hurtAni = _damage2;
+                _hurtPath = _damage2Path;
+                _hurtTimeline = _damage2Timeline;
+            }
+            Motion = HeroMotion.Hurt;
+            _motionMs = 0;
+            AttackStage = 0;
+            SkillId = 0;
+            _skillWindupStage = -1;
+            _attackQueued = false;
+            _dashTrigger = false;
+            _hurtSpanMs = stunMs < 0 ? 0 : stunMs;
+            _hurtClockMs = 0;
+            _hurtPushDir = pushToLeft ? -1 : 1;
+            _hurtPushTotal = pushPixels < 0 ? 0 : pushPixels;
+            _hurtPushDone = 0;
+            _hurtPushMs = 0;
+            _hurtPushEaseMs = pushMs;
+            return true;
+        }
+
+        /// <summary>
+        /// 命中停顿里主角不推进(<see cref="Update(double, int, int, bool, bool)"/> 不被调用),但硬直是一块不被停顿冻结的秒表(与怪物一样,证据 E-080):
+        /// 停顿期间调用方用它把这段时间记进硬直。不在受击里时什么也不做。
+        /// </summary>
+        public void AddHurtClock(double ms)
+        {
+            if (Motion == HeroMotion.Hurt && ms > 0)
+            {
+                _hurtClockMs += ms;
+            }
+        }
+
+        /// <summary>推进受击:动画播放、被击退(先快后慢)、硬直时间到就回到站立。</summary>
+        private void AdvanceHurt(double deltaMs)
+        {
+            _hurtClockMs += deltaMs;
+            _motionMs += deltaMs;
+            if (_hurtPushDone < _hurtPushTotal)
+            {
+                _hurtPushMs += deltaMs;
+                double t = _hurtPushEaseMs <= 0 ? 1.0 : Math.Min(1.0, _hurtPushMs / _hurtPushEaseMs);
+                double target = _hurtPushTotal * (1.0 - (1.0 - t) * (1.0 - t));
+                double step = target - _hurtPushDone;
+                if (step > 0)
+                {
+                    _hurtPushDone = target;
+                    X = MoveAxis(X, _hurtPushDir * step, true);
+                    // 被打退撞上出口的碰撞体或边界不算"走向出口":出口只由主角自己的移动触发
+                    PushedInto = null;
+                    PushedUp = false;
+                    PushedDown = false;
+                }
+            }
+            if (_hurtClockMs >= _hurtSpanMs)
+            {
+                Motion = HeroMotion.Rest;
+                _motionMs = 0;
+            }
+        }
+
         /// <summary>
         /// 读 .chr 的 [jump motion]、[jumpattack motion]、[jump power](跳跃力)、[weight](重量)与 [jump speed](跳跃速度属性);
         /// 后三个进起跳初速度与重力的公式(证据 E-073)。
@@ -1428,6 +1563,9 @@ namespace Dnf.Render
                     return;
                 case HeroMotion.Skill:
                     AdvanceSkill(deltaMs);
+                    return;
+                case HeroMotion.Hurt:
+                    AdvanceHurt(deltaMs);
                     return;
                 case HeroMotion.Jump:
                 case HeroMotion.JumpAttack:
@@ -1885,6 +2023,8 @@ namespace Dnf.Render
                         return _jump;
                     case HeroMotion.JumpAttack:
                         return _jumpAttack;
+                    case HeroMotion.Hurt:
+                        return _hurtAni;
                     default:
                         return _battleStance ? _battleRest : _rest;
                 }
@@ -1911,6 +2051,8 @@ namespace Dnf.Render
                         return _jumpPath;
                     case HeroMotion.JumpAttack:
                         return _jumpAttackPath;
+                    case HeroMotion.Hurt:
+                        return _hurtPath;
                     default:
                         return _battleStance ? _battleRestPath : _restPath;
                 }
@@ -1937,6 +2079,8 @@ namespace Dnf.Render
                         return _jumpAttackTimeline.FrameAt(AttackAnimationMs);
                     case HeroMotion.Jump:
                         return JumpFrame();
+                    case HeroMotion.Hurt:
+                        return _hurtTimeline.FrameAt(MotionMs);
                     default:
                         return (_battleStance ? _battleRestTimeline : _restTimeline).FrameAt(MotionMs);
                 }

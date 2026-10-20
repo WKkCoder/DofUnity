@@ -5,7 +5,9 @@
 #                                       怪物清完出口打开,顶着出口的门洞走进去换房间;Esc 退出。Z 不绑定;空格是暂停(原版里它们是技能槽,绑什么没确认)
 #       tools/play-dungeon.sh explore    自动机逛遍所有房间再打首领(看一遍整条路线)
 #       tools/play-dungeon.sh bot        自动机直奔首领
-# 伤害是占位值,命中停顿按客户端代码做了(E-077),没有耗蓝,怪物不会伤害你,没有结算界面。数据目录取 DNF_DIR(local.env 或环境变量)。
+#       tools/play-dungeon.sh nodamage   (可以和上面的模式连着写,例如 explore nodamage)怪物打不到你、没有血条:想只看打怪的时候用
+# 伤害是占位值,命中停顿按客户端代码做了(E-077);怪物会还手(E-086,左下角有生命条与魔法条,主角死了只有 DEAD 字样,没有复活),
+# 没有耗蓝、没有结算界面。数据目录取 DNF_DIR(local.env 或环境变量)。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . tools/env.sh
@@ -18,11 +20,13 @@ if [ -z "${DNF_DIR:-}" ] || [ ! -f "$DNF_DIR/Script.pvf" ]; then
 fi
 
 extra=()
-case "${1:-}" in
-  "") ;;
-  bot) extra=(-dnfbot) ;;
-  explore) extra=(-dnfexplore) ;;
-  *) echo "用法: $0 [bot|explore]" >&2; exit 2 ;;
-esac
+for arg in "$@"; do
+  case "$arg" in
+    bot) extra+=(-dnfbot) ;;
+    explore) extra+=(-dnfexplore) ;;
+    nodamage) extra+=(-dnfnodamage) ;;
+    *) echo "用法: $0 [bot|explore] [nodamage]" >&2; exit 2 ;;
+  esac
+done
 
 open -n "$app" --args -dnfdir "$DNF_DIR" -dnfdungeon dungeon/act1/lorien.dgn ${extra[@]+"${extra[@]}"}

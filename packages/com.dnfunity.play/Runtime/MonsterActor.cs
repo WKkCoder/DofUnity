@@ -14,7 +14,7 @@ namespace Dnf.Play
         /// <summary>朝主角走。</summary>
         Walk,
 
-        /// <summary>出招(.mob 的第一个攻击动作);目前不伤害主角。</summary>
+        /// <summary>出招(.mob 的第一个攻击动作);动画里带攻击框的那几帧能打中主角(<see cref="MonsterActor.AttackBoxesAt"/>)。</summary>
         Attack,
 
         /// <summary>受击硬直(受击动作一或二,被击倒时是倒地动作)。</summary>
@@ -48,6 +48,12 @@ namespace Dnf.Play
         public const double AttackRangeX = 70;
 
         public const double AttackRangeY = 16;
+
+        /// <summary>
+        /// 按攻击框判断"够得着就出招"时(<see cref="MonsterActor.Update"/> 给了主角受击框),怪物最近走到离主角这么远(水平像素)就不再靠近,
+        /// 免得叠在主角身上(未量,随手取的数)。
+        /// </summary>
+        public const double MinSeparationX = 8;
 
         /// <summary>两次出招之间的间隔缺省值:.mob 没有 [attack delay] 时用。</summary>
         public const int DefaultAttackDelayMs = 1500;
@@ -134,6 +140,7 @@ namespace Dnf.Play
         private int _rollState;
         private int[] _holdFrames;
         private bool _dyingFromDown;
+        private List<AniBox> _strikeBoxes;
 
         /// <summary>血已经没了、但还在走倒地流程(腾空、颠一下);躺下的那一刻转入死亡(证据 E-079 第 3 步、E-082、E-084)。</summary>
         private bool _dead;
@@ -313,7 +320,7 @@ namespace Dnf.Play
         /// 推进 <paramref name="deltaMs"/> 毫秒。<paramref name="heroX"/>、<paramref name="heroY"/> 是主角位置,<paramref name="walk"/> 是怪物能站的地方。
         /// 主角死亡或不存在时传 <paramref name="heroPresent"/> = false,怪物就待机。
         /// </summary>
-        public void Update(double deltaMs, double heroX, double heroY, bool heroPresent, IWalkArea walk)
+        public void Update(double deltaMs, double heroX, double heroY, bool heroPresent, IWalkArea walk, IReadOnlyList<Aabb> heroBoxes = null)
         {
             if (Phase == MonsterPhase.Gone)
             {
@@ -374,7 +381,7 @@ namespace Dnf.Play
                     }
                     break;
                 default:
-                    Think(deltaMs, heroX, heroY, heroPresent, walk);
+                    Think(deltaMs, heroX, heroY, heroPresent, walk, heroBoxes);
                     break;
             }
             if (Hp <= 0 && Phase != MonsterPhase.Gone && _deathMs >= MonsterTuning.DeathMs)
@@ -388,10 +395,113 @@ namespace Dnf.Play
         {
             Phase = next;
             _phaseMs = 0;
+            if (next == MonsterPhase.Attack)
+            {
+                SwingNumber++;
+                AttackEvalFrame = -1;
+                HitHeroThisSwing = false;
+            }
         }
 
-        /// <summary>待机与行走时的决策:够近就出招,在视野里就走过去,否则站着。</summary>
-        private void Think(double deltaMs, double heroX, double heroY, bool heroPresent, IWalkArea walk)
+        /// <summary>从开始玩起出招的次数(每次进入出招阶段加 1)。命中判定用它给"同一次出招只打中主角一次"去重。</summary>
+        public long SwingNumber { get; private set; }
+
+        /// <summary>这一次出招已经判定到第几帧(-1 表示还没有);会话按"上次判到哪里"补判中间跳过的帧,保证每一帧的攻击框都被检查过。</summary>
+        public int AttackEvalFrame { get; set; } = -1;
+
+        /// <summary>这一次出招已经打中过主角(同一次出招的多个攻击框、多帧只算一次)。</summary>
+        public bool HitHeroThisSwing { get; set; }
+
+        /// <summary>怪物这次出招用的攻击信息(<see cref="MonsterModel.AttackInfoPaths"/> 里与 <see cref="MonsterModel.Attacks"/> 第 0 项对应的那一个);没有时是全默认值。</summary>
+        public HeroStrikeInfo Strike { get; set; }
+
+        /// <summary>怪物的物理攻击力(<see cref="MonsterStats.PhysicalAttack"/>):打主角的占位伤害用;没给就是 0。</summary>
+        public int PhysicalAttack { get; set; }
+
+        /// <summary>怪物的魔法攻击力(<see cref="MonsterStats.MagicalAttack"/>):魔法攻击信息打主角时用;没给就是 0。</summary>
+        public int MagicalAttack { get; set; }
+
+        /// <summary>
+        /// 出招动画第 <paramref name="frame"/> 帧的攻击框(世界坐标,类型 15,跟着怪物的朝向镜像、跟着离地高度抬升)。
+        /// 不在出招阶段、已经死了或这一帧没有攻击框时返回空表。
+        /// </summary>
+        public List<Aabb> AttackBoxesAt(int frame)
+        {
+            var result = new List<Aabb>();
+            if (!IsAlive || Phase != MonsterPhase.Attack)
+            {
+                return result;
+            }
+            AniFile ani = CurrentAni;
+            if (ani == null || (uint)frame >= (uint)ani.Frames.Length)
+            {
+                return result;
+            }
+            int direction = FacingLeft ? Direction.Left : Direction.Right;
+            int wx = (int)Math.Floor(X), wy = (int)Math.Floor(Y), wz = (int)Math.Floor(Z);
+            foreach (AniBox box in ani.Frames[frame].Boxes)
+            {
+                if (box.Type == AniBoxType.Attack)
+                {
+                    result.Add(Combat.ToWorld(box, wx, wy, wz, direction));
+                }
+            }
+            return result;
+        }
+
+        /// <summary>出招动画(第 0 个 [attack motion])所有帧里的攻击框(原始坐标,朝右):判断"这一击能不能够到主角"用。</summary>
+        private List<AniBox> StrikeBoxes()
+        {
+            if (_strikeBoxes != null)
+            {
+                return _strikeBoxes;
+            }
+            _strikeBoxes = new List<AniBox>();
+            AniFile ani = _model.Attacks.Count > 0 ? _model.Attacks[0] : null;
+            if (ani != null)
+            {
+                foreach (AniFrame frame in ani.Frames)
+                {
+                    foreach (AniBox box in frame.Boxes)
+                    {
+                        if (box.Type == AniBoxType.Attack)
+                        {
+                            _strikeBoxes.Add(box);
+                        }
+                    }
+                }
+            }
+            return _strikeBoxes;
+        }
+
+        /// <summary>
+        /// 按此刻的位置与朝向出招,攻击框(任意一帧的)会不会碰到主角此刻的受击框。这是个几何近似:原版的怪物(C++ 默认 AI,
+        /// 读 [attack kind] 等标签)是按什么距离出招的还没读通,取"挥出去能打中"作为靠近的标准,走到够得着就停(出招条件的推断,P5.M5)。
+        /// </summary>
+        private bool CanReach(IReadOnlyList<Aabb> heroBoxes)
+        {
+            int direction = FacingLeft ? Direction.Left : Direction.Right;
+            int wx = (int)Math.Floor(X), wy = (int)Math.Floor(Y), wz = (int)Math.Floor(Z);
+            foreach (AniBox box in StrikeBoxes())
+            {
+                Aabb strike = Combat.ToWorld(box, wx, wy, wz, direction);
+                for (int i = 0; i < heroBoxes.Count; i++)
+                {
+                    if (strike.Overlaps(heroBoxes[i]))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 待机与行走时的决策:够近就出招,在视野里就走过去,否则站着。
+        /// 给了主角的受击框、而且出招动画有攻击框时,"够近"= 这一击能打到(<see cref="CanReach"/>),走到够得着为止(最近停在 <see cref="MonsterTuning.MinSeparationX"/> 之外);
+        /// 否则用固定的距离(<see cref="MonsterTuning.AttackRangeX"/>、<see cref="MonsterTuning.AttackRangeY"/>)。
+        /// </summary>
+        private void Think(double deltaMs, double heroX, double heroY, bool heroPresent, IWalkArea walk, IReadOnlyList<Aabb> heroBoxes)
         {
             double dx = heroX - X;
             double dy = heroY - Y;
@@ -407,7 +517,10 @@ namespace Dnf.Play
             {
                 FacingLeft = dx < 0;
             }
-            bool near = Math.Abs(dx) <= MonsterTuning.AttackRangeX && Math.Abs(dy) <= MonsterTuning.AttackRangeY;
+            bool geometric = heroBoxes != null && heroBoxes.Count > 0 && StrikeBoxes().Count > 0;
+            bool near = geometric
+                ? CanReach(heroBoxes)
+                : Math.Abs(dx) <= MonsterTuning.AttackRangeX && Math.Abs(dy) <= MonsterTuning.AttackRangeY;
             if (near)
             {
                 if (_cooldownMs <= 0 && _model.Attacks.Count > 0 && _model.Attacks[0] != null)
@@ -426,7 +539,7 @@ namespace Dnf.Play
             }
             double seconds = deltaMs / 1000.0;
             double stepX = 0, stepY = 0;
-            if (Math.Abs(dx) > MonsterTuning.AttackRangeX * 0.8)
+            if (Math.Abs(dx) > (geometric ? MonsterTuning.MinSeparationX : MonsterTuning.AttackRangeX * 0.8))
             {
                 stepX = Math.Sign(dx) * Math.Min(SpeedX * seconds, Math.Abs(dx));
             }
