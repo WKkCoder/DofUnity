@@ -18,6 +18,11 @@ namespace Dnf.Client
     /// 带 -dnfdungeon &lt;副本定义路径&gt;(例如 dungeon/act1/lorien.dgn)时玩一整座副本:迷宫里的一格一格房间,怪物清完出口打开,走进出口换到相邻的房间,
     /// 屏幕右上角有占位小地图,首领房清空后出 CLEAR(<see cref="DungeonSession"/>,证据 E-070)。-dnfbot 让自动机替你打(-dnfexplore 先逛遍所有房间),
     /// -dnfseed 与 -dnfrandomlayout 指定战斗种子与随机选房。
+    /// 带 -dnfflow 时玩整条流程(<see cref="GameFlow"/>,证据 E-093):从城镇(-dnfflowfrom town,默认)、副本选择(select)或副本(dungeon)开始;
+    /// 城镇里按回车打开副本选择(占位:城镇里真实的副本入口触发还没做),选择界面上下键选、回车或空格进入、Esc 回城,
+    /// 副本(-dnfdungeon,默认洛兰)打完在结算菜单上选再次挑战、选择其它地下城、返回城镇,各去各的阶段。
+    /// 再带 -dnfbot(-dnfexplore)时由 <see cref="FlowBot"/> 替你走完全程,结算选择依次按 -dnfflowchoices(默认 retry,select,town,用完就停);
+    /// -dnftimescale N(1 到 6)把每帧的时间步放大,无人值守的检查用它缩短墙钟时间。每次阶段切换在日志里留一行 DNF_FLOW。
     /// 不分发、不复制任何原版内容:数据只在内存里解码。
     ///
     /// 数据目录(里面要有 Script.pvf 与 ImagePacks2)按下面的顺序找:
@@ -55,6 +60,12 @@ namespace Dnf.Client
         public const string DefaultMap = "map/elvengard/(r)gate.map";
         public const string PrefsKey = "DnfDir";
 
+        /// <summary>-dnfflow 没给 -dnfdungeon 时进的副本。</summary>
+        public const string DefaultDungeon = "dungeon/act1/lorien.dgn";
+
+        /// <summary>-dnfflow -dnfbot 没给 -dnfflowchoices 时结算菜单依次做的选择。</summary>
+        public const string DefaultFlowChoices = "retry,select,town";
+
         private enum State
         {
             Loading,
@@ -88,6 +99,15 @@ namespace Dnf.Client
         private double _afterClearSeconds;
         private SettlementChoice _loggedChoice;
         private string _dungeonPath;
+        private bool _flowMode;
+        private string _flowFrom = "town";
+        private string _flowChoices = DefaultFlowChoices;
+        private double _timeScale = 1.0;
+        private GameFlow _flow;
+        private FlowBot _flowBot;
+        private int _shownSerial;
+        private int _loggedEvents;
+        private bool _flowDoneNoted;
         private DungeonBot _bot;
         private bool _botExplore;
         private bool _useBot;
@@ -205,6 +225,19 @@ namespace Dnf.Client
                     case "-dnfsound":
                         _forceSound = true;
                         break;
+                    case "-dnfflow":
+                        _flowMode = true;
+                        break;
+                    case "-dnfflowfrom":
+                        if (value != null && (value == "town" || value == "select" || value == "dungeon")) { _flowFrom = value; i++; }
+                        break;
+                    case "-dnfflowchoices":
+                        if (value != null) { _flowChoices = value; i++; }
+                        break;
+                    case "-dnftimescale":
+                        if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out double ts)) { _timeScale = Math.Max(1.0, Math.Min(6.0, ts)); i++; }
+                        break;
                     case "-dnfquitafter":
                         if (value != null && float.TryParse(value, System.Globalization.NumberStyles.Float,
                                 System.Globalization.CultureInfo.InvariantCulture, out float q)) { _quitAfterSeconds = q; i++; }
@@ -277,10 +310,21 @@ namespace Dnf.Client
             {
                 DisposeView();
                 _assets = DnfAssets.Open(dir);
-                _session = TryCreateSession();
-                _view = _session != null
-                    ? new TownView(_assets, _session, StageBackground)
-                    : new TownView(_assets, mapPath, TownProjection.FromE024, StageBackground);
+                if (_flowMode)
+                {
+                    StartFlow();
+                    _session = _flow.Session;
+                    _view = new TownView(_assets, _flow.Scene, StageBackground);
+                    _shownSerial = _flow.StageSerial;
+                    LogNewFlowEvents();
+                }
+                else
+                {
+                    _session = TryCreateSession();
+                    _view = _session != null
+                        ? new TownView(_assets, _session, StageBackground)
+                        : new TownView(_assets, mapPath, TownProjection.FromE024, StageBackground);
+                }
                 _audio = TryCreateAudio(dir);
             }
             catch (Exception e)
@@ -313,7 +357,7 @@ namespace Dnf.Client
         /// </summary>
         private DnfAudio TryCreateAudio(string dir)
         {
-            if (_noSound || !string.IsNullOrEmpty(_shotPath) || !(_session is ISoundSource))
+            if (_noSound || !string.IsNullOrEmpty(_shotPath) || (!_flowMode && !(_session is ISoundSource)))
             {
                 return null;
             }
@@ -341,26 +385,7 @@ namespace Dnf.Client
         {
             if (!string.IsNullOrEmpty(_dungeonPath))
             {
-                // 整座副本:自动机(或 -dnfautowalk 的时间表)在离屏渲染前先按固定 1/60 秒步长确定地打到指定时刻,与命令行 dungeon-check 同一局
-                bool shot = !string.IsNullOrEmpty(_shotPath);
-                DungeonSession dungeon = DungeonSession.Create(_assets, _dungeonPath, _seed, _randomLayout, heroVitals: !_noDamage);
-                _heroInput = true;
-                if (_useBot)
-                {
-                    _bot = new DungeonBot(_botExplore);
-                }
-                if (shot && _playAtSeconds >= 0.0)
-                {
-                    if (_bot != null)
-                    {
-                        _bot.RunUntil(dungeon, _playAtSeconds * 1000.0, _afterClearSeconds * 1000.0);
-                    }
-                    else
-                    {
-                        _script.RunUntil(dungeon, _playAtSeconds * 1000.0);
-                    }
-                }
-                return dungeon;
+                return CreateDungeon(_dungeonPath, _seed);
             }
             if (DemoRoom.IsRoomMap(_assets, mapPath))
             {
@@ -409,6 +434,34 @@ namespace Dnf.Client
             return session;
         }
 
+        /// <summary>
+        /// 整座副本:自动机(或 -dnfautowalk 的时间表)在离屏渲染前先按固定 1/60 秒步长确定地打到指定时刻,与命令行 dungeon-check 同一局。
+        /// 流程模式下(<see cref="GameFlow"/>)自动机由 <see cref="FlowBot"/> 管,这里不留。
+        /// </summary>
+        private DungeonSession CreateDungeon(string path, int seed)
+        {
+            bool shot = !string.IsNullOrEmpty(_shotPath);
+            DungeonSession dungeon = DungeonSession.Create(_assets, path, seed, _randomLayout, heroVitals: !_noDamage);
+            _heroInput = true;
+            if (_useBot && !_flowMode)
+            {
+                _bot = new DungeonBot(_botExplore);
+            }
+            if (shot && _playAtSeconds >= 0.0)
+            {
+                DungeonBot shotBot = _bot ?? (_useBot ? new DungeonBot(_botExplore) : null);
+                if (shotBot != null)
+                {
+                    shotBot.RunUntil(dungeon, _playAtSeconds * 1000.0, _afterClearSeconds * 1000.0);
+                }
+                else
+                {
+                    _script.RunUntil(dungeon, _playAtSeconds * 1000.0);
+                }
+            }
+            return dungeon;
+        }
+
         /// <summary>x,y,left|right,rest|move,毫秒[,镜头x]:不带镜头 x 时镜头取"主角居中再夹住"。</summary>
         private static void ApplyHeroSpec(IHeroSession session, string spec)
         {
@@ -437,7 +490,23 @@ namespace Dnf.Client
             }
         }
 
+        /// <summary>日志里的英雄一段 + 流程模式下的流程一段。</summary>
         private string HeroLog()
+        {
+            return HeroOnlyLog() + FlowLog();
+        }
+
+        private string FlowLog()
+        {
+            if (_flow == null)
+            {
+                return string.Empty;
+            }
+            return " flow=" + _flow.Stage + " serial=" + _flow.StageSerial + " runs=" + _flow.Runs + " settlements=" + _flow.Settlements
+                + (_flowBot != null ? " botDone=" + _flowBot.Done + " choicesMade=" + _flowBot.ChoicesMade : string.Empty);
+        }
+
+        private string HeroOnlyLog()
         {
             if (_session == null)
             {
@@ -514,6 +583,8 @@ namespace Dnf.Client
             _view?.Dispose();
             _view = null;
             _session = null;
+            _flow = null;
+            _flowBot = null;
             _assets?.Dispose();
             _assets = null;
         }
@@ -528,46 +599,18 @@ namespace Dnf.Client
             _clockMs = NowMs();
             try
             {
-                if (_session != null && !_paused)
+                if (_flow != null)
+                {
+                    if (!_paused)
+                    {
+                        StepFlow(Math.Min(Time.unscaledDeltaTime * 1000.0 * _timeScale, 100.0));
+                    }
+                }
+                else if (_session != null && !_paused)
                 {
                     // 一帧最多推进 100 毫秒:窗口被拖动、打开数据等卡顿之后主角不会一步冲出去
-                    double deltaMs = Math.Min(Time.unscaledDeltaTime * 1000.0, 100.0);
-                    if (_bot != null && _session is DungeonSession botDungeon)
-                    {
-                        // 自动机按固定的 1/60 秒"心跳"决策并推进(与命令行 dungeon-check --bot 同一局):帧率抖动、卡顿只会让一帧里多补或少补几个心跳,
-                        // 不会改变它的路线。它的走位、出手间隔都是按心跳数写的,按可变的帧长喂给它会在怪物旁来回晃(证据 E-072 的实时运行里出现过)。
-                        if (botDungeon.Finished)
-                        {
-                            // 副本走完(首领清空):主角站着不动,只让时间走,结算画面随之出现;自动机不再决策
-                            botDungeon.Update(deltaMs, 0, 0);
-                        }
-                        else
-                        {
-                            _bot.Advance(botDungeon, deltaMs);
-                        }
-                    }
-                    else
-                    {
-                        int dirX = 0, dirY = 0;
-                        bool attack = false, jump = false;
-                        SkillKeys skills = SkillKeys.None;
-                        if (_heroInput)
-                        {
-                            attack = ReadHeroInput(out dirX, out dirY, out jump, out skills);
-                        }
-                        if (_session is ISkillSession skillSession)
-                        {
-                            skillSession.Update(deltaMs, dirX, dirY, attack, jump, skills);
-                        }
-                        else if (_session is IActionSession action)
-                        {
-                            action.Update(deltaMs, dirX, dirY, attack, jump);
-                        }
-                        else
-                        {
-                            _session.Update(deltaMs, dirX, dirY);
-                        }
-                    }
+                    double deltaMs = Math.Min(Time.unscaledDeltaTime * 1000.0 * _timeScale, 100.0);
+                    StepSession(deltaMs);
                     // 声音:取走这一步发出的提示、推进调度器、执行命令(不碰画面与游戏状态)
                     _audio?.Tick(deltaMs, _session as ISoundSource);
                     UpdateSettlement();
@@ -579,6 +622,12 @@ namespace Dnf.Client
             {
                 Fail(e);
                 return;
+            }
+            if (_flowBot != null && _flowBot.Done && _quitAfterSeconds >= 0f && !_flowDoneNoted)
+            {
+                // 无人值守的流程走完了:再留一秒让最后的日志与声音计数落定,然后照常收尾退出(-dnfquitafter 只是上限)
+                _flowDoneNoted = true;
+                _quitAfterSeconds = Mathf.Min(_quitAfterSeconds, Time.realtimeSinceStartup - _runningSince + 1f);
             }
             if (_quitAfterSeconds >= 0f && Time.realtimeSinceStartup - _runningSince >= _quitAfterSeconds)
             {
@@ -592,6 +641,156 @@ namespace Dnf.Client
                 _quitAfterSeconds = -1f;
                 Application.Quit(0);
             }
+        }
+
+        /// <summary>
+        /// 把当前的会话推进 <paramref name="deltaMs"/> 毫秒:自动机在打副本就让它按固定心跳决策并推进,否则读键盘(或 -dnfautowalk 的时间表)替主角操作。
+        /// </summary>
+        private void StepSession(double deltaMs)
+        {
+            if (_bot != null && _session is DungeonSession botDungeon)
+            {
+                // 自动机按固定的 1/60 秒"心跳"决策并推进(与命令行 dungeon-check --bot 同一局):帧率抖动、卡顿只会让一帧里多补或少补几个心跳,
+                // 不会改变它的路线。它的走位、出手间隔都是按心跳数写的,按可变的帧长喂给它会在怪物旁来回晃(证据 E-072 的实时运行里出现过)。
+                if (botDungeon.Finished)
+                {
+                    // 副本走完(首领清空):主角站着不动,只让时间走,结算画面随之出现;自动机不再决策
+                    botDungeon.Update(deltaMs, 0, 0);
+                }
+                else
+                {
+                    _bot.Advance(botDungeon, deltaMs);
+                }
+            }
+            else
+            {
+                int dirX = 0, dirY = 0;
+                bool attack = false, jump = false;
+                SkillKeys skills = SkillKeys.None;
+                if (_heroInput)
+                {
+                    attack = ReadHeroInput(out dirX, out dirY, out jump, out skills);
+                }
+                if (_session is ISkillSession skillSession)
+                {
+                    skillSession.Update(deltaMs, dirX, dirY, attack, jump, skills);
+                }
+                else if (_session is IActionSession action)
+                {
+                    action.Update(deltaMs, dirX, dirY, attack, jump);
+                }
+                else
+                {
+                    _session.Update(deltaMs, dirX, dirY);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 流程模式(<see cref="GameFlow"/>)下推进一帧:流程自动机在就让它推进当前阶段并做决定,否则按人的操作推进当前阶段的会话;
+        /// 然后应用阶段切换(换视图、停声音、写日志),最后给声音调度器与结算菜单的悬停更新。
+        /// </summary>
+        private void StepFlow(double deltaMs)
+        {
+            if (_flowBot != null)
+            {
+                _flowBot.Advance(_flow, deltaMs);
+            }
+            else
+            {
+                if (_session != null)
+                {
+                    StepSession(deltaMs);
+                }
+                _flow.Poll();
+            }
+            if (_flow.StageSerial != _shownSerial)
+            {
+                SwitchView();
+            }
+            _audio?.Tick(deltaMs, _flow.Session as ISoundSource);
+            UpdateSettlement();
+        }
+
+        /// <summary>
+        /// 流程换了阶段:用新阶段的内容造视图、销毁旧视图,停掉旧阶段的声音(新副本的第一个房间提示会重新起音乐)。
+        /// </summary>
+        private void SwitchView()
+        {
+            TownView previous = _view;
+            _session = _flow.Session;
+            _view = new TownView(_assets, _flow.Scene, StageBackground);
+            previous?.Dispose();
+            _shownSerial = _flow.StageSerial;
+            _loggedChoice = SettlementChoice.None;
+            _audio?.StopAll();
+            LogNewFlowEvents();
+        }
+
+        private void LogNewFlowEvents()
+        {
+            while (_loggedEvents < _flow.History.Count)
+            {
+                FlowEvent e = _flow.History[_loggedEvents++];
+                Debug.Log("DNF_FLOW serial=" + e.Serial + " from=" + e.From + " to=" + e.To + " reason=\"" + e.Reason + "\" runs=" + _flow.Runs
+                    + " settlements=" + _flow.Settlements + (e.To == GameStage.Dungeon ? " dungeon=" + _flow.DungeonPath : string.Empty));
+            }
+        }
+
+        /// <summary>流程模式的初始化:造 <see cref="GameFlow"/>(城镇、副本两种会话的工厂接上这个演示的数据与参数)并进入起始阶段;带自动机参数时再造流程自动机。</summary>
+        private void StartFlow()
+        {
+            string dungeon = string.IsNullOrEmpty(_dungeonPath) ? DefaultDungeon : _dungeonPath;
+            _flow = new GameFlow(
+                () => DemoHero.CreateSession(_assets, DefaultMap, DemoHero.SeriaRoom),
+                (path, run) => CreateDungeon(path, _seed + run),
+                new[] { new DungeonEntry(dungeon, null) });
+            switch (_flowFrom)
+            {
+                case "select":
+                    _flow.EnterSelect("start");
+                    break;
+                case "dungeon":
+                    _flow.StartDungeon(dungeon, "start");
+                    break;
+                default:
+                    _flow.EnterTown("start");
+                    break;
+            }
+            if (_useBot)
+            {
+                _flowBot = new FlowBot(_botExplore, ParseSettlementChoices(_flowChoices));
+            }
+        }
+
+        /// <summary>retry、select、town(逗号分隔)→ 结算菜单上的选项;写错了就报错。</summary>
+        private static System.Collections.Generic.List<SettlementChoice> ParseSettlementChoices(string text)
+        {
+            var list = new System.Collections.Generic.List<SettlementChoice>();
+            foreach (string item in (text ?? string.Empty).Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                switch (item.Trim().ToLowerInvariant())
+                {
+                    case "retry":
+                        list.Add(SettlementChoice.Retry);
+                        break;
+                    case "select":
+                        list.Add(SettlementChoice.SelectDungeon);
+                        break;
+                    case "town":
+                        list.Add(SettlementChoice.ReturnToTown);
+                        break;
+                    default:
+                        throw new FormatException("-dnfflowchoices 里只能写 retry、select、town: " + item);
+                }
+            }
+            return list;
+        }
+
+        /// <summary>流程模式下正处在副本选择界面(没有主角)。</summary>
+        private bool InSelect
+        {
+            get { return _flow != null && _flow.Stage == GameStage.DungeonSelect; }
         }
 
         /// <summary>
@@ -737,25 +936,62 @@ namespace Dnf.Client
                 switch (e.keyCode)
                 {
                     case KeyCode.Space:
-                        TogglePause();
+                        if (InSelect)
+                        {
+                            _flow.Select.Confirm();     // 副本选择界面底栏写的是"空格 进入地下城"
+                        }
+                        else
+                        {
+                            TogglePause();
+                        }
                         break;
                     case KeyCode.LeftArrow:
-                        if (_paused || _session == null)
+                        if ((_paused || _session == null) && !InSelect)
                         {
                             Step(-50.0);
                         }
                         break;
                     case KeyCode.RightArrow:
-                        if (_paused || _session == null)
+                        if ((_paused || _session == null) && !InSelect)
                         {
                             Step(50.0);
+                        }
+                        break;
+                    case KeyCode.UpArrow:
+                        if (InSelect)
+                        {
+                            _flow.Select.Move(-1);
+                        }
+                        break;
+                    case KeyCode.DownArrow:
+                        if (InSelect)
+                        {
+                            _flow.Select.Move(1);
+                        }
+                        break;
+                    case KeyCode.Return:
+                    case KeyCode.KeypadEnter:
+                        if (InSelect)
+                        {
+                            _flow.Select.Confirm();
+                        }
+                        else if (_flow != null && _flow.Stage == GameStage.Town)
+                        {
+                            _flow.EnterSelect("key");   // 占位:原版是走到城镇里的副本入口(这个演示里的赛丽亚房间没有入口)
                         }
                         break;
                     case KeyCode.H:
                         _hud = !_hud;
                         break;
                     case KeyCode.Escape:
-                        Quit();
+                        if (InSelect)
+                        {
+                            _flow.Select.Back();
+                        }
+                        else
+                        {
+                            Quit();
+                        }
                         break;
                     // 副本结算菜单的热键(原版界面上写的是 F13 再次挑战、F11 选择其它地下城、F12 返回城镇,证据 E-091);
                     // 笔记本键盘没有 F13,所以数字键 1、2、3 也行(这是本演示加的,原版没有)
@@ -783,9 +1019,9 @@ namespace Dnf.Client
                         settling.Click(cx, cy);
                     }
                 }
-                else
+                else if (!InSelect)
                 {
-                    TogglePause(); // 触摸屏上没有空格键
+                    TogglePause(); // 触摸屏上没有空格键;副本选择界面里点击暂时不处理(界面还是占位)
                 }
             }
         }
@@ -934,8 +1170,21 @@ namespace Dnf.Client
             {
                 help = "Space: pause   Left/Right: step 50 ms   H: hide text   Esc: quit   (no player character on this map)";
             }
-            string shownMap = _session != null ? _session.MapPath : mapPath;
-            string text = (_session is DungeonSession ? "DNF dungeon demo (Unity)   room: " : IsRoomSession ? "DNF dungeon room demo (Unity)   map: " : "DNF town demo (Unity)   map: ") + shownMap + "\n"
+            if (_flow != null)
+            {
+                hero = "flow: " + _flow.Stage + "  dungeon runs " + _flow.Runs + "  menu choices " + _flow.Settlements
+                    + (_flowBot != null ? "  (autopilot" + (_flowBot.Done ? ", done)" : ")") : string.Empty) + "\n" + hero;
+                if (InSelect)
+                {
+                    help = "Up/Down: choose a dungeon   Enter or Space: go in   Esc: back to town   H: hide text   (placeholder screen)";
+                }
+                else if (_flow.Stage == GameStage.Town)
+                {
+                    help = "Arrow keys: walk   Enter: open the dungeon map (placeholder for the town's dungeon gate)   Space: pause   H: hide text   Esc: quit";
+                }
+            }
+            string shownMap = _session != null ? _session.MapPath : InSelect ? "(dungeon select)" : mapPath;
+            string text = (_session is DungeonSession ? "DNF dungeon demo (Unity)   room: " : IsRoomSession ? "DNF dungeon room demo (Unity)   map: " : InSelect ? "DNF game flow demo (Unity)   screen: " : "DNF town demo (Unity)   map: ") + shownMap + "\n"
                 + "t = " + ((long)_clockMs) + " ms" + (_paused ? " (paused)" : "") + "    " + _fps.ToString("F0") + " FPS    sprites: " + _spriteCount
                 + "    NPCs: " + _view.NpcCount + "    map layers: " + _view.LayerCount + "\n"
                 + hero + help;

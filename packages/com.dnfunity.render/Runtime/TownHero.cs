@@ -2161,7 +2161,7 @@ namespace Dnf.Render
     /// 带一个可操作主角与跟随镜头的场景游戏(城镇或副本房间)。视图层(Unity 的 TownView)只依赖这个接口:
     /// 每帧 <see cref="Update"/> 推进主角与镜头,再用 <see cref="Build"/> 取绘制列表。
     /// </summary>
-    public interface IHeroSession
+    public interface IHeroSession : ISceneSource
     {
         string MapPath { get; }
         TownHero Hero { get; }
@@ -2169,7 +2169,6 @@ namespace Dnf.Render
         int LayerCount { get; }
         int NpcCount { get; }
         void Update(double deltaMs, int dirX, int dirY);
-        List<SceneSprite> Build(long timeMs);
     }
 
     /// <summary>

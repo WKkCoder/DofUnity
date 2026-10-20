@@ -76,7 +76,7 @@ public class DungeonSessionTests
     /// 一横排两格的副本:(0,0) 起点、只有右出口(B);(1,0) 首领格、只有左出口(E)。出口码:右 1、上 2、左 4、下 8。
     /// 起点与首领不能是同一格,所以一个格的副本造不出首领;这里两格都没有怪物,向右走进首领格的那一刻首领格就清空了。
     /// </summary>
-    private static DungeonLayout TwoRoomBossLayout()
+    internal static DungeonLayout TwoRoomBossLayout()
     {
         var doc = new[]
         {
@@ -95,7 +95,7 @@ public class DungeonSessionTests
     }
 
     /// <summary>用夹具造出每一格的迷你房间;<paramref name="monstersOf"/> 给每一格的怪物位置。</summary>
-    private sealed class Dungeon : IDisposable
+    internal sealed class Dungeon : IDisposable
     {
         private readonly AvatarFixture _fx = new AvatarFixture();
         private readonly Func<int, int, (int X, int Y)[]> _monstersOf;
@@ -199,7 +199,7 @@ public class DungeonSessionTests
         }
     }
 
-    private static (int X, int Y)[] None() => Array.Empty<(int, int)>();
+    internal static (int X, int Y)[] None() => Array.Empty<(int, int)>();
 
     /// <summary>起点格有一只离主角 40 像素远的弱怪物,其余格没有怪物。</summary>
     private static (int X, int Y)[] OneWeakAtStart(int cx, int cy) => cx == 0 && cy == 0 ? new[] { (340, 100) } : None();

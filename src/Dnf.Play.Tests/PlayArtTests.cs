@@ -44,8 +44,8 @@ public class PlayArtTests
         Assert.Equal(0, one.Rgba[At(6, 8) + 3]);
 
         // 字库里没有的字符画成空格:整张都是透明的
-        SpriteFrame blank = art.Text("Z", 1);
-        Assert.False(OverlayArt.HasGlyph('Z'));
+        SpriteFrame blank = art.Text("~", 1);
+        Assert.False(OverlayArt.HasGlyph('~'));
         Assert.True(OverlayArt.HasGlyph('7'));
         Assert.All(Enumerable.Range(0, blank.Width * blank.Height), i => Assert.Equal(0, blank.Rgba[i * 4 + 3]));
     }

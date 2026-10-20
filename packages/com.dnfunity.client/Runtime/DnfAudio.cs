@@ -164,6 +164,24 @@ namespace Dnf.Client
             MaxInFlight = Math.Max(MaxInFlight, _playbacks.Count);
         }
 
+        /// <summary>
+        /// 停掉所有声音(离开副本、换阶段时):调度器清掉在放的与还没开始的声音和房间声音的记录,执行产生的停止命令。
+        /// 之后新一场游戏的第一个提示会重新起音乐与环境声。
+        /// </summary>
+        public void StopAll()
+        {
+            if (_scheduler == null)
+            {
+                return;
+            }
+            _commands.Clear();
+            _scheduler.StopAll(_commands);
+            for (int i = 0; i < _commands.Count; i++)
+            {
+                Execute(_commands[i]);
+            }
+        }
+
         /// <summary>演示暂停时所有声音一起暂停。</summary>
         public void SetPaused(bool paused)
         {

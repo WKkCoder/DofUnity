@@ -12,6 +12,8 @@
 #   5. 整座副本(E-070):自动机按固定步长打到指定时刻(逛遍所有房间的 6.8/21.0/48.0/59.7 秒与直奔首领的 14.0 秒),离屏渲染的一帧(出口淡出、换房间、小地图、CLEAR)
 #      与命令行 dungeon-check --bot 逐字节对照;再实时让自动机逛遍并打完整座副本,检查走完(进过 6 个房间、首领清空)。
 #   6. 声音(E-089、E-090):同一局实时运行默认静音(-batchmode),但整条链路照跑;日志里的 DNF_AUDIO 计数要有提示、开始放过、读成功过剪辑、没有读失败。
+#   7. 整条流程(E-093):副本选择界面(占位)离屏一帧与命令行 flow-check --from select 逐字节对照;再让流程自动机在播放器里实时走完
+#      城镇 → 选择 → 副本 → 结算 → 再次挑战 → 副本 → 结算 → 选择其它地下城 → 选择 → 副本 → 结算 → 返回城镇(时间步放大 4 倍),检查七次阶段切换、三局副本与声音计数。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -365,6 +367,43 @@ if [ "$platform" = "macos" ]; then
     echo "$audio_line"
     echo "$audio_line" | grep -q -E 'cues=[1-9][0-9]* .* started=[1-9][0-9]* .* loaded=[1-9][0-9]* failed=0 ' \
       || { echo "声音的计数不对(应有 cues>=1、started>=1、loaded>=1、failed=0):$dungeon_log" >&2; exit 1; }
+
+    # 整条流程(证据 E-093)。副本选择界面是占位(自带像素字),离屏一帧与命令行 flow-check --from select 在第一帧的画面逐字节对照
+    rm -f out/town-demo-flow-select.png out/town-cpu-flow-select-0.00.png
+    set +e
+    "$app" -batchmode -logFile "$PWD/re/unity-run-town-flow-select-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-flow-select.png" \
+      -dnftime 0 -dnfflow -dnfflowfrom select
+    rc=$?
+    set -e
+    echo "播放器退出码(离屏渲染副本选择界面): $rc"
+    grep -E 'DNF_TOWN_DEMO' "$PWD/re/unity-run-town-flow-select-macos.log" || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll flow-check --from select --choices town --seconds 2 --shots-at 0 --png "$PWD/out/town-cpu-flow-select" >/dev/null || [ $? -eq 2 ]
+    python3 tools/py/png_diff.py out/town-demo-flow-select.png out/town-cpu-flow-select-0.00.png --max-diff 0
+    # 实时运行:流程自动机走完 城镇 → 选择 → 副本 → 结算 → 再次挑战 → 副本 → 结算 → 选择其它地下城 → 选择 → 副本 → 结算 → 返回城镇;
+    # 时间步放大 4 倍,走完自动退出(-dnfquitafter 只是上限)。要有七次阶段切换、三局副本、三次菜单选择,自动机说走完了,最后停在城镇
+    flow_log="$PWD/re/unity-run-town-flow-macos.log"
+    rm -f "$flow_log"
+    set +e
+    "$app" -batchmode -logFile "$flow_log" -dnfdir "$DNF_DIR" -dnfflow -dnfbot -dnfnodamage -dnfdungeon "$dungeon" -dnfflowchoices retry,select,town \
+      -dnftimescale 4 -dnfquitafter 150
+    rc=$?
+    set -e
+    echo "播放器退出码(实时走完整条流程): $rc"
+    grep -E 'DNF_FLOW|DNF_TOWN_DEMO ran' "$flow_log" | cut -c1-260 || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$flow_log"; then
+      echo "整条流程的日志里有异常:$flow_log" >&2
+      exit 1
+    fi
+    [ "$(grep -c -E 'DNF_FLOW serial=' "$flow_log")" -eq 7 ] \
+      || { echo "整条流程应有七次阶段切换(DNF_FLOW 行):$flow_log" >&2; exit 1; }
+    grep -q -E 'DNF_TOWN_DEMO ran .* flow=Town serial=7 runs=3 settlements=3 botDone=True choicesMade=3' "$flow_log" \
+      || { echo "整条流程没有走完(应停在城镇、三局副本、三次菜单选择、自动机说走完了):$flow_log" >&2; exit 1; }
+    flow_audio="$(grep -E 'DNF_AUDIO cues=' "$flow_log" | tail -1)"
+    echo "$flow_audio"
+    echo "$flow_audio" | grep -q -E 'cues=[1-9][0-9]* .* started=[1-9][0-9]* .* loaded=[1-9][0-9]* failed=0 ' \
+      || { echo "整条流程的声音计数不对(应有 cues>=1、started>=1、loaded>=1、failed=0):$flow_log" >&2; exit 1; }
   else
     echo "没有设置 DNF_DIR:跳过离屏渲染校验"
   fi
