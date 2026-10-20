@@ -47,7 +47,7 @@ internal static class CombatCheck
         Console.WriteLine("房间 " + opts.MapPath + ":怪物 " + session.Monsters.Count + " 个,主角连招 " + session.Hero.AttackCount + " 段,出生 ("
             + F(session.Hero.X) + "," + F(session.Hero.Y) + ") 朝" + (session.Hero.FacingLeft ? "左" : "右") + ",镜头 x " + session.Camera.IntX
             + ",主角脚本 [move speed] " + session.Hero.MoveSpeedStat + ",武器命中停顿 " + (session.WeaponStunMs > 0 ? "有" : "无") + "(E-077)"
-            + ",受击硬直 " + (session.StunTable != null ? "按客户端公式" : "占位值") + "(E-080)");
+            + ",受击硬直 " + (session.StunTable != null ? "按客户端公式" : "占位值") + "(E-080),倒地 按客户端的开始处理与三阶段(E-083)");
         foreach (MonsterActor m in session.Monsters)
         {
             Console.WriteLine("  怪物 " + m.Index + ":编号 " + m.Code + (m.IsBoss ? "(首领)" : string.Empty) + " 等级 " + m.Level + " 生命 " + m.HpMax
@@ -74,7 +74,8 @@ internal static class CombatCheck
                 {
                     if (m.Phase is MonsterPhase.Hurt or MonsterPhase.Dying)
                     {
-                        sb.Append("  [怪物 " + m.Index + " 血 " + m.Hp + "/" + m.HpMax + " " + m.Phase + "]");
+                        sb.Append("  [怪物 " + m.Index + " 血 " + m.Hp + "/" + m.HpMax + " " + m.Phase
+                            + (m.IsKnockedDown ? " 倒地阶段 " + m.DownStage + " 离地 " + F(m.Z) + " 水平速度 " + F(m.HorizontalSpeed) : string.Empty) + "]");
                     }
                 }
                 Console.WriteLine(sb.ToString());
@@ -94,7 +95,7 @@ internal static class CombatCheck
                 var tr = new StringBuilder("  [跟踪 " + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s] 主角 (" + F(session.Hero.X) + "," + F(session.Hero.Y) + ")");
                 foreach (MonsterActor m in session.Monsters)
                 {
-                    tr.Append("  #" + m.Index + " " + m.Phase + " (" + F(m.X) + "," + F(m.Y) + ") " + m.Hp);
+                    tr.Append("  #" + m.Index + " " + m.Phase + (m.IsKnockedDown ? "/倒地" + m.DownStage : string.Empty) + " (" + F(m.X) + "," + F(m.Y) + (m.Z > 0 ? "," + F(m.Z) : string.Empty) + ") " + m.Hp);
                 }
                 Console.WriteLine(tr.ToString());
             }

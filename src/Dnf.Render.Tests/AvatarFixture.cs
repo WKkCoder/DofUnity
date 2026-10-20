@@ -96,6 +96,15 @@ internal sealed class AvatarFixture : IDisposable
     /// <summary>怪物目录、怪物 .mob、怪物动画目录与 IMG。编号 1 是完整的迷你怪物,2 只有待机动作,3 的路径指向不存在的脚本。</summary>
     public const string MonsterListPath = "monster/monster.lst";
     public const string BlobMobPath = "monster/blob/blob.mob";
+
+    /// <summary>
+    /// 倒地动画每一帧都有受击框、有两个长停留帧的迷你怪物(与原版地精的倒地动画同形:两帧短、两帧长停留、一帧躺着;证据 E-083),
+    /// 用来测空中还能不能被打到、颠一下换帧。其余动作与 <see cref="BlobMobPath"/> 相同。
+    /// </summary>
+    public const string BlobBoxedDownMobPath = "monster/blob/boxed.mob";
+
+    /// <summary>倒地动作是一段没有长停留帧的短动画(三帧各 80 毫秒):倒地状态机只能靠时间走完。</summary>
+    public const string BlobShortDownMobPath = "monster/blob/short.mob";
     public const string BlobAnimationDir = "monster/blob/animation_blob";
     public const string BlobImage = "sprite/monster/blob/blob.img";
 
@@ -318,6 +327,17 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[down motion]").Str("Animation_Blob/Down.ani")
                 .Tag("[attack motion]").Str("Animation_Blob/Attack1.ani")
                 .Tag("[attack info]").Str("AttackInfo/Attack1.atk").Str("").Build()),
+            (BlobBoxedDownMobPath, NewScript()
+                .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
+                .Tag("[move motion]").Str("Animation_Blob/Move.ani")
+                .Tag("[damage motion 1]").Str("Animation_Blob/Damage1.ani")
+                .Tag("[damage motion 2]").Str("Animation_Blob/Damage2.ani")
+                .Tag("[down motion]").Str("Animation_Blob/DownBoxed.ani")
+                .Tag("[attack motion]").Str("Animation_Blob/Attack1.ani").Build()),
+            (BlobShortDownMobPath, NewScript()
+                .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
+                .Tag("[damage motion 1]").Str("Animation_Blob/Damage1.ani")
+                .Tag("[down motion]").Str("Animation_Blob/Attack1.ani").Build()),
             ("monster/blob/big.mob", NewScript()
                 .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani").Build()),
             // 受击动画只有一帧、停留 10000 毫秒(原版的受击动画就是这样:停多久由游戏逻辑决定);倒地动画的中间两帧同理
@@ -326,6 +346,8 @@ internal sealed class AvatarFixture : IDisposable
             (BlobAnimationDir + "/damage1.ani", BuildBlobAni(false, (4, 10000, BlobHurtBox))),
             (BlobAnimationDir + "/damage2.ani", BuildBlobAni(false, (5, 10000, BlobHurtBox))),
             (BlobAnimationDir + "/down.ani", BuildBlobAni(false, (6, 80, BlobHurtBox), (7, 10000, default), (8, 500, default))),
+            (BlobAnimationDir + "/downboxed.ani", BuildBlobAni(false, (6, 80, BlobHurtBox), (7, 80, BlobHurtBox), (7, 10000, BlobHurtBox), (8, 10000, BlobHurtBox),
+                (8, 500, BlobHurtBox))),
             (BlobAnimationDir + "/attack1.ani", BuildBlobAni(false, (0, 80, BlobHurtBox), (1, 80, BlobHurtBox), (2, 80, BlobHurtBox))),
             // 可走区域:两个矩形 (10,20,100,50) 与 (100,60,30,40),拼成一个 L 形
             (AreaMap, NewScript().Tag("[virtual movable area]").Int(10, 20, 100, 50, 100, 60, 30, 40).Build()),

@@ -497,20 +497,34 @@ public class RoomCombatTests
     [Fact]
     public void ThePushFollowsTheHeroFacingAndTheKnockDownFlagSelectsTheFallingAnimation()
     {
-        var strikes = new[] { new HeroStrikeInfo(0, 30, true), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false) };
+        // 倒地按客户端的开始处理算(E-083):[push aside] 是水平初速的来源,[lift up] 给腾空。体重 0、类型 1:
+        // 推 60 → 缩放 121 → 一半 60 → 再 × [0.8, 1.2];抬升 300 → 缩放 606 → 高度 122,腾空约 0.8 秒,落地后再颠一下:一共被推出去大约 45 到 80 像素
+        var strikes = new[] { new HeroStrikeInfo(0, 60, true, liftUp: 300), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false) };
         using var arena = new Arena(new[] { (340, 100) }, strikes);
         RoomCombatSession s = arena.Session;
-        arena.Run(300, 0);                                                // 第 0 段 200 毫秒命中,推 30 像素用 300 毫秒走完
+        arena.Run(300, 0);                                                // 第 0 段 200 毫秒命中
         MonsterActor m = s.Monsters[0];
         Assert.Equal(1, s.Hits);
         Assert.Equal(AvatarFixture.BlobAnimationDir + "/down.ani", m.CurrentAnimationPath);
-        arena.Run(200);
-        Assert.Equal(340 + 30.0, m.X, 6);                                 // 朝右的挥击把怪物往右推
+        Assert.True(m.IsKnockedDown);
+        Assert.True(m.FacingLeft);                                        // 攻击方在怪物左边:怪物转向攻击方(原本也朝左)
+        for (int i = 0; i < 400 && m.IsKnockedDown; i++)
+        {
+            arena.Run(10);
+        }
+        Assert.False(m.IsKnockedDown);
+        Assert.InRange(m.X - 340, 35, 90);                                // 朝右的挥击把怪物往右推
 
         using var left = new Arena(new[] { (260, 100) }, strikes, facingLeft: true);
         left.Run(600, 0);
         Assert.Equal(1, left.Session.Hits);
-        Assert.Equal(260 - 30.0, left.Session.Monsters[0].X, 6);
+        MonsterActor lm = left.Session.Monsters[0];
+        Assert.False(lm.FacingLeft);                                      // 攻击方在怪物右边:怪物转向攻击方
+        for (int i = 0; i < 400 && lm.IsKnockedDown; i++)
+        {
+            left.Run(10);
+        }
+        Assert.InRange(260 - lm.X, 35, 90);
     }
 
     [Fact]
@@ -637,8 +651,8 @@ public class RoomCombatTests
     [Fact]
     public void ADashAttackStrikesWithItsOwnBoxAndItsOwnStrikeInfoWhileTheChainStaysUntouched()
     {
-        // 奔跑攻击的攻击信息:加成 +100%(伤害 ≈ 50.6)、推 40 像素、倒地;连招各段的加成都是 0
-        var dash = new HeroStrikeInfo(100, 40, true);
+        // 奔跑攻击的攻击信息:加成 +100%(伤害 ≈ 50.6)、推 40、抬升 300、倒地;连招各段的加成都是 0
+        var dash = new HeroStrikeInfo(100, 40, true, liftUp: 300);
         using var arena = new Arena(new[] { (400, 100) }, chr: AvatarFixture.ActionChrPath, dash: dash, monsterSpeed: 0);   // 怪物原地不动
         RoomCombatSession s = arena.Session;
         TownHero hero = s.Hero;
@@ -658,8 +672,13 @@ public class RoomCombatTests
         Assert.InRange(s.TotalDamage, 50, 51);                           // 25.3 × (100 + 100) / 100
         MonsterActor m = s.Monsters[0];
         Assert.Equal(AvatarFixture.BlobAnimationDir + "/down.ani", m.CurrentAnimationPath);   // 倒地
-        arena.Steps(80);
-        Assert.Equal(400 + 40.0, m.X, 6);                                // 朝右的奔跑攻击把怪物往右推 40
+        Assert.True(m.IsKnockedDown);
+        for (int i = 0; i < 400 && m.IsKnockedDown; i++)
+        {
+            arena.Steps(1);
+        }
+        Assert.False(m.IsKnockedDown);
+        Assert.InRange(m.X - 400, 20, 70);                               // 朝右的奔跑攻击把怪物往右推(水平初速 [32, 48] 像素/秒,腾空约 0.8 秒加颠一下)
 
         // 同一份数据里站着出的第一段普攻不受奔跑攻击信息的影响
         using var walker = new Arena(new[] { (340, 100) }, chr: AvatarFixture.ActionChrPath, dash: dash, monsterSpeed: 0);

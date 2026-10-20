@@ -57,9 +57,21 @@ namespace Dnf.Play
         /// <summary>[attack type] 是魔法:受击硬直的倍率再乘 0.7(证据 E-080)。</summary>
         public bool Magical { get; }
 
+        /// <summary>[lift up]:倒地的抬升量(类型 1 到 3 当初速、按体重缩放,类型 0 当高度;证据 E-079、E-083)。</summary>
+        public int LiftUp { get; }
+
+        /// <summary>[bounce] 非 0:倒地时先砸地再弹起飞第二次(证据 E-079、E-083)。</summary>
+        public bool Bounce { get; }
+
+        /// <summary>[ignore weight] 非 0:倒地的击飞不受怪物体重影响(类型 0 或 2;证据 E-079)。</summary>
+        public bool IgnoreWeight { get; }
+
+        /// <summary>[damage reaction] 是普通受击(1,或按 1 处理的 3):怪物在空中或已在倒地中时也走倒地分支(证据 E-079 第 6' 步)。</summary>
+        public bool ReactionDamage { get; }
+
         public HeroStrikeInfo(int damageBonus, int pushAside, bool knockDown, int skillRatePercent = 0, int skillFixed = 0,
             int hitValue = -1, bool useWeaponHitDelayRate = false, float hitScale = -1f, int knockBackType = 0, bool noKnockBack = false,
-            int forceHitStunMs = 0, bool magical = false)
+            int forceHitStunMs = 0, bool magical = false, int liftUp = 0, bool bounce = false, bool ignoreWeight = false, bool reactionDamage = false)
         {
             DamageBonus = damageBonus;
             PushAside = pushAside;
@@ -74,6 +86,10 @@ namespace Dnf.Play
             NoKnockBack = noKnockBack;
             ForceHitStunMs = forceHitStunMs;
             Magical = magical;
+            LiftUp = liftUp;
+            Bounce = bounce;
+            IgnoreWeight = ignoreWeight;
+            ReactionDamage = reactionDamage;
         }
 
         /// <summary>读一份 .atk 里命中要用的字段;路径为 null、读不到时全是默认值。</summary>
@@ -83,14 +99,16 @@ namespace Dnf.Play
             return info == null
                 ? new HeroStrikeInfo(0, 0, false)
                 : new HeroStrikeInfo(info.DamageBonus, info.PushAside, info.Reaction == DamageReaction.Down, 0, 0, info.HitValue, info.UseWeaponHitDelayRate,
-                    info.HitScale, info.KnockBackType, info.HitType == HitKind.Burn, info.ForceHitStunTime, info.AttackType == AttackKind.Magic);
+                    info.HitScale, info.KnockBackType, info.HitType == HitKind.Burn, info.ForceHitStunTime, info.AttackType == AttackKind.Magic,
+                    info.LiftUp, info.Bounce != 0, info.IgnoreWeight != 0,
+                    info.Reaction == DamageReaction.Damage || info.Reaction == DamageReaction.DamageExceptHuman);
         }
 
         /// <summary>同一份攻击信息,换上技能伤害的两个数。</summary>
         public HeroStrikeInfo WithSkillDamage(int ratePercent, int fixedDamage)
         {
             return new HeroStrikeInfo(DamageBonus, PushAside, KnockDown, ratePercent, fixedDamage, HitValue, UseWeaponHitDelayRate,
-                HitScale, KnockBackType, NoKnockBack, ForceHitStunMs, Magical);
+                HitScale, KnockBackType, NoKnockBack, ForceHitStunMs, Magical, LiftUp, Bounce, IgnoreWeight, ReactionDamage);
         }
     }
 
@@ -260,6 +278,9 @@ namespace Dnf.Play
         private readonly List<AnimatedEffect> _effects = new List<AnimatedEffect>();
         private readonly HashSet<MonsterActor> _hitThisSwing = new HashSet<MonsterActor>();
         private readonly Random _random;
+
+        /// <summary>倒地的随机抖动(水平量 ±20%、高度 ±10%;E-083)用的随机数,与伤害的随机数分开,免得改变伤害序列。</summary>
+        private readonly Random _physicsRandom;
         private long _evalSwing = -1;
         private int _evalFrame = -1;
         private double _targetMs = double.MaxValue;
@@ -353,6 +374,7 @@ namespace Dnf.Play
             _jumpStrike = jumpStrike;
             _boxes = new HeroStrikeBoxes(assets);
             _random = new Random(seed);
+            _physicsRandom = new Random(unchecked(seed * 31 + 17));
             SyncStance();
         }
 
@@ -404,7 +426,7 @@ namespace Dnf.Play
                 MonsterKind kind = spawn.IsBoss ? MonsterKind.Boss : MonsterKind.Normal;
                 MonsterStats stats = MonsterAbility.Compute(def, data.MonsterBaseTables, data.GetMonsterOwnTable(def), level, 0, kind);
                 var actor = new MonsterActor(index++, spawn, model, level, stats.HpMax, WalkSpeed(room.Hero, stats.MoveSpeed > 0 ? stats.MoveSpeed : def.Tags.IntOr("[move speed]", 0)),
-                    def.Tags.IntOr("[attack delay]", 0), def.Tags.IntOr("[attack speed]", 0), stats.HitRecovery);
+                    def.Tags.IntOr("[attack delay]", 0), def.Tags.IntOr("[attack speed]", 0), stats.HitRecovery, stats.Weight);
                 actors.Add(actor);
             }
             // 受击硬直的三张表:Etc/EtcParameter.etc(证据 E-080);读不到就退回占位硬直
@@ -674,8 +696,9 @@ namespace Dnf.Play
             int damage = info.IsSkillDamage
                 ? PlaceholderDamage.RollSkill(info.SkillRatePercent, info.SkillFixed, _random)
                 : PlaceholderDamage.Roll(info.DamageBonus, _random);
-            // 受击硬直与击退按客户端的公式算(证据 E-080);没有硬直表时 StunInput 无效,怪物走占位值
-            bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, hero.FacingLeft, StunInput(info));
+            // 受击硬直与击退按客户端的公式算(证据 E-080);没有硬直表时 StunInput 无效,怪物走占位值。
+            // 倒地(以及空中、倒地中又挨打)按客户端的开始处理算:体重缩放的击飞、z 抛物线、落地后颠一下再躺下(证据 E-082、E-083)
+            bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, hero.FacingLeft, StunInput(info), DownInput(info));
             int stun = HitStop.StunMs(info.HitValue, info.UseWeaponHitDelayRate, WeaponStunMs);
             if (stun > 0)
             {
@@ -697,6 +720,12 @@ namespace Dnf.Play
                 Kills++;
             }
             _popups.Add(new HitPopup(damage.ToString(System.Globalization.CultureInfo.InvariantCulture), monster.X, monster.Y, monster.HeadHeight()));
+        }
+
+        /// <summary>这一击的倒地输入(证据 E-083):攻击信息的抬升、弹起、不受体重,外加两个抖动用的随机数。</summary>
+        private KnockdownInput DownInput(HeroStrikeInfo info)
+        {
+            return new KnockdownInput(info.LiftUp, info.Bounce, info.IgnoreWeight, info.ReactionDamage, _physicsRandom.Next(1000), _physicsRandom.Next(1000));
         }
 
         /// <summary>
