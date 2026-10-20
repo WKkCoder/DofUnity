@@ -9,13 +9,17 @@ namespace Dnf.Play
     /// 用来在没有人的环境里检查流程(命令行 flow-check、播放器的 -dnfflow -dnfbot)。
     /// 副本里交给 <see cref="DungeonBot"/> 打;结算菜单出现之后等一会儿,按预设的清单依次做选择(再次挑战、选择其它地下城、返回城镇);
     /// 清单用完就算结束(<see cref="Done"/>):清单以返回城镇收尾时停在城镇,否则停在最后一局的结算菜单上(那一次不再选)。
-    /// 城镇与副本选择里是占位:站一会儿再走下一步(城镇的真实入口触发、选择界面上的按键还没做)。
+    /// 城镇里沿出口走到地下城入口区域、走出通往世界地图的出口(证据 E-095;城镇世界不给路线时退回站一会儿再走下一步的占位);
+    /// 副本选择里是占位:停一会儿再确认(选择界面上的按键由玩家按,自动机直接确认);加载画面等它停够时间。
     /// 和 <see cref="DungeonBot"/> 一样,输入只来自它自己的决定,不碰随机数,所以同样的种子与清单总是走出同样的流程。
     /// </summary>
     public sealed class FlowBot
     {
-        /// <summary>城镇里站多久再走进副本选择(占位)。</summary>
+        /// <summary>城镇世界不给路线时,在城镇里站多久再走进副本选择(占位)。</summary>
         public const double TownDwellMs = 1500.0;
+
+        /// <summary>沿路线走了这么久还没走到地下城入口就当卡住了(<see cref="Stuck"/>):直接进副本选择让流程接着走。</summary>
+        public const double TownTimeoutMs = 120000.0;
 
         /// <summary>副本选择界面上停多久再确认(占位;要比世界地图的开场动画长,卡片淡入之后才确认)。</summary>
         public const double SelectDwellMs = 2500.0;
@@ -53,6 +57,9 @@ namespace Dnf.Play
         /// <summary>清单用完了(回到了城镇,或者停在没有选择可做的结算菜单上):流程走完,不会再有动作。</summary>
         public bool Done { get; private set; }
 
+        /// <summary>城镇里沿路线走了 <see cref="TownTimeoutMs"/> 还没走到入口(走不通的地图、路线与可走区域对不上)。</summary>
+        public bool Stuck { get; private set; }
+
         /// <summary>
         /// 把流程往前推 <paramref name="deltaMs"/> 毫秒:推进当前阶段的会话、必要时替玩家做决定,最后调 <see cref="GameFlow.Poll"/> 应用结果。
         /// 副本里的自动机按固定心跳决策,所以帧长不影响路线。已经 <see cref="Done"/> 时不做任何事。
@@ -76,6 +83,9 @@ namespace Dnf.Play
             _stageMs += deltaMs;
             switch (flow.Stage)
             {
+                case GameStage.Loading:
+                    flow.Splash.Advance(deltaMs);
+                    break;
                 case GameStage.Town:
                     AdvanceTown(flow, deltaMs);
                     break;
@@ -95,11 +105,29 @@ namespace Dnf.Play
 
         private void AdvanceTown(GameFlow flow, double deltaMs)
         {
-            flow.Session.Update(deltaMs, 0, 0);
+            bool routed = false;
+            int dirX = 0, dirY = 0;
+            if (!(ChoicesMade >= _choices.Count && ChoicesMade > 0) && flow.Place.HasValue && flow.Session is ITownExitSource source
+                && flow.TownWorld.TryRoute(flow.Place.Value, out TownExit exit))
+            {
+                routed = true;
+                source.OutwardOf(exit, out int outwardX, out int outwardY);
+                TownBot.Direction(source.HeroX, source.HeroY, exit.Rect, outwardX, outwardY, out dirX, out dirY);
+            }
+            flow.Session.Update(deltaMs, dirX, dirY);
             if (ChoicesMade >= _choices.Count && ChoicesMade > 0)
             {
                 Done = true;                      // 选择用完、回到了城镇
                 return;
+            }
+            if (routed)
+            {
+                if (_stageMs >= TownTimeoutMs)
+                {
+                    Stuck = true;
+                    flow.EnterSelect("bot stuck");
+                }
+                return;                           // 走到出口之后由流程在 Poll 里接手(换区域或打开世界地图)
             }
             if (_stageMs >= TownDwellMs)
             {

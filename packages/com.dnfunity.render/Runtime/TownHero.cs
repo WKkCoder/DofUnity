@@ -175,6 +175,17 @@ namespace Dnf.Render
             X = Clamp(heroX - centerX);
         }
 
+        /// <summary>
+        /// 进区域时的镜头(证据 E-095):先放在最小值,再按死区规则追一次主角(主角在屏幕死区的边缘,而不是屏幕中央)。
+        /// 两次进区域(登录进赛丽亚房间、从房间走回城镇)的原版第一张截图上,镜头位置都与这个规则一致,与"居中再夹住"不一致。
+        /// </summary>
+        public static TownCamera AtArrival(int minX, int maxX, double heroX, int centerX = DefaultCenterX, int halfWidth = DefaultHalfWidth)
+        {
+            var camera = new TownCamera(minX, maxX, minX + centerX, centerX, halfWidth);
+            camera.Follow(heroX);
+            return camera;
+        }
+
         /// <summary>主角移动之后调用:按死区规则更新镜头。</summary>
         public void Follow(double heroX)
         {
@@ -2175,7 +2186,7 @@ namespace Dnf.Render
     /// 一场城镇游戏:地图图层、NPC、主角与镜头。每帧先 <see cref="Update"/> 推进主角,再 <see cref="Build"/> 取绘制列表
     /// (地图图层与 NPC 的动画按墙钟时间 <c>timeMs</c> 播放,主角按自己的状态计时)。
     /// </summary>
-    public sealed class TownSession : IHeroSession
+    public sealed class TownSession : IHeroSession, ITownExitSource
     {
         /// <summary>纵向常数,E-024 在网关地图上拟合出的 200。</summary>
         public const int DefaultGroundY = 200;
@@ -2183,39 +2194,98 @@ namespace Dnf.Render
         private readonly DnfAssets _assets;
         private readonly List<TownScene.ResolvedLayer> _layers;
         private readonly List<TownScene.ResolvedNpc> _npcs;
+        private readonly RoomContent _room;
+        private readonly TownExitTracker _exits;
+        private TownExit? _pending;
 
         public string MapPath { get; }
         public TownHero Hero { get; }
         public TownCamera Camera { get; }
         public int GroundY { get; }
         public int NpcCount => _npcs.Count;
-        public int LayerCount => _layers.Count;
+        public int LayerCount => _room != null ? _room.Layers.Count : _layers.Count;
+
+        /// <summary>主角走进、还没被流程处理的出口;没有出口表、或还没走进时为 null。</summary>
+        public TownExit? PendingExit => _pending;
+
+        /// <summary>出口触发器;没有出口表(演示用的单张地图)时为 null。</summary>
+        public TownExitTracker Exits => _exits;
+
+        public double HeroX => Hero.X;
+
+        public double HeroY => Hero.Y;
+
+        public bool HeroFacingLeft => Hero.FacingLeft;
+
+        public void OutwardOf(TownExit exit, out int dx, out int dy)
+        {
+            if (_exits == null)
+            {
+                dx = 0;
+                dy = 0;
+                return;
+            }
+            _exits.OutwardOf(exit, out dx, out dy);
+        }
 
         /// <summary>此刻的投影:镜头 x 由主角位置按 <see cref="Camera"/> 算出。</summary>
         public TownProjection Projection => new TownProjection(Camera.IntX, GroundY);
 
         public TownSession(DnfAssets assets, string mapPath, TownHero hero, TownCamera camera, int groundY = DefaultGroundY)
+            : this(assets, mapPath, hero, camera, groundY, null, null)
+        {
+        }
+
+        /// <summary>
+        /// 带"房间式内容"与出口的城镇会话(证据 E-095):<paramref name="room"/> 不为空时按副本房间的方式合成地图
+        /// (远景/中景视差背景、地面瓦片、[animation] 图层与被动物件,<see cref="RoomScene.Build"/>),再把 NPC 与主角放进同一次深度排序;
+        /// 艾尔文防线这样的大区域需要它(背景与地面瓦片);赛丽亚房间的瓦片是空的,画出来与只画图层的结果逐像素相同
+        /// (本机用真实数据核对过:同一出生点与镜头、含 NPC 与主角,四个时刻零差异)。
+        /// <paramref name="exits"/> 不为空时 <see cref="Update"/> 会检测主角走进出口(<see cref="PendingExit"/>)。
+        /// </summary>
+        public TownSession(DnfAssets assets, string mapPath, TownHero hero, TownCamera camera, int groundY, RoomContent room, TownExitTracker exits)
         {
             _assets = assets ?? throw new ArgumentNullException(nameof(assets));
             MapPath = mapPath ?? throw new ArgumentNullException(nameof(mapPath));
             Hero = hero ?? throw new ArgumentNullException(nameof(hero));
             Camera = camera ?? throw new ArgumentNullException(nameof(camera));
             GroundY = groundY;
-            _layers = TownScene.ResolveLayers(assets, mapPath);
+            _room = room;
+            _exits = exits;
+            _layers = room != null ? new List<TownScene.ResolvedLayer>() : TownScene.ResolveLayers(assets, mapPath);
             _npcs = TownScene.Resolve(assets, TownScene.ReadMapNpcs(assets, mapPath));
+            _exits?.Arrive(hero.X, hero.Y);
         }
 
         public void Update(double deltaMs, int dirX, int dirY)
         {
             Hero.Update(deltaMs, dirX, dirY);
             Camera.Follow(Hero.X);
+            if (_exits != null && !_pending.HasValue)
+            {
+                _pending = _exits.Step(Hero.X, Hero.Y, dirX, dirY);
+            }
         }
 
         public List<SceneSprite> Build(long timeMs)
         {
             TownProjection projection = Projection;
             List<SceneSprite> hero = Hero.Sprites(_assets, projection);
-            return TownScene.BuildResolvedScene(_assets, _layers, _npcs, projection, timeMs, hero);
+            if (_room == null)
+            {
+                return TownScene.BuildResolvedScene(_assets, _layers, _npcs, projection, timeMs, hero);
+            }
+            var extra = new List<SceneSprite>(_npcs.Count + hero.Count);
+            foreach (TownScene.ResolvedNpc r in _npcs)
+            {
+                SceneSprite s = TownScene.SpriteAt(_assets, r, r.Timeline.FrameAt(timeMs), projection);
+                if (s != null)
+                {
+                    extra.Add(s);
+                }
+            }
+            extra.AddRange(hero);
+            return RoomScene.Build(_assets, _room, projection.CameraX, projection.GroundY, timeMs, extra);
         }
     }
 
@@ -2266,12 +2336,18 @@ namespace Dnf.Render
             return false;
         }
 
+        /// <summary>默认外观的鬼剑士换装(游戏数据自带的 *_default 装备加一件起始武器)。要造多个主角(换区域)时先造一次共用。</summary>
+        public static AvatarOutfit CreateOutfit(DnfAssets assets, string weaponEqu = StarterWeapon)
+        {
+            AvatarClass cls = AvatarClass.FromChr(assets, SwordmanChrPath, SwordmanJobTag);
+            return AvatarOutfit.CreateDefault(assets, cls, SwordmanEquipRoot, weaponEqu);
+        }
+
         /// <summary>造一个默认外观的鬼剑士,可走区域取自地图的 [virtual movable area]。</summary>
         public static TownHero CreateSwordman(DnfAssets assets, string mapPath, double x, double y, bool facingLeft, string weaponEqu = StarterWeapon,
             string restTag = TownHero.TownRestTag)
         {
-            AvatarClass cls = AvatarClass.FromChr(assets, SwordmanChrPath, SwordmanJobTag);
-            AvatarOutfit outfit = AvatarOutfit.CreateDefault(assets, cls, SwordmanEquipRoot, weaponEqu);
+            AvatarOutfit outfit = CreateOutfit(assets, weaponEqu);
             return TownHero.Create(assets, SwordmanChrPath, outfit, MapScript.ReadVirtualMovableArea(assets, mapPath), x, y, facingLeft, restTag);
         }
 

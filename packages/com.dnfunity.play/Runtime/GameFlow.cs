@@ -4,12 +4,15 @@ using Dnf.Render;
 
 namespace Dnf.Play
 {
-    /// <summary>游戏流程的阶段。城镇与副本是有可操作主角的场景;副本选择是一张没有主角的整屏界面。</summary>
+    /// <summary>游戏流程的阶段。城镇与副本是有可操作主角的场景;副本选择是一张没有主角的整屏界面;加载是切换场景时的整屏过场图。</summary>
     public enum GameStage
     {
         Town = 0,
         DungeonSelect = 1,
         Dungeon = 2,
+
+        /// <summary>加载画面(<see cref="SplashScreen"/>):停够时间之后流程切到目标阶段(证据 E-095)。只有给了加载画面素材的流程才会出现这个阶段。</summary>
+        Loading = 3,
     }
 
     /// <summary>
@@ -57,29 +60,53 @@ namespace Dnf.Play
     /// 结算菜单的去向(证据 E-091 的菜单,原版热键 F13 再次挑战、F11 选择其它地下城、F12 返回城镇):
     /// 再次挑战 = 同一座副本重新开一局(<see cref="Runs"/> 加一,工厂拿到局序号好换随机种子);选择其它地下城 = 回到副本选择界面,
     /// 选中刚打过的那座;返回城镇 = 回到城镇。快速组队在原版里没有队伍时是灰的,这里不会被选中。
-    /// 阶段之间原版有加载画面(基线 S06 的进图过渡),这里先瞬间切换(没做)。
-    /// 从城镇进副本选择、在原版里是走到副本入口,这里由宿主调 <see cref="EnterSelect"/> 占位(城镇的真实入口触发还没做)。
+    /// 城镇由 <see cref="ITownWorld"/> 供给(证据 E-095):登录落在第一站,走进出口换区域或(地下城入口区域的出口)打开世界地图,
+    /// 从副本回来落在地下城入口区域;换城镇、进出网关区域、进副本时先停在加载画面(<see cref="GameStage.Loading"/>:过场图 + 边条 + 标题)。
+    /// 没有城镇世界(老式的单会话工厂,<see cref="LegacyTownWorld"/>)或没给副本加载画面时,对应的切换是瞬间的,与之前一致。
+    /// 城镇里的出口触发由会话判断(<see cref="ITownExitSource"/>),流程在 <see cref="Poll"/> 里接手;宿主与自动机只管推进当前阶段。
     /// </summary>
     public sealed class GameFlow
     {
-        private readonly Func<IHeroSession> _town;
+        private readonly ITownWorld _townWorld;
         private readonly Func<string, int, IRunSession> _dungeon;
+        private readonly Func<string, SplashScene> _dungeonSplash;
         private readonly List<DungeonEntry> _entries;
         private readonly WorldMapScene _world;
         private readonly List<FlowEvent> _history = new List<FlowEvent>();
+        private Action _afterSplash;
 
         /// <summary>
-        /// <paramref name="town"/> 造城镇会话;<paramref name="dungeon"/> 按(副本路径, 局序号)造一局副本;
-        /// <paramref name="entries"/> 是副本选择界面上的副本列表;<paramref name="world"/> 不为空时选择界面画原版的世界地图(<see cref="WorldMapArt"/>),
-        /// 为空是占位画面。造好之后还要调 <see cref="EnterTown"/>、<see cref="EnterSelect"/> 或 <see cref="StartDungeon"/> 开始。
+        /// 老式构造:<paramref name="town"/> 造城镇会话(每次回城造一个新的),没有出口与加载画面。其余参数同新式构造。
         /// </summary>
         public GameFlow(Func<IHeroSession> town, Func<string, int, IRunSession> dungeon, IEnumerable<DungeonEntry> entries, WorldMapScene world = null)
+            : this(new LegacyTownWorld(town ?? throw new ArgumentNullException(nameof(town))), dungeon, entries, world, null)
         {
-            _town = town ?? throw new ArgumentNullException(nameof(town));
+        }
+
+        /// <summary>
+        /// <paramref name="townWorld"/> 供给城镇;<paramref name="dungeon"/> 按(副本路径, 局序号)造一局副本;
+        /// <paramref name="entries"/> 是副本选择界面上的副本列表;<paramref name="world"/> 不为空时选择界面画原版的世界地图(<see cref="WorldMapArt"/>),
+        /// 为空是占位画面;<paramref name="dungeonSplash"/> 按副本路径给进图加载画面的素材(返回 null 或不给就直接进)。
+        /// 造好之后还要调 <see cref="EnterTown"/>、<see cref="EnterSelect"/> 或 <see cref="StartDungeon"/> 开始。
+        /// </summary>
+        public GameFlow(ITownWorld townWorld, Func<string, int, IRunSession> dungeon, IEnumerable<DungeonEntry> entries, WorldMapScene world = null,
+            Func<string, SplashScene> dungeonSplash = null)
+        {
+            _townWorld = townWorld ?? throw new ArgumentNullException(nameof(townWorld));
             _dungeon = dungeon ?? throw new ArgumentNullException(nameof(dungeon));
             _entries = new List<DungeonEntry>(entries ?? throw new ArgumentNullException(nameof(entries)));
             _world = world;
+            _dungeonSplash = dungeonSplash;
         }
+
+        /// <summary>城镇世界(自动机用它查出口路线)。</summary>
+        public ITownWorld TownWorld => _townWorld;
+
+        /// <summary>主角现在(或最后一次)所在的城镇区域;从没进过城镇时为 null。</summary>
+        public TownPlace? Place { get; private set; }
+
+        /// <summary>加载阶段里的画面;其它阶段是 null。</summary>
+        public SplashScreen Splash { get; private set; }
 
         /// <summary>当前阶段;开始之前(<see cref="StageSerial"/> 为 0)没有意义。</summary>
         public GameStage Stage { get; private set; }
@@ -96,8 +123,8 @@ namespace Dnf.Play
         /// <summary>副本选择阶段里的界面;其它阶段是 null。</summary>
         public DungeonSelectScreen Select { get; private set; }
 
-        /// <summary>当前阶段要画的内容(带主角的会话或整屏界面);还没开始时是 null。</summary>
-        public ISceneSource Scene => Select != null ? (ISceneSource)Select : Session;
+        /// <summary>当前阶段要画的内容(带主角的会话、整屏界面或加载画面);还没开始时是 null。</summary>
+        public ISceneSource Scene => Splash != null ? (ISceneSource)Splash : Select != null ? (ISceneSource)Select : Session;
 
         /// <summary>正在玩或刚玩过的副本路径;还没进过副本是 null。</summary>
         public string DungeonPath { get; private set; }
@@ -113,10 +140,39 @@ namespace Dnf.Play
         /// <summary>每次阶段切换的记录,按先后排。</summary>
         public IReadOnlyList<FlowEvent> History => _history;
 
-        /// <summary>回到城镇(造一个新的城镇会话)。</summary>
+        /// <summary>
+        /// 进城镇:流程刚开始时是登录的第一站,之后(副本、选择界面之后)是回城的落脚点。造一个新的城镇会话;
+        /// 世界给了加载画面就先停在加载阶段。
+        /// </summary>
         public void EnterTown(string reason = "town")
         {
-            Switch(GameStage.Town, reason, _town(), null);
+            GoTown(StageSerial == 0 ? _townWorld.Start : _townWorld.Return, null, reason);
+        }
+
+        private void GoTown(TownPlace to, TownPlace? from, string reason)
+        {
+            void Arrive()
+            {
+                IHeroSession session = _townWorld.Create(to);
+                Place = to;
+                Switch(GameStage.Town, reason, session, null);
+            }
+
+            SplashScene splash = _townWorld.Splash(from, to);
+            if (splash == null)
+            {
+                Arrive();
+            }
+            else
+            {
+                BeginSplash(splash, reason, Arrive);
+            }
+        }
+
+        private void BeginSplash(SplashScene scene, string reason, Action after)
+        {
+            _afterSplash = after;
+            Switch(GameStage.Loading, reason, null, null, new SplashScreen(scene));
         }
 
         /// <summary>打开副本选择界面;选中刚打过的那座副本(没打过则选第一个)。</summary>
@@ -144,10 +200,24 @@ namespace Dnf.Play
             {
                 throw new ArgumentException("需要副本路径", nameof(dungeonPath));
             }
-            IRunSession run = _dungeon(dungeonPath, Runs);
             DungeonPath = dungeonPath;
-            Runs++;
-            Switch(GameStage.Dungeon, reason, run, null);
+
+            void Begin()
+            {
+                IRunSession run = _dungeon(dungeonPath, Runs);
+                Runs++;
+                Switch(GameStage.Dungeon, reason, run, null);
+            }
+
+            SplashScene splash = _dungeonSplash?.Invoke(dungeonPath);
+            if (splash == null)
+            {
+                Begin();
+            }
+            else
+            {
+                BeginSplash(splash, reason, Begin);
+            }
         }
 
         /// <summary>
@@ -162,6 +232,10 @@ namespace Dnf.Play
             }
             switch (Stage)
             {
+                case GameStage.Town:
+                    return PollTown();
+                case GameStage.Loading:
+                    return PollLoading();
                 case GameStage.Dungeon:
                     return PollDungeon();
                 case GameStage.DungeonSelect:
@@ -169,6 +243,39 @@ namespace Dnf.Play
                 default:
                     return false;
             }
+        }
+
+        private bool PollLoading()
+        {
+            if (Splash == null || !Splash.Finished || _afterSplash == null)
+            {
+                return false;
+            }
+            Action after = _afterSplash;
+            _afterSplash = null;
+            after();
+            return true;
+        }
+
+        private bool PollTown()
+        {
+            if (!(Session is ITownExitSource source) || !source.PendingExit.HasValue || !Place.HasValue)
+            {
+                return false;
+            }
+            TownExit exit = source.PendingExit.Value;
+            if (exit.IsDungeonGate)
+            {
+                EnterSelect("gate");
+                return true;
+            }
+            TownPlace? to = _townWorld.Through(Place.Value, exit, source.HeroFacingLeft);
+            if (!to.HasValue)
+            {
+                return false;
+            }
+            GoTown(to.Value, Place, "exit " + exit.Town + "/" + exit.Area);
+            return true;
         }
 
         private bool PollDungeon()
@@ -207,20 +314,21 @@ namespace Dnf.Play
                     StartDungeon(entry.Path, "select " + entry.Name);
                     return true;
                 case SelectOutcome.Back:
-                    EnterTown("select Back");
+                    GoTown(_townWorld.Return, Place, "select Back");     // 从世界地图返回:来源是城镇里的入口区域,同一块区域不加载
                     return true;
                 default:
                     return false;
             }
         }
 
-        private void Switch(GameStage to, string reason, IHeroSession session, DungeonSelectScreen select)
+        private void Switch(GameStage to, string reason, IHeroSession session, DungeonSelectScreen select, SplashScreen splash = null)
         {
             GameStage from = Stage;
             bool first = StageSerial == 0;
             Stage = to;
             Session = session;
             Select = select;
+            Splash = splash;
             StageSerial++;
             _history.Add(new FlowEvent(StageSerial, first ? to : from, to, reason));
         }

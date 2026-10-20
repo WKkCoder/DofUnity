@@ -109,5 +109,5 @@ dotnet test DnfUnity.slnx -c Release
 dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll flow-check --from select --choices town --seconds 6 --shots-at 0.4,1.0,1.5,2.0,2.4 --png out/m9c/ours
 dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll flow-check --from select --worldmap none --shots-at 0 --png out/m9c/placeholder   # 退回占位名单
 tools/unity-build-town.sh macos                    # 构建 + 对拍(含副本选择 0.7、2.0 秒两帧)+ 实时走完整条流程
-tools/play-dungeon.sh flow [bot|explore] [nodamage] [nosound]   # 自己玩:城镇里按回车打开选择界面,方向键选,回车进,Esc 回城,鼠标点卡片
+tools/play-dungeon.sh flow [bot|explore] [nodamage] [nosound]   # 自己玩:走出口换区域、走进地下城入口区域的世界地图出口打开选择界面,方向键选,回车进,Esc 回城,鼠标点卡片
 ```

@@ -19,7 +19,10 @@ namespace Dnf.Client
     /// 屏幕右上角有占位小地图,首领房清空后出 CLEAR(<see cref="DungeonSession"/>,证据 E-070)。-dnfbot 让自动机替你打(-dnfexplore 先逛遍所有房间),
     /// -dnfseed 与 -dnfrandomlayout 指定战斗种子与随机选房。
     /// 带 -dnfflow 时玩整条流程(<see cref="GameFlow"/>,证据 E-093):从城镇(-dnfflowfrom town,默认)、副本选择(select)或副本(dungeon)开始;
-    /// 城镇里按回车打开副本选择(占位:城镇里真实的副本入口触发还没做),选择界面上下键选、回车或空格进入、Esc 回城,
+    /// 城镇走城镇图册(<see cref="AtlasTownWorld"/>,证据 E-095):登录落在赛丽亚房间、走进地图边缘的出口换区域、艾尔文防线走到地下城入口区域再走进右边的出口打开世界地图,
+    /// 换区域与进图停在加载画面(过场图 + 边条 + 标题);-dnflegacytown 退回只有赛丽亚房间一张图的老行为(城镇里按回车打开副本选择的占位),-dnfnosplash 去掉所有加载画面。
+    /// -dnftownarea 城镇/区域(例如 1/0)不带流程,直接看城镇图册里的一块区域(主角在登录落脚点,-dnfhero 可改位置;离屏渲染一帧与命令行 town-shot 对拍)。
+    /// 选择界面上下键选、回车或空格进入、Esc 回城,
     /// 副本(-dnfdungeon,默认洛兰)打完在结算菜单上选再次挑战、选择其它地下城、返回城镇,各去各的阶段。
     /// 再带 -dnfbot(-dnfexplore)时由 <see cref="FlowBot"/> 替你走完全程,结算选择依次按 -dnfflowchoices(默认 retry,select,town,用完就停);
     /// -dnftimescale N(1 到 6)把每帧的时间步放大,无人值守的检查用它缩短墙钟时间。每次阶段切换在日志里留一行 DNF_FLOW。
@@ -106,6 +109,9 @@ namespace Dnf.Client
         private string _flowFrom = "town";
         private string _flowChoices = DefaultFlowChoices;
         private string _worldMapPath = DefaultWorldMap;
+        private bool _legacyTown;
+        private bool _noSplash;
+        private TownPlace? _townArea;
         private double _timeScale = 1.0;
         private GameFlow _flow;
         private FlowBot _flowBot;
@@ -240,6 +246,15 @@ namespace Dnf.Client
                         break;
                     case "-dnfworldmap":
                         if (value != null) { _worldMapPath = value; i++; }
+                        break;
+                    case "-dnflegacytown":
+                        _legacyTown = true;
+                        break;
+                    case "-dnfnosplash":
+                        _noSplash = true;
+                        break;
+                    case "-dnftownarea":
+                        if (value != null) { _townArea = ParseTownArea(value); i++; }
                         break;
                     case "-dnftimescale":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
@@ -393,6 +408,17 @@ namespace Dnf.Client
             if (!string.IsNullOrEmpty(_dungeonPath))
             {
                 return CreateDungeon(_dungeonPath, _seed);
+            }
+            if (_townArea.HasValue)
+            {
+                // 城镇图册里的一块区域(E-095):按登录落脚点出生的主角,房间式合成;-dnfhero 可以改主角与镜头的位置
+                TownSession area = TownWorld.CreateSession(_assets, TownAtlas.Open(_assets), _townArea.Value, DemoHero.CreateOutfit(_assets));
+                if (_heroSpec != null)
+                {
+                    ApplyHeroSpec(area, _heroSpec);
+                }
+                _heroInput = !_noHero;
+                return area;
             }
             if (DemoRoom.IsRoomMap(_assets, mapPath))
             {
@@ -711,6 +737,7 @@ namespace Dnf.Client
                     StepSession(deltaMs);
                 }
                 _flow.Select?.Advance(deltaMs);      // 副本选择界面自己的时钟(开场动画与横幅轮换)
+                _flow.Splash?.Advance(deltaMs);      // 加载画面:停够时间之后流程切到目标阶段
                 _flow.Poll();
             }
             if (_flow.StageSerial != _shownSerial)
@@ -753,11 +780,18 @@ namespace Dnf.Client
             // 副本选择界面:读得到世界地图就画原版的世界地图界面(E-094),读不到(数据不全、-dnfworldmap none)退回占位名单
             WorldMapSet world = string.Equals(_worldMapPath, "none", StringComparison.OrdinalIgnoreCase) ? null : WorldMapCatalog.Load(_assets, _worldMapPath);
             bool realSelect = world != null && world.Entries.Count > 0;
+            // 城镇:默认走城镇图册(E-095:登录在网关区域、沿出口换区域、地下城入口区域的出口通世界地图、换区域与进图有加载画面);
+            // -dnflegacytown 退回只有赛丽亚房间一张图、阶段瞬间切换的老行为;-dnfnosplash 去掉所有加载画面
+            ITownWorld townWorld = _legacyTown
+                ? new LegacyTownWorld(() => DemoHero.CreateSession(_assets, DefaultMap, DemoHero.SeriaRoom))
+                : (ITownWorld)new AtlasTownWorld(_assets, TownAtlas.Open(_assets), 1, withSplashes: !_noSplash);
+            Func<string, SplashScene> dungeonSplash = _legacyTown || _noSplash ? (Func<string, SplashScene>)null : path => SplashCatalog.ForDungeon(_assets, path);
             _flow = new GameFlow(
-                () => DemoHero.CreateSession(_assets, DefaultMap, DemoHero.SeriaRoom),
+                townWorld,
                 (path, run) => CreateDungeon(path, _seed + run),
                 realSelect ? (System.Collections.Generic.IEnumerable<DungeonEntry>)world.Entries : new[] { new DungeonEntry(dungeon, null) },
-                realSelect ? world.Scene : null);
+                realSelect ? world.Scene : null,
+                dungeonSplash);
             switch (_flowFrom)
             {
                 case "select":
@@ -774,6 +808,17 @@ namespace Dnf.Client
             {
                 _flowBot = new FlowBot(_botExplore, ParseSettlementChoices(_flowChoices));
             }
+        }
+
+        /// <summary>城镇/区域(例如 1/0)→ 城镇图册里的一个落脚点(登录进入);写错了就报错。</summary>
+        private static TownPlace ParseTownArea(string text)
+        {
+            string[] p = (text ?? string.Empty).Split('/');
+            if (p.Length != 2 || !int.TryParse(p[0], out int town) || !int.TryParse(p[1], out int area) || town < 0 || area < 0)
+            {
+                throw new FormatException("-dnftownarea 需要 城镇/区域(例如 1/0): " + text);
+            }
+            return new TownPlace(town, area);
         }
 
         /// <summary>retry、select、town(逗号分隔)→ 结算菜单上的选项;写错了就报错。</summary>
@@ -804,6 +849,12 @@ namespace Dnf.Client
         private bool InSelect
         {
             get { return _flow != null && _flow.Stage == GameStage.DungeonSelect; }
+        }
+
+        /// <summary>流程模式下正停在加载画面(没有主角,画面静止,停够时间流程自己往下走)。</summary>
+        private bool InLoading
+        {
+            get { return _flow != null && _flow.Stage == GameStage.Loading; }
         }
 
         /// <summary>
@@ -959,13 +1010,13 @@ namespace Dnf.Client
                         }
                         break;
                     case KeyCode.LeftArrow:
-                        if ((_paused || _session == null) && !InSelect)
+                        if ((_paused || _session == null) && !InSelect && !InLoading)
                         {
                             Step(-50.0);
                         }
                         break;
                     case KeyCode.RightArrow:
-                        if ((_paused || _session == null) && !InSelect)
+                        if ((_paused || _session == null) && !InSelect && !InLoading)
                         {
                             Step(50.0);
                         }
@@ -988,9 +1039,9 @@ namespace Dnf.Client
                         {
                             _flow.Select.Confirm();
                         }
-                        else if (_flow != null && _flow.Stage == GameStage.Town)
+                        else if (_flow != null && _flow.Stage == GameStage.Town && _flow.TownWorld is LegacyTownWorld)
                         {
-                            _flow.EnterSelect("key");   // 占位:原版是走到城镇里的副本入口(这个演示里的赛丽亚房间没有入口)
+                            _flow.EnterSelect("key");   // 占位(-dnflegacytown):老式城镇只有赛丽亚房间一张图,没有出口;城镇图册里的城镇走到地下城入口区域的出口就是了
                         }
                         break;
                     case KeyCode.H:
@@ -1200,9 +1251,15 @@ namespace Dnf.Client
                     help = "Up/Down: choose a dungeon   Enter or Space: go in   Esc: back to town   Mouse: click a card (again to enter) or the town button   H: hide text"
                         + (_flow.Select.World == null ? "   (placeholder screen)" : string.Empty);
                 }
+                else if (_flow.Stage == GameStage.Loading)
+                {
+                    help = "Loading screen (the flow moves on by itself)   H: hide text   Esc: quit";
+                }
                 else if (_flow.Stage == GameStage.Town)
                 {
-                    help = "Arrow keys: walk   Enter: open the dungeon map (placeholder for the town's dungeon gate)   Space: pause   H: hide text   Esc: quit";
+                    help = _flow.TownWorld is LegacyTownWorld
+                        ? "Arrow keys: walk   Enter: open the dungeon map (placeholder: this legacy town has no exits)   Space: pause   H: hide text   Esc: quit"
+                        : "Arrow keys: walk (push into a map edge exit to change area; the last area's right-hand exit opens the dungeon map)   Space: pause   H: hide text   Esc: quit";
                 }
             }
             string shownMap = _session != null ? _session.MapPath : InSelect ? "(dungeon select)" : mapPath;

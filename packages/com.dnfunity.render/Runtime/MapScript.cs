@@ -69,6 +69,39 @@ namespace Dnf.Render
         }
 
         /// <summary>
+        /// 读地图脚本的 [town movable area](证据 E-095):每 6 个整数是一个出口 (x, y, 宽, 高, 城镇编号, 区域编号),
+        /// 矩形在世界坐标里,后两个数是走进去之后去的 (城镇, 区域)(见 <see cref="TownExit"/>)。没有这个标签(副本地图)时返回空列表。
+        /// </summary>
+        public static List<TownExit> ReadTownExits(DnfAssets assets, string mapPath)
+        {
+            ScriptLine[] doc = assets.ReadScript(mapPath);
+            if (doc == null)
+            {
+                throw new DnfFormatException("PVF 里没有地图脚本: " + mapPath);
+            }
+            return ParseTownExits(doc);
+        }
+
+        /// <summary>同 <see cref="ReadTownExits"/>,对已经解析好的脚本。</summary>
+        public static List<TownExit> ParseTownExits(ScriptLine[] doc)
+        {
+            var exits = new List<TownExit>();
+            foreach (ScriptLine line in doc)
+            {
+                if (!line.TagIs("[town movable area]"))
+                {
+                    continue;
+                }
+                List<int> v = line.Ints();
+                for (int i = 0; i + 5 < v.Count; i += 6)
+                {
+                    exits.Add(new TownExit(new WorldRect(v[i], v[i + 1], v[i + 2], v[i + 3]), v[i + 4], v[i + 5]));
+                }
+            }
+            return exits;
+        }
+
+        /// <summary>
         /// 读地图脚本的 [animation] 行。每一组是 5 个值:动画路径(字符串)、图层(字符串)、x、y、z;
         /// 全库 2,693 条 [animation] 都能按这个形状整齐地切开。路径相对 .map 所在目录解析,找不到文件时仍然返回这一项(路径照解析后的写)。
         /// </summary>

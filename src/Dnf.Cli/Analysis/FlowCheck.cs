@@ -9,7 +9,8 @@ namespace Dnf.Cli.Analysis;
 /// 用真实数据造城镇与副本会话,交给 <see cref="GameFlow"/>,由 <see cref="FlowBot"/> 按固定的 1/60 秒步长走完
 /// 城镇 → 副本选择 → 副本(自动机打到首领清空)→ 结算 → 按 --choices 清单依次选再次挑战、选择其它地下城、返回城镇;
 /// 打印每次阶段切换与每一局的战绩,清单用完或到时间为止。--shots-at 在指定时刻输出当时阶段的 800×600 画面。
-/// 战斗用占位伤害(<see cref="PlaceholderDamage"/>)。城镇是量过出生点与镜头范围的赛丽亚房间(目前唯一可走的城镇地图),
+/// 战斗用占位伤害(<see cref="PlaceholderDamage"/>)。城镇默认走城镇图册(<see cref="AtlasTownWorld"/>,证据 E-095:登录在网关区域、沿出口换区域、地下城入口区域的出口通世界地图、换区域与进图有加载画面,
+/// 自动机沿出口走过去);--legacy-town 退回量过出生点与镜头范围的赛丽亚房间一张图(没有出口与加载画面),
 /// 副本选择默认画原版的世界地图界面(洛兰,<see cref="WorldMapArt"/>,证据 E-094;--worldmap none 退回占位名单),阶段之间瞬间切换:
 /// 这些不都是原版的样子,验证的是流程的次序与每一段能不能接上。
 /// </summary>
@@ -23,6 +24,9 @@ internal static class FlowCheck
 
     /// <summary>城镇用的地图:目前唯一量过出生点与镜头范围的城镇(<see cref="DemoHero.SeriaRoom"/>)。</summary>
     public const string TownMap = "map/elvengard/(r)gate.map";
+
+    /// <summary>城镇图册的起始城镇(--town 可改):town.lst 里的 1 号,基线 S03 拍到的那座。</summary>
+    public const int DefaultTown = 1;
 
     /// <summary>副本选择界面用的世界地图(基线 S05 拍的就是洛兰这张)。</summary>
     public const string DefaultWorldMap = "worldmap/lorien.wdm";
@@ -53,11 +57,15 @@ internal static class FlowCheck
         }
         bool realSelect = world != null && world.Entries.Count > 0;
         var entries = realSelect ? new List<DungeonEntry>(world!.Entries) : new List<DungeonEntry> { new DungeonEntry(opts.Dungeon, null) };
+        ITownWorld townWorld = opts.LegacyTown
+            ? new LegacyTownWorld(() => DemoHero.CreateSession(assets, TownMap, DemoHero.SeriaRoom))
+            : new AtlasTownWorld(assets, TownAtlas.Open(assets), opts.TownId >= 0 ? opts.TownId : DefaultTown);
         var flow = new GameFlow(
-            () => DemoHero.CreateSession(assets, TownMap, DemoHero.SeriaRoom),
+            townWorld,
             (path, run) => DungeonSession.Create(assets, path, opts.Seed + run, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage),
             entries,
-            realSelect ? world!.Scene : null);
+            realSelect ? world!.Scene : null,
+            opts.LegacyTown ? null : path => SplashCatalog.ForDungeon(assets, path));
         var bot = new FlowBot(opts.Explore, choices);
 
         double seconds = opts.SecondsGiven ? opts.Seconds : DefaultSeconds;
@@ -168,8 +176,11 @@ internal static class FlowCheck
     {
         switch (flow.Stage)
         {
+            case GameStage.Loading:
+                return "  加载画面 " + flow.Splash!.Scene.Name + "(" + Sec(flow.Splash.Scene.DurationMs) + " 秒"
+                    + (flow.Splash.Scene.Cutscene == null ? ",没有过场图" : string.Empty) + (flow.Splash.Scene.Title != null ? ",带标题" : string.Empty) + ")";
             case GameStage.Town:
-                return "  地图 " + flow.Session!.MapPath;
+                return "  区域 " + (flow.Place.HasValue ? flow.Place.Value.Town + "/" + flow.Place.Value.Area + " " : string.Empty) + "地图 " + flow.Session!.MapPath;
             case GameStage.DungeonSelect:
                 return "  副本 " + flow.Select!.Entries.Count + " 个,选中 " + (flow.Select.Selected?.Name ?? "无") + (flow.Select.World != null ? "(世界地图 " + flow.Select.World.RegionName + ")" : "(占位界面)");
             default:

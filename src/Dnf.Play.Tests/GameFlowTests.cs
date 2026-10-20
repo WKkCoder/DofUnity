@@ -260,7 +260,8 @@ public class GameFlowTests
     [Fact]
     public void TheFlowRejectsMissingPartsAndAnEmptyDungeonPath()
     {
-        Assert.Throws<ArgumentNullException>(() => new GameFlow(null, (p, r) => null, new DungeonEntry[0]));
+        Assert.Throws<ArgumentNullException>(() => new GameFlow((Func<IHeroSession>)null, (p, r) => null, new DungeonEntry[0]));
+        Assert.Throws<ArgumentNullException>(() => new GameFlow((ITownWorld)null, (p, r) => null, new DungeonEntry[0]));
         Assert.Throws<ArgumentNullException>(() => new GameFlow(() => null, null, new DungeonEntry[0]));
         Assert.Throws<ArgumentNullException>(() => new GameFlow(() => null, (p, r) => null, null));
         GameFlow flow = NewFlow();
