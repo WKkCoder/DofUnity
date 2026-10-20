@@ -18,7 +18,8 @@ namespace Dnf.Client
     /// 带 -dnfdungeon &lt;副本定义路径&gt;(例如 dungeon/act1/lorien.dgn)时玩一整座副本:迷宫里的一格一格房间,怪物清完出口打开,走进出口换到相邻的房间,
     /// 屏幕右上角有占位小地图,首领房清空后出 CLEAR(<see cref="DungeonSession"/>,证据 E-070)。-dnfbot 让自动机替你打(-dnfexplore 先逛遍所有房间),
     /// -dnfseed 与 -dnfrandomlayout 指定战斗种子与随机选房。
-    /// 带 -dnfflow 时玩整条流程(<see cref="GameFlow"/>,证据 E-093):从城镇(-dnfflowfrom town,默认)、副本选择(select)或副本(dungeon)开始;
+    /// 带 -dnfflow 时玩整条流程(<see cref="GameFlow"/>,证据 E-093):从选角(-dnfflowfrom char,证据 E-096:方向键移动选中、回车或空格开始游戏、Esc 或点"结束游戏"退出,点角色格子选中)、
+    /// 城镇(town,默认)、副本选择(select)或副本(dungeon)开始;
     /// 城镇走城镇图册(<see cref="AtlasTownWorld"/>,证据 E-095):登录落在赛丽亚房间、走进地图边缘的出口换区域、艾尔文防线走到地下城入口区域再走进右边的出口打开世界地图,
     /// 换区域与进图停在加载画面(过场图 + 边条 + 标题);-dnflegacytown 退回只有赛丽亚房间一张图的老行为(城镇里按回车打开副本选择的占位),-dnfnosplash 去掉所有加载画面。
     /// -dnftownarea 城镇/区域(例如 1/0)不带流程,直接看城镇图册里的一块区域(主角在登录落脚点,-dnfhero 可改位置;离屏渲染一帧与命令行 town-shot 对拍)。
@@ -239,7 +240,7 @@ namespace Dnf.Client
                         _flowMode = true;
                         break;
                     case "-dnfflowfrom":
-                        if (value != null && (value == "town" || value == "select" || value == "dungeon")) { _flowFrom = value; i++; }
+                        if (value != null && (value == "char" || value == "town" || value == "select" || value == "dungeon")) { _flowFrom = value; i++; }
                         break;
                     case "-dnfflowchoices":
                         if (value != null) { _flowChoices = value; i++; }
@@ -580,6 +581,7 @@ namespace Dnf.Client
             try
             {
                 _flow?.Select?.Advance(_shotTimeMs);      // 副本选择界面有自己的时钟(开场动画、横幅轮换):走到 -dnftime 那一刻再画
+                _flow?.CharacterSelect?.Advance(_shotTimeMs);   // 选角界面同理(光束与头像的动画)
                 var sprites = _view.ShowAt(_shotTimeMs);
                 byte[] rgba = _view.Stage.Capture();
                 WritePng(rgba, _shotPath);
@@ -737,12 +739,19 @@ namespace Dnf.Client
                     StepSession(deltaMs);
                 }
                 _flow.Select?.Advance(deltaMs);      // 副本选择界面自己的时钟(开场动画与横幅轮换)
+                _flow.CharacterSelect?.Advance(deltaMs);   // 选角界面自己的时钟(光束与头像的动画)
                 _flow.Splash?.Advance(deltaMs);      // 加载画面:停够时间之后流程切到目标阶段
                 _flow.Poll();
             }
             if (_flow.StageSerial != _shownSerial)
             {
                 SwitchView();
+            }
+            if (_flow.CharacterSelect != null && _flow.CharacterSelect.Outcome == CharacterSelectOutcome.Quit)
+            {
+                Debug.Log("DNF_FLOW quit from character select");
+                Quit();                              // 选角界面上的"结束游戏"(或 Esc):流程不动,宿主退出
+                return;
             }
             _audio?.Tick(deltaMs, _flow.Session as ISoundSource);
             UpdateSettlement();
@@ -786,14 +795,20 @@ namespace Dnf.Client
                 ? new LegacyTownWorld(() => DemoHero.CreateSession(_assets, DefaultMap, DemoHero.SeriaRoom))
                 : (ITownWorld)new AtlasTownWorld(_assets, TownAtlas.Open(_assets), 1, withSplashes: !_noSplash);
             Func<string, SplashScene> dungeonSplash = _legacyTown || _noSplash ? (Func<string, SplashScene>)null : path => SplashCatalog.ForDungeon(_assets, path);
+            // 选角界面(E-096):原版图包与鬼剑士头像;名册是本地存档占位(一个 1 级的默认鬼剑士)
+            CharacterSelectScene characterScene = CharacterSelectScene.From(_assets);
             _flow = new GameFlow(
                 townWorld,
                 (path, run) => CreateDungeon(path, _seed + run),
                 realSelect ? (System.Collections.Generic.IEnumerable<DungeonEntry>)world.Entries : new[] { new DungeonEntry(dungeon, null) },
                 realSelect ? world.Scene : null,
-                dungeonSplash);
+                dungeonSplash,
+                () => new CharacterSelectScreen(CharacterRoster.Local(), characterScene));
             switch (_flowFrom)
             {
+                case "char":
+                    _flow.EnterCharacterSelect("start");
+                    break;
                 case "select":
                     _flow.EnterSelect("start");
                     break;
@@ -849,6 +864,12 @@ namespace Dnf.Client
         private bool InSelect
         {
             get { return _flow != null && _flow.Stage == GameStage.DungeonSelect; }
+        }
+
+        /// <summary>流程模式下正处在选角界面(没有主角)。</summary>
+        private bool InCharacterSelect
+        {
+            get { return _flow != null && _flow.Stage == GameStage.CharacterSelect; }
         }
 
         /// <summary>流程模式下正停在加载画面(没有主角,画面静止,停够时间流程自己往下走)。</summary>
@@ -1004,19 +1025,31 @@ namespace Dnf.Client
                         {
                             _flow.Select.Confirm();     // 副本选择界面底栏写的是"空格 进入地下城"
                         }
+                        else if (InCharacterSelect)
+                        {
+                            _flow.CharacterSelect.Confirm();
+                        }
                         else
                         {
                             TogglePause();
                         }
                         break;
                     case KeyCode.LeftArrow:
-                        if ((_paused || _session == null) && !InSelect && !InLoading)
+                        if (InCharacterSelect)
+                        {
+                            _flow.CharacterSelect.Move(-1);
+                        }
+                        else if ((_paused || _session == null) && !InSelect && !InLoading)
                         {
                             Step(-50.0);
                         }
                         break;
                     case KeyCode.RightArrow:
-                        if ((_paused || _session == null) && !InSelect && !InLoading)
+                        if (InCharacterSelect)
+                        {
+                            _flow.CharacterSelect.Move(1);
+                        }
+                        else if ((_paused || _session == null) && !InSelect && !InLoading)
                         {
                             Step(50.0);
                         }
@@ -1026,11 +1059,19 @@ namespace Dnf.Client
                         {
                             _flow.Select.Move(-1);
                         }
+                        else if (InCharacterSelect)
+                        {
+                            _flow.CharacterSelect.Move(0, -1);
+                        }
                         break;
                     case KeyCode.DownArrow:
                         if (InSelect)
                         {
                             _flow.Select.Move(1);
+                        }
+                        else if (InCharacterSelect)
+                        {
+                            _flow.CharacterSelect.Move(0, 1);
                         }
                         break;
                     case KeyCode.Return:
@@ -1038,6 +1079,10 @@ namespace Dnf.Client
                         if (InSelect)
                         {
                             _flow.Select.Confirm();
+                        }
+                        else if (InCharacterSelect)
+                        {
+                            _flow.CharacterSelect.Confirm();
                         }
                         else if (_flow != null && _flow.Stage == GameStage.Town && _flow.TownWorld is LegacyTownWorld)
                         {
@@ -1051,6 +1096,10 @@ namespace Dnf.Client
                         if (InSelect)
                         {
                             _flow.Select.Back();
+                        }
+                        else if (InCharacterSelect)
+                        {
+                            _flow.CharacterSelect.Back();   // 结束游戏:宿主在 StepFlow 里看到结果就退出
                         }
                         else
                         {
@@ -1089,6 +1138,14 @@ namespace Dnf.Client
                     if (TryGetCanvasPoint(Input.mousePosition, out int sx, out int sy))
                     {
                         _flow.Select.Click(sx, sy);
+                    }
+                }
+                else if (InCharacterSelect)
+                {
+                    // 选角界面:点角色的格子选中、点"游戏开始"开始、点"结束游戏"退出(触摸也走这条)
+                    if (TryGetCanvasPoint(Input.mousePosition, out int cx2, out int cy2))
+                    {
+                        _flow.CharacterSelect.Click(cx2, cy2);
                     }
                 }
                 else
@@ -1251,6 +1308,11 @@ namespace Dnf.Client
                     help = "Up/Down: choose a dungeon   Enter or Space: go in   Esc: back to town   Mouse: click a card (again to enter) or the town button   H: hide text"
                         + (_flow.Select.World == null ? "   (placeholder screen)" : string.Empty);
                 }
+                else if (InCharacterSelect)
+                {
+                    help = "Arrow keys: choose a character   Enter or Space: start   Esc: quit   Mouse: click a character slot, Start or Exit   H: hide text"
+                        + (_flow.CharacterSelect.Scene == null ? "   (placeholder screen)" : string.Empty);
+                }
                 else if (_flow.Stage == GameStage.Loading)
                 {
                     help = "Loading screen (the flow moves on by itself)   H: hide text   Esc: quit";
@@ -1262,8 +1324,8 @@ namespace Dnf.Client
                         : "Arrow keys: walk (push into a map edge exit to change area; the last area's right-hand exit opens the dungeon map)   Space: pause   H: hide text   Esc: quit";
                 }
             }
-            string shownMap = _session != null ? _session.MapPath : InSelect ? "(dungeon select)" : mapPath;
-            string text = (_session is DungeonSession ? "DNF dungeon demo (Unity)   room: " : IsRoomSession ? "DNF dungeon room demo (Unity)   map: " : InSelect ? "DNF game flow demo (Unity)   screen: " : "DNF town demo (Unity)   map: ") + shownMap + "\n"
+            string shownMap = _session != null ? _session.MapPath : InSelect ? "(dungeon select)" : InCharacterSelect ? "(character select)" : mapPath;
+            string text = (_session is DungeonSession ? "DNF dungeon demo (Unity)   room: " : IsRoomSession ? "DNF dungeon room demo (Unity)   map: " : (InSelect || InCharacterSelect) ? "DNF game flow demo (Unity)   screen: " : "DNF town demo (Unity)   map: ") + shownMap + "\n"
                 + "t = " + ((long)_clockMs) + " ms" + (_paused ? " (paused)" : "") + "    " + _fps.ToString("F0") + " FPS    sprites: " + _spriteCount
                 + "    NPCs: " + _view.NpcCount + "    map layers: " + _view.LayerCount + "\n"
                 + hero + help;

@@ -13,6 +13,9 @@ namespace Dnf.Play
 
         /// <summary>加载画面(<see cref="SplashScreen"/>):停够时间之后流程切到目标阶段(证据 E-095)。只有给了加载画面素材的流程才会出现这个阶段。</summary>
         Loading = 3,
+
+        /// <summary>选角界面(<see cref="CharacterSelectScreen"/>):流程的起点,确认之后用选中的角色登录进城(证据 E-096)。只有给了选角界面工厂的流程才会出现这个阶段。</summary>
+        CharacterSelect = 4,
     }
 
     /// <summary>
@@ -64,12 +67,16 @@ namespace Dnf.Play
     /// 从副本回来落在地下城入口区域;换城镇、进出网关区域、进副本时先停在加载画面(<see cref="GameStage.Loading"/>:过场图 + 边条 + 标题)。
     /// 没有城镇世界(老式的单会话工厂,<see cref="LegacyTownWorld"/>)或没给副本加载画面时,对应的切换是瞬间的,与之前一致。
     /// 城镇里的出口触发由会话判断(<see cref="ITownExitSource"/>),流程在 <see cref="Poll"/> 里接手;宿主与自动机只管推进当前阶段。
+    /// 流程的起点可以是选角界面(<see cref="EnterCharacterSelect"/>,证据 E-096):确认之后用选中的角色登录,落在城镇世界的第一站
+    /// (与 <see cref="EnterTown"/> 在流程刚开始时一样,中间照样经过加载画面);选角界面里"结束游戏"只是界面的结果(<see cref="CharacterSelectOutcome.Quit"/>),
+    /// 流程不换阶段,由宿主决定怎么退出。
     /// </summary>
     public sealed class GameFlow
     {
         private readonly ITownWorld _townWorld;
         private readonly Func<string, int, IRunSession> _dungeon;
         private readonly Func<string, SplashScene> _dungeonSplash;
+        private readonly Func<CharacterSelectScreen> _characterSelect;
         private readonly List<DungeonEntry> _entries;
         private readonly WorldMapScene _world;
         private readonly List<FlowEvent> _history = new List<FlowEvent>();
@@ -86,17 +93,19 @@ namespace Dnf.Play
         /// <summary>
         /// <paramref name="townWorld"/> 供给城镇;<paramref name="dungeon"/> 按(副本路径, 局序号)造一局副本;
         /// <paramref name="entries"/> 是副本选择界面上的副本列表;<paramref name="world"/> 不为空时选择界面画原版的世界地图(<see cref="WorldMapArt"/>),
-        /// 为空是占位画面;<paramref name="dungeonSplash"/> 按副本路径给进图加载画面的素材(返回 null 或不给就直接进)。
-        /// 造好之后还要调 <see cref="EnterTown"/>、<see cref="EnterSelect"/> 或 <see cref="StartDungeon"/> 开始。
+        /// 为空是占位画面;<paramref name="dungeonSplash"/> 按副本路径给进图加载画面的素材(返回 null 或不给就直接进);
+        /// <paramref name="characterSelect"/> 每次造一个新的选角界面(不给就没有选角这个阶段,<see cref="EnterCharacterSelect"/> 会报错)。
+        /// 造好之后还要调 <see cref="EnterCharacterSelect"/>、<see cref="EnterTown"/>、<see cref="EnterSelect"/> 或 <see cref="StartDungeon"/> 开始。
         /// </summary>
         public GameFlow(ITownWorld townWorld, Func<string, int, IRunSession> dungeon, IEnumerable<DungeonEntry> entries, WorldMapScene world = null,
-            Func<string, SplashScene> dungeonSplash = null)
+            Func<string, SplashScene> dungeonSplash = null, Func<CharacterSelectScreen> characterSelect = null)
         {
             _townWorld = townWorld ?? throw new ArgumentNullException(nameof(townWorld));
             _dungeon = dungeon ?? throw new ArgumentNullException(nameof(dungeon));
             _entries = new List<DungeonEntry>(entries ?? throw new ArgumentNullException(nameof(entries)));
             _world = world;
             _dungeonSplash = dungeonSplash;
+            _characterSelect = characterSelect;
         }
 
         /// <summary>城镇世界(自动机用它查出口路线)。</summary>
@@ -123,8 +132,14 @@ namespace Dnf.Play
         /// <summary>副本选择阶段里的界面;其它阶段是 null。</summary>
         public DungeonSelectScreen Select { get; private set; }
 
+        /// <summary>选角阶段里的界面;其它阶段是 null。</summary>
+        public CharacterSelectScreen CharacterSelect { get; private set; }
+
         /// <summary>当前阶段要画的内容(带主角的会话、整屏界面或加载画面);还没开始时是 null。</summary>
-        public ISceneSource Scene => Splash != null ? (ISceneSource)Splash : Select != null ? (ISceneSource)Select : Session;
+        public ISceneSource Scene => Splash != null ? (ISceneSource)Splash
+            : Select != null ? (ISceneSource)Select
+            : CharacterSelect != null ? (ISceneSource)CharacterSelect
+            : Session;
 
         /// <summary>正在玩或刚玩过的副本路径;还没进过副本是 null。</summary>
         public string DungeonPath { get; private set; }
@@ -139,6 +154,20 @@ namespace Dnf.Play
 
         /// <summary>每次阶段切换的记录,按先后排。</summary>
         public IReadOnlyList<FlowEvent> History => _history;
+
+        /// <summary>
+        /// 打开选角界面(造一个新的,选中第一个角色)。通常是流程的起点;确认之后 <see cref="Poll"/> 用选中的角色登录进城
+        /// (落在城镇世界的第一站,世界给了加载画面就先停在加载阶段)。没给选角界面工厂时报错。
+        /// </summary>
+        public void EnterCharacterSelect(string reason = "start")
+        {
+            if (_characterSelect == null)
+            {
+                throw new InvalidOperationException("这个流程没有选角界面(构造时没给 characterSelect)");
+            }
+            CharacterSelectScreen screen = _characterSelect() ?? throw new InvalidOperationException("选角界面工厂返回了 null");
+            Switch(GameStage.CharacterSelect, reason, null, null, null, screen);
+        }
 
         /// <summary>
         /// 进城镇:流程刚开始时是登录的第一站,之后(副本、选择界面之后)是回城的落脚点。造一个新的城镇会话;
@@ -240,9 +269,22 @@ namespace Dnf.Play
                     return PollDungeon();
                 case GameStage.DungeonSelect:
                     return PollSelect();
+                case GameStage.CharacterSelect:
+                    return PollCharacterSelect();
                 default:
                     return false;
             }
+        }
+
+        private bool PollCharacterSelect()
+        {
+            // 开始游戏:用选中的角色登录,落在城镇世界的第一站(没有"从哪来",所以只有登录用的加载画面);结束游戏是界面的结果,流程不动
+            if (CharacterSelect == null || CharacterSelect.Outcome != CharacterSelectOutcome.Start)
+            {
+                return false;
+            }
+            GoTown(_townWorld.Start, null, "login");
+            return true;
         }
 
         private bool PollLoading()
@@ -321,7 +363,8 @@ namespace Dnf.Play
             }
         }
 
-        private void Switch(GameStage to, string reason, IHeroSession session, DungeonSelectScreen select, SplashScreen splash = null)
+        private void Switch(GameStage to, string reason, IHeroSession session, DungeonSelectScreen select, SplashScreen splash = null,
+            CharacterSelectScreen characterSelect = null)
         {
             GameStage from = Stage;
             bool first = StageSerial == 0;
@@ -329,6 +372,7 @@ namespace Dnf.Play
             Session = session;
             Select = select;
             Splash = splash;
+            CharacterSelect = characterSelect;
             StageSerial++;
             _history.Add(new FlowEvent(StageSerial, first ? to : from, to, reason));
         }

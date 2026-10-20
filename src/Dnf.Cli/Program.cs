@@ -127,7 +127,7 @@ namespace Dnf.Cli
         /// <summary>flow-check --choices:结算菜单依次做的选择(retry、select、town,逗号分隔);没给时用 <see cref="Dnf.Cli.Analysis.FlowCheck.DefaultChoices"/>。</summary>
         public string? Choices { get; set; }
 
-        /// <summary>flow-check --from:流程从哪个阶段开始(town、select、dungeon;默认 town)。</summary>
+        /// <summary>flow-check --from:流程从哪个阶段开始(char 选角、town、select、dungeon;默认 town)。</summary>
         public string FlowFrom { get; set; } = "town";
 
         /// <summary>town-check --town:只详细打印这座城镇(town.lst 里的编号);默认 -1 = 只打印全部城镇的汇总。</summary>
@@ -135,6 +135,15 @@ namespace Dnf.Cli
 
         /// <summary>town-shot --area:城镇图册里的一块区域,写 城镇/区域(例如 1/0)。</summary>
         public string? TownArea { get; set; }
+
+        /// <summary>charselect-shot --chars:名册里有几个角色(1 到 12,默认 1;多出来的都是同样的默认角色,看格子摆位用)。</summary>
+        public int CharCount { get; set; } = 1;
+
+        /// <summary>charselect-shot --select:选中名册里的第几个角色(从 1 数,默认 1)。</summary>
+        public int SelectIndex { get; set; } = 1;
+
+        /// <summary>charselect-shot --no-avatars:不画角色头像(只剩底座、框与文字),拿来和带头像的画面相减量出头像的位置。</summary>
+        public bool NoAvatars { get; set; }
 
         /// <summary>flow-check --legacy-town:城镇只用赛丽亚房间一张图(没有出口与加载画面,城镇图册之前的行为);默认走城镇图册(证据 E-095)。</summary>
         public bool LegacyTown { get; set; }
@@ -224,10 +233,12 @@ namespace Dnf.Cli
             "      (副本房间里的战斗模拟:按时间表按键,打印命中与怪物状态,可在指定时刻输出 800×600 画面;证据 E-069。怪物会还手(E-086),--no-damage 让主角没有生命值、打不到,回到还手功能加入之前的行为)\n" +
             "  dnf dungeon-check [--dungeon <副本定义>] [--seed N] [--random-layout] [--bot [--explore] | --play 秒:动作,…] [--seconds N(默认 900)] [--frame-ms 毫秒] [--jitter 比例] [--shots-at 秒,…] [--png 前缀] [--layout-only] [--no-damage] [--after-clear 秒]\n" +
             "      (整座副本:读迷宫、选每格的房间、打印布局;--bot 让自动机从起点打到首领清空,逐个房间打印进出与清房时刻;--after-clear 清空之后再空转几秒(看结算画面);--shots-at 在指定时刻输出画面;--frame-ms、--jitter 改每帧的毫秒数与抖动,模拟帧率不固定的实时运行(自动机按固定心跳补步,不受影响;时间表按帧长取样);证据 E-070、E-072)\n" +
-            "  dnf flow-check [--dungeon <副本定义>] [--from town|select|dungeon] [--town N] [--legacy-town] [--worldmap <世界地图定义>|none] [--choices retry,select,town] [--explore] [--seed N] [--no-damage] [--seconds N(默认 1800)] [--frame-ms 毫秒] [--shots-at 秒,… --png 前缀]\n" +
+            "  dnf flow-check [--dungeon <副本定义>] [--from char|town|select|dungeon] [--town N] [--legacy-town] [--worldmap <世界地图定义>|none] [--choices retry,select,town] [--explore] [--seed N] [--no-damage] [--seconds N(默认 1800)] [--frame-ms 毫秒] [--shots-at 秒,… --png 前缀]\n" +
             "      (整条流程的无人值守检查:城镇(默认从城镇图册的登录区域出发,自动机沿出口走到地下城入口,换区域与进图有加载画面;--legacy-town 退回只有赛丽亚房间一张图、阶段瞬间切换的老行为;--town 指定起始城镇) → 副本选择 → 副本 → 结算 → 按 --choices 清单依次选再次挑战(retry)、选择其它地下城(select)、返回城镇(town),打印每次阶段切换与每局的战绩;清单用完或到时间为止;默认清单 retry,select,town;--shots-at 在指定时刻输出当时阶段的画面;证据 E-093)\n" +
             "  dnf town-shot --area <城镇>/<区域> --png <输出.png> [--time <毫秒>] [--hero x,y,left|right,rest|move,毫秒[,镜头x]]\n" +
             "      (城镇图册里一块区域的 800×600 画面:主角在登录落脚点,房间式合成,证据 E-095;Unity 的 -dnftownarea 离屏渲染以它为 CPU 参照)\n" +
+            "  dnf charselect-shot --png <输出.png> [--time <毫秒>] [--chars N(1 到 12,默认 1)] [--select N] [--no-avatars]\n" +
+            "      (选角界面在界面打开 --time 毫秒时的 800×600 画面,证据 E-096:名册是 N 个默认角色,--select 选中第几个(从 1 数);Unity 的 -dnfflowfrom char 离屏渲染以它为 CPU 参照)\n" +
             "  dnf town-check [--town N]\n" +
             "      (城镇图册检查:读 town.lst 与每座 .twn,汇总区域类型、出口的去处与对称性、到地下城入口的路线;--town N 逐区域打印出口矩形、触发方向与按规则算出的落脚点(本机查看,数值不入库))\n" +
             "  dnf arrival-check [--dungeon <副本定义>] [--hero-id N] [--scan 起:止 --expect 房间:侧:x:y:容差,…] [--probe 房间:侧:y,…]\n" +
@@ -413,7 +424,7 @@ namespace Dnf.Cli
                         opts.Choices = NextValue(args, ref i);
                         break;
                     case "--from":
-                        opts.FlowFrom = NextValue(args, ref i) is var from && (from is "town" or "select" or "dungeon") ? from : throw new UserError("--from 需要 town、select 或 dungeon");
+                        opts.FlowFrom = NextValue(args, ref i) is var from && (from is "char" or "town" or "select" or "dungeon") ? from : throw new UserError("--from 需要 char、town、select 或 dungeon");
                         break;
                     case "--worldmap":
                         opts.WorldMap = NextValue(args, ref i);
@@ -423,6 +434,15 @@ namespace Dnf.Cli
                         break;
                     case "--area":
                         opts.TownArea = NextValue(args, ref i);
+                        break;
+                    case "--chars":
+                        opts.CharCount = int.TryParse(NextValue(args, ref i), out int chars) && chars >= 1 && chars <= 12 ? chars : throw new UserError("--chars 需要 1 到 12 的整数");
+                        break;
+                    case "--select":
+                        opts.SelectIndex = int.TryParse(NextValue(args, ref i), out int selectIndex) && selectIndex >= 1 ? selectIndex : throw new UserError("--select 需要从 1 数起的正整数");
+                        break;
+                    case "--no-avatars":
+                        opts.NoAvatars = true;
                         break;
                     case "--town":
                         opts.TownId = int.TryParse(NextValue(args, ref i), out int townId) && townId >= 0 ? townId : throw new UserError("--town 需要非负整数");
@@ -555,6 +575,8 @@ namespace Dnf.Cli
                         : TownRender.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "town-shot":
                     return TownShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "charselect-shot":
+                    return CharSelectShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "fit-map":
                     return MapFit.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "fit-sprite":

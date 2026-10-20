@@ -7,7 +7,8 @@ namespace Dnf.Cli.Analysis;
 /// <summary>
 /// flow-check:整条流程的无人值守检查(证据 E-093)。
 /// 用真实数据造城镇与副本会话,交给 <see cref="GameFlow"/>,由 <see cref="FlowBot"/> 按固定的 1/60 秒步长走完
-/// 城镇 → 副本选择 → 副本(自动机打到首领清空)→ 结算 → 按 --choices 清单依次选再次挑战、选择其它地下城、返回城镇;
+/// (选角 →)城镇 → 副本选择 → 副本(自动机打到首领清空)→ 结算 → 按 --choices 清单依次选再次挑战、选择其它地下城、返回城镇;
+/// --from char 从选角界面开始(证据 E-096:自动机停一会儿确认第一个角色,登录进城);
 /// 打印每次阶段切换与每一局的战绩,清单用完或到时间为止。--shots-at 在指定时刻输出当时阶段的 800×600 画面。
 /// 战斗用占位伤害(<see cref="PlaceholderDamage"/>)。城镇默认走城镇图册(<see cref="AtlasTownWorld"/>,证据 E-095:登录在网关区域、沿出口换区域、地下城入口区域的出口通世界地图、换区域与进图有加载画面,
 /// 自动机沿出口走过去);--legacy-town 退回量过出生点与镜头范围的赛丽亚房间一张图(没有出口与加载画面),
@@ -60,12 +61,14 @@ internal static class FlowCheck
         ITownWorld townWorld = opts.LegacyTown
             ? new LegacyTownWorld(() => DemoHero.CreateSession(assets, TownMap, DemoHero.SeriaRoom))
             : new AtlasTownWorld(assets, TownAtlas.Open(assets), opts.TownId >= 0 ? opts.TownId : DefaultTown);
+        CharacterSelectScene characterScene = CharacterSelectScene.From(assets);
         var flow = new GameFlow(
             townWorld,
             (path, run) => DungeonSession.Create(assets, path, opts.Seed + run, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage),
             entries,
             realSelect ? world!.Scene : null,
-            opts.LegacyTown ? null : path => SplashCatalog.ForDungeon(assets, path));
+            opts.LegacyTown ? null : path => SplashCatalog.ForDungeon(assets, path),
+            () => new CharacterSelectScreen(CharacterRoster.Local(), characterScene));
         var bot = new FlowBot(opts.Explore, choices);
 
         double seconds = opts.SecondsGiven ? opts.Seconds : DefaultSeconds;
@@ -75,6 +78,9 @@ internal static class FlowCheck
 
         switch (opts.FlowFrom)
         {
+            case "char":
+                flow.EnterCharacterSelect("start");
+                break;
             case "select":
                 flow.EnterSelect("start");
                 break;
@@ -176,6 +182,9 @@ internal static class FlowCheck
     {
         switch (flow.Stage)
         {
+            case GameStage.CharacterSelect:
+                return "  角色 " + flow.CharacterSelect!.Roster.Count + " 个,选中第 " + (flow.CharacterSelect.Index + 1) + " 个"
+                    + (flow.CharacterSelect.Scene != null ? "(原版素材)" : "(占位界面)");
             case GameStage.Loading:
                 return "  加载画面 " + flow.Splash!.Scene.Name + "(" + Sec(flow.Splash.Scene.DurationMs) + " 秒"
                     + (flow.Splash.Scene.Cutscene == null ? ",没有过场图" : string.Empty) + (flow.Splash.Scene.Title != null ? ",带标题" : string.Empty) + ")";

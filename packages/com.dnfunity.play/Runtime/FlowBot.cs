@@ -5,8 +5,9 @@ using Dnf.Render;
 namespace Dnf.Play
 {
     /// <summary>
-    /// 无人值守的流程自动机:替玩家走完整条流程(城镇 → 副本选择 → 副本 → 结算 → 再来一次 / 选择其它地下城 / 返回城镇),
+    /// 无人值守的流程自动机:替玩家走完整条流程(选角 → 城镇 → 副本选择 → 副本 → 结算 → 再来一次 / 选择其它地下城 / 返回城镇),
     /// 用来在没有人的环境里检查流程(命令行 flow-check、播放器的 -dnfflow -dnfbot)。
+    /// 选角界面上停一会儿(<see cref="CharacterSelectDwellMs"/>)再确认选中的角色;
     /// 副本里交给 <see cref="DungeonBot"/> 打;结算菜单出现之后等一会儿,按预设的清单依次做选择(再次挑战、选择其它地下城、返回城镇);
     /// 清单用完就算结束(<see cref="Done"/>):清单以返回城镇收尾时停在城镇,否则停在最后一局的结算菜单上(那一次不再选)。
     /// 城镇里沿出口走到地下城入口区域、走出通往世界地图的出口(证据 E-095;城镇世界不给路线时退回站一会儿再走下一步的占位);
@@ -20,6 +21,9 @@ namespace Dnf.Play
 
         /// <summary>沿路线走了这么久还没走到地下城入口就当卡住了(<see cref="Stuck"/>):直接进副本选择让流程接着走。</summary>
         public const double TownTimeoutMs = 120000.0;
+
+        /// <summary>选角界面上停多久再确认(占位;让背景光束与头像的动画先走一会儿)。</summary>
+        public const double CharacterSelectDwellMs = 1500.0;
 
         /// <summary>副本选择界面上停多久再确认(占位;要比世界地图的开场动画长,卡片淡入之后才确认)。</summary>
         public const double SelectDwellMs = 2500.0;
@@ -85,6 +89,13 @@ namespace Dnf.Play
             {
                 case GameStage.Loading:
                     flow.Splash.Advance(deltaMs);
+                    break;
+                case GameStage.CharacterSelect:
+                    flow.CharacterSelect.Advance(deltaMs);
+                    if (_stageMs >= CharacterSelectDwellMs)
+                    {
+                        flow.CharacterSelect.Confirm();      // 选中的是第一个角色;确认之后流程登录进城
+                    }
                     break;
                 case GameStage.Town:
                     AdvanceTown(flow, deltaMs);

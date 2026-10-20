@@ -13,9 +13,10 @@
 #      与命令行 dungeon-check --bot 逐字节对照;再实时让自动机逛遍并打完整座副本,检查走完(进过 6 个房间、首领清空)。
 #   6. 声音(E-089、E-090):同一局实时运行默认静音(-batchmode),但整条链路照跑;日志里的 DNF_AUDIO 计数要有提示、开始放过、读成功过剪辑、没有读失败。
 #   7. 整条流程(E-093、E-094):副本选择界面(原版世界地图画法)离屏两帧(0.7、2.0 秒)与命令行 flow-check --from select 逐字节对照;
+#      选角界面(E-096)0、0.7、1.4 秒三帧与命令行 charselect-shot 逐字节对照;
 #      加载画面(E-095)进城与进图两帧、城镇图册里的三块区域(赛丽亚房间、艾尔文防线、地下城入口区域)各一帧,分别与命令行 flow-check --shots-at、town-shot 逐字节对照;
-#      再让流程自动机在播放器里实时走完 登录加载 → 赛丽亚房间 → 走出口 → 艾尔文防线 → 走出口 → 地下城入口区域 → 走出口 → 选择 → 副本 → 结算 → 再次挑战 → 副本 → 结算 →
-#      选择其它地下城 → 选择 → 副本 → 结算 → 返回城镇(时间步放大 4 倍),检查十五次阶段切换、三局副本与声音计数。
+#      再让流程自动机在播放器里实时走完 选角 → 登录加载 → 赛丽亚房间 → 走出口 → 艾尔文防线 → 走出口 → 地下城入口区域 → 走出口 → 选择 → 副本 → 结算 → 再次挑战 → 副本 → 结算 →
+#      选择其它地下城 → 选择 → 副本 → 结算 → 返回城镇(时间步放大 4 倍),检查十六次阶段切换、三局副本与声音计数。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -389,6 +390,21 @@ if [ "$platform" = "macos" ]; then
       [ "$rc" -eq 0 ] || exit "$rc"
       python3 tools/py/png_diff.py "out/town-demo-flow-select-$shot_ms.png" "out/town-cpu-flow-select-$cpu_sec.png" --max-diff 0
     done
+    # 选角界面(证据 E-096):原版的背景、窗口边框、标题、旗、底座、选中框、滚动条、按钮、鬼剑士头像都是图包里的图(边框与滚动条、按钮是几十个小图块合成的大图),
+    # 光束是 .ani 动画;离屏渲染 0、0.7、1.4 秒三个时刻(-dnfflow -dnfflowfrom char,界面时间一次走到这一刻)与命令行 charselect-shot 逐字节对照
+    rm -f out/town-demo-charselect-*.png out/town-cpu-charselect-*.png
+    for shot_ms in 0 700 1400; do
+      set +e
+      "$app" -batchmode -logFile "$PWD/re/unity-run-town-charselect-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-charselect-$shot_ms.png" \
+        -dnftime "$shot_ms" -dnfflow -dnfflowfrom char
+      rc=$?
+      set -e
+      echo "播放器退出码(离屏渲染选角界面 t=${shot_ms}ms): $rc"
+      grep -E 'DNF_TOWN_DEMO' "$PWD/re/unity-run-town-charselect-macos.log" || true
+      [ "$rc" -eq 0 ] || exit "$rc"
+      dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll charselect-shot --time "$shot_ms" --png "$PWD/out/town-cpu-charselect-$shot_ms.png" >/dev/null
+      python3 tools/py/png_diff.py "out/town-demo-charselect-$shot_ms.png" "out/town-cpu-charselect-$shot_ms.png" --max-diff 0
+    done
     # 加载画面(证据 E-095):流程从头开始就停在加载画面,所以 -dnfflow(-dnfflowfrom town 进城、dungeon 进图)离屏渲染 0.5 秒的一帧就是加载画面,
     # 与命令行 flow-check --shots-at 0.5 逐字节对照(过场图、整屏边条、标题三层,画面是静止的)
     rm -f out/town-demo-splash-*.png out/town-cpu-splash-*.png
@@ -419,13 +435,13 @@ if [ "$platform" = "macos" ]; then
       dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll town-shot --area "$area" --time 545 --png "$PWD/out/town-cpu-$tag.png" >/dev/null
       python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-$tag.png" --max-diff 0
     done
-    # 实时运行:流程自动机走完 登录加载 → 赛丽亚房间 → 走出口(加载)→ 艾尔文防线 → 走出口 → 地下城入口区域 → 走出口(世界地图)→ 选择 → 加载 → 副本 → 结算 →
-    # 再次挑战(加载)→ 副本 → 结算 → 选择其它地下城 → 选择 → 加载 → 副本 → 结算 → 返回城镇(加载);
-    # 时间步放大 4 倍,走完自动退出(-dnfquitafter 只是上限)。要有十五次阶段切换、三局副本、三次菜单选择,自动机说走完了,最后停在城镇
+    # 实时运行:流程自动机走完 选角(停一会儿确认第一个角色,E-096)→ 登录加载 → 赛丽亚房间 → 走出口(加载)→ 艾尔文防线 → 走出口 → 地下城入口区域 →
+    # 走出口(世界地图)→ 选择 → 加载 → 副本 → 结算 → 再次挑战(加载)→ 副本 → 结算 → 选择其它地下城 → 选择 → 加载 → 副本 → 结算 → 返回城镇(加载);
+    # 时间步放大 4 倍,走完自动退出(-dnfquitafter 只是上限)。要有十六次阶段切换(第一次是进入选角界面)、三局副本、三次菜单选择,自动机说走完了,最后停在城镇
     flow_log="$PWD/re/unity-run-town-flow-macos.log"
     rm -f "$flow_log"
     set +e
-    "$app" -batchmode -logFile "$flow_log" -dnfdir "$DNF_DIR" -dnfflow -dnfbot -dnfnodamage -dnfdungeon "$dungeon" -dnfflowchoices retry,select,town \
+    "$app" -batchmode -logFile "$flow_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom char -dnfbot -dnfnodamage -dnfdungeon "$dungeon" -dnfflowchoices retry,select,town \
       -dnftimescale 4 -dnfquitafter 150
     rc=$?
     set -e
@@ -436,9 +452,13 @@ if [ "$platform" = "macos" ]; then
       echo "整条流程的日志里有异常:$flow_log" >&2
       exit 1
     fi
-    [ "$(grep -c -E 'DNF_FLOW serial=' "$flow_log")" -eq 15 ] \
-      || { echo "整条流程应有十五次阶段切换(DNF_FLOW 行):$flow_log" >&2; exit 1; }
-    grep -q -E 'DNF_TOWN_DEMO ran .* flow=Town serial=15 runs=3 settlements=3 botDone=True choicesMade=3' "$flow_log" \
+    [ "$(grep -c -E 'DNF_FLOW serial=' "$flow_log")" -eq 16 ] \
+      || { echo "整条流程应有十六次阶段切换(DNF_FLOW 行):$flow_log" >&2; exit 1; }
+    grep -q -E 'DNF_FLOW serial=1 from=[A-Za-z]+ to=CharacterSelect reason="start"' "$flow_log" \
+      || { echo "整条流程应从选角界面开始(第一行 DNF_FLOW 应是进入 CharacterSelect):$flow_log" >&2; exit 1; }
+    grep -q -E 'DNF_FLOW serial=2 from=CharacterSelect to=Loading reason="login"' "$flow_log" \
+      || { echo "选角之后应登录进城(第二行 DNF_FLOW 应是 CharacterSelect -> Loading,原因 login):$flow_log" >&2; exit 1; }
+    grep -q -E 'DNF_TOWN_DEMO ran .* flow=Town serial=16 runs=3 settlements=3 botDone=True choicesMade=3' "$flow_log" \
       || { echo "整条流程没有走完(应停在城镇、三局副本、三次菜单选择、自动机说走完了):$flow_log" >&2; exit 1; }
     flow_audio="$(grep -E 'DNF_AUDIO cues=' "$flow_log" | tail -1)"
     echo "$flow_audio"
