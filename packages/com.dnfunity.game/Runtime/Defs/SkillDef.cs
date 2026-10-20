@@ -85,6 +85,20 @@ namespace Dnf.Game
         /// <summary>有 [command](出招指令)标签:主动技能里能放进快捷槽、按指令放出的才有(证据 E-076:新建角色的初始技能表里,恰好是它们占了 A S D 三个快捷槽)。</summary>
         public bool HasCommand { get; }
 
+        /// <summary>
+        /// [icon] 的图标图像(原样,例如 "Character/Swordman/Effect/SkillIcon.img";在图包里的路径是前面加 sprite/ 再转小写,证据 E-088);没有 [icon] 时为 null。
+        /// </summary>
+        public string IconImage { get; }
+
+        /// <summary>[icon] 的第一个帧号:能用时的图标;没有 [icon] 时为 -1。</summary>
+        public int IconFrame { get; }
+
+        /// <summary>[icon] 的第二个图像(观察:洛兰初始三个技能里与第一个相同);没有 [icon] 时为 null。</summary>
+        public string IconDisabledImage { get; }
+
+        /// <summary>[icon] 的第二个帧号:不能用时(冷却、魔法不够)的灰色图标;没有 [icon] 时为 -1。</summary>
+        public int IconDisabledFrame { get; }
+
         public SkillDef(int id, string path, ScriptLine[] lines)
         {
             Id = id;
@@ -98,6 +112,19 @@ namespace Dnf.Game
             MaximumLevel = table.IntOr("[maximum level]", 0);
             Type = table.FirstString("[type]");
             HasCommand = table.Has("[command]");
+
+            // [icon] "图像" 帧 "图像" 帧:能用时的图标与不能用时的灰图标(形状不对就当没有)
+            IconFrame = -1;
+            IconDisabledFrame = -1;
+            if (table.TryGetLine("[icon]", out ScriptLine iconLine) && iconLine.Values.Length >= 4
+                && iconLine.Values[0].Kind == ScriptValueKind.String && iconLine.Values[1].IsNumber
+                && iconLine.Values[2].Kind == ScriptValueKind.String && iconLine.Values[3].IsNumber)
+            {
+                IconImage = iconLine.Values[0].Text;
+                IconFrame = iconLine.Values[1].Int;
+                IconDisabledImage = iconLine.Values[2].Text;
+                IconDisabledFrame = iconLine.Values[3].Int;
+            }
 
             // 按出现顺序走一遍:[pvp] ... [/pvp] 之间的 [static data]/[level info] 属于决斗场,其余属于普通模式
             int[] pveStatic = Array.Empty<int>();

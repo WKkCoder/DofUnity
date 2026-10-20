@@ -60,6 +60,31 @@ public sealed class DefsAndCoreTests
     }
 
     [Fact]
+    public void SkillDefReadsTheTwoIconFramesAndIgnoresAMalformedIconLine()
+    {
+        // [icon] "图像" 帧 "图像" 帧:能用的图标与灰图标(数是合成的)
+        var def = new SkillDef(5, "skill/x/icon.skl", new[] { Line("[icon]", "Character/X/Effect/SkillIcon.img", 10, "Character/X/Effect/SkillIcon.img", 11) });
+        Assert.Equal(("Character/X/Effect/SkillIcon.img", 10, "Character/X/Effect/SkillIcon.img", 11), (def.IconImage, def.IconFrame, def.IconDisabledImage, def.IconDisabledFrame));
+
+        // 两个图像可以不同,各自带各自的帧
+        var split = new SkillDef(6, "skill/x/split.skl", new[] { Line("[icon]", "A/One.img", 3, "A/Two.img", 4) });
+        Assert.Equal(("A/One.img", 3, "A/Two.img", 4), (split.IconImage, split.IconFrame, split.IconDisabledImage, split.IconDisabledFrame));
+
+        // 没有 [icon] 或形状不对(少了后一对、类型错位):当作没有
+        foreach (SkillDef none in new[]
+        {
+            new SkillDef(7, "skill/x/none.skl", new[] { Line("[type]", "[active]") }),
+            new SkillDef(8, "skill/x/short.skl", new[] { Line("[icon]", "A/One.img", 3) }),
+            new SkillDef(9, "skill/x/swapped.skl", new[] { Line("[icon]", 3, "A/One.img", 4, "A/Two.img") }),
+        })
+        {
+            Assert.Null(none.IconImage);
+            Assert.Null(none.IconDisabledImage);
+            Assert.Equal((-1, -1), (none.IconFrame, none.IconDisabledFrame));
+        }
+    }
+
+    [Fact]
     public void SkillDefWithoutPvpSectionFallsBackToTheNormalDataInPvpMode()
     {
         var def = new SkillDef(1, "skill/x/a.skl", new[]

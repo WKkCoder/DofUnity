@@ -55,7 +55,7 @@ public class HeroSkillsTests
         using DnfAssets assets = DnfAssets.Open(fx.Root);
         HeroSkills skills = Load(assets);
 
-        // 上挑 3 级:冷却 2000→1000 在 10 级里线性插值,第 3 级 = 2000 − 1000 × 2 / 9 = 1777.8 取整 1778;耗蓝 5→35 同理得 11.7 取整 12(数据照读,目前不扣蓝)
+        // 上挑 3 级:冷却 2000→1000 在 10 级里线性插值,第 3 级 = 2000 − 1000 × 2 / 9 = 1777.8 取整 1778;耗蓝 5→35 同理得 11.7 取整 12(放出来时的扣蓝见 HeroMpTests)
         HeroSkillSlot upper = skills.SlotOf(SkillKeys.S);
         Assert.Equal(1778, upper.CooldownMs);
         Assert.Equal(12, upper.ConsumeMp);

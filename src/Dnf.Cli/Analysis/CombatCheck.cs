@@ -123,6 +123,7 @@ internal static class CombatCheck
             + ",剩余 " + session.AliveCount + " 个"
             + (session.Vitals != null
                 ? ",主角被打中 " + session.HeroHits + " 次(共 " + session.HeroDamageTaken + " 点),生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax
+                    + ",魔法 " + session.Vitals.Mp + "/" + session.Vitals.MpMax
                     + ",动作 " + session.Hero.Motion
                 : string.Empty));
         foreach (MonsterActor m in session.Monsters)

@@ -315,7 +315,8 @@ namespace Dnf.Play
     /// 一次挥击只打一下;伤害交给原版公式(<see cref="DamageFormula"/>,输入是占位值,见 <see cref="MonsterDamage"/>);主角有生命与魔法(<see cref="Vitals"/>)、
     /// 受击硬直与击退、左下角的占位血条、红色伤害数字;生命归零后主角停在受击姿势、画面上显示 DEAD,不再接受输入。
     /// 构造时不给 <see cref="Vitals"/> 就是旧的行为:主角打不到、怪物按固定距离出招、没有血条(命令行 --no-damage、播放器 -dnfnodamage 用它,按时刻对拍的回归检查靠它保持原来的时刻)。
-    /// 没做:主角打怪的真实伤害公式(仍用 <see cref="PlaceholderDamage"/>)、主角的真实面板(等级、装备、成长)、耗蓝与魔法恢复、主角倒地起身与空中受击、
+    /// 魔法值(证据 E-087):放技能时扣 .skl 的 [consume MP],不够就放不出来;按 .chr 的 [MP regen speed](每分钟,单位是推断的)连续恢复。
+    /// 没做:主角打怪的真实伤害公式(仍用 <see cref="PlaceholderDamage"/>)、主角的真实面板(等级、装备、成长)、主角倒地起身与空中受击、
     /// 复活与结算、技能音效与语音、掉落。出口开关与换房间在 <see cref="DungeonSession"/>。证据 E-069。
     /// </summary>
     public sealed class RoomCombatSession : ISkillSession
@@ -341,6 +342,9 @@ namespace Dnf.Play
         private readonly HeroStrikeInfo _jumpStrike;
         private readonly HeroStrikeBoxes _boxes;
         private readonly OverlayArt _art = new OverlayArt();
+
+        /// <summary>原版的底栏(血魔球、技能槽等,证据 E-088);图包里没有时为 null,退回占位的色块血条。</summary>
+        private readonly HudArt _hud;
         private readonly List<HitPopup> _popups = new List<HitPopup>();
         private readonly List<AnimatedEffect> _effects = new List<AnimatedEffect>();
         private readonly HashSet<MonsterActor> _hitThisSwing = new HashSet<MonsterActor>();
@@ -464,6 +468,7 @@ namespace Dnf.Play
             _dashStrike = dashStrike;
             _jumpStrike = jumpStrike;
             _boxes = new HeroStrikeBoxes(assets);
+            _hud = HudArt.For(assets);
             _random = new Random(seed);
             _physicsRandom = new Random(unchecked(seed * 31 + 17));
             SyncStance();
@@ -622,6 +627,7 @@ namespace Dnf.Play
         private void Step(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed, SkillKeys skillsPressed)
         {
             Skills.Advance(deltaMs);
+            Vitals?.RegenMp(deltaMs);   // 魔法值按墙钟恢复(证据 E-087);死了不恢复在 RegenMp 里判断
 
             if (HeroDead)
             {
@@ -663,7 +669,7 @@ namespace Dnf.Play
                 _bufferedAttack = false;
                 _bufferedJump = false;
                 _bufferedSkills = SkillKeys.None;
-                HeroSkillSlot cast = skillsPressed == SkillKeys.None ? null : Skills.TryCast(skillsPressed, _room.Hero);
+                HeroSkillSlot cast = skillsPressed == SkillKeys.None ? null : Skills.TryCast(skillsPressed, _room.Hero, Vitals);
                 if (cast != null)
                 {
                     attackPressed = false;
@@ -988,7 +994,19 @@ namespace Dnf.Play
             }
             if (Vitals != null)
             {
-                AddHeroBars(into, ref order);
+                if (_hud != null)
+                {
+                    AddHud(into, ref order);
+                }
+                else
+                {
+                    AddHeroBars(into, ref order);
+                }
+                if (!Vitals.IsAlive)
+                {
+                    SpriteFrame dead = _art.Text("DEAD", 8, HeroPopupColor);
+                    into.Add(OverlayArt.Place(dead, (800 - dead.Width) / 2, 220, order++, "hero-dead"));
+                }
             }
             foreach (HitPopup p in _popups)
             {
@@ -1008,7 +1026,7 @@ namespace Dnf.Play
         /// <summary>主角受伤飘字的颜色(红)。</summary>
         public const uint HeroPopupColor = 0xFF5050u;
 
-        /// <summary>主角生命条与魔法条(占位的叠加层,不是原版的界面):屏幕左下角,红色与蓝色,上面各一行 "HP 当前/上限"。死后居中显示 DEAD。</summary>
+        /// <summary>主角生命条与魔法条(占位的叠加层,不是原版的界面):屏幕左下角,红色与蓝色,上面各一行 "HP 当前/上限"。只在图包里没有原版底栏时用(<see cref="HudArt"/>);死后居中显示 DEAD(两种底栏都有)。</summary>
         public const int HeroBarX = 24;
         public const int HeroBarY = 540;
         public const int HeroBarWidth = 180;
@@ -1031,11 +1049,23 @@ namespace Dnf.Play
                     + v.MpMax.ToString(System.Globalization.CultureInfo.InvariantCulture), 2, OverlayArt.White);
                 into.Add(OverlayArt.Place(mpLabel, HeroBarX, mpY - OverlayArt.TextHeight(2) - 2, order++, "hero-mp-label"));
             }
-            if (!v.IsAlive)
+        }
+
+        /// <summary>
+        /// 原版底栏(<see cref="HudArt"/>,证据 E-088):血球、魔法球、等级牌与 A S D 技能槽(能放亮、冷却或魔法不够时灰)。
+        /// 技能槽按 <see cref="Skills"/> 的次序对应 A、S、D。
+        /// </summary>
+        private void AddHud(List<SceneSprite> into, ref int order)
+        {
+            HeroVitals v = Vitals;
+            var states = new List<HudSkillState>(Skills.Slots.Count);
+            for (int i = 0; i < Skills.Slots.Count; i++)
             {
-                SpriteFrame dead = _art.Text("DEAD", 8, HeroPopupColor);
-                into.Add(OverlayArt.Place(dead, (800 - dead.Width) / 2, 220, order++, "hero-dead"));
+                HeroSkillSlot s = Skills.Slots[i];
+                bool usable = s.Ready && v.IsAlive && v.Mp >= s.ConsumeMp;
+                states.Add(new HudSkillState(i, s.Def, usable));
             }
+            _hud.Build(into, ref order, v.Level, v.Hp, v.HpMax, v.Mp, v.MpMax, states);
         }
 
         private static int FilledWidth(int value, int max)

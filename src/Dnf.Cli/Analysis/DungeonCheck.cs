@@ -123,7 +123,7 @@ internal static class DungeonCheck
         Console.WriteLine("结束:t=" + Sec(t) + "s  " + (session.BossCleared ? "首领清空" : session.ExitReached ? "走出迷宫" : "未走完")
             + "  进过 " + session.RoomsEntered + " 个房间,清空 " + session.RoomsCleared + " 个,换房间 " + session.Transitions + " 次;命中 " + session.Hits
             + " 次,击杀 " + session.Kills + " 个,总伤害 " + session.TotalDamage
-            + (session.Vitals != null ? ";主角被打中 " + session.HeroHits + " 次,生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax : ";怪物不还手(--no-damage)"));
+            + (session.Vitals != null ? ";主角被打中 " + session.HeroHits + " 次,生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax + ",魔法 " + session.Vitals.Mp + "/" + session.Vitals.MpMax : ";怪物不还手(--no-damage)"));
         for (int y = 0; y < maze.Rows; y++)
         {
             var sb = new StringBuilder("  ");

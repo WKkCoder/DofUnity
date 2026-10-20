@@ -410,13 +410,13 @@ namespace Dnf.Client
                 + (_session is RoomCombatSession fight
                     ? " monsters=" + fight.AliveCount + "/" + fight.Monsters.Count + " hits=" + fight.Hits + " kills=" + fight.Kills + " combo=" + fight.Combo
                         + " casts=" + fight.SkillCasts + " stage=" + (h.IsAttacking ? h.AttackStage + 1 : 0)
-                        + (fight.Vitals != null ? " heroHits=" + fight.HeroHits + " heroHp=" + fight.Vitals.Hp + "/" + fight.Vitals.HpMax : string.Empty)
+                        + (fight.Vitals != null ? " heroHits=" + fight.HeroHits + " heroHp=" + fight.Vitals.Hp + "/" + fight.Vitals.HpMax + " heroMp=" + fight.Vitals.Mp + "/" + fight.Vitals.MpMax : string.Empty)
                     : string.Empty)
                 + (_session is DungeonSession d
                     ? " dungeon=" + _dungeonPath + " cell=(" + d.CellX + "," + d.CellY + ") map=" + d.MapPath + " entered=" + d.RoomsEntered + " cleared=" + d.RoomsCleared
                         + " transitions=" + d.Transitions + " bossCleared=" + d.BossCleared + " exitReached=" + d.ExitReached
                         + " monsters=" + d.Current.AliveCount + "/" + d.Current.Monsters.Count + " hits=" + d.Hits + " kills=" + d.Kills + " damage=" + d.TotalDamage
-                        + (d.Vitals != null ? " heroHits=" + d.HeroHits + " heroHp=" + d.Vitals.Hp + "/" + d.Vitals.HpMax : string.Empty)
+                        + (d.Vitals != null ? " heroHits=" + d.HeroHits + " heroHp=" + d.Vitals.Hp + "/" + d.Vitals.HpMax + " heroMp=" + d.Vitals.Mp + "/" + d.Vitals.MpMax : string.Empty)
                     : string.Empty);
         }
 

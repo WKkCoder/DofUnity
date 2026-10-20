@@ -31,6 +31,9 @@ namespace Dnf.Play
         /// <summary>技能还在冷却。</summary>
         Cooldown,
 
+        /// <summary>魔法值不够(证据 E-087)。</summary>
+        NoMp,
+
         /// <summary>主角此刻不能放(正在挥击、腾空或放别的技能,或缺少需要的动作)。</summary>
         Busy,
 
@@ -49,7 +52,7 @@ namespace Dnf.Play
         /// <summary>满冷却时长(毫秒):.skl 的 [cool time] 按等级插值;没有这个标签为 0(例如后跳)。</summary>
         public int CooldownMs { get; }
 
-        /// <summary>.skl 的 [consume MP] 按等级插值(数据照读,目前不扣蓝:蓝量与回蓝的规则还没读出来)。</summary>
+        /// <summary>.skl 的 [consume MP] 按等级插值;放出来的那一刻从 <see cref="HeroVitals"/> 里扣(证据 E-087)。</summary>
         public int ConsumeMp { get; }
 
         /// <summary>
@@ -93,7 +96,9 @@ namespace Dnf.Play
     /// 放法:鬼斩 = 原地播自己的动作动画(<see cref="TownHero.BeginSkillMotion"/>),命中用自己的攻击信息与 .skl 的伤害数(<see cref="HeroSkillSlot.Strike"/>);
     /// 上挑 = 连招第三段的动画与攻击信息整段打一遍(<see cref="TownHero.BeginSkillStrike"/>);后跳 = 跳跃状态的特殊参数(<see cref="TownHero.BeginBackStep"/>)。
     /// 冷却在放出的那一刻开始(.skl 的 [auto cooltime apply] 1 对应的行为,客户端在进入技能状态时启动冷却),按墙钟倒数。
-    /// 没做:耗蓝与回蓝、施放期间的无敌与霸体、冷却缩减、技能等级成长对伤害与攻击范围的影响。
+    /// 耗蓝(证据 E-087):给了 <see cref="HeroVitals"/> 就在技能真正开始的那一刻扣 [consume MP],魔法值不够就放不出来(<see cref="SkillCastResult.NoMp"/>,
+    /// 不启动冷却、不扣蓝);没给就不耗蓝(旧行为)。
+    /// 没做:施放期间的无敌与霸体、冷却缩减、技能等级成长对伤害与攻击范围的影响。
     /// </summary>
     public sealed class HeroSkills
     {
@@ -230,7 +235,7 @@ namespace Dnf.Play
         /// 处理这一步按下的技能键:每个键按槽的次序试一遍,第一个放出来的就是这一步的技能(同一步里最多放一个)。
         /// 返回放出来的技能的槽;没放出来返回 null。
         /// </summary>
-        public HeroSkillSlot TryCast(SkillKeys pressed, TownHero hero)
+        public HeroSkillSlot TryCast(SkillKeys pressed, TownHero hero, HeroVitals vitals = null)
         {
             if (pressed == SkillKeys.None || hero == null)
             {
@@ -238,7 +243,7 @@ namespace Dnf.Play
             }
             foreach (HeroSkillSlot s in _slots)
             {
-                if ((pressed & s.Key) != 0 && Cast(s, hero) == SkillCastResult.Cast)
+                if ((pressed & s.Key) != 0 && Cast(s, hero, vitals) == SkillCastResult.Cast)
                 {
                     return s;
                 }
@@ -246,8 +251,11 @@ namespace Dnf.Play
             return null;
         }
 
-        /// <summary>试着放这一个槽的技能;放出来就启动冷却。</summary>
-        public SkillCastResult Cast(HeroSkillSlot slot, TownHero hero)
+        /// <summary>
+        /// 试着放这一个槽的技能;放出来就启动冷却,并(给了 <paramref name="vitals"/> 时)扣掉 [consume MP]。
+        /// 检查顺序:没绑定、没实现、冷却、魔法值(不够就不放),最后才是"此刻能不能开始"——技能没能开始(<see cref="SkillCastResult.Busy"/>)不扣蓝、不进冷却。
+        /// </summary>
+        public SkillCastResult Cast(HeroSkillSlot slot, TownHero hero, HeroVitals vitals = null)
         {
             if (slot == null)
             {
@@ -260,6 +268,10 @@ namespace Dnf.Play
             if (!slot.Ready)
             {
                 return SkillCastResult.Cooldown;
+            }
+            if (vitals != null && (!vitals.IsAlive || vitals.Mp < slot.ConsumeMp))
+            {
+                return SkillCastResult.NoMp;
             }
             bool began;
             switch (slot.SkillId)
@@ -283,6 +295,7 @@ namespace Dnf.Play
             {
                 return SkillCastResult.Busy;
             }
+            vitals?.TrySpendMp(slot.ConsumeMp);
             slot.CooldownLeftMs = slot.CooldownMs;
             return SkillCastResult.Cast;
         }
