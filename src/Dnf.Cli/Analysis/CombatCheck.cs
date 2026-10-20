@@ -46,7 +46,8 @@ internal static class CombatCheck
 
         Console.WriteLine("房间 " + opts.MapPath + ":怪物 " + session.Monsters.Count + " 个,主角连招 " + session.Hero.AttackCount + " 段,出生 ("
             + F(session.Hero.X) + "," + F(session.Hero.Y) + ") 朝" + (session.Hero.FacingLeft ? "左" : "右") + ",镜头 x " + session.Camera.IntX
-            + ",主角脚本 [move speed] " + session.Hero.MoveSpeedStat + ",武器命中停顿 " + session.WeaponStunMs + " 毫秒(E-077)");
+            + ",主角脚本 [move speed] " + session.Hero.MoveSpeedStat + ",武器命中停顿 " + (session.WeaponStunMs > 0 ? "有" : "无") + "(E-077)"
+            + ",受击硬直 " + (session.StunTable != null ? "按客户端公式" : "占位值") + "(E-080)");
         foreach (MonsterActor m in session.Monsters)
         {
             Console.WriteLine("  怪物 " + m.Index + ":编号 " + m.Code + (m.IsBoss ? "(首领)" : string.Empty) + " 等级 " + m.Level + " 生命 " + m.HpMax

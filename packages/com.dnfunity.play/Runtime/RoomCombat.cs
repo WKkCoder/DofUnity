@@ -39,8 +39,27 @@ namespace Dnf.Play
         /// <summary>[is use weapon hit delay rate]:为真时停顿 = 武器的停顿 × <see cref="HitValue"/>。</summary>
         public bool UseWeaponHitDelayRate { get; }
 
+        private readonly float _hitScale;
+        private readonly bool _hasHitScale;
+
+        /// <summary>[hit info] 的浮点项(命中延迟倍率,受击硬直要乘它,证据 E-080);没写是 -1,表示取武器表。</summary>
+        public float HitScale => _hasHitScale ? _hitScale : -1f;
+
+        /// <summary>[knuck back] 的类型(0 普通、1 击退、2 短击退、3 按像素、-1 不后退;证据 E-080)。</summary>
+        public int KnockBackType { get; }
+
+        /// <summary>命中模式为 [burn](客户端的 2):受击不击退(证据 E-080)。</summary>
+        public bool NoKnockBack { get; }
+
+        /// <summary>[force hit stun time]:非 0 时直接当作受击硬直(毫秒)。</summary>
+        public int ForceHitStunMs { get; }
+
+        /// <summary>[attack type] 是魔法:受击硬直的倍率再乘 0.7(证据 E-080)。</summary>
+        public bool Magical { get; }
+
         public HeroStrikeInfo(int damageBonus, int pushAside, bool knockDown, int skillRatePercent = 0, int skillFixed = 0,
-            int hitValue = -1, bool useWeaponHitDelayRate = false)
+            int hitValue = -1, bool useWeaponHitDelayRate = false, float hitScale = -1f, int knockBackType = 0, bool noKnockBack = false,
+            int forceHitStunMs = 0, bool magical = false)
         {
             DamageBonus = damageBonus;
             PushAside = pushAside;
@@ -49,6 +68,12 @@ namespace Dnf.Play
             SkillFixed = skillFixed;
             _hitValuePlusOne = unchecked(hitValue + 1);
             UseWeaponHitDelayRate = useWeaponHitDelayRate;
+            _hitScale = hitScale;
+            _hasHitScale = true;
+            KnockBackType = knockBackType;
+            NoKnockBack = noKnockBack;
+            ForceHitStunMs = forceHitStunMs;
+            Magical = magical;
         }
 
         /// <summary>读一份 .atk 里命中要用的字段;路径为 null、读不到时全是默认值。</summary>
@@ -57,13 +82,15 @@ namespace Dnf.Play
             AttackInfoData info = atkPath == null || data == null ? null : data.GetAttackInfo(atkPath)?.Data;
             return info == null
                 ? new HeroStrikeInfo(0, 0, false)
-                : new HeroStrikeInfo(info.DamageBonus, info.PushAside, info.Reaction == DamageReaction.Down, 0, 0, info.HitValue, info.UseWeaponHitDelayRate);
+                : new HeroStrikeInfo(info.DamageBonus, info.PushAside, info.Reaction == DamageReaction.Down, 0, 0, info.HitValue, info.UseWeaponHitDelayRate,
+                    info.HitScale, info.KnockBackType, info.HitType == HitKind.Burn, info.ForceHitStunTime, info.AttackType == AttackKind.Magic);
         }
 
         /// <summary>同一份攻击信息,换上技能伤害的两个数。</summary>
         public HeroStrikeInfo WithSkillDamage(int ratePercent, int fixedDamage)
         {
-            return new HeroStrikeInfo(DamageBonus, PushAside, KnockDown, ratePercent, fixedDamage, HitValue, UseWeaponHitDelayRate);
+            return new HeroStrikeInfo(DamageBonus, PushAside, KnockDown, ratePercent, fixedDamage, HitValue, UseWeaponHitDelayRate,
+                HitScale, KnockBackType, NoKnockBack, ForceHitStunMs, Magical);
         }
     }
 
@@ -292,14 +319,28 @@ namespace Dnf.Play
         /// </summary>
         public int WeaponStunMs { get; }
 
+        /// <summary>
+        /// 主角手上这件武器的命中延迟倍率(同一项 [weapon hit info] 里的浮点,证据 E-077、E-080):受击一侧的硬直要乘它。
+        /// 攻击信息的 [hit info] 浮点项是 -1 或没写时用它;-1 表示没有这张表。
+        /// </summary>
+        public float WeaponDelayRate { get; }
+
+        /// <summary>
+        /// 受击硬直的三张表(取自 Etc/EtcParameter.etc,证据 E-080);null 表示没有,怪物挨打退回占位硬直。
+        /// </summary>
+        public HitStunTable StunTable { get; }
+
         /// <summary>主角还要定住多少毫秒(命中停顿,证据 E-077);0 表示没在停顿。</summary>
         public double HeroPauseMs => _heroPauseMs;
 
         public RoomCombatSession(DnfAssets assets, RoomSession room, IReadOnlyList<MonsterActor> monsters, IReadOnlyList<HeroStrikeInfo> strikes, int seed = 1,
-            HeroStrikeInfo dashStrike = default, HeroStrikeInfo jumpStrike = default, HeroSkills skills = null, int weaponStunMs = 0)
+            HeroStrikeInfo dashStrike = default, HeroStrikeInfo jumpStrike = default, HeroSkills skills = null, int weaponStunMs = 0,
+            float weaponDelayRate = -1f, HitStunTable stunTable = null)
         {
             Skills = skills ?? new HeroSkills(new HeroSkillSlot[0]);
             WeaponStunMs = weaponStunMs;
+            WeaponDelayRate = weaponDelayRate;
+            StunTable = stunTable;
             _assets = assets ?? throw new ArgumentNullException(nameof(assets));
             _room = room ?? throw new ArgumentNullException(nameof(room));
             _monsters = new List<MonsterActor>(monsters ?? new List<MonsterActor>());
@@ -363,27 +404,42 @@ namespace Dnf.Play
                 MonsterKind kind = spawn.IsBoss ? MonsterKind.Boss : MonsterKind.Normal;
                 MonsterStats stats = MonsterAbility.Compute(def, data.MonsterBaseTables, data.GetMonsterOwnTable(def), level, 0, kind);
                 var actor = new MonsterActor(index++, spawn, model, level, stats.HpMax, WalkSpeed(room.Hero, stats.MoveSpeed > 0 ? stats.MoveSpeed : def.Tags.IntOr("[move speed]", 0)),
-                    def.Tags.IntOr("[attack delay]", 0), def.Tags.IntOr("[attack speed]", 0));
+                    def.Tags.IntOr("[attack delay]", 0), def.Tags.IntOr("[attack speed]", 0), stats.HitRecovery);
                 actors.Add(actor);
             }
-            return new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, HeroSkills.Create(data, chr, 0), WeaponStunOf(chr, room.Hero));
+            // 受击硬直的三张表:Etc/EtcParameter.etc(证据 E-080);读不到就退回占位硬直
+            ScriptLine[] etc = data.ReadScript(HitStunTablePath);
+            HitStunTable stunTable = etc == null ? null : HitStunTable.FromEtcParameter(new TagTable(etc));
+            bool hasWeapon = TryWeaponHit(chr, room.Hero, out WeaponHitInfo weapon);
+            return new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, HeroSkills.Create(data, chr, 0), hasWeapon ? weapon.StunMs : 0,
+                hasWeapon ? weapon.DelayRate : -1f, stunTable);
         }
+
+        /// <summary>受击硬直的三张表所在的脚本(证据 E-080)。</summary>
+        public const string HitStunTablePath = "Etc/EtcParameter.etc";
 
         /// <summary>主角穿的武器([equipment type] 为 [weapon] 的那件)的 [sub type] 在 .chr 的 [weapon hit info] 里对应的命中停顿;取不到是 0。</summary>
         public static int WeaponStunOf(CharacterDef chr, TownHero hero)
         {
+            return TryWeaponHit(chr, hero, out WeaponHitInfo info) ? info.StunMs : 0;
+        }
+
+        /// <summary>主角穿的武器在 .chr 的 [weapon hit info] 里那一项(命中停顿与命中延迟倍率);取不到返回 false。</summary>
+        public static bool TryWeaponHit(CharacterDef chr, TownHero hero, out WeaponHitInfo info)
+        {
+            info = default;
             if (chr == null || hero?.Outfit == null)
             {
-                return 0;
+                return false;
             }
             foreach (AvatarItem item in hero.Outfit.Items)
             {
-                if (string.Equals(item.EquipmentType, "[weapon]", StringComparison.OrdinalIgnoreCase) && chr.TryGetWeaponHitInfo(item.SubType, out WeaponHitInfo info))
+                if (string.Equals(item.EquipmentType, "[weapon]", StringComparison.OrdinalIgnoreCase) && chr.TryGetWeaponHitInfo(item.SubType, out info))
                 {
-                    return info.StunMs;
+                    return true;
                 }
             }
-            return 0;
+            return false;
         }
 
         /// <summary>
@@ -618,7 +674,8 @@ namespace Dnf.Play
             int damage = info.IsSkillDamage
                 ? PlaceholderDamage.RollSkill(info.SkillRatePercent, info.SkillFixed, _random)
                 : PlaceholderDamage.Roll(info.DamageBonus, _random);
-            bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, hero.FacingLeft);
+            // 受击硬直与击退按客户端的公式算(证据 E-080);没有硬直表时 StunInput 无效,怪物走占位值
+            bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, hero.FacingLeft, StunInput(info));
             int stun = HitStop.StunMs(info.HitValue, info.UseWeaponHitDelayRate, WeaponStunMs);
             if (stun > 0)
             {
@@ -640,6 +697,20 @@ namespace Dnf.Play
                 Kills++;
             }
             _popups.Add(new HitPopup(damage.ToString(System.Globalization.CultureInfo.InvariantCulture), monster.X, monster.Y, monster.HeadHeight()));
+        }
+
+        /// <summary>
+        /// 这一击的受击硬直输入(证据 E-080):倍率取攻击信息的命中延迟倍率([hit info] 的浮点项,没写取武器表),按客户端的两次取整换成 rate;
+        /// 没有硬直表时返回无效值,怪物走占位硬直。
+        /// </summary>
+        private HitStunInput StunInput(HeroStrikeInfo info)
+        {
+            if (StunTable == null)
+            {
+                return default;
+            }
+            float rate = HitStun.Rate(info.HitScale, WeaponDelayRate, info.UseWeaponHitDelayRate, info.Magical);
+            return new HitStunInput(StunTable, rate, info.ForceHitStunMs, info.KnockBackType, info.NoKnockBack);
         }
 
         public List<SceneSprite> Build(long timeMs)

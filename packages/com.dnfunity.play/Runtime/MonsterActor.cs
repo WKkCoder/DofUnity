@@ -59,7 +59,9 @@ namespace Dnf.Play
         public const double HoldFrameThresholdMs = 3000;
 
         /// <summary>
-        /// 普通受击硬直的时长(命中停顿之后才开始计,见 <see cref="MonsterActor.Pause"/>)。量法:基线连拍 S07 里两只一级地精各挨一下,
+        /// 普通受击硬直的占位时长(命中停顿之后才开始计,见 <see cref="MonsterActor.Pause"/>)。**E-080 起,读得到 Etc/EtcParameter.etc 的三张表时
+        /// 受击硬直改按客户端的公式算(<see cref="HitStun"/>,从被打中那一刻起算、含停顿),这个值只在读不到表(或倒地以外的占位路径)时用。**
+        /// 量法:基线连拍 S07 里两只一级地精各挨一下,
         /// 受击帧分别连续出现 4 次与 3 次(间隔 100 毫秒),之后恢复站立,所以受击姿势在画面上的总时长在 300 到 500 毫秒之间(分辨率 100 毫秒);
         /// 这个总时长里已经含着主角武器的那一次命中停顿(E-077),所以这里取区间偏下的 350,停顿在它之前另外计。
         /// 只有两个样本,没有算上 [hit recovery] 与攻击信息里的 [force hit stun time];换武器时停顿不同,总时长会跟着变(原版的硬直怎么算还没读)。
@@ -101,6 +103,9 @@ namespace Dnf.Play
         private int _hurtCount;
         private AniFile _hurtAni;
         private double _hurtSpanMs;
+        private double _hurtClockMs;
+        private bool _hurtOnClock;
+        private double _pushEaseMs = MonsterTuning.PushEaseMs;
 
         public int Index { get; }
         public int Code { get; }
@@ -123,6 +128,18 @@ namespace Dnf.Play
         /// <summary>这一次受击硬直的总时长(毫秒);不在受击中时是上一次的值。</summary>
         public double HurtSpanMs => _hurtSpanMs;
 
+        /// <summary>
+        /// 怪物的"受击恢复"属性(<see cref="MonsterStats.HitRecovery"/>):受击硬直公式里的 R(证据 E-080);越大硬直越短。
+        /// 没有公式(没传硬直表)时不起作用。
+        /// </summary>
+        public int HitRecovery { get; }
+
+        /// <summary>
+        /// 这一次受击的硬直是不是按客户端的公式算的(<see cref="HitStun"/>,证据 E-080)。为真时硬直从被打中那一刻起算、
+        /// 命中停顿也算在里面(秒表不被停顿冻结,推断,E-080);为假时是占位值,停顿之后才开始计。
+        /// </summary>
+        public bool HurtFromFormula => _hurtOnClock;
+
         /// <summary>命中停顿还剩多少毫秒(证据 E-077):停顿期间动画、行走、出招、击退、冷却的时间都不走。</summary>
         public double PauseMs { get; private set; }
 
@@ -133,10 +150,12 @@ namespace Dnf.Play
         public long PhaseMs => (long)_phaseMs;
 
         /// <param name="speedX">水平行走速度,像素/秒(房间里由 <see cref="RoomCombatSession.Create"/> 把怪物的 [move speed] 按主角的速度比例换算,同一比例套在怪物上是假设)。</param>
+        /// <param name="hitRecovery">怪物的"受击恢复"属性(<see cref="MonsterStats.HitRecovery"/>),受击硬直公式里的 R;没有就传 0。</param>
         public MonsterActor(int index, RoomMonsterSpawn spawn, MonsterModel model, int level, int hpMax, double speedX, int attackDelayMs,
-            int attackSpeed = 0)
+            int attackSpeed = 0, int hitRecovery = 0)
         {
             _model = model ?? throw new ArgumentNullException(nameof(model));
+            HitRecovery = hitRecovery;
             Index = index;
             Spawn = spawn;
             Code = spawn.Code;
@@ -227,6 +246,11 @@ namespace Dnf.Play
             {
                 deltaMs = 0;
             }
+            if (_hurtOnClock && Phase == MonsterPhase.Hurt)
+            {
+                // 按公式算的硬直是一块秒表:命中停顿冻结动画、行走与击退,但不冻结它(推断,E-080)
+                _hurtClockMs += deltaMs;
+            }
             if (PauseMs > 0)
             {
                 // 定住的时间先用掉;这一小步里停顿结束的话,剩下的时间照常推进
@@ -247,7 +271,7 @@ namespace Dnf.Play
             {
                 case MonsterPhase.Hurt:
                     ApplyPush(deltaMs, walk);
-                    if (_phaseMs >= _hurtSpanMs)
+                    if ((_hurtOnClock ? _hurtClockMs : _phaseMs) >= _hurtSpanMs)
                     {
                         EnterPhase(MonsterPhase.Wait);
                     }
@@ -345,7 +369,7 @@ namespace Dnf.Play
                 return;
             }
             _pushMs += deltaMs;
-            double t = Math.Min(1.0, _pushMs / MonsterTuning.PushEaseMs);
+            double t = _pushEaseMs <= 0 ? 1.0 : Math.Min(1.0, _pushMs / _pushEaseMs);
             double target = _pushTotal * (1.0 - (1.0 - t) * (1.0 - t));
             double step = target - _pushDone;
             if (step <= 0)
@@ -377,6 +401,17 @@ namespace Dnf.Play
         /// </summary>
         public bool ApplyHit(int damage, bool knockDown, double pushPixels, bool pushToLeft)
         {
+            return ApplyHit(damage, knockDown, pushPixels, pushToLeft, default);
+        }
+
+        /// <summary>
+        /// 同 <see cref="ApplyHit(int, bool, double, bool)"/>,另外带上受击硬直公式的输入(<see cref="HitStunInput"/>;证据 E-080)。
+        /// 输入有效、而且这一下进的是受击(不是倒地)时:硬直 = <see cref="HitStun.Damage"/> 算出的毫秒数(从被打中那一刻起算,命中停顿也算在里面),
+        /// 击退 = 公式给出的初速与持续(默认 30 像素左右、150 毫秒,与 [push aside] 无关,所以 <paramref name="pushPixels"/> 此时不用);
+        /// 否则走占位值(倒地的停留与击退、以及没有硬直表时)。
+        /// </summary>
+        public bool ApplyHit(int damage, bool knockDown, double pushPixels, bool pushToLeft, HitStunInput stun)
+        {
             if (!IsAlive || Phase == MonsterPhase.Gone)
             {
                 return false;
@@ -402,7 +437,21 @@ namespace Dnf.Play
                 knockDown = false;
             }
             _hurtAni = ani;
-            _hurtSpanMs = HurtSpan(ani, knockDown);
+            _hurtClockMs = 0;
+            _pushEaseMs = MonsterTuning.PushEaseMs;
+            if (!knockDown && stun.IsSet)
+            {
+                HitStunResult r = HitStun.Damage(stun.Table, HitRecovery, 0, stun.Rate, stun.ForceStunMs, stun.KnockType, stun.NoKnock);
+                _hurtOnClock = true;
+                _hurtSpanMs = Math.Max(0, r.StunMs);
+                _pushTotal = r.KnockPixels;
+                _pushEaseMs = r.KnockMs;
+            }
+            else
+            {
+                _hurtOnClock = false;
+                _hurtSpanMs = HurtSpan(ani, knockDown);
+            }
             EnterPhase(MonsterPhase.Hurt);
             return false;
         }

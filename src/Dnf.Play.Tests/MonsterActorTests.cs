@@ -240,6 +240,147 @@ public class MonsterActorTests
         Assert.Equal(100.0, right.Y);
     }
 
+    // ------------------------------------------------------------------ 受击硬直公式(证据 E-080):表、倍率与受击恢复全是合成数值
+
+    private static readonly HitStunTable SyntheticTable = new HitStunTable(10, 330, 1000);
+
+    private static MonsterActor WithRecovery(DnfAssets assets, double x, double y, int recovery, int hp = 100)
+    {
+        MonsterModel model = MonsterModel.Read(assets, AvatarFixture.BlobMobPath);
+        var spawn = new RoomMonsterSpawn(1, 0, 0, (int)x, (int)y, 0, 1, 0, "[fixed]", "[normal]");
+        return new MonsterActor(0, spawn, model, 3, hp, WalkSpeed, 1500, 0, recovery);
+    }
+
+    [Fact]
+    public void TheFormulaHurtLastsTheComputedTimeFromTheMomentOfTheHit()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = WithRecovery(assets, 200, 100, recovery: 500);
+        Assert.Equal(500, m.HitRecovery);
+
+        Assert.False(m.ApplyHit(10, false, 999, true, new HitStunInput(SyntheticTable, 1.0f)));
+        Assert.Equal(MonsterPhase.Hurt, m.Phase);
+        Assert.True(m.HurtFromFormula);
+        Assert.Equal(170.0, m.HurtSpanMs);                      // 10 + (330 − 10) × (1000 − 500) / 1000
+        Run(m, 169, 5000, 100, heroPresent: false);
+        Assert.Equal(MonsterPhase.Hurt, m.Phase);
+        Run(m, 1, 5000, 100, heroPresent: false);
+        Assert.Equal(MonsterPhase.Wait, m.Phase);
+
+        // 受击恢复高的怪物硬直短:恢复到顶只剩下限;再高也一样
+        MonsterActor tough = WithRecovery(assets, 200, 100, recovery: 5000);
+        tough.ApplyHit(1, false, 0, true, new HitStunInput(SyntheticTable, 1.0f));
+        Assert.Equal(10.0, tough.HurtSpanMs);
+
+        // 倍率乘在整个硬直上
+        MonsterActor slow = WithRecovery(assets, 200, 100, recovery: 500);
+        slow.ApplyHit(1, false, 0, true, new HitStunInput(SyntheticTable, 0.5f));
+        Assert.Equal(85.0, slow.HurtSpanMs);
+    }
+
+    [Fact]
+    public void TheHitStopFreezesTheAnimationButNotTheFormulaHurtClock()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = WithRecovery(assets, 200, 100, recovery: 500);     // 硬直 170
+        m.ApplyHit(1, false, 0, true, new HitStunInput(SyntheticTable, 1.0f));
+        m.Pause(100);
+
+        Run(m, 100, 5000, 100, heroPresent: false);                          // 停顿的 100 毫秒:动画时间不走,硬直秒表走
+        Assert.Equal(0L, m.PhaseMs);
+        Assert.Equal(MonsterPhase.Hurt, m.Phase);
+        Run(m, 69, 5000, 100, heroPresent: false);
+        Assert.Equal(MonsterPhase.Hurt, m.Phase);                             // 总共 169 毫秒
+        Run(m, 1, 5000, 100, heroPresent: false);
+        Assert.Equal(MonsterPhase.Wait, m.Phase);                             // 170 毫秒:停顿算在硬直里,不是停顿之后再 170
+
+        // 停顿比硬直还长:停顿里状态不变,停顿一结束(下一步)就恢复
+        MonsterActor frozen = WithRecovery(assets, 200, 100, recovery: 500);
+        frozen.ApplyHit(1, false, 0, true, new HitStunInput(SyntheticTable, 1.0f));
+        frozen.Pause(300);
+        Run(frozen, 300, 5000, 100, heroPresent: false);
+        Assert.Equal(MonsterPhase.Hurt, frozen.Phase);
+        Run(frozen, 10, 5000, 100, heroPresent: false);
+        Assert.Equal(MonsterPhase.Wait, frozen.Phase);
+
+        // 占位硬直(没给表)照旧:停顿之后才开始计
+        MonsterActor placeholder = WithRecovery(assets, 200, 100, recovery: 500);
+        placeholder.ApplyHit(1, false, 0, true);
+        Assert.False(placeholder.HurtFromFormula);
+        placeholder.Pause(100);
+        Run(placeholder, 100 + MonsterTuning.HurtHoldMs - 1, 5000, 100, heroPresent: false);
+        Assert.Equal(MonsterPhase.Hurt, placeholder.Phase);
+        Run(placeholder, 1, 5000, 100, heroPresent: false);
+        Assert.Equal(MonsterPhase.Wait, placeholder.Phase);
+    }
+
+    [Fact]
+    public void TheFormulaKnockbackIgnoresPushAsideAndEasesOutOverItsOwnDuration()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = WithRecovery(assets, 200, 100, recovery: 0);        // 硬直 330,比 150 长:默认击退整整 150 毫秒
+        m.ApplyHit(1, false, 999, true, new HitStunInput(SyntheticTable, 1.0f));      // [push aside] = 999 在受击里不用
+        HitStunResult expected = HitStun.Damage(SyntheticTable, 0, 0, 1.0f, 0, 0, false);
+        Assert.InRange(expected.KnockPixels, 30.0, 30.02);
+
+        Run(m, 75, 5000, 100, heroPresent: false);                            // 约一半时间:位移比例约 1 − 0.25
+        Assert.InRange(m.X, 177.48, 177.52);
+        Run(m, 200, 5000, 100, heroPresent: false);
+        Assert.Equal(200 - expected.KnockPixels, m.X, 6);
+        Assert.Equal(100.0, m.Y);
+
+        // 往右打就往右退;命中模式是灼烧(不击退)时不动
+        MonsterActor right = WithRecovery(assets, 200, 100, recovery: 0);
+        right.ApplyHit(1, false, 0, false, new HitStunInput(SyntheticTable, 1.0f));
+        Run(right, 300, 5000, 100, heroPresent: false);
+        Assert.Equal(200 + expected.KnockPixels, right.X, 6);
+
+        MonsterActor burn = WithRecovery(assets, 200, 100, recovery: 0);
+        burn.ApplyHit(1, false, 30, true, new HitStunInput(SyntheticTable, 1.0f, noKnock: true));
+        Run(burn, 300, 5000, 100, heroPresent: false);
+        Assert.Equal(200.0, burn.X);
+    }
+
+    [Fact]
+    public void AKnockDownAndAKillKeepThePlaceholderPaths()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = WithRecovery(assets, 200, 100, recovery: 0, hp: 40);
+        m.ApplyHit(1, true, 30, true, new HitStunInput(SyntheticTable, 1.0f));      // 倒地:停留与击退仍是占位
+        Assert.Equal(Down, m.CurrentAnimationPath);
+        Assert.False(m.HurtFromFormula);
+        Assert.Equal(MonsterTuning.KnockDownHoldMs, m.HurtSpanMs);
+        Run(m, MonsterTuning.PushEaseMs, 5000, 100, heroPresent: false);
+        Assert.Equal(170.0, m.X, 6);                                                // [push aside] 30 照旧推满
+
+        // 没有倒地动画时"被击倒"退成普通受击(E-079 第 7 步):按公式算
+        var big = new MonsterActor(0, new RoomMonsterSpawn(1, 0, 0, 200, 100, 0, 1, 0, "[fixed]", "[normal]"),
+            MonsterModel.Read(assets, "monster/blob/big.mob"), 3, 100, WalkSpeed, 1500, 0, 500);
+        big.ApplyHit(1, true, 0, true, new HitStunInput(SyntheticTable, 1.0f));
+        Assert.True(big.HurtFromFormula);
+        Assert.Equal(170.0, big.HurtSpanMs);
+
+        // 一击打死:进死亡,不走硬直
+        MonsterActor dying = WithRecovery(assets, 200, 100, recovery: 0, hp: 5);
+        Assert.True(dying.ApplyHit(50, false, 0, true, new HitStunInput(SyntheticTable, 1.0f)));
+        Assert.Equal(MonsterPhase.Dying, dying.Phase);
+        Assert.False(dying.HurtFromFormula);
+    }
+
+    [Fact]
+    public void AForcedStunTimeReplacesTheComputedOne()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = WithRecovery(assets, 200, 100, recovery: 500);
+        m.ApplyHit(1, false, 0, true, new HitStunInput(SyntheticTable, 1.0f, forceStunMs: 77));
+        Assert.Equal(77.0, m.HurtSpanMs);
+    }
+
     [Fact]
     public void AMonsterCannotBePushedOutOfTheWalkableArea()
     {

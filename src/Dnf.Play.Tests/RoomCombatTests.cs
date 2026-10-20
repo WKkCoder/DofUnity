@@ -36,7 +36,7 @@ public class RoomCombatTests
         /// <param name="withSkills">为真时按合成的角色脚本([skill] 初始技能表)排出技能快捷槽(要用带跳跃的 <see cref="AvatarFixture.ActionChrPath"/>)。</param>
         public Arena(IReadOnlyList<(int X, int Y)> monsters, HeroStrikeInfo[] strikes = null, bool facingLeft = false, int hp = 100,
             bool frozen = false, int seed = 1, string chr = null, HeroStrikeInfo dash = default, HeroStrikeInfo jump = default, double monsterSpeed = 222.5,
-            bool withSkills = false, int weaponStun = 0)
+            bool withSkills = false, int weaponStun = 0, HitStunTable stunTable = null, int monsterRecovery = 0, float weaponDelay = -1f)
         {
             Assets = DnfAssets.Open(_fx.Root);
             var tiles = new List<TileFile>();
@@ -58,7 +58,7 @@ public class RoomCombatTests
             for (int i = 0; i < monsters.Count; i++)
             {
                 var spawn = new RoomMonsterSpawn(1, 0, 0, monsters[i].X, monsters[i].Y, 0, 1, 0, "[fixed]", "[normal]");
-                actors.Add(new MonsterActor(i, spawn, model, 1, hp, monsterSpeed, 1500, 0));
+                actors.Add(new MonsterActor(i, spawn, model, 1, hp, monsterSpeed, 1500, 0, monsterRecovery));
             }
             HeroSkills skills = null;
             if (withSkills)
@@ -66,7 +66,7 @@ public class RoomCombatTests
                 var data = new GameData(new PvfScriptSource(Assets.Pvf));
                 skills = HeroSkills.Create(data, data.GetCharacter(0), 0);
             }
-            Session = new RoomCombatSession(Assets, room, actors, strikes ?? Plain(), seed, dash, jump, skills, weaponStun);
+            Session = new RoomCombatSession(Assets, room, actors, strikes ?? Plain(), seed, dash, jump, skills, weaponStun, weaponDelay, stunTable);
         }
 
         /// <summary>每 10 毫秒一步推进:前 <paramref name="steps"/> 步按 (dirX, dirY) 走,攻击键与跳跃键在 <paramref name="attackAt"/>、<paramref name="jumpAt"/> 那一步按下(从 0 数)。</summary>
@@ -230,6 +230,98 @@ public class RoomCombatTests
         using var zero = new Arena(new[] { (340, 100) }, Stunning(0), weaponStun: 44);
         RunToFirstHit(zero.Session);
         Assert.Equal(0.0, zero.Session.HeroPauseMs, 9);
+    }
+
+    // ------------------------------------------------------------------ 受击硬直公式接进战斗(证据 E-080;表、倍率与受击恢复全是合成数值)
+
+    private static readonly HitStunTable SyntheticStunTable = new HitStunTable(10, 330, 1000);
+
+    [Fact]
+    public void WithAStunTableAHitHurtsForTheFormulaTimeScaledByTheDelayRate()
+    {
+        // 受击恢复 500:表给出 170;武器的命中延迟倍率 0.5、攻击信息没写 → 倍率 0.5 → 85
+        using var weapon = new Arena(new[] { (340, 100) }, stunTable: SyntheticStunTable, monsterRecovery: 500, weaponDelay: 0.5f);
+        RunToFirstHit(weapon.Session);
+        MonsterActor m = weapon.Session.Monsters[0];
+        Assert.True(m.HurtFromFormula);
+        Assert.Equal(85.0, m.HurtSpanMs);
+        Assert.Equal(0.5f, weapon.Session.WeaponDelayRate);
+
+        // 没有武器表、攻击信息也没写:倍率 1 → 170
+        using var plain = new Arena(new[] { (340, 100) }, stunTable: SyntheticStunTable, monsterRecovery: 500);
+        RunToFirstHit(plain.Session);
+        Assert.Equal(170.0, plain.Session.Monsters[0].HurtSpanMs);
+
+        // 攻击信息写了自己的倍率 2.0:用它(不管武器)
+        var own = new[] { new HeroStrikeInfo(0, 0, false, hitScale: 2.0f), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false) };
+        using var scaled = new Arena(new[] { (340, 100) }, own, stunTable: SyntheticStunTable, monsterRecovery: 500, weaponDelay: 0.5f);
+        RunToFirstHit(scaled.Session);
+        Assert.Equal(340.0, scaled.Session.Monsters[0].HurtSpanMs);
+
+        // 写了 [is use weapon hit delay rate]:武器 0.5 × 文件 2.0 = 1.0 → 170
+        var product = new[] { new HeroStrikeInfo(0, 0, false, useWeaponHitDelayRate: true, hitScale: 2.0f), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false) };
+        using var both = new Arena(new[] { (340, 100) }, product, stunTable: SyntheticStunTable, monsterRecovery: 500, weaponDelay: 0.5f);
+        RunToFirstHit(both.Session);
+        Assert.Equal(170.0, both.Session.Monsters[0].HurtSpanMs);
+    }
+
+    [Fact]
+    public void ForcedStunMagicBurnAndKnockBackTypesReachTheMonster()
+    {
+        HeroStrikeInfo[] Only(HeroStrikeInfo first) => new[] { first, new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false) };
+
+        // [force hit stun time] 直接当硬直
+        using var forced = new Arena(new[] { (340, 100) }, Only(new HeroStrikeInfo(0, 0, false, forceHitStunMs: 77)), stunTable: SyntheticStunTable, monsterRecovery: 500);
+        RunToFirstHit(forced.Session);
+        Assert.Equal(77.0, forced.Session.Monsters[0].HurtSpanMs);
+
+        // 魔法攻击的倍率再乘 0.7:170 的硬直变短,但不会短到 100 以下
+        using var magic = new Arena(new[] { (340, 100) }, Only(new HeroStrikeInfo(0, 0, false, magical: true)), stunTable: SyntheticStunTable, monsterRecovery: 500);
+        RunToFirstHit(magic.Session);
+        Assert.InRange(magic.Session.Monsters[0].HurtSpanMs, 118.0, 119.0);
+
+        // [knuck back] 类型 1:硬直 = int(rate × 333),不看表
+        using var strong = new Arena(new[] { (340, 100) }, Only(new HeroStrikeInfo(0, 0, false, knockBackType: 1)), stunTable: SyntheticStunTable, monsterRecovery: 500);
+        RunToFirstHit(strong.Session);
+        Assert.Equal(333.0, strong.Session.Monsters[0].HurtSpanMs);
+
+        // 命中模式灼烧:受击但不击退
+        using var burn = new Arena(new[] { (340, 100) }, Only(new HeroStrikeInfo(0, 40, false, noKnockBack: true)), stunTable: SyntheticStunTable, monsterRecovery: 0);
+        double before = burn.Session.Monsters[0].X;
+        RunToFirstHit(burn.Session);
+        burn.Run(300);
+        Assert.Equal(before, burn.Session.Monsters[0].X);
+    }
+
+    [Fact]
+    public void WithoutAStunTableTheHurtStaysOnThePlaceholderAndWithOneThePushAsideIsIgnoredForAHurtHit()
+    {
+        // 没有表:占位硬直,[push aside] 照旧当击退
+        using var none = new Arena(new[] { (340, 100) }, new[] { new HeroStrikeInfo(0, 40, false), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false) }, monsterRecovery: 500);
+        RunToFirstHit(none.Session);
+        Assert.False(none.Session.Monsters[0].HurtFromFormula);
+        Assert.Equal(MonsterTuning.HurtHoldMs, none.Session.Monsters[0].HurtSpanMs);
+
+        // 有表:同一击的击退是公式的约 30 像素,不是 [push aside] 的 40
+        using var formula = new Arena(new[] { (340, 100) }, new[] { new HeroStrikeInfo(0, 40, false), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false) },
+            stunTable: SyntheticStunTable, monsterRecovery: 0);
+        double start = formula.Session.Monsters[0].X;
+        RunToFirstHit(formula.Session);
+        formula.Run(400);
+        double moved = Math.Abs(formula.Session.Monsters[0].X - start);
+        Assert.InRange(moved, 25.0, 31.0);
+    }
+
+    [Fact]
+    public void StrikeInfoRemembersTheStunFieldsAndUnsetMeansMinusOne()
+    {
+        Assert.Equal(-1f, default(HeroStrikeInfo).HitScale);
+        Assert.Equal(-1f, new HeroStrikeInfo(0, 0, false).HitScale);
+        var info = new HeroStrikeInfo(5, 6, true, 7, 8, 9, true, 0.25f, 3, true, 11, true);
+        Assert.Equal((0.25f, 3, true, 11, true), (info.HitScale, info.KnockBackType, info.NoKnockBack, info.ForceHitStunMs, info.Magical));
+        HeroStrikeInfo skill = info.WithSkillDamage(100, 200);
+        Assert.Equal((100, 200, 9, true), (skill.SkillRatePercent, skill.SkillFixed, skill.HitValue, skill.UseWeaponHitDelayRate));
+        Assert.Equal((0.25f, 3, true, 11, true), (skill.HitScale, skill.KnockBackType, skill.NoKnockBack, skill.ForceHitStunMs, skill.Magical));
     }
 
     [Fact]
