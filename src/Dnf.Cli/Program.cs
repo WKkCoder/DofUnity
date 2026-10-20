@@ -130,6 +130,9 @@ namespace Dnf.Cli
         /// <summary>flow-check --from:流程从哪个阶段开始(town、select、dungeon;默认 town)。</summary>
         public string FlowFrom { get; set; } = "town";
 
+        /// <summary>flow-check --worldmap:副本选择界面用的世界地图定义(PVF 路径,默认 <see cref="Dnf.Cli.Analysis.FlowCheck.DefaultWorldMap"/>);写 none 用占位界面(只有名字列表)。</summary>
+        public string? WorldMap { get; set; }
+
         /// <summary>arrival-check --hero-id:主角对象编号(进房间落点的随机种子 = 它 × 地图编号,证据 E-074);默认 <see cref="Dnf.Render.GateArrival.DefaultHeroObjectId"/>。</summary>
         public int HeroId { get; set; } = Dnf.Render.GateArrival.DefaultHeroObjectId;
 
@@ -212,7 +215,7 @@ namespace Dnf.Cli
             "      (副本房间里的战斗模拟:按时间表按键,打印命中与怪物状态,可在指定时刻输出 800×600 画面;证据 E-069。怪物会还手(E-086),--no-damage 让主角没有生命值、打不到,回到还手功能加入之前的行为)\n" +
             "  dnf dungeon-check [--dungeon <副本定义>] [--seed N] [--random-layout] [--bot [--explore] | --play 秒:动作,…] [--seconds N(默认 900)] [--frame-ms 毫秒] [--jitter 比例] [--shots-at 秒,…] [--png 前缀] [--layout-only] [--no-damage] [--after-clear 秒]\n" +
             "      (整座副本:读迷宫、选每格的房间、打印布局;--bot 让自动机从起点打到首领清空,逐个房间打印进出与清房时刻;--after-clear 清空之后再空转几秒(看结算画面);--shots-at 在指定时刻输出画面;--frame-ms、--jitter 改每帧的毫秒数与抖动,模拟帧率不固定的实时运行(自动机按固定心跳补步,不受影响;时间表按帧长取样);证据 E-070、E-072)\n" +
-            "  dnf flow-check [--dungeon <副本定义>] [--from town|select|dungeon] [--choices retry,select,town] [--explore] [--seed N] [--no-damage] [--seconds N(默认 1800)] [--frame-ms 毫秒] [--shots-at 秒,… --png 前缀]\n" +
+            "  dnf flow-check [--dungeon <副本定义>] [--from town|select|dungeon] [--worldmap <世界地图定义>|none] [--choices retry,select,town] [--explore] [--seed N] [--no-damage] [--seconds N(默认 1800)] [--frame-ms 毫秒] [--shots-at 秒,… --png 前缀]\n" +
             "      (整条流程的无人值守检查:城镇 → 副本选择 → 副本 → 结算 → 按 --choices 清单依次选再次挑战(retry)、选择其它地下城(select)、返回城镇(town),打印每次阶段切换与每局的战绩;清单用完或到时间为止;默认清单 retry,select,town;--shots-at 在指定时刻输出当时阶段的画面;证据 E-093)\n" +
             "  dnf arrival-check [--dungeon <副本定义>] [--hero-id N] [--scan 起:止 --expect 房间:侧:x:y:容差,…] [--probe 房间:侧:y,…]\n" +
             "      (进房间的落点:对副本每个房间打印各出口的识别矩形与按客户端规则算出的落点(随机点、最终点);--scan 在主角编号范围里找同时满足所有 --expect 的编号,房间写地图文件名如 s3,侧为 start/left/right/up/down,y 写 * 不限;--probe 沿水平线 y 找出口门体挡路的边界(左右出口,y 写 * 表示出口矩形里每 6 像素一条);证据 E-074)\n" +
@@ -398,6 +401,9 @@ namespace Dnf.Cli
                         break;
                     case "--from":
                         opts.FlowFrom = NextValue(args, ref i) is var from && (from is "town" or "select" or "dungeon") ? from : throw new UserError("--from 需要 town、select 或 dungeon");
+                        break;
+                    case "--worldmap":
+                        opts.WorldMap = NextValue(args, ref i);
                         break;
                     case "--hero-id":
                         opts.HeroId = int.TryParse(NextValue(args, ref i), out int heroId) ? heroId : throw new UserError("--hero-id 需要整数");

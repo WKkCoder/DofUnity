@@ -65,17 +65,20 @@ namespace Dnf.Play
         private readonly Func<IHeroSession> _town;
         private readonly Func<string, int, IRunSession> _dungeon;
         private readonly List<DungeonEntry> _entries;
+        private readonly WorldMapScene _world;
         private readonly List<FlowEvent> _history = new List<FlowEvent>();
 
         /// <summary>
         /// <paramref name="town"/> 造城镇会话;<paramref name="dungeon"/> 按(副本路径, 局序号)造一局副本;
-        /// <paramref name="entries"/> 是副本选择界面上的副本列表。造好之后还要调 <see cref="EnterTown"/>、<see cref="EnterSelect"/> 或 <see cref="StartDungeon"/> 开始。
+        /// <paramref name="entries"/> 是副本选择界面上的副本列表;<paramref name="world"/> 不为空时选择界面画原版的世界地图(<see cref="WorldMapArt"/>),
+        /// 为空是占位画面。造好之后还要调 <see cref="EnterTown"/>、<see cref="EnterSelect"/> 或 <see cref="StartDungeon"/> 开始。
         /// </summary>
-        public GameFlow(Func<IHeroSession> town, Func<string, int, IRunSession> dungeon, IEnumerable<DungeonEntry> entries)
+        public GameFlow(Func<IHeroSession> town, Func<string, int, IRunSession> dungeon, IEnumerable<DungeonEntry> entries, WorldMapScene world = null)
         {
             _town = town ?? throw new ArgumentNullException(nameof(town));
             _dungeon = dungeon ?? throw new ArgumentNullException(nameof(dungeon));
             _entries = new List<DungeonEntry>(entries ?? throw new ArgumentNullException(nameof(entries)));
+            _world = world;
         }
 
         /// <summary>当前阶段;开始之前(<see cref="StageSerial"/> 为 0)没有意义。</summary>
@@ -131,7 +134,7 @@ namespace Dnf.Play
                     }
                 }
             }
-            Switch(GameStage.DungeonSelect, reason, null, new DungeonSelectScreen(_entries, index));
+            Switch(GameStage.DungeonSelect, reason, null, new DungeonSelectScreen(_entries, index, _world));
         }
 
         /// <summary>开一局新的副本(局序号 = 已开过的局数)。</summary>

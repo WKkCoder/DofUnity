@@ -10,7 +10,8 @@ namespace Dnf.Cli.Analysis;
 /// 城镇 → 副本选择 → 副本(自动机打到首领清空)→ 结算 → 按 --choices 清单依次选再次挑战、选择其它地下城、返回城镇;
 /// 打印每次阶段切换与每一局的战绩,清单用完或到时间为止。--shots-at 在指定时刻输出当时阶段的 800×600 画面。
 /// 战斗用占位伤害(<see cref="PlaceholderDamage"/>)。城镇是量过出生点与镜头范围的赛丽亚房间(目前唯一可走的城镇地图),
-/// 副本选择是占位界面(只有名字列表),阶段之间瞬间切换:这些都不是原版的样子,验证的是流程的次序与每一段能不能接上。
+/// 副本选择默认画原版的世界地图界面(洛兰,<see cref="WorldMapArt"/>,证据 E-094;--worldmap none 退回占位名单),阶段之间瞬间切换:
+/// 这些不都是原版的样子,验证的是流程的次序与每一段能不能接上。
 /// </summary>
 internal static class FlowCheck
 {
@@ -22,6 +23,9 @@ internal static class FlowCheck
 
     /// <summary>城镇用的地图:目前唯一量过出生点与镜头范围的城镇(<see cref="DemoHero.SeriaRoom"/>)。</summary>
     public const string TownMap = "map/elvengard/(r)gate.map";
+
+    /// <summary>副本选择界面用的世界地图(基线 S05 拍的就是洛兰这张)。</summary>
+    public const string DefaultWorldMap = "worldmap/lorien.wdm";
 
     public static int Run(DnfLocation loc, Options opts)
     {
@@ -41,11 +45,19 @@ internal static class FlowCheck
         }
 
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
-        var entries = new[] { new DungeonEntry(opts.Dungeon, null) };
+        WorldMapSet? world = null;
+        string worldPath = opts.WorldMap ?? DefaultWorldMap;
+        if (!string.Equals(worldPath, "none", StringComparison.OrdinalIgnoreCase))
+        {
+            world = WorldMapCatalog.Load(assets, worldPath) ?? throw new UserError("读不到世界地图 " + worldPath + "(--worldmap none 画占位界面)");
+        }
+        bool realSelect = world != null && world.Entries.Count > 0;
+        var entries = realSelect ? new List<DungeonEntry>(world!.Entries) : new List<DungeonEntry> { new DungeonEntry(opts.Dungeon, null) };
         var flow = new GameFlow(
             () => DemoHero.CreateSession(assets, TownMap, DemoHero.SeriaRoom),
             (path, run) => DungeonSession.Create(assets, path, opts.Seed + run, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage),
-            entries);
+            entries,
+            realSelect ? world!.Scene : null);
         var bot = new FlowBot(opts.Explore, choices);
 
         double seconds = opts.SecondsGiven ? opts.Seconds : DefaultSeconds;
@@ -159,7 +171,7 @@ internal static class FlowCheck
             case GameStage.Town:
                 return "  地图 " + flow.Session!.MapPath;
             case GameStage.DungeonSelect:
-                return "  副本 " + flow.Select!.Entries.Count + " 个,选中 " + (flow.Select.Selected?.Name ?? "无");
+                return "  副本 " + flow.Select!.Entries.Count + " 个,选中 " + (flow.Select.Selected?.Name ?? "无") + (flow.Select.World != null ? "(世界地图 " + flow.Select.World.RegionName + ")" : "(占位界面)");
             default:
                 return "  副本 " + flow.DungeonPath + ",第 " + (flow.Runs - 1) + " 局";
         }

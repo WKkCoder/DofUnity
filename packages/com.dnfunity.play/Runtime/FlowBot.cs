@@ -17,8 +17,8 @@ namespace Dnf.Play
         /// <summary>城镇里站多久再走进副本选择(占位)。</summary>
         public const double TownDwellMs = 1500.0;
 
-        /// <summary>副本选择界面上停多久再确认(占位)。</summary>
-        public const double SelectDwellMs = 1000.0;
+        /// <summary>副本选择界面上停多久再确认(占位;要比世界地图的开场动画长,卡片淡入之后才确认)。</summary>
+        public const double SelectDwellMs = 2500.0;
 
         /// <summary>结算菜单出现之后等多久再做选择(占位)。</summary>
         public const double SettlementDwellMs = 1500.0;
@@ -80,6 +80,7 @@ namespace Dnf.Play
                     AdvanceTown(flow, deltaMs);
                     break;
                 case GameStage.DungeonSelect:
+                    flow.Select.Advance(deltaMs);
                     if (_stageMs >= SelectDwellMs)
                     {
                         flow.Select.Confirm();

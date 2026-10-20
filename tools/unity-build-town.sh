@@ -12,7 +12,7 @@
 #   5. 整座副本(E-070):自动机按固定步长打到指定时刻(逛遍所有房间的 6.8/21.0/48.0/59.7 秒与直奔首领的 14.0 秒),离屏渲染的一帧(出口淡出、换房间、小地图、CLEAR)
 #      与命令行 dungeon-check --bot 逐字节对照;再实时让自动机逛遍并打完整座副本,检查走完(进过 6 个房间、首领清空)。
 #   6. 声音(E-089、E-090):同一局实时运行默认静音(-batchmode),但整条链路照跑;日志里的 DNF_AUDIO 计数要有提示、开始放过、读成功过剪辑、没有读失败。
-#   7. 整条流程(E-093):副本选择界面(占位)离屏一帧与命令行 flow-check --from select 逐字节对照;再让流程自动机在播放器里实时走完
+#   7. 整条流程(E-093、E-094):副本选择界面(原版世界地图画法)离屏两帧(0.7、2.0 秒)与命令行 flow-check --from select 逐字节对照;再让流程自动机在播放器里实时走完
 #      城镇 → 选择 → 副本 → 结算 → 再次挑战 → 副本 → 结算 → 选择其它地下城 → 选择 → 副本 → 结算 → 返回城镇(时间步放大 4 倍),检查七次阶段切换、三局副本与声音计数。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
@@ -368,18 +368,25 @@ if [ "$platform" = "macos" ]; then
     echo "$audio_line" | grep -q -E 'cues=[1-9][0-9]* .* started=[1-9][0-9]* .* loaded=[1-9][0-9]* failed=0 ' \
       || { echo "声音的计数不对(应有 cues>=1、started>=1、loaded>=1、failed=0):$dungeon_log" >&2; exit 1; }
 
-    # 整条流程(证据 E-093)。副本选择界面是占位(自带像素字),离屏一帧与命令行 flow-check --from select 在第一帧的画面逐字节对照
-    rm -f out/town-demo-flow-select.png out/town-cpu-flow-select-0.00.png
-    set +e
-    "$app" -batchmode -logFile "$PWD/re/unity-run-town-flow-select-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-flow-select.png" \
-      -dnftime 0 -dnfflow -dnfflowfrom select
-    rc=$?
-    set -e
-    echo "播放器退出码(离屏渲染副本选择界面): $rc"
-    grep -E 'DNF_TOWN_DEMO' "$PWD/re/unity-run-town-flow-select-macos.log" || true
-    [ "$rc" -eq 0 ] || exit "$rc"
-    dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll flow-check --from select --choices town --seconds 2 --shots-at 0 --png "$PWD/out/town-cpu-flow-select" >/dev/null || [ $? -eq 2 ]
-    python3 tools/py/png_diff.py out/town-demo-flow-select.png out/town-cpu-flow-select-0.00.png --max-diff 0
+    # 整条流程(证据 E-093、E-094)。副本选择界面是原版的世界地图界面(底图、标记、卡片、横幅、按钮都是图包里的图,卡片缩放由自己的双线性算,所以 CPU 与 GPU 一致):
+    # 离屏渲染 0.7 / 2.0 秒两个时刻(地图名横幅停留中、卡片全部出现)与命令行 flow-check --from select 逐字节对照。
+    # 两个时刻都选在不透明度恒定的区间里(横幅停留 0.3 到 1.0 秒、卡片 1.6 秒之后到按键提示横幅 3 秒之前),不在淡入淡出的边界上:
+    # CPU 按 1/60 秒步长走到的那一帧(--shots-at 0 实际是第一步之后的 16 毫秒,横幅已经亮起一点)与播放器直接走到的时刻差几毫秒也不影响像素
+    rm -f out/town-demo-flow-select-*.png out/town-cpu-flow-select-*.png
+    dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll flow-check --from select --choices town --seconds 3 --shots-at 0.7,2.0 --png "$PWD/out/town-cpu-flow-select" >/dev/null || [ $? -eq 2 ]
+    for pair in 700:0.70 2000:2.00; do
+      shot_ms="${pair%%:*}"
+      cpu_sec="${pair##*:}"
+      set +e
+      "$app" -batchmode -logFile "$PWD/re/unity-run-town-flow-select-macos.log" -dnfdir "$DNF_DIR" -dnfshot "$PWD/out/town-demo-flow-select-$shot_ms.png" \
+        -dnftime "$shot_ms" -dnfflow -dnfflowfrom select
+      rc=$?
+      set -e
+      echo "播放器退出码(离屏渲染副本选择界面 t=${shot_ms}ms): $rc"
+      grep -E 'DNF_TOWN_DEMO' "$PWD/re/unity-run-town-flow-select-macos.log" || true
+      [ "$rc" -eq 0 ] || exit "$rc"
+      python3 tools/py/png_diff.py "out/town-demo-flow-select-$shot_ms.png" "out/town-cpu-flow-select-$cpu_sec.png" --max-diff 0
+    done
     # 实时运行:流程自动机走完 城镇 → 选择 → 副本 → 结算 → 再次挑战 → 副本 → 结算 → 选择其它地下城 → 选择 → 副本 → 结算 → 返回城镇;
     # 时间步放大 4 倍,走完自动退出(-dnfquitafter 只是上限)。要有七次阶段切换、三局副本、三次菜单选择,自动机说走完了,最后停在城镇
     flow_log="$PWD/re/unity-run-town-flow-macos.log"

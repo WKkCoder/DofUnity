@@ -66,6 +66,9 @@ namespace Dnf.Client
         /// <summary>-dnfflow -dnfbot 没给 -dnfflowchoices 时结算菜单依次做的选择。</summary>
         public const string DefaultFlowChoices = "retry,select,town";
 
+        /// <summary>-dnfflow 没给 -dnfworldmap 时副本选择界面用的世界地图(基线 S05 拍的就是洛兰这张)。</summary>
+        public const string DefaultWorldMap = "worldmap/lorien.wdm";
+
         private enum State
         {
             Loading,
@@ -102,6 +105,7 @@ namespace Dnf.Client
         private bool _flowMode;
         private string _flowFrom = "town";
         private string _flowChoices = DefaultFlowChoices;
+        private string _worldMapPath = DefaultWorldMap;
         private double _timeScale = 1.0;
         private GameFlow _flow;
         private FlowBot _flowBot;
@@ -233,6 +237,9 @@ namespace Dnf.Client
                         break;
                     case "-dnfflowchoices":
                         if (value != null) { _flowChoices = value; i++; }
+                        break;
+                    case "-dnfworldmap":
+                        if (value != null) { _worldMapPath = value; i++; }
                         break;
                     case "-dnftimescale":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
@@ -546,6 +553,7 @@ namespace Dnf.Client
         {
             try
             {
+                _flow?.Select?.Advance(_shotTimeMs);      // 副本选择界面有自己的时钟(开场动画、横幅轮换):走到 -dnftime 那一刻再画
                 var sprites = _view.ShowAt(_shotTimeMs);
                 byte[] rgba = _view.Stage.Capture();
                 WritePng(rgba, _shotPath);
@@ -702,6 +710,7 @@ namespace Dnf.Client
                 {
                     StepSession(deltaMs);
                 }
+                _flow.Select?.Advance(deltaMs);      // 副本选择界面自己的时钟(开场动画与横幅轮换)
                 _flow.Poll();
             }
             if (_flow.StageSerial != _shownSerial)
@@ -741,10 +750,14 @@ namespace Dnf.Client
         private void StartFlow()
         {
             string dungeon = string.IsNullOrEmpty(_dungeonPath) ? DefaultDungeon : _dungeonPath;
+            // 副本选择界面:读得到世界地图就画原版的世界地图界面(E-094),读不到(数据不全、-dnfworldmap none)退回占位名单
+            WorldMapSet world = string.Equals(_worldMapPath, "none", StringComparison.OrdinalIgnoreCase) ? null : WorldMapCatalog.Load(_assets, _worldMapPath);
+            bool realSelect = world != null && world.Entries.Count > 0;
             _flow = new GameFlow(
                 () => DemoHero.CreateSession(_assets, DefaultMap, DemoHero.SeriaRoom),
                 (path, run) => CreateDungeon(path, _seed + run),
-                new[] { new DungeonEntry(dungeon, null) });
+                realSelect ? (System.Collections.Generic.IEnumerable<DungeonEntry>)world.Entries : new[] { new DungeonEntry(dungeon, null) },
+                realSelect ? world.Scene : null);
             switch (_flowFrom)
             {
                 case "select":
@@ -1019,9 +1032,17 @@ namespace Dnf.Client
                         settling.Click(cx, cy);
                     }
                 }
-                else if (!InSelect)
+                else if (InSelect)
                 {
-                    TogglePause(); // 触摸屏上没有空格键;副本选择界面里点击暂时不处理(界面还是占位)
+                    // 副本选择界面:点卡片选中(再点一下进入)、点"返回城镇"按钮返回(触摸也走这条)
+                    if (TryGetCanvasPoint(Input.mousePosition, out int sx, out int sy))
+                    {
+                        _flow.Select.Click(sx, sy);
+                    }
+                }
+                else
+                {
+                    TogglePause(); // 触摸屏上没有空格键
                 }
             }
         }
@@ -1176,7 +1197,8 @@ namespace Dnf.Client
                     + (_flowBot != null ? "  (autopilot" + (_flowBot.Done ? ", done)" : ")") : string.Empty) + "\n" + hero;
                 if (InSelect)
                 {
-                    help = "Up/Down: choose a dungeon   Enter or Space: go in   Esc: back to town   H: hide text   (placeholder screen)";
+                    help = "Up/Down: choose a dungeon   Enter or Space: go in   Esc: back to town   Mouse: click a card (again to enter) or the town button   H: hide text"
+                        + (_flow.Select.World == null ? "   (placeholder screen)" : string.Empty);
                 }
                 else if (_flow.Stage == GameStage.Town)
                 {
