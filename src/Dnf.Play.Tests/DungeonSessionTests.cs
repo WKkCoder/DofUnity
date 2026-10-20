@@ -80,6 +80,7 @@ public class DungeonSessionTests
         private readonly int _hp;
         private readonly bool _bodies;
         private readonly Func<HeroVitals> _vitalsOf;
+        private readonly Func<int, int, string[]> _soundsOf;
 
         public DnfAssets Assets { get; }
         public DungeonLayout Layout { get; }
@@ -93,7 +94,7 @@ public class DungeonSessionTests
         /// 为假时左右出口没有碰撞体(退回近似的触发)。
         /// </summary>
         public Dungeon(DungeonLayout layout, Func<int, int, (int X, int Y)[]> monstersOf, int hp = 10, bool bodies = false, int heroObjectId = TestHeroId,
-            Func<HeroVitals> vitalsOf = null)
+            Func<HeroVitals> vitalsOf = null, Func<int, int, string[]> soundsOf = null)
         {
             Assets = DnfAssets.Open(_fx.Root);
             Layout = layout;
@@ -101,6 +102,7 @@ public class DungeonSessionTests
             _hp = hp;
             _bodies = bodies;
             _vitalsOf = vitalsOf;
+            _soundsOf = soundsOf;
             Session = new DungeonSession(layout, Build, heroObjectId);
         }
 
@@ -128,7 +130,7 @@ public class DungeonSessionTests
             }
             var gatePos = new List<int[]> { new[] { 16, 120 }, new[] { 1104, 120 }, new[] { 560, 12 }, new[] { 560, 348 } };
             var map = new RoomMap("map/test/cell" + cx + cy + ".map", "[normal]", tiles, 50, 80, 120, new List<RoomBackground>(), new List<MapAnimation>(),
-                gatePos, null);
+                gatePos, null, sounds: _soundsOf?.Invoke(cx, cy));
             var gates = new List<RoomGate>();
             foreach (GateSide side in new[] { GateSide.Left, GateSide.Right, GateSide.Up, GateSide.Down })
             {
@@ -347,6 +349,39 @@ public class DungeonSessionTests
         Assert.False(hero.BattleStance);
         Assert.Equal(GateState.Open, GateOf(s, GateSide.Right).State);   // 出口一直开着
         Assert.Equal((2, 2), (s.RoomsEntered, s.RoomsCleared));          // 回来不重复计数
+    }
+
+    [Fact]
+    public void TheDungeonSoundQueueCarriesEachRoomsMapSoundsAndReplaysThemWhenReturning()
+    {
+        // 起点格 (0,0) 有一只弱怪物;每个房间的地图声音是合成的:一首自己的音乐加一个共用的环境声
+        using var d = new Dungeon(RingLayout(), OneWeakAtStart, soundsOf: (x, y) => new[] { "MUSIC_" + x + y, "AMB_SHARED" });
+        DungeonSession s = d.Session;
+        var cues = new List<SoundCue>();
+        s.DrainSounds(cues);
+        Assert.Equal(new[] { "RoomEnter:map/test/cell00.map", "RoomSound:MUSIC_00", "RoomSound:AMB_SHARED" }, cues.Select(c => c.ToString()).ToArray());
+
+        Run(s, 1000, 0, 0, true);                                        // 打死怪物(挥剑的语音等也进队列;夹具没有给武器声音标签,所以只有语音)
+        s.DrainSounds(cues);
+        Assert.Contains(cues, c => c.Kind == SoundCueKind.Voice && c.Key == Dnf.Game.SwordmanVoice.Attack);
+        cues.Clear();
+
+        RunUntil(s, () => s.CellX == 1, 1, 0);
+        s.DrainSounds(cues);
+        // 走进格 (1,0):房间标记在前,它的地图声音紧跟着;走过去的这一路上没有别的房间声音
+        int enter = cues.FindIndex(c => c.Kind == SoundCueKind.RoomEnter);
+        Assert.True(enter >= 0);
+        Assert.Equal(new[] { "RoomEnter:map/test/cell10.map", "RoomSound:MUSIC_10", "RoomSound:AMB_SHARED" },
+            cues.Skip(enter).Take(3).Select(c => c.ToString()).ToArray());
+        Assert.Equal(1, cues.Count(c => c.Kind == SoundCueKind.RoomEnter));
+        cues.Clear();
+
+        RunUntil(s, () => s.CellX == 0, -1, 0);                          // 走回去过的房间:地图声音再发一遍,怪物出场声不再发
+        s.DrainSounds(cues);
+        int back = cues.FindIndex(c => c.Kind == SoundCueKind.RoomEnter);
+        Assert.Equal(new[] { "RoomEnter:map/test/cell00.map", "RoomSound:MUSIC_00", "RoomSound:AMB_SHARED" },
+            cues.Skip(back).Take(3).Select(c => c.ToString()).ToArray());
+        Assert.DoesNotContain(cues, c => c.Kind == SoundCueKind.Voice);
     }
 
     [Fact]

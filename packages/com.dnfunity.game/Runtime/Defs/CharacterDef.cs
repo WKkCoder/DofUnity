@@ -20,6 +20,9 @@ namespace Dnf.Game
         /// <summary>[weapon hit info]:每种武器一项,下标是装备脚本的 [sub type](证据 E-077)。没有这个标签是空数组。</summary>
         public WeaponHitInfo[] WeaponHitInfos { get; }
 
+        /// <summary>[weapon wav] 块:每种武器一块,下标同 <see cref="WeaponHitInfos"/>(证据 E-089)。没有这个标签是空数组。</summary>
+        public WeaponSound[] WeaponSounds { get; }
+
         public CharacterDef(int job, string path, ScriptLine[] lines)
             : base(path, lines)
         {
@@ -28,6 +31,19 @@ namespace Dnf.Game
             AttackMotions = Tags.Strings("[attack motion]");
             AttackInfos = Tags.Strings("[attack info]");
             WeaponHitInfos = WeaponHitInfo.ParseAll(Tags);
+            WeaponSounds = WeaponSound.ParseAll(Tags);
+        }
+
+        /// <summary>某种武器([sub type] = <paramref name="subType"/>)的挥动与命中声音;下标越界或那一块是空的返回 false。</summary>
+        public bool TryGetWeaponSound(int subType, out WeaponSound sound)
+        {
+            if ((uint)subType < (uint)WeaponSounds.Length && !WeaponSounds[subType].IsEmpty)
+            {
+                sound = WeaponSounds[subType];
+                return true;
+            }
+            sound = default;
+            return false;
         }
 
         /// <summary>某种武器([sub type] = <paramref name="subType"/>)的命中默认值;下标越界返回 false。</summary>

@@ -72,6 +72,9 @@ namespace Dnf.Render
 
         public bool Contains(string imageName) => imageName != null && _index.ContainsKey(imageName);
 
+        /// <summary>索引里的全部名字(命令行的覆盖检查用,不要逐帧调用)。</summary>
+        public List<string> AllNames() => new List<string>(_index.Keys);
+
         /// <summary>索引里所有以 <paramref name="prefix"/> 开头的 IMG 名字(不区分大小写)。线性扫描整张索引,不要逐帧调用。</summary>
         public List<string> NamesWithPrefix(string prefix)
         {

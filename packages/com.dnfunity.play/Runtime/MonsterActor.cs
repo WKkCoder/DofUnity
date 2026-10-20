@@ -421,6 +421,9 @@ namespace Dnf.Play
         /// <summary>怪物的魔法攻击力(<see cref="MonsterStats.MagicalAttack"/>):魔法攻击信息打主角时用;没给就是 0。</summary>
         public int MagicalAttack { get; set; }
 
+        /// <summary>.mob 里的出场、受击、死亡、出招、环境五种声音标签(证据 E-089);没写的为 null。会话在对应的时刻发声音提示。</summary>
+        public MonsterSounds Sounds { get; set; }
+
         /// <summary>
         /// 出招动画第 <paramref name="frame"/> 帧的攻击框(世界坐标,类型 15,跟着怪物的朝向镜像、跟着离地高度抬升)。
         /// 不在出招阶段、已经死了或这一帧没有攻击框时返回空表。

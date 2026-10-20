@@ -11,6 +11,7 @@
 #      离屏渲染的一帧(怪物受击/死亡、血条、伤害数字、连击)与命令行 combat-check 逐字节对照;再实时跑一遍挥击。
 #   5. 整座副本(E-070):自动机按固定步长打到指定时刻(逛遍所有房间的 6.8/21.0/48.0/59.7 秒与直奔首领的 14.0 秒),离屏渲染的一帧(出口淡出、换房间、小地图、CLEAR)
 #      与命令行 dungeon-check --bot 逐字节对照;再实时让自动机逛遍并打完整座副本,检查走完(进过 6 个房间、首领清空)。
+#   6. 声音(E-089、E-090):同一局实时运行默认静音(-batchmode),但整条链路照跑;日志里的 DNF_AUDIO 计数要有提示、开始放过、读成功过剪辑、没有读失败。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -346,6 +347,14 @@ if [ "$platform" = "macos" ]; then
       || { echo "实时打副本没有走完(应进过 6 个房间、清空 6 个、首领清空):$dungeon_log" >&2; exit 1; }
     grep -q -E 'DNF_TOWN_DEMO ran .* dungeon=.* heroHits=[0-9]+ heroHp=[1-9][0-9]*/[0-9]+' "$dungeon_log" \
       || { echo "实时打副本结束时主角应还活着(heroHp 不为 0,日志里要有 heroHits 与 heroHp):$dungeon_log" >&2; exit 1; }
+    # 声音(证据 E-089、E-090):带 -batchmode 的运行默认静音,但整条链路照跑(提示 → 调度 → 读剪辑 → 放),所以能查计数器:
+    # 收到过提示、真的开始放过、读成功过剪辑、没有读失败的文件;不对具体数字下结论(帧率不固定,放的次数会变)
+    grep -q -E 'DNF_AUDIO ready ' "$dungeon_log" \
+      || { echo "实时打副本没有打开声音(日志里应有 DNF_AUDIO ready):$dungeon_log" >&2; exit 1; }
+    audio_line="$(grep -E 'DNF_AUDIO cues=' "$dungeon_log" | tail -1)"
+    echo "$audio_line"
+    echo "$audio_line" | grep -q -E 'cues=[1-9][0-9]* .* started=[1-9][0-9]* .* loaded=[1-9][0-9]* failed=0 ' \
+      || { echo "声音的计数不对(应有 cues>=1、started>=1、loaded>=1、failed=0):$dungeon_log" >&2; exit 1; }
   else
     echo "没有设置 DNF_DIR:跳过离屏渲染校验"
   fi

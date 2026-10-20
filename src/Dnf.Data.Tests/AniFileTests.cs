@@ -123,6 +123,25 @@ public class AniFileTests
     }
 
     [Fact]
+    public void FrameAccessor_ReadsSoundKey()
+    {
+        var keyed = Frame(0, 0, 0, 0, (16, TestData.Str("R_SM_JUMP_ATK")));
+        var empty = Frame(0, 0, 0, 0, (16, TestData.Str("")));
+        var plain = Frame(0, 0, 0, 0, (12, TestData.LE32(50)));
+        AniFile a = AniFile.Parse(TestData.BuildAni(new[] { "a.img" }, Array.Empty<(ushort, byte[])>(), new[] { keyed, empty, plain }));
+
+        Assert.True(a.Frames[0].TrySoundKey(out string key));
+        Assert.Equal("R_SM_JUMP_ATK", key);
+        Assert.False(a.Frames[1].TrySoundKey(out string none));
+        Assert.Null(none);
+        Assert.False(a.Frames[2].TrySoundKey(out _));
+
+        // Sample() 的第 0 帧带字符串属性 "HOLD"
+        Assert.True(AniFile.Parse(Sample()).Frames[0].TrySoundKey(out string hold));
+        Assert.Equal("HOLD", hold);
+    }
+
+    [Fact]
     public void Parse_RejectsTrailingBytes()
     {
         byte[] data = Sample().Concat(new byte[] { 0 }).ToArray();

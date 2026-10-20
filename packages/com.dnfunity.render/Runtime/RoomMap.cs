@@ -213,6 +213,12 @@ namespace Dnf.Render
         /// <summary>[monster] 的摆放(进房间时的怪物与位置,证据 E-069)。</summary>
         public IReadOnlyList<RoomMonsterSpawn> Monsters { get; }
 
+        /// <summary>
+        /// [sound] 里的声音标签(audio.xml 的 ID,按脚本顺序,证据 E-089):背景音乐、环境声、偶尔响的音效混在一起,
+        /// 种类以 audio.xml 里的条目为准(MUSIC、AMBIENT、其余),位置并不固定。没有 [sound] 就是空列表。
+        /// </summary>
+        public IReadOnlyList<string> Sounds { get; }
+
         public int Width => Tiles.Count * TileFile.TileWidth;
 
         /// <summary>镜头 x 的最大值(房间宽减屏宽,不小于 0)。</summary>
@@ -221,8 +227,9 @@ namespace Dnf.Render
         public RoomMap(string mapPath, string type, IReadOnlyList<TileFile> tiles, int farScroll, int middleScroll, int nearScroll,
             IReadOnlyList<RoomBackground> backgrounds, IReadOnlyList<MapAnimation> animations, IReadOnlyList<int[]> gates, WorldRect? startArea,
             IReadOnlyList<PassivePlacement> passiveObjects = null, IReadOnlyList<RoomMonsterSpawn> monsters = null,
-            IReadOnlyList<int[]> gateRanges = null)
+            IReadOnlyList<int[]> gateRanges = null, IReadOnlyList<string> sounds = null)
         {
+            Sounds = sounds ?? new List<string>();
             GateRanges = gateRanges ?? new List<int[]> { null, null, null, null };
             MapPath = mapPath;
             Type = type ?? string.Empty;
@@ -236,6 +243,38 @@ namespace Dnf.Render
             StartArea = startArea;
             PassiveObjects = passiveObjects ?? new List<PassivePlacement>();
             Monsters = monsters ?? new List<RoomMonsterSpawn>();
+        }
+
+        /// <summary>
+        /// 一张地图脚本里 [sound] 的全部声音标签(按脚本顺序;空白字符串与数被略过)。<see cref="Read"/> 用的就是这条规则,命令行的全库覆盖检查也用它,
+        /// 不必为了数声音把每张地图的瓦片与动画都读一遍。
+        /// </summary>
+        public static List<string> ReadSounds(IEnumerable<ScriptLine> doc)
+        {
+            var sounds = new List<string>();
+            if (doc == null)
+            {
+                return sounds;
+            }
+            foreach (ScriptLine line in doc)
+            {
+                if (line.TagIs("[sound]"))
+                {
+                    AddSounds(line, sounds);
+                }
+            }
+            return sounds;
+        }
+
+        private static void AddSounds(ScriptLine line, List<string> into)
+        {
+            foreach (ScriptValue v in line.Values)
+            {
+                if (v.Kind == ScriptValueKind.String && !string.IsNullOrWhiteSpace(v.Text))
+                {
+                    into.Add(v.Text);
+                }
+            }
         }
 
         /// <summary>读一张副本房间地图。缺少的瓦片文件按"没有这块瓦片"丢弃(所以宽度会变小),不抛异常。</summary>
@@ -255,6 +294,7 @@ namespace Dnf.Render
             WorldRect? start = null;
             var passive = new List<PassivePlacement>();
             var monsters = new List<RoomMonsterSpawn>();
+            var sounds = new List<string>();
 
             bool inInfo = false;
             string infoFile = null, infoLayer = null, infoOrder = null;
@@ -353,8 +393,12 @@ namespace Dnf.Render
                 {
                     ReadMonsters(line.Values, monsters);
                 }
+                else if (line.TagIs("[sound]"))
+                {
+                    AddSounds(line, sounds);
+                }
             }
-            return new RoomMap(mapPath, type, tiles, far, middle, near, backgrounds, MapScript.ReadAnimations(assets, mapPath), gates, start, passive, monsters, ranges);
+            return new RoomMap(mapPath, type, tiles, far, middle, near, backgrounds, MapScript.ReadAnimations(assets, mapPath), gates, start, passive, monsters, ranges, sounds);
         }
 
         /// <summary>

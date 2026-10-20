@@ -313,6 +313,35 @@ namespace Dnf.Data
             flag = 0;
             return false;
         }
+
+        /// <summary>
+        /// 这一帧带的音效键(<see cref="AniFrameProperty.Sound"/>:u32 长度 + 字符串,键的取值去 audio.xml 里查,证据 E-089)。
+        /// 没有该属性或键为空时返回 false。播放时机是"动画走到这一帧"(这一点没有运行时验证)。
+        /// </summary>
+        public bool TrySoundKey(out string key)
+        {
+            foreach (AniProperty p in Properties)
+            {
+                if (p.Id != AniFrameProperty.Sound || p.Payload.Length < 4)
+                {
+                    continue;
+                }
+                uint n = BinaryPrimitives.ReadUInt32LittleEndian(p.Payload);
+                if (n == 0 || n > p.Payload.Length - 4)
+                {
+                    break;
+                }
+                string text = Latin1.Decode(new ReadOnlySpan<byte>(p.Payload, 4, (int)n)).TrimEnd('\0');
+                if (text.Length > 0)
+                {
+                    key = text;
+                    return true;
+                }
+                break;
+            }
+            key = null;
+            return false;
+        }
     }
 
     /// <summary>

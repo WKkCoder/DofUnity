@@ -84,6 +84,18 @@ public class RoomTests
     }
 
     [Fact]
+    public void TheSoundListIsReadInScriptOrderSkippingBlanksAndNumbers()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+
+        Assert.Equal(new[] { "TEST_MUSIC", "TEST_AMBIENT", "TEST_EFFECT" }, ReadMap(assets).Sounds.ToArray());
+        // 没有 [sound] 的地图:空列表,不是 null
+        Assert.Empty(RoomMap.Read(assets, "map/test/room/town.map").Sounds);
+        Assert.Empty(Corridor(2).Sounds);
+    }
+
+    [Fact]
     public void TheMaskIsCellsSixteenWideAndTwelveHighStartingAtTheOrigin()
     {
         using var fx = new RoomFixture();

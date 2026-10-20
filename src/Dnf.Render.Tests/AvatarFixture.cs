@@ -52,6 +52,7 @@ internal sealed class AvatarFixture : IDisposable
     /// </summary>
     public const string HardAttackAni = "character/test/animation/hardattack.ani";
     public const string HardAttackAtk = "character/test/attackinfo/hardattack.atk";
+    public const string SoundAtk = "character/test/attackinfo/sound.atk";
     public const int HardAttackRate = 200;
     public const int HardAttackFixed = 40;
     public const int HardAttackPushAside = 150;
@@ -270,6 +271,8 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[level info]").Int(2, HardAttackRate, HardAttackFixed, 250, 60).Build()),
             // 鬼斩的攻击信息:击倒,水平击退 HardAttackPushAside 像素
             (HardAttackAtk, NewScript().Tag("[damage reaction]").Tag("[down]").Tag("[push aside]").Int(HardAttackPushAside).Build()),
+            // 只带一个命中声标签的攻击信息(合成):读取与保留 [hit wav] 的测试用
+            (SoundAtk, NewScript().Tag("[hit wav]").Str("TEST_HIT_WAV").Build()),
             ("skill/test/upperslash.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Str("SKILL").Tag("[maximum level]").Int(10)
                 .Tag("[consume MP]").Int(UpperSlashMpStart, UpperSlashMpEnd).Tag("[cool time]").Int(UpperSlashCoolStart, UpperSlashCoolEnd).Tag("[static data]").Int(110, -200).Build()),

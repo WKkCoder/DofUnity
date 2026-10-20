@@ -200,6 +200,21 @@ namespace Dnf.Game
         /// <summary>[floating height]:离地高度,没有则 0。</summary>
         public int FloatingHeight => Tags.IntOr("[floating height]", 0);
 
+        /// <summary>[appear sound]:出场时放的声音标签(audio.xml 里的 ID,证据 E-089);没写为 null。出场的确切时刻没有读,按进房间时放处理。</summary>
+        public string AppearSound => Tags.FirstString("[appear sound]");
+
+        /// <summary>[damage sound]:受击时放的声音标签;没写为 null。</summary>
+        public string DamageSound => Tags.FirstString("[damage sound]");
+
+        /// <summary>[die sound]:死亡时放的声音标签;没写为 null。</summary>
+        public string DieSound => Tags.FirstString("[die sound]");
+
+        /// <summary>[attack sound]:出招时放的声音标签;没写为 null。</summary>
+        public string AttackSound => Tags.FirstString("[attack sound]");
+
+        /// <summary>[ambient sound]:活着时偶尔放的环境声音标签;没写为 null。</summary>
+        public string AmbientSound => Tags.FirstString("[ambient sound]");
+
         /// <summary>[stuckbonus on damage] 的四个整数(没有则四个 0)。</summary>
         public int[] StuckBonusOnDamage
         {

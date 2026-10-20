@@ -69,10 +69,15 @@ namespace Dnf.Play
         /// <summary>[damage reaction] 是普通受击(1,或按 1 处理的 3):怪物在空中或已在倒地中时也走倒地分支(证据 E-079 第 6' 步)。</summary>
         public bool ReactionDamage { get; }
 
+        /// <summary>[hit wav]:命中时放的声音标签(audio.xml 的 ID,证据 E-089);没写为 null(这时命中声取武器的 [weapon wav],推断)。</summary>
+        public string HitWav { get; }
+
         public HeroStrikeInfo(int damageBonus, int pushAside, bool knockDown, int skillRatePercent = 0, int skillFixed = 0,
             int hitValue = -1, bool useWeaponHitDelayRate = false, float hitScale = -1f, int knockBackType = 0, bool noKnockBack = false,
-            int forceHitStunMs = 0, bool magical = false, int liftUp = 0, bool bounce = false, bool ignoreWeight = false, bool reactionDamage = false)
+            int forceHitStunMs = 0, bool magical = false, int liftUp = 0, bool bounce = false, bool ignoreWeight = false, bool reactionDamage = false,
+            string hitWav = null)
         {
+            HitWav = string.IsNullOrEmpty(hitWav) ? null : hitWav;
             DamageBonus = damageBonus;
             PushAside = pushAside;
             KnockDown = knockDown;
@@ -101,14 +106,14 @@ namespace Dnf.Play
                 : new HeroStrikeInfo(info.DamageBonus, info.PushAside, info.Reaction == DamageReaction.Down, 0, 0, info.HitValue, info.UseWeaponHitDelayRate,
                     info.HitScale, info.KnockBackType, info.HitType == HitKind.Burn, info.ForceHitStunTime, info.AttackType == AttackKind.Magic,
                     info.LiftUp, info.Bounce != 0, info.IgnoreWeight != 0,
-                    info.Reaction == DamageReaction.Damage || info.Reaction == DamageReaction.DamageExceptHuman);
+                    info.Reaction == DamageReaction.Damage || info.Reaction == DamageReaction.DamageExceptHuman, info.HitWav);
         }
 
         /// <summary>同一份攻击信息,换上技能伤害的两个数。</summary>
         public HeroStrikeInfo WithSkillDamage(int ratePercent, int fixedDamage)
         {
             return new HeroStrikeInfo(DamageBonus, PushAside, KnockDown, ratePercent, fixedDamage, HitValue, UseWeaponHitDelayRate,
-                HitScale, KnockBackType, NoKnockBack, ForceHitStunMs, Magical, LiftUp, Bounce, IgnoreWeight, ReactionDamage);
+                HitScale, KnockBackType, NoKnockBack, ForceHitStunMs, Magical, LiftUp, Bounce, IgnoreWeight, ReactionDamage, HitWav);
         }
     }
 
@@ -319,7 +324,7 @@ namespace Dnf.Play
     /// 没做:主角打怪的真实伤害公式(仍用 <see cref="PlaceholderDamage"/>)、主角的真实面板(等级、装备、成长)、主角倒地起身与空中受击、
     /// 复活与结算、技能音效与语音、掉落。出口开关与换房间在 <see cref="DungeonSession"/>。证据 E-069。
     /// </summary>
-    public sealed class RoomCombatSession : ISkillSession
+    public sealed class RoomCombatSession : ISkillSession, ISoundSource
     {
         /// <summary>一小步的最长时间(毫秒):比任何动画帧都短,保证每一帧的判定框至少被检查一次。</summary>
         public const double MaxStepMs = 10;
@@ -364,6 +369,14 @@ namespace Dnf.Play
         private bool _bufferedAttack;
         private bool _bufferedJump;
         private SkillKeys _bufferedSkills;
+
+        // 声音提示(证据 E-089、E-090):逻辑只发提示,播放在别处
+        private readonly SoundCueQueue _sounds = new SoundCueQueue();
+        private readonly WeaponSound _weaponSound;
+        private HeroMotion _cueMotion;
+        private long _cueSwing;
+        private readonly Dictionary<MonsterActor, long> _cueMonsterSwing = new Dictionary<MonsterActor, long>();
+        private readonly bool[] _cueCooling;
 
         public RoomSession Room => _room;
         public IReadOnlyList<MonsterActor> Monsters => _monsters;
@@ -446,11 +459,28 @@ namespace Dnf.Play
         /// <summary>伤害按原版公式算(读到了 Etc/EtcParameter.etc 的公式常量);否则用占位的"攻击力 × 加成"。</summary>
         public bool HasDamageConstants => _damageConstants != null;
 
+        /// <summary>
+        /// 声音提示队列(证据 E-089、E-090):进房间时的地图声音与怪物出场声、挥剑与语音、命中、怪物受击与死亡、主角受击与死亡、没魔法与冷却中的语音、跳跃与技能音效。
+        /// 播放的一方每帧调 <see cref="DrainSounds"/> 取走;没人取时只留最近一批。
+        /// </summary>
+        public SoundCueQueue Sounds => _sounds;
+
+        public void DrainSounds(List<SoundCue> into)
+        {
+            _sounds.Drain(into);
+        }
+
+        /// <summary>主角手上这件武器的挥动与命中声音标签(角色 .chr 的 [weapon wav] 里按装备 [sub type] 取的那一块,证据 E-089);取不到是空值。</summary>
+        public WeaponSound HeroWeaponSound => _weaponSound;
+
         public RoomCombatSession(DnfAssets assets, RoomSession room, IReadOnlyList<MonsterActor> monsters, IReadOnlyList<HeroStrikeInfo> strikes, int seed = 1,
             HeroStrikeInfo dashStrike = default, HeroStrikeInfo jumpStrike = default, HeroSkills skills = null, int weaponStunMs = 0,
-            float weaponDelayRate = -1f, HitStunTable stunTable = null, HeroVitals vitals = null, DamageConstants damageConstants = null)
+            float weaponDelayRate = -1f, HitStunTable stunTable = null, HeroVitals vitals = null, DamageConstants damageConstants = null,
+            WeaponSound weaponSound = default)
         {
+            _weaponSound = weaponSound;
             Skills = skills ?? new HeroSkills(new HeroSkillSlot[0]);
+            _cueCooling = new bool[Skills.Slots.Count];
             WeaponStunMs = weaponStunMs;
             WeaponDelayRate = weaponDelayRate;
             StunTable = stunTable;
@@ -472,6 +502,172 @@ namespace Dnf.Play
             _random = new Random(seed);
             _physicsRandom = new Random(unchecked(seed * 31 + 17));
             SyncStance();
+            _cueMotion = _room.Hero.Motion;
+            _cueSwing = _room.Hero.SwingNumber;
+            EmitRoomEntryCues();
+        }
+
+        // ------------------------------------------------------------------ 声音提示(证据 E-089、E-090)
+
+        /// <summary>进房间:先发一个房间标记,再是地图 [sound] 里的每一项(背景音乐、环境声……),再加每只怪物的出场声。</summary>
+        private void EmitRoomEntryCues()
+        {
+            ReplayRoomSounds();
+            foreach (MonsterActor m in _monsters)
+            {
+                _sounds.Add(m.Sounds.Appear, SoundCueKind.Voice, m.Index + 1);
+            }
+        }
+
+        /// <summary>
+        /// 再发一遍这个房间的地图声音(房间标记加 [sound] 每一项,不含怪物出场声):副本里走回一个去过的房间时用,
+        /// 播放的一方据此换成这个房间的背景音乐与环境声(证据 E-089;换房间时沿用相同标签、停掉别的是推断)。
+        /// </summary>
+        public void ReplayRoomSounds()
+        {
+            if (_room.Map == null)
+            {
+                return;
+            }
+            _sounds.Add(_room.Map.MapPath, SoundCueKind.RoomEnter);
+            foreach (string id in _room.Map.Sounds)
+            {
+                _sounds.Add(id, SoundCueKind.RoomSound);
+            }
+        }
+
+        /// <summary>
+        /// 主角的动作切换:离开地面起跳放起跳声(后跳放后跳语音,其余放跳跃语音)、回到地面放落地声;新一次挥击开始放挥击声与语音。
+        /// 状态切换的那一步发,不等动画走到哪一帧(客户端是按状态内部的阶段放的,阶段与我们的切换点是否一致没有核对)。
+        /// </summary>
+        private void EmitHeroCues()
+        {
+            TownHero hero = _room.Hero;
+            HeroMotion motion = hero.Motion;
+            if (motion != _cueMotion)
+            {
+                bool wasAir = _cueMotion == HeroMotion.Jump || _cueMotion == HeroMotion.JumpAttack;
+                bool isAir = motion == HeroMotion.Jump || motion == HeroMotion.JumpAttack;
+                if (!wasAir && motion == HeroMotion.Jump)
+                {
+                    _sounds.Add(SwordmanVoice.JumpStart, SoundCueKind.Effect);
+                    _sounds.Add(hero.IsBackStep ? SwordmanVoice.Backstep : SwordmanVoice.Jump, SoundCueKind.Voice);
+                }
+                else if (wasAir && !isAir && motion != HeroMotion.Hurt)
+                {
+                    _sounds.Add(SwordmanVoice.JumpEnd, SoundCueKind.Effect);
+                }
+                _cueMotion = motion;
+            }
+            if (hero.SwingNumber != _cueSwing)
+            {
+                _cueSwing = hero.SwingNumber;
+                if (hero.IsAttacking)
+                {
+                    EmitSwingCues(hero);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 一次挥击开始:语音按攻击种类(普攻 R_SM_ATK、奔跑攻击 SM_THRUST、跳跃攻击 R_SM_JUMP_ATK),再加武器的挥动声(.chr [weapon wav]:
+        /// 连招最后一段用 B、其余用 A,是推断)。技能的声音在放技能时另外发(<see cref="EmitSkillCues"/>)。
+        /// </summary>
+        private void EmitSwingCues(TownHero hero)
+        {
+            switch (hero.AttackKind)
+            {
+                case HeroAttackKind.Normal:
+                    _sounds.Add(SwordmanVoice.Attack, SoundCueKind.Voice);
+                    _sounds.Add(IsFinalCombo(hero) ? _weaponSound.SwingB : _weaponSound.SwingA, SoundCueKind.Effect);
+                    break;
+                case HeroAttackKind.Dash:
+                    _sounds.Add(SwordmanVoice.Thrust, SoundCueKind.Voice);
+                    _sounds.Add(_weaponSound.SwingA, SoundCueKind.Effect);
+                    break;
+                case HeroAttackKind.Jump:
+                    _sounds.Add(SwordmanVoice.JumpAttack, SoundCueKind.Voice);
+                    _sounds.Add(_weaponSound.SwingA, SoundCueKind.Effect);
+                    break;
+            }
+        }
+
+        private static bool IsFinalCombo(TownHero hero)
+        {
+            return hero.AttackCount > 0 && hero.AttackStage >= hero.AttackCount - 1;
+        }
+
+        /// <summary>
+        /// 按了技能键:放出来的发各技能自己的声音(上挑 UPPER_SLASH_02;后跳的语音在起跳切换时发;鬼斩没有读到专门的声音);
+        /// 没放出来时,魔法不够放"没魔法"语音,冷却中放"冷却中"语音(两个语音在 12 项语音表里有位置,触发的位置是按名字推断的)。
+        /// </summary>
+        private void EmitSkillCues(HeroSkillSlot cast)
+        {
+            if (cast != null)
+            {
+                if (cast.SkillId == SkillIds.UpperSlash)
+                {
+                    _sounds.Add(SwordmanVoice.UpperSlash, SoundCueKind.Effect);
+                }
+                return;
+            }
+            switch (Skills.LastCastResult)
+            {
+                case SkillCastResult.NoMp:
+                    _sounds.Add(SwordmanVoice.NoMana, SoundCueKind.Voice);
+                    break;
+                case SkillCastResult.Cooldown:
+                    _sounds.Add(SwordmanVoice.CoolTime, SoundCueKind.Voice);
+                    break;
+            }
+        }
+
+        /// <summary>怪物开始新的一次出招:放它的 [attack sound]。</summary>
+        private void EmitMonsterCues()
+        {
+            foreach (MonsterActor m in _monsters)
+            {
+                if (m.Sounds.Attack == null)
+                {
+                    continue;
+                }
+                _cueMonsterSwing.TryGetValue(m, out long seen);
+                if (m.SwingNumber != seen)
+                {
+                    _cueMonsterSwing[m] = m.SwingNumber;
+                    _sounds.Add(m.Sounds.Attack, SoundCueKind.Voice, m.Index + 1);
+                }
+            }
+        }
+
+        /// <summary>技能冷却走完的那一刻放"冷却完成"的界面音(客户端有这个声音标签,放的条件是推断)。</summary>
+        private void EmitCooldownCues()
+        {
+            IReadOnlyList<HeroSkillSlot> slots = Skills.Slots;
+            for (int i = 0; i < slots.Count && i < _cueCooling.Length; i++)
+            {
+                bool cooling = !slots[i].Ready;
+                if (_cueCooling[i] && !cooling)
+                {
+                    _sounds.Add(CooldownEndSound, SoundCueKind.Ui);
+                }
+                _cueCooling[i] = cooling;
+            }
+        }
+
+        /// <summary>技能冷却完成的界面音标签(客户端的字符串表里有它,在技能栏的更新函数末尾被引用;触发条件没有读到)。</summary>
+        public const string CooldownEndSound = "COOLTIME_SKILL_END";
+
+        /// <summary>主角打中怪物:命中声(攻击信息的 [hit wav],没写取武器的命中声,连招最后一段用 B,其余 A;推断)与怪物的受击或死亡叫声。</summary>
+        private void EmitHitCues(TownHero hero, HeroStrikeInfo info, MonsterActor monster, bool killed)
+        {
+            string hit = info.HitWav;
+            if (hit == null)
+            {
+                hit = hero.AttackKind == HeroAttackKind.Normal && IsFinalCombo(hero) ? _weaponSound.HitB : _weaponSound.HitA;
+            }
+            _sounds.Add(hit, SoundCueKind.Effect);
+            _sounds.Add(killed ? monster.Sounds.Die : monster.Sounds.Damage, SoundCueKind.Voice, monster.Index + 1);
         }
 
         /// <summary>
@@ -530,16 +726,36 @@ namespace Dnf.Play
                     : new HeroStrikeInfo(0, 0, false);
                 actor.PhysicalAttack = stats.PhysicalAttack;
                 actor.MagicalAttack = stats.MagicalAttack;
+                actor.Sounds = new MonsterSounds(def.AppearSound, def.DamageSound, def.DieSound, def.AttackSound, def.AmbientSound);
                 actors.Add(actor);
             }
             // 受击硬直的三张表:Etc/EtcParameter.etc(证据 E-080);读不到就退回占位硬直
             ScriptLine[] etc = data.ReadScript(HitStunTablePath);
             HitStunTable stunTable = etc == null ? null : HitStunTable.FromEtcParameter(new TagTable(etc));
             bool hasWeapon = TryWeaponHit(chr, room.Hero, out WeaponHitInfo weapon);
+            TryWeaponSound(chr, room.Hero, out WeaponSound weaponSound);
             // 主角的生命值:没有就是旧行为(怪物只按固定距离出招、打不到主角、没有血条)——自动化检查里需要"不会被打"的主角时用
             HeroVitals vitals = heroVitals && chr != null ? HeroVitals.FromChr(chr) : null;
             return new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, HeroSkills.Create(data, chr, 0), hasWeapon ? weapon.StunMs : 0,
-                hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null);
+                hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null, weaponSound);
+        }
+
+        /// <summary>主角穿的武器在 .chr 的 [weapon wav] 里那一块(挥动与命中声音标签);取不到返回 false。</summary>
+        public static bool TryWeaponSound(CharacterDef chr, TownHero hero, out WeaponSound sound)
+        {
+            sound = default;
+            if (chr == null || hero?.Outfit == null)
+            {
+                return false;
+            }
+            foreach (AvatarItem item in hero.Outfit.Items)
+            {
+                if (string.Equals(item.EquipmentType, "[weapon]", StringComparison.OrdinalIgnoreCase) && chr.TryGetWeaponSound(item.SubType, out sound))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>受击硬直的三张表所在的脚本(证据 E-080)。</summary>
@@ -670,6 +886,10 @@ namespace Dnf.Play
                 _bufferedJump = false;
                 _bufferedSkills = SkillKeys.None;
                 HeroSkillSlot cast = skillsPressed == SkillKeys.None ? null : Skills.TryCast(skillsPressed, _room.Hero, Vitals);
+                if (skillsPressed != SkillKeys.None)
+                {
+                    EmitSkillCues(cast);
+                }
                 if (cast != null)
                 {
                     attackPressed = false;
@@ -679,6 +899,7 @@ namespace Dnf.Play
                 }
                 _room.Update(heroDelta, dirX, dirY, attackPressed, jumpPressed);
             }
+            EmitHeroCues();
             TownHero hero = _room.Hero;
             // 有主角的生命值时,怪物按"这一击能不能打到主角的受击框"决定靠近与出招,主角死了就待机;没有时按固定距离(旧行为)
             bool heroAlive = !HeroDead;
@@ -687,9 +908,11 @@ namespace Dnf.Play
             {
                 m.Update(deltaMs, hero.X, hero.Y, heroAlive, hero.Walk, heroBoxes);
             }
+            EmitMonsterCues();
             ResolveHits();
             ResolveMonsterHits();
             SyncStance();
+            EmitCooldownCues();
             for (int i = _popups.Count - 1; i >= 0; i--)
             {
                 _popups[i].AgeMs += deltaMs;
@@ -824,6 +1047,7 @@ namespace Dnf.Play
             // 受击硬直与击退按客户端的公式算(证据 E-080);没有硬直表时 StunInput 无效,怪物走占位值。
             // 倒地(以及空中、倒地中又挨打)按客户端的开始处理算:体重缩放的击飞、z 抛物线、落地后颠一下再躺下(证据 E-082、E-083)
             bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, hero.FacingLeft, StunInput(info), DownInput(info));
+            EmitHitCues(hero, info, monster, killed);
             int stun = HitStop.StunMs(info.HitValue, info.UseWeaponHitDelayRate, WeaponStunMs);
             if (stun > 0)
             {
@@ -909,6 +1133,9 @@ namespace Dnf.Play
                 knockMs = r.KnockMs;
             }
             hero.BeginHurt(killed ? HeroHurtTuning.DeadHoldMs : stunMs, knockPixels, knockMs, monster.FacingLeft);
+            // 声音:攻击信息的命中声,加主角的受击或死亡语音(客户端有"职业 → (受击, 死亡)"的全局表,证据 E-089)
+            _sounds.Add(info.HitWav, SoundCueKind.Effect);
+            _sounds.Add(killed ? SwordmanVoice.Die : SwordmanVoice.Hurt, SoundCueKind.Voice);
             int pause = HitStop.StunMs(info.HitValue, info.UseWeaponHitDelayRate, 0);
             if (pause > 0)
             {

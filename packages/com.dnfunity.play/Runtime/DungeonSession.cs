@@ -24,7 +24,7 @@ namespace Dnf.Play
     /// 没做 / 没量过:客户端"走进出口就换房间"的触发代码(没有读到,触发条件是推断)、主角对象编号的来源(<see cref="HeroObjectId"/>)、淡入期间是否接受操作(现在接受)、
     /// 转场时怪物是否冻结(现在不冻结)、清房时站姿切换的确切时刻、结算界面。
     /// </summary>
-    public sealed class DungeonSession : ISkillSession
+    public sealed class DungeonSession : ISkillSession, ISoundSource
     {
         /// <summary>
         /// 没有碰撞体的左右出口的触发范围:主角离出口的横向距离不超过它(像素;近似,没有量过;真实数据里左右出口都有碰撞体)。
@@ -71,6 +71,8 @@ namespace Dnf.Play
         private readonly DungeonRoomFactory _factory;
         private readonly CellState[] _cells;
         private readonly OverlayArt _art = new OverlayArt();
+        private readonly SoundCueQueue _sounds = new SoundCueQueue();
+        private readonly List<SoundCue> _soundScratch = new List<SoundCue>();
         private double _clockMs;
         private Phase _phase;
         private double _phaseMs;
@@ -188,6 +190,28 @@ namespace Dnf.Play
 
         /// <summary>整座副本里主角被怪物打中的总次数。</summary>
         public int HeroHits => Sum(s => s.HeroHits);
+
+        /// <summary>
+        /// 整座副本的声音提示队列(证据 E-089、E-090):每一步把当前房间会话发出的提示按时间顺序收进来,换房间时先放新房间的 <see cref="SoundCueKind.RoomEnter"/> 标记与地图声音
+        /// (第一次进去还有怪物出场声);播放的一方每帧调 <see cref="DrainSounds"/> 取走。
+        /// </summary>
+        public SoundCueQueue Sounds => _sounds;
+
+        public void DrainSounds(List<SoundCue> into)
+        {
+            _sounds.Drain(into);
+        }
+
+        /// <summary>把一个房间会话里等着的声音提示搬进副本的队列(保持顺序)。</summary>
+        private void ForwardSounds(RoomCombatSession session)
+        {
+            _soundScratch.Clear();
+            session.DrainSounds(_soundScratch);
+            foreach (SoundCue cue in _soundScratch)
+            {
+                _sounds.Add(cue.Key, cue.Kind, cue.Owner);
+            }
+        }
         public TownCamera Camera => Current.Camera;
         public int LayerCount => Current.LayerCount;
         public int NpcCount => Current.NpcCount;
@@ -307,6 +331,7 @@ namespace Dnf.Play
             bool inTransition = _phase != Phase.None;
             CellState cell = _cells[CellY * Maze.Cols + CellX];
             cell.Session.Update(stepMs, dirX, dirY, attackPressed, jumpPressed, skillsPressed);
+            ForwardSounds(cell.Session);
             _clockMs += stepMs;
             if (!cell.Cleared && AllMonstersGone(cell.Session))
             {
@@ -439,10 +464,16 @@ namespace Dnf.Play
         private void Enter(int x, int y, bool viaGate, GateSide entry, bool carryFacingLeft)
         {
             CellState cell = _cells[y * Maze.Cols + x];
-            if (cell.Session == null)
+            bool fresh = cell.Session == null;
+            if (fresh)
             {
                 cell.Session = _factory(x, y) ?? throw new InvalidOperationException("房间工厂没有造出格 (" + x + "," + y + ")");
             }
+            else
+            {
+                cell.Session.ReplayRoomSounds();   // 走回去过的房间:再发一遍它的地图声音(怪物出场声只在第一次)
+            }
+            ForwardSounds(cell.Session);
             CellX = x;
             CellY = y;
             if (viaGate)

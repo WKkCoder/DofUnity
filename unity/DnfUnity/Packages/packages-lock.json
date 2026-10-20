@@ -7,7 +7,10 @@
       "dependencies": {
         "com.dnfunity.data": "0.1.0",
         "com.dnfunity.render": "0.1.0",
-        "com.dnfunity.play": "0.1.0"
+        "com.dnfunity.play": "0.1.0",
+        "com.unity.modules.audio": "1.0.0",
+        "com.unity.modules.unitywebrequest": "1.0.0",
+        "com.unity.modules.unitywebrequestaudio": "1.0.0"
       }
     },
     "com.dnfunity.data": {
@@ -142,6 +145,21 @@
         "com.unity.modules.jsonserialize": "1.0.0",
         "com.unity.modules.hierarchycore": "1.0.0",
         "com.unity.modules.physics": "1.0.0"
+      }
+    },
+    "com.unity.modules.unitywebrequest": {
+      "version": "1.0.0",
+      "depth": 0,
+      "source": "builtin",
+      "dependencies": {}
+    },
+    "com.unity.modules.unitywebrequestaudio": {
+      "version": "1.0.0",
+      "depth": 0,
+      "source": "builtin",
+      "dependencies": {
+        "com.unity.modules.unitywebrequest": "1.0.0",
+        "com.unity.modules.audio": "1.0.0"
       }
     }
   }

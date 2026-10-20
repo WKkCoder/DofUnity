@@ -226,6 +226,9 @@ namespace Dnf.Cli
             "      读 tools/py/mob_ability_oracle.py --write-cases 写出的合成用例(期望值来自服务端原版函数在模拟器里的运行结果),用 C# 重算并逐槽比较。\n" +
             "  dnf script-stats --ext <扩展名> [--top N] [--json <文件>]\n" +
             "      按标签统计某一类标记流脚本的词汇:次数、文件数、每个值位置上的值种类与字符串直方图、\"第一个字符串 → 形状\"表。用来在读客户端解释器前弄清脚本的词汇;输出放 out/,不入库。\n" +
+            "  dnf sound-check [--bot [--dungeon <副本定义>] [--seconds N] [--seed N] [--no-damage]] [--json <文件>]\n" +
+            "      声音数据与触发(证据 E-089、E-090):audio.xml 各类条目数、文件是否在 SoundPacks/Music 里且是 Ogg、RANDOM/GROUP 能否展开;全库脚本里 .map [sound]、.mob 的声音标签、.atk [hit wav]、.chr [weapon wav]、.ani 帧声音在 audio.xml 里的命中率;\n" +
+            "      代码里写死的语音标签是否存在;--bot 让自动机打一座副本并统计战斗发出的声音提示(没有录音可对照:验证的是数据对得上、触发有发出)。\n" +
             "  dnf damage-check [--cases <文件>]\n" +
             "      伤害公式(证据 E-049)。不带 --cases:读 PVF 里的 Etc/EtcParameter.etc 与 Creature/Common/creatureCommon.cre,只报告个数与完整性(不输出原版数值);\n" +
             "      带 --cases:读 tools/py/damage_ref.py --gen 生成的随机用例,用 C# 公式复算并与 Python 参考实现逐项比较。\n" +
@@ -532,6 +535,8 @@ namespace Dnf.Cli
                         : MobCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "script-stats":
                     return ScriptStats.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "sound-check":
+                    return SoundCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "damage-check":
                     return opts.CasesFile != null
                         ? DamageCheck.RunCases(opts)

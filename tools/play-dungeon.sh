@@ -6,8 +6,9 @@
 #       tools/play-dungeon.sh explore    自动机逛遍所有房间再打首领(看一遍整条路线)
 #       tools/play-dungeon.sh bot        自动机直奔首领
 #       tools/play-dungeon.sh nodamage   (可以和上面的模式连着写,例如 explore nodamage)怪物打不到你、没有血条:想只看打怪的时候用
+#       tools/play-dungeon.sh nosound    (同样可以连着写)不要声音。默认是有声音的(E-089、E-090):挥剑与命中、角色语音、地图音乐与环境声,数据取自你自备的 audio.xml、SoundPacks、Music
 # 伤害是占位值,命中停顿按客户端代码做了(E-077);怪物会还手(E-086,左下角有生命条与魔法条,主角死了只有 DEAD 字样,没有复活),
-# 没有耗蓝、没有结算界面。数据目录取 DNF_DIR(local.env 或环境变量)。
+# 放技能耗蓝(E-087)、有原版底栏(E-088)、没有结算界面。数据目录取 DNF_DIR(local.env 或环境变量)。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . tools/env.sh
@@ -25,7 +26,8 @@ for arg in "$@"; do
     bot) extra+=(-dnfbot) ;;
     explore) extra+=(-dnfexplore) ;;
     nodamage) extra+=(-dnfnodamage) ;;
-    *) echo "用法: $0 [bot|explore] [nodamage]" >&2; exit 2 ;;
+    nosound) extra+=(-dnfnosound) ;;
+    *) echo "用法: $0 [bot|explore] [nodamage] [nosound]" >&2; exit 2 ;;
   esac
 done
 

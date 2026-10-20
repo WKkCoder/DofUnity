@@ -27,7 +27,7 @@ namespace Dnf.Client
     ///
     /// 命令行:-dnfdir &lt;目录&gt; -dnfmap &lt;PVF 内地图路径&gt; [-dnfshot &lt;输出.png&gt; [-dnftime &lt;毫秒&gt;]] [-dnfquitafter &lt;秒&gt;]
     ///         [-dnfnohero] [-dnfhero x,y,left|right,rest|move,毫秒[,镜头x]] [-dnfautowalk 秒:动作,…]
-    ///         [-dnfmonsters | -dnfnomonsters] [-dnfnodamage] [-dnfplayat &lt;秒&gt;]
+    ///         [-dnfmonsters | -dnfnomonsters] [-dnfnodamage] [-dnfplayat &lt;秒&gt;] [-dnfnosound | -dnfsound]
     ///         [-dnfdungeon &lt;副本定义路径&gt; [-dnfbot | -dnfexplore] [-dnfseed &lt;整数&gt;] [-dnfrandomlayout]]
     /// 带 -dnfshot 时只离屏渲染一帧写成 PNG 就退出(用来和 CPU 合成器逐字节对照,见 tools/unity-build-town.sh);
     /// 这时默认不画主角,带 -dnfhero 才把主角摆到指定的位置、朝向与动作进度(与 dnf render-town --scene --hero 同一写法)。
@@ -43,6 +43,8 @@ namespace Dnf.Client
     /// 按键(副本房间里的主角,按原版默认键位,证据 E-072、E-076):方向键 走动(按住;同方向再按一下接着按住 = 奔跑);X 普攻(连按接下一段);C 跳跃;
     /// A S D 前三个技能快捷槽(新建的剑士是鬼斩、上挑、后跳,各有冷却);Z 与原版的另一个快捷槽没有确认绑什么,不响应。
     /// 空格 暂停/继续;暂停时左右方向键按 50 毫秒步进动画时间;H 显示/隐藏文字;Esc 退出;点击/触摸 暂停/继续。
+    /// 声音(<see cref="DnfAudio"/>,证据 E-089、E-090):战斗里有挥击、命中、角色语音、地图音乐与环境声,数据取自用户自备的 audio.xml、SoundPacks 与 Music;
+    /// -dnfnosound 关闭;带 -batchmode 的无人值守运行默认静音(整条链路照跑,计数器写进日志的 DNF_AUDIO 行),-dnfsound 才出声;离屏渲染一帧不开声音。
     /// 画面以整数倍放大并居中(留黑边),所以与原版 800×600 像素一一对应、不糊。
     /// </summary>
     public sealed class TownDemo : MonoBehaviour
@@ -87,6 +89,9 @@ namespace Dnf.Client
         private int _seed = 1;
         private bool _randomLayout;
         private CombatScript _script = new CombatScript();
+        private DnfAudio _audio;
+        private bool _noSound;
+        private bool _forceSound;
         private Camera _bars;
         private double _clockMs;          // 本帧显示的动画时间(毫秒)
         private double _originReal;       // t = 0 对应的 Time.realtimeSinceStartupAsDouble;动画时间按墙钟走,所以打开数据时的卡顿不会算进去
@@ -185,6 +190,12 @@ namespace Dnf.Client
                     case "-dnfrandomlayout":
                         _randomLayout = true;
                         break;
+                    case "-dnfnosound":
+                        _noSound = true;
+                        break;
+                    case "-dnfsound":
+                        _forceSound = true;
+                        break;
                     case "-dnfquitafter":
                         if (value != null && float.TryParse(value, System.Globalization.NumberStyles.Float,
                                 System.Globalization.CultureInfo.InvariantCulture, out float q)) { _quitAfterSeconds = q; i++; }
@@ -261,6 +272,7 @@ namespace Dnf.Client
                 _view = _session != null
                     ? new TownView(_assets, _session, StageBackground)
                     : new TownView(_assets, mapPath, TownProjection.FromE024, StageBackground);
+                _audio = TryCreateAudio(dir);
             }
             catch (Exception e)
             {
@@ -284,6 +296,31 @@ namespace Dnf.Client
             _state = State.Running;
             _runningSince = Time.realtimeSinceStartup;
             Debug.Log("DNF_TOWN_DEMO running map=" + (_session != null ? _session.MapPath : mapPath) + " npcs=" + _view.NpcCount + " layers=" + _view.LayerCount + HeroLog());
+        }
+
+        /// <summary>
+        /// 声音只在实时运行、会话会发声音提示(房间战斗、整座副本)时才开;离屏渲染一帧不开,-dnfnosound 也不开。
+        /// 带 -batchmode 的无人值守运行默认静音(整条链路照跑、计数器照记),带 -dnfsound 才出声。数据目录里没有 audio.xml 时安静地没有声音。
+        /// </summary>
+        private DnfAudio TryCreateAudio(string dir)
+        {
+            if (_noSound || !string.IsNullOrEmpty(_shotPath) || !(_session is ISoundSource))
+            {
+                return null;
+            }
+            try
+            {
+                DnfAudio audio = DnfAudio.Open(dir, audible: !Application.isBatchMode || _forceSound);
+                Debug.Log(audio == null
+                    ? "DNF_AUDIO silent: no audio.xml in the data folder"
+                    : "DNF_AUDIO ready tags=" + audio.Library.Catalog.Count + " packed=" + audio.Library.PackedCount + " loose=" + audio.Library.LooseCount + " audible=" + audio.Audible);
+                return audio;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("DNF_AUDIO disabled: " + e.GetType().Name + ": " + e.Message);
+                return null;
+            }
         }
 
         /// <summary>
@@ -459,6 +496,11 @@ namespace Dnf.Client
 
         private void DisposeView()
         {
+            if (_audio != null)
+            {
+                UnityObjects.Destroy(_audio.gameObject);
+                _audio = null;
+            }
             _view?.Dispose();
             _view = null;
             _session = null;
@@ -508,6 +550,8 @@ namespace Dnf.Client
                             _session.Update(deltaMs, dirX, dirY);
                         }
                     }
+                    // 声音:取走这一步发出的提示、推进调度器、执行命令(不碰画面与游戏状态)
+                    _audio?.Tick(deltaMs, _session as ISoundSource);
                 }
                 _spriteCount = _view.ShowAt((long)_clockMs).Count;
                 _frames++;
@@ -522,6 +566,10 @@ namespace Dnf.Client
                 float seconds = Time.realtimeSinceStartup - _runningSince;
                 Debug.Log("DNF_TOWN_DEMO ran frames=" + _frames + " seconds=" + seconds.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)
                     + " clockMs=" + (long)_clockMs + " sprites=" + _spriteCount + HeroLog());
+                if (_audio != null)
+                {
+                    Debug.Log("DNF_AUDIO " + _audio.Summary());
+                }
                 _quitAfterSeconds = -1f;
                 Application.Quit(0);
             }
@@ -571,6 +619,7 @@ namespace Dnf.Client
                 _pausedAtMs = NowMs();
                 _paused = true;
             }
+            _audio?.SetPaused(_paused);
         }
 
         /// <summary>把动画时间拨动 <paramref name="deltaMs"/> 毫秒(不早于 0)。</summary>
@@ -756,15 +805,20 @@ namespace Dnf.Client
                 {
                     hero += SkillsText(skillFight.Skills);
                 }
+                if (_audio != null)
+                {
+                    hero += "audio  cues " + _audio.CueCount + "  playing " + _audio.InFlight + "  music " + (_audio.Scheduler.MusicId ?? "-")
+                        + (_audio.Audible ? string.Empty : "  (muted)") + (_audio.FailedCount > 0 ? "  load failures " + _audio.FailedCount : string.Empty) + "\n";
+                }
                 if (_session is DungeonSession)
                 {
                     help = (_bot != null ? "Auto-play bot is driving (bot input only)   " : "Arrow keys: walk (double-tap Left/Right: run)   X: attack (again to chain; while running: dash attack)   C: jump (X in the air: jump attack)   A: Hard Attack   S: Upper Slash   D: Back Step   ")
-                        + "Space: pause   H: hide text   Esc: quit   (clear a room to open its gates, then walk into a gate; placeholder damage; no MP; monsters do not hurt you; Z/Space not bound)";
+                        + "Space: pause   H: hide text   Esc: quit   (clear a room to open its gates, then walk into a gate; placeholder damage; skills cost MP; monsters hit back unless -dnfnodamage; Z not bound)";
                 }
                 else
                 {
                     help = _session is RoomCombatSession
-                        ? "Arrow keys: walk (double-tap Left/Right: run)   X: attack (again to chain; while running: dash attack)   C: jump (X in the air: jump attack)   A: Hard Attack   S: Upper Slash   D: Back Step   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (placeholder damage; no MP; monsters do not hurt you)"
+                        ? "Arrow keys: walk (double-tap Left/Right: run)   X: attack (again to chain; while running: dash attack)   C: jump (X in the air: jump attack)   A: Hard Attack   S: Upper Slash   D: Back Step   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (placeholder damage; skills cost MP; monsters hit back unless -dnfnodamage)"
                         : "Arrow keys: walk   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (no UI, no combat)";
                 }
             }

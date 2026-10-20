@@ -237,19 +237,29 @@ namespace Dnf.Play
         /// </summary>
         public HeroSkillSlot TryCast(SkillKeys pressed, TownHero hero, HeroVitals vitals = null)
         {
+            LastCastResult = SkillCastResult.NotBound;
             if (pressed == SkillKeys.None || hero == null)
             {
                 return null;
             }
             foreach (HeroSkillSlot s in _slots)
             {
-                if ((pressed & s.Key) != 0 && Cast(s, hero, vitals) == SkillCastResult.Cast)
+                if ((pressed & s.Key) == 0)
+                {
+                    continue;
+                }
+                SkillCastResult result = Cast(s, hero, vitals);
+                LastCastResult = result;
+                if (result == SkillCastResult.Cast)
                 {
                     return s;
                 }
             }
             return null;
         }
+
+        /// <summary>最近一次 <see cref="TryCast"/> 的结果(放出来了就是 <see cref="SkillCastResult.Cast"/>;按了几个键时是最后一个被试的槽的结果)。用来决定放"没魔法"、"冷却中"的语音。</summary>
+        public SkillCastResult LastCastResult { get; private set; } = SkillCastResult.NotBound;
 
         /// <summary>
         /// 试着放这一个槽的技能;放出来就启动冷却,并(给了 <paramref name="vitals"/> 时)扣掉 [consume MP]。
