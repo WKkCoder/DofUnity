@@ -85,6 +85,14 @@ internal static class CombatCheck
                             + (m.IsKnockedDown ? " 倒地阶段 " + m.DownStage + " 离地 " + F(m.Z) + " 水平速度 " + F(m.HorizontalSpeed) : string.Empty) + "]");
                     }
                 }
+                // 这一步新放的伤害数字(E-107):位置是命中点加抖动,只打印、不入库
+                foreach (HitPopup popup in session.Popups)
+                {
+                    if (popup.AgeMs <= CombatScript.StepMs * 2)
+                    {
+                        sb.Append("  [数字 " + popup.Value + " 标志 " + popup.Flags + " 世界 (" + F(popup.WorldX) + "," + F(popup.WorldY) + "," + popup.Z + ")]");
+                    }
+                }
                 Console.WriteLine(sb.ToString());
                 lastHits = session.Hits;
             }
@@ -102,7 +110,9 @@ internal static class CombatCheck
                     + session.HeroHits + " 次,共 " + session.HeroDamageTaken + " 点  生命 " + session.Vitals!.Hp + "/" + session.Vitals.HpMax
                     + (session.HeroDown.Active ? "  倒地阶段 " + session.HeroDown.Stage + " 离地 " + F(session.Hero.Z) : "  受击硬直 " + F(session.Hero.HurtSpanMs) + " 毫秒")
                     + (session.HeroDead ? "  主角死亡" : string.Empty)
-                    + (session.HeroPauseMs > 0 ? "  定住 " + F(session.HeroPauseMs) + " 毫秒" : string.Empty));
+                    + (session.HeroPauseMs > 0 ? "  定住 " + F(session.HeroPauseMs) + " 毫秒" : string.Empty)
+                    + string.Concat(session.Popups.Where(p => p.OnHero && p.AgeMs <= CombatScript.StepMs * 2)
+                        .Select(p => "  [数字 " + p.Value + " 标志 " + p.Flags + " 世界 (" + F(p.WorldX) + "," + F(p.WorldY) + "," + p.Z + ")]")));
                 lastHeroHits = session.HeroHits;
             }
             string state = session.Hero.Motion + "/" + session.Hero.AttackStage + (session.HeroDown.Active ? "/倒地" + session.HeroDown.Stage : string.Empty);

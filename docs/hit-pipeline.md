@@ -601,7 +601,7 @@ DIE 开始(`0x00837612`)、其余状态(1、2、6 到 9)。
 **Unity 里的实现**:
 - **怪物**:`MonsterActor.Think` 在"够得着"时进入出招阶段(`SwingNumber` 加一,`AttackEvalFrame`、`HitHeroThisSwing` 清零);`AttackBoxesAt(frame)` 取出招动画那一帧的攻击框(类型 15,跟着朝向镜像、跟着离地高度抬升)。`RoomCombatSession.ResolveMonsterHits` 每步对每个出招中的怪物补判帧,命中就 `StrikeHero`。
 - **主角受击框**:`HeroHurtBoxes.At(hero)` = 主角当前动作的基础动画那一帧的类型 14 盒(世界坐标)。
-- **`StrikeHero`**:伤害(读得到 `Etc/EtcParameter.etc` 的公式常量就走 `DamageFormula.Compute`,否则是"攻击力 × 加成"的占位)→ `HeroVitals.Damage`(返回这一下是否打死)→ 受击硬直与击退(`HitStun.Damage`,受击方恢复项取主角的 `[hit recovery]`,攻击方恢复项 0)→ `TownHero.BeginHurt`(放 `[damage motion 1]`、`[damage motion 2]` 交替;硬直计时不被命中停顿冻结;击退先快后慢 `1 − (1 − t)²`,被墙或通行带边缘挡住就停;会打断挥击与技能,挨打期间不能放技能;离地时不走受击硬直,改走倒地,见 §21)→ 命中停顿(攻击信息的 `[hit info]` 整数,怪物没有武器表)→ 红色伤害数字。
+- **`StrikeHero`**:伤害(读得到 `Etc/EtcParameter.etc` 的公式常量就走 `DamageFormula.Compute`,否则是"攻击力 × 加成"的占位)→ `HeroVitals.Damage`(返回这一下是否打死)→ 受击硬直与击退(`HitStun.Damage`,受击方恢复项取主角的 `[hit recovery]`,攻击方恢复项 0)→ `TownHero.BeginHurt`(放 `[damage motion 1]`、`[damage motion 2]` 交替;硬直计时不被命中停顿冻结;击退先快后慢 `1 − (1 − t)²`,被墙或通行带边缘挡住就停;会打断挥击与技能,挨打期间不能放技能;离地时不走受击硬直,改走倒地,见 §21)→ 命中停顿(攻击信息的 `[hit info]` 整数,怪物没有武器表)→ 红橙色伤害数字(位图字,位置取自相交盒,见 §22)。
 - **主角死亡**:`Vitals.Hp` 归零 → `HeroDead`;会话不再读输入,怪物待机;主角有倒地动作时这一击把他打倒、躺下后不再起身(E-105,§21),没有倒地动作的脚本才退回"受击硬直变成永远"的占位;画面居中显示 DEAD。没有复活与结算。
 - **占位 HUD**:屏幕左下角红色生命条与蓝色魔法条,上方各一行 "HP 当前/上限"、"MP 当前/上限"(`OverlayArt` 的占位字体与条,不是原版界面)。图包里找得到原版底栏时不再用它(E-088,[hud.md](hud.md));魔法的消耗与恢复在 E-087 做了(同一篇)。
 - **`HeroVitals.FromChr`**:`.chr` 里第一次出现的 `[HP MAX]`、`[MP MAX]`、`[physical defense]`、`[magical defense]`、`[hit recovery]`(同名标签后面还有各成长类型的增量,只取第一次出现的初始值)。**在真实数据上第一次跑才发现**:这几项在真实 .chr 里存成浮点数,按整数读会当成"没写"、血量退成 1(合成夹具当初用的是整数,没能发现);现在一律按"第一个数值"读再四舍五入,测试覆盖两种存法。
@@ -669,3 +669,13 @@ DIE 开始(`0x00837612`)、其余状态(1、2、6 到 9)。
 - 主角类的"命中模式槽"(`0x00846c60` → 受保护区的蹦床 `0x022a2656`,需要 `DNF_ALLOW_PROTECTED=1`;只导出了反汇编,是满篇垃圾指令的混淆代码,没有读通):主角是否有额外的受击规则(霸体技能、状态下的特殊处理)属于这一部分。
 - `[overturn motion]` 的用法;反应 3(`[damage except human]`)里"是不是人类"的那一问(`0x0052e870` 的参数 `0x14`)——现在按 1 处理;倒地的"+50 抬升"的来源布尔;按体重分三档的落地声;主角倒地的 `Character` 状态 4 的前奏。
 - 复活与结算(主角死亡之后的流程)仍然没有。
+
+## 22. 伤害数字(E-107;静态读码 + 基线对照 + Unity 实现 + 合成数值测试)
+
+命中处理在伤害结算之后调"生成伤害数字"(0x007f9610,cdecl `(所有者, x, y, z, 数值, 标志)`)。完整的机制、数字图、动画关键帧与位置公式见 `docs/damage-number.md`;和本文有关的接口只有三点:
+
+- **位置取自相交盒**(§3,E-058):x = 盒中心 x + `rand % 20` − 10,z = 盒中心 z + `rand % 20` + 60,y = 受击者自己的 y;盒中心是 `(int)(尺寸 × 0.5f + 下界)`(单精度,向零取整)。所以会话里 `TryHit` 现在返回这一击的相交盒(`Aabb.Intersection`),`Strike` 与 `StrikeHero` 都带着它。
+- **标志**:施加者是本机主角 → 位 0(黄色一套),受击者是本机主角 → 位 1(红橙色一套),暴击 → 位 4(还没有暴击);两个方向走同一段代码。
+- **寿命**:数字从弹出到消失一共 1000 毫秒(暴击 1500),与命中停顿、受击硬直无关(数字有自己的时钟)。
+
+测试:`AabbTests`(4 条)、`DamageNumberTests`(40 条)、`RoomCombatTests` 与 `MonsterAttackTests` 里关于数字位置、叠加层与寿命的断言;全套 1340 条通过(Data 92、Script 7、Squirrel 22、Game 420、Render 273、Play 526),0 警告。

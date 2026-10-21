@@ -162,25 +162,46 @@ namespace Dnf.Play
         }
     }
 
-    /// <summary>屏幕上浮起的一个伤害数字。</summary>
+    /// <summary>
+    /// 场景里的一个伤害数字(证据 E-107):数值、标志(<see cref="DamageNumberFlags"/>,决定数字图和动画)、世界位置与已经过去的时间。
+    /// 位置是客户端放数字的位置:x = 命中点(攻击框与受击框的相交盒)的横向中心加 [-10, 9] 的抖动,y = 受击者的 y,
+    /// z = 命中点的高度中心 + 60 + [0, 19] 的抖动(都是单位像素;抖动用的随机数与伤害无关)。
+    /// </summary>
     public sealed class HitPopup
     {
-        public string Text { get; }
+        /// <summary>显示的数(伤害点数)。</summary>
+        public int Value { get; }
+
+        /// <summary>数的十进制文字(占位文字画法与测试用)。</summary>
+        public string Text => Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        /// <summary>标志位,见 <see cref="DamageNumberFlags"/>。</summary>
+        public int Flags { get; }
+
         public double WorldX { get; }
         public double WorldY { get; }
         public int Z { get; }
         public double AgeMs { get; set; }
 
-        /// <summary>主角挨的伤害(画成红色);否则是怪物挨的(画成黄色)。</summary>
-        public bool OnHero { get; }
+        /// <summary>主角挨的伤害(红橙色一套);否则是怪物挨的(黄色一套)。</summary>
+        public bool OnHero => (Flags & DamageNumberFlags.VictimIsHero) != 0;
 
-        public HitPopup(string text, double worldX, double worldY, int z, bool onHero = false)
+        /// <summary>动画模板(<see cref="DamageNumberFlags.Template"/>)。</summary>
+        public int Template => DamageNumberFlags.Template(Flags);
+
+        /// <summary>数字图里这一套的 "0" 所在帧号。</summary>
+        public int FirstFrame => DamageNumberFlags.FirstFrame(Flags, Value);
+
+        /// <summary>从弹出到消失一共多少毫秒。</summary>
+        public double LifeMs => DamageNumberAnimation.DurationMs(Template);
+
+        public HitPopup(int value, int flags, double worldX, double worldY, int z)
         {
-            Text = text;
+            Value = value;
+            Flags = flags;
             WorldX = worldX;
             WorldY = worldY;
             Z = z;
-            OnHero = onHero;
         }
     }
 
@@ -337,8 +358,9 @@ namespace Dnf.Play
         /// <summary>一小步的最长时间(毫秒):比任何动画帧都短,保证每一帧的判定框至少被检查一次。</summary>
         public const double MaxStepMs = 10;
 
-        public const double PopupMs = 800;
-        public const double PopupRisePixels = 30;
+        /// <summary>伤害数字落在命中点之上多高(像素,证据 E-107)。</summary>
+        public const int NumberRise = 60;
+
         public const double TargetBarMs = 3500;
         public const double ComboMs = 2600;
 
@@ -364,6 +386,12 @@ namespace Dnf.Play
 
         /// <summary>界面计时用的墙钟(毫秒):每一小步累加,与命中停顿无关(目标血条的闪光与缩短、死亡 X 的闪烁都按它走)。</summary>
         private double _hudClockMs;
+
+        /// <summary>伤害数字的位图字画法(证据 E-107);图包里没有 combo_big.img 时为 null,退回占位的文字。</summary>
+        private DamageNumberArt _numberArt;
+
+        /// <summary>伤害数字位置抖动用的随机数(客户端用的是全局随机数;这里单独一个,免得改变伤害序列)。</summary>
+        private readonly Random _numberRandom;
         private readonly List<HitPopup> _popups = new List<HitPopup>();
         private readonly List<AnimatedEffect> _effects = new List<AnimatedEffect>();
         private readonly List<MonsterProjectile> _projectiles = new List<MonsterProjectile>();
@@ -430,6 +458,15 @@ namespace Dnf.Play
         {
             _monsterHp = sprites == null ? null : MonsterHpWindow.For(sprites, _art);
         }
+
+        /// <summary>用另一个图源重建伤害数字的位图字画法(测试里喂合成的图);传 null,或图源里没有数字图,就退回占位的文字。</summary>
+        public void UseDamageNumberArt(ISpriteSource sprites)
+        {
+            _numberArt = DamageNumberArt.For(sprites);
+        }
+
+        /// <summary>伤害数字的位图字画法;图包里没有数字图时为 null。</summary>
+        public DamageNumberArt NumberArt => _numberArt;
 
         public int Hits { get; private set; }
         public int Kills { get; private set; }
@@ -549,8 +586,10 @@ namespace Dnf.Play
             _boxes = new HeroStrikeBoxes(assets);
             _hud = HudArt.For(assets);
             _monsterHp = MonsterHpWindow.For(assets, _art);
+            _numberArt = DamageNumberArt.For(assets);
             _random = new Random(seed);
             _physicsRandom = new Random(unchecked(seed * 31 + 17));
+            _numberRandom = new Random(unchecked(seed * 53 + 41));
             _heroDown = new HeroKnockdown(_room.Hero);
             _voiceSeed = unchecked((uint)seed * 2246822519u + 3266489917u);
             SyncStance();
@@ -999,7 +1038,7 @@ namespace Dnf.Play
             for (int i = _popups.Count - 1; i >= 0; i--)
             {
                 _popups[i].AgeMs += deltaMs;
-                if (_popups[i].AgeMs >= PopupMs)
+                if (_popups[i].AgeMs >= _popups[i].LifeMs)
                 {
                     _popups.RemoveAt(i);
                 }
@@ -1079,15 +1118,19 @@ namespace Dnf.Play
                 {
                     continue;
                 }
-                if (Touches(strike, m.DamageBoxes()))
+                if (TryHit(strike, m.DamageBoxes(), out Aabb hit))
                 {
                     _hitThisSwing.Add(m);
-                    Strike(hero, m);
+                    Strike(hero, m, hit);
                 }
             }
         }
 
-        private static bool Touches(List<Aabb> strike, List<Aabb> hurt)
+        /// <summary>
+        /// 攻击框与受击框的相交判定:外层攻击框、内层受击框,第一对相交的就是命中,返回它们的相交盒(客户端的"命中信息",证据 E-058);
+        /// 伤害数字按它的中心放(证据 E-107)。
+        /// </summary>
+        private static bool TryHit(List<Aabb> strike, List<Aabb> hurt, out Aabb hit)
         {
             foreach (Aabb a in strike)
             {
@@ -1095,14 +1138,27 @@ namespace Dnf.Play
                 {
                     if (a.Overlaps(b))
                     {
+                        hit = Aabb.Intersection(a, b);
                         return true;
                     }
                 }
             }
+            hit = default;
             return false;
         }
 
-        private void Strike(TownHero hero, MonsterActor monster)
+        /// <summary>
+        /// 放一个伤害数字:位置按命中点算(x = 相交盒横向中心 + [-10, 9] 的抖动,y = 受击者的 y,z = 相交盒高度中心 + 60 + [0, 19] 的抖动,证据 E-107)。
+        /// 抖动是客户端的"随机数 % 20":x 减 10,z 加在 60 上。
+        /// </summary>
+        private void AddNumber(int value, int flags, Aabb hit, double victimY)
+        {
+            int jitterX = _numberRandom.Next(20) - 10;
+            int jitterZ = _numberRandom.Next(20);
+            _popups.Add(new HitPopup(value, flags, hit.CenterX + jitterX, victimY, hit.CenterZ + NumberRise + jitterZ));
+        }
+
+        private void Strike(TownHero hero, MonsterActor monster, Aabb hit)
         {
             HeroStrikeInfo info;
             switch (hero.AttackKind)
@@ -1154,7 +1210,7 @@ namespace Dnf.Play
             {
                 Kills++;
             }
-            _popups.Add(new HitPopup(damage.ToString(System.Globalization.CultureInfo.InvariantCulture), monster.X, monster.Y, monster.HeadHeight()));
+            AddNumber(damage, DamageNumberFlags.AttackerIsHero, hit, monster.Y);
         }
 
         // ------------------------------------------------------------------ 怪物打主角(P5.M5,证据 E-086)
@@ -1180,10 +1236,10 @@ namespace Dnf.Play
                 for (int f = m.AttackEvalFrame + 1; f <= frame && !m.HitHeroThisSwing; f++)
                 {
                     List<Aabb> strike = m.AttackBoxesAt(f);
-                    if (strike.Count > 0 && Touches(strike, HeroHurtBoxes.At(hero)))
+                    if (strike.Count > 0 && TryHit(strike, HeroHurtBoxes.At(hero), out Aabb hit))
                     {
                         m.HitHeroThisSwing = true;
-                        StrikeHero(m, hero);
+                        StrikeHero(m, hero, hit);
                     }
                 }
                 if (frame > m.AttackEvalFrame)
@@ -1231,13 +1287,13 @@ namespace Dnf.Play
                     continue;
                 }
                 List<Aabb> strike = p.AttackBoxes();
-                if (strike.Count == 0 || !Touches(strike, hurt))
+                if (strike.Count == 0 || !TryHit(strike, hurt, out Aabb hit))
                 {
                     continue;
                 }
                 p.Vanish();
                 ProjectileHits++;
-                StrikeHero(p.Owner, p.Template.Strike, p.FacingLeft, hero, null);
+                StrikeHero(p.Owner, p.Template.Strike, p.FacingLeft, hero, null, hit);
                 if (!Vitals.IsAlive)
                 {
                     break;
@@ -1252,16 +1308,17 @@ namespace Dnf.Play
         /// 受击反应按决策函数选(证据 E-079、E-105,见 <see cref="ReactHero"/>):倒地类的攻击、空中与倒地中被打、已死的一击让主角倒地(<see cref="HeroDown"/>),
         /// 其余走受击硬直;[damage reaction] 为 none 的只扣血;主角没有倒地动作时血量归零停在受击姿势上(占位的死亡)。
         /// </summary>
-        private void StrikeHero(MonsterActor monster, TownHero hero)
+        private void StrikeHero(MonsterActor monster, TownHero hero, Aabb hit)
         {
-            StrikeHero(monster, monster.Strike, monster.FacingLeft, hero, monster);
+            StrikeHero(monster, monster.Strike, monster.FacingLeft, hero, monster, hit);
         }
 
         /// <param name="owner">攻击的所有者(取等级与攻击力;投射物的所有者是扔它的怪物)。</param>
         /// <param name="info">这一击的攻击信息。</param>
         /// <param name="attackerFacingLeft">攻击者(怪物或投射物)朝左:主角被打退的方向。</param>
         /// <param name="attacker">命中停顿时一起定住的攻击者;投射物打中就消失,传 null。</param>
-        private void StrikeHero(MonsterActor owner, HeroStrikeInfo info, bool attackerFacingLeft, TownHero hero, MonsterActor attacker)
+        /// <param name="hit">攻击框与主角受击框的相交盒,伤害数字按它的中心放(证据 E-107)。</param>
+        private void StrikeHero(MonsterActor owner, HeroStrikeInfo info, bool attackerFacingLeft, TownHero hero, MonsterActor attacker, Aabb hit)
         {
             int attack = info.Magical ? owner.MagicalAttack : owner.PhysicalAttack;
             int damage = _damageConstants != null
@@ -1284,7 +1341,7 @@ namespace Dnf.Play
                     _heroPauseMs = pause;
                 }
             }
-            _popups.Add(new HitPopup(damage.ToString(System.Globalization.CultureInfo.InvariantCulture), hero.X, hero.Y, HeroHurtBoxes.HeadHeight(hero, 80), true));
+            AddNumber(damage, DamageNumberFlags.VictimIsHero, hit, hero.Y);
         }
 
         /// <summary>
@@ -1437,11 +1494,22 @@ namespace Dnf.Play
             }
             foreach (HitPopup p in _popups)
             {
+                // 原版的位图字(证据 E-107);图包里没有数字图或缺帧时退回占位文字,按同一条动画的偏移与不透明度画
+                SceneSprite number = _numberArt?.Place(p, projection, order);
+                if (number != null)
+                {
+                    into.Add(number);
+                    order++;
+                    continue;
+                }
+                if (!DamageNumberAnimation.TryPose(p.Template, p.AgeMs, out DamageNumberPose pose))
+                {
+                    continue;
+                }
                 SpriteFrame text = _art.Text(p.Text, 3, p.OnHero ? HeroPopupColor : OverlayArt.Yellow);
-                double rise = PopupRisePixels * Math.Min(1.0, p.AgeMs / (PopupMs * 0.5));
                 int sx = (int)Math.Floor(p.WorldX) - projection.CameraX - text.Width / 2;
-                int sy = (int)Math.Floor(p.WorldY) + projection.GroundY - p.Z - text.Height - 6 - (int)rise;
-                into.Add(OverlayArt.Place(text, sx, sy, order++, "damage"));
+                int sy = (int)Math.Floor(p.WorldY) + projection.GroundY - p.Z + (int)Math.Round(pose.YOffset);
+                into.Add(OverlayArt.Place(text, sx, sy, order++, "damage", pose.Alpha));
             }
             if (Combo > 1)
             {

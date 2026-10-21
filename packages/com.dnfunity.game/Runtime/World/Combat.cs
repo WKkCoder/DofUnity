@@ -1,3 +1,4 @@
+using System;
 using Dnf.Data;
 
 namespace Dnf.Game
@@ -26,6 +27,27 @@ namespace Dnf.Game
         {
             return MinX < o.MaxX && o.MinX < MaxX && MinY < o.MaxY && o.MinY < MaxY && MinZ < o.MaxZ && o.MinZ < MaxZ;
         }
+
+        /// <summary>
+        /// 两个盒子的相交盒(客户端的"命中信息",证据 E-058):各轴下界取较大的、上界取较小的。
+        /// 只在两个盒子相交时有意义(调用方先用 <see cref="Overlaps"/> 判);不相交时某些轴的下界会大于上界。
+        /// </summary>
+        public static Aabb Intersection(Aabb a, Aabb b)
+        {
+            return new Aabb(
+                Math.Max(a.MinX, b.MinX), Math.Min(a.MaxX, b.MaxX),
+                Math.Max(a.MinY, b.MinY), Math.Min(a.MaxY, b.MaxY),
+                Math.Max(a.MinZ, b.MinZ), Math.Min(a.MaxZ, b.MaxZ));
+        }
+
+        /// <summary>X 方向的中心:客户端取 (int)(尺寸 × 0.5 + 下界),单精度算、向零取整(证据 E-107,读 0x0109de20)。</summary>
+        public int CenterX => (int)((MaxX - MinX) * 0.5f + MinX);
+
+        /// <summary>Y 方向的中心,算法同 <see cref="CenterX"/>(读 0x0109de80)。</summary>
+        public int CenterY => (int)((MaxY - MinY) * 0.5f + MinY);
+
+        /// <summary>Z 方向的中心,算法同 <see cref="CenterX"/>(读 0x0109dee0)。</summary>
+        public int CenterZ => (int)((MaxZ - MinZ) * 0.5f + MinZ);
 
         public override string ToString()
         {

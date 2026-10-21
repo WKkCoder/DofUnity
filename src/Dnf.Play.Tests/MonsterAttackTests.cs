@@ -223,8 +223,12 @@ public class MonsterAttackTests
 
         Assert.Equal((100 - ExpectedDamage, (long)ExpectedDamage), (s.Vitals.Hp, s.HeroDamageTaken));
         HitPopup popup = Assert.Single(s.Popups);
-        Assert.Equal((ExpectedDamage.ToString(), true, 80), (popup.Text, popup.OnHero, popup.Z));     // 头顶 = 受击框顶
-        Assert.Equal((300.0, 100.0), (popup.WorldX, popup.WorldY));
+        Assert.Equal((ExpectedDamage.ToString(), true, DamageNumberFlags.VictimIsHero), (popup.Text, popup.OnHero, popup.Flags));
+        // 位置取自怪物攻击框与主角受击框的相交盒(E-107):x ∈ [290, 312]、z ∈ [0, 50],中心 (301, 25);
+        // 横向抖 -10 到 +9,高度 60 起再加 0 到 19;y 是受击者(主角)自己的 y
+        Assert.InRange(popup.WorldX, 291.0, 310.0);
+        Assert.InRange(popup.Z, 85, 104);
+        Assert.Equal(100.0, popup.WorldY);
         Assert.False(s.HeroDead);
     }
 

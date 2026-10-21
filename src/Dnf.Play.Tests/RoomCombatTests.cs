@@ -537,20 +537,120 @@ public class RoomCombatTests
         HitPopup popup = Assert.Single(s.Popups);
         Assert.True(int.TryParse(popup.Text, out int shown));
         Assert.Equal((int)s.TotalDamage, shown);
-        Assert.Equal(60, popup.Z);                                        // 浮在怪物头顶(受击框顶 = 60)
-        Assert.Equal((340.0, 100.0), (popup.WorldX, popup.WorldY));
+        // 位置取自攻击框与受击框的相交盒(E-107):相交盒 x ∈ [310, 350]、z ∈ [0, 60],中心 (330, 30);
+        // 横向在中心上抖 -10 到 +9,高度在中心上方 60 起再随机加 0 到 19;y 是受击者自己的 y
+        Assert.InRange(popup.WorldX, 320.0, 339.0);
+        Assert.InRange(popup.Z, 90, 109);
+        Assert.Equal(100.0, popup.WorldY);
+        Assert.Equal(DamageNumberFlags.AttackerIsHero, popup.Flags);       // 主角打出去的:黄色一套
         Assert.NotNull(s.Target);
 
         arena.Run(800);
-        Assert.Empty(s.Popups);                                           // 800 毫秒后数字消失
+        popup = Assert.Single(s.Popups);                                  // 数字活 1000 毫秒:距命中 850 毫秒还在
+        Assert.Equal(1000.0, popup.LifeMs);
+        arena.Run(200);
+        Assert.Empty(s.Popups);                                           // 距命中 1050 毫秒:数字消失
         Assert.NotNull(s.Target);
         Assert.Equal(1, s.Combo);
-        arena.Run(1800);                                                  // 距命中 2650 毫秒 > 2600:连击清零
+        arena.Run(1800);                                                  // 距命中 2850 毫秒 > 2600:连击清零
         Assert.Equal(0, s.Combo);
         Assert.NotNull(s.Target);
-        arena.Run(1000);                                                  // 距命中 3650 毫秒 > 3500:血条消失
+        arena.Run(1000);                                                  // 距命中 3850 毫秒 > 3500:血条消失
         Assert.Null(s.Target);
         Assert.Equal(1, s.Hits);                                          // 累计命中数不清零
+    }
+
+    [Fact]
+    public void WithTheBitmapDigitsTheNumberSitsOnTheDimLayerAndFollowsTheAnimationAtTheHitPoint()
+    {
+        using var arena = new Arena(new[] { (340, 100) });
+        RoomCombatSession s = arena.Session;
+        Assert.Null(s.NumberArt);                                         // 合成图包里没有 combo_big.img:先是占位文字
+        s.UseDamageNumberArt(new DigitSprites());
+        Assert.NotNull(s.NumberArt);
+
+        arena.Run(250, 0);                                                // 命中发生在 200 毫秒
+        HitPopup popup = Assert.Single(s.Popups);
+        int originY = (int)Math.Floor(popup.WorldY) + s.Room.Projection.GroundY - popup.Z;
+        foreach (int more in new[] { 0, 400, 200, 200 })                   // 距命中约 50、450、650、850 毫秒:弹出、停住、上飘、淡出
+        {
+            arena.Run(more);
+            Assert.True(DamageNumberAnimation.TryPose(popup.Template, popup.AgeMs, out DamageNumberPose pose));
+            SceneSprite n = Assert.Single(s.Build(0), x => x.AnimationPath == "damage");
+            Assert.Equal(OverlayArt.DimRank, n.LayerRank);                // 盖住场景、在界面之下
+            Assert.Equal(pose.Alpha, n.TintAlpha);
+            // 缩放中心在贴图顶边(再加一个像素的透明边):贴图顶边 + 边 × 缩放 = 原点高度 + 动画的竖直偏移
+            double pad = n.Frame.Height / (double)(DigitSprites.Tall + 2);
+            Assert.InRange(n.ScreenY + pad, originY + pose.YOffset - 1.0, originY + pose.YOffset + 1.0);
+        }
+        Assert.InRange(popup.AgeMs, 800.0, 900.0);
+        Assert.NotEqual(255, Assert.Single(s.Build(0), x => x.AnimationPath == "damage").TintAlpha);   // 已经在淡出
+        arena.Run(200);
+        Assert.DoesNotContain(s.Build(0), x => x.AnimationPath == "damage");                            // 播完就摘
+    }
+
+    [Fact]
+    public void WithoutTheDigitArtThePlaceholderTextRidesTheSameAnimationOnTheInterfaceLayer()
+    {
+        using var arena = new Arena(new[] { (340, 100) });
+        RoomCombatSession s = arena.Session;
+        Assert.Null(s.NumberArt);
+        arena.Run(250, 0);
+        HitPopup popup = Assert.Single(s.Popups);
+        arena.Run(500);                                                   // 距命中约 550 毫秒:停住
+        Assert.True(DamageNumberAnimation.TryPose(popup.Template, popup.AgeMs, out DamageNumberPose hold));
+        SceneSprite held = Assert.Single(s.Build(0), x => x.AnimationPath == "damage");
+        Assert.Equal((OverlayArt.UiRank, hold.Alpha), (held.LayerRank, held.TintAlpha));
+        arena.Run(200);                                                   // 约 750 毫秒:上飘中
+        Assert.True(DamageNumberAnimation.TryPose(popup.Template, popup.AgeMs, out DamageNumberPose rise));
+        SceneSprite rising = Assert.Single(s.Build(0), x => x.AnimationPath == "damage");
+        Assert.True(rise.Alpha < hold.Alpha);
+        Assert.Equal(rise.Alpha, rising.TintAlpha);
+        Assert.True(rising.ScreenY < held.ScreenY);
+    }
+
+    [Fact]
+    public void EveryHitGetsItsOwnJitterWithinTheRangeAroundTheIntersectionBox()
+    {
+        // 主角与怪物都原地不动;怪物血量很大,连挥很多下:每一击一个数字,位置抖动不会全一样,也不会超出相交盒中心的抖动范围
+        using var arena = new Arena(new[] { (340, 100) }, hp: 1_000_000, frozen: true);
+        RoomCombatSession s = arena.Session;
+        var seen = new List<HitPopup>();
+        for (int i = 0; i < 40; i++)
+        {
+            arena.Run(500, 0);
+            foreach (HitPopup p in s.Popups)
+            {
+                if (!seen.Contains(p))
+                {
+                    seen.Add(p);
+                }
+            }
+        }
+        Assert.True(seen.Count >= 30, "命中数 " + seen.Count);
+        Assert.Equal(seen.Count, s.Hits);
+        // 各段攻击框与受击框相交盒的中心都落在 x ∈ [310, 350]、z ∈ [0, 60] 之内:横向抖 -10 到 +9,高度加 60 再抖 0 到 19
+        Assert.All(seen, p => Assert.InRange(p.WorldX, 310.0 - 10, 350.0 + 9));
+        Assert.All(seen, p => Assert.InRange(p.Z, 60, 60 + 60 + 19));
+        Assert.All(seen, p => Assert.Equal(100.0, p.WorldY));
+        Assert.True(seen.Select(p => p.WorldX).Distinct().Count() >= 5);
+        Assert.True(seen.Select(p => p.Z).Distinct().Count() >= 5);
+
+        // 同一个种子同样的操作,数字的位置逐个相同(可复现)
+        using var again = new Arena(new[] { (340, 100) }, hp: 1_000_000, frozen: true);
+        var replay = new List<HitPopup>();
+        for (int i = 0; i < 40; i++)
+        {
+            again.Run(500, 0);
+            foreach (HitPopup p in again.Session.Popups)
+            {
+                if (!replay.Contains(p))
+                {
+                    replay.Add(p);
+                }
+            }
+        }
+        Assert.Equal(seen.Select(p => (p.WorldX, p.Z)), replay.Select(p => (p.WorldX, p.Z)));
     }
 
     [Fact]
