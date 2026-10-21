@@ -18,6 +18,8 @@
 #      再让流程自动机在播放器里实时走完 选角 → 登录加载 → 赛丽亚房间 → 走出口 → 艾尔文防线 → 走出口 → 地下城入口区域 → 走出口 → 选择 → 副本 → 结算 → 再次挑战 → 副本 → 结算 →
 #      选择其它地下城 → 选择 → 副本 → 结算 → 返回城镇(时间步放大 4 倍),检查十六次阶段切换、三局副本与声音计数;
 #      场景音乐(E-097):日志里第一首 DNF_MUSIC 是选角音乐 M_CHARACTER_SELECT、背景音乐至少开始七次、三个结算界面各有一行 DNF_RESULT_SOUND(M_RESULT)。
+#   8. 触屏操作层(M13,docs/mobile.md,本项目自己的设计):-dnftouchscript 按时间表替手指操作,走真实的触屏路径(时间表 → TouchControls → 与键盘同一组输入 → 会话);
+#      城镇里把摇杆推到最外圈向左再抬起,与键盘 -dnfautowalk 同一个终点;房间里用 stick/tap 复刻技能时间表,A、S、D 各放出一次且命中过怪物。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -247,6 +249,42 @@ if [ "$platform" = "macos" ]; then
     fi
     grep -q -E 'DNF_TOWN_DEMO ran .* room=true monsters=[0-9]+/4 hits=[1-9][0-9]* .* casts=3 ' "$skill_log" \
       || { echo "实时放技能里 A、S、D 没有各放出一次、或没有命中过怪物(应有 casts=3 与 hits>=1):$skill_log" >&2; exit 1; }
+
+    # 触屏操作层(M13,docs/mobile.md):-dnftouchscript 按时间表替手指操作,走的是真实的触屏路径(时间表 → TouchControls → 与键盘同一组输入 → 会话)。
+    # 城镇里把摇杆推到最外圈向左(奔跑)再抬起:与上面的 -dnfautowalk 同一个终点(可走区域左边界、朝左、站立、镜头 0);
+    # 房间里用 stick/tap 复刻上面的技能时间表:A、S、D 各放出一次且命中过怪物。
+    touch_walk_log="$PWD/re/unity-run-town-touch-walk-macos.log"
+    rm -f "$touch_walk_log"
+    set +e
+    "$app" -batchmode -logFile "$touch_walk_log" -dnfdir "$DNF_DIR" -dnfquitafter 4 -dnftouchscript 0.5:stick=left+run,3:stick=none
+    rc=$?
+    set -e
+    echo "播放器退出码(触屏摇杆向左奔跑): $rc"
+    grep -E 'DNF_TOUCH|DNF_TOWN_DEMO' "$touch_walk_log" || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$touch_walk_log"; then
+      echo "触屏行走的日志里有异常:$touch_walk_log" >&2
+      exit 1
+    fi
+    grep -q 'DNF_TOUCH on ' "$touch_walk_log" || { echo "触屏操作层没有打开:$touch_walk_log" >&2; exit 1; }
+    grep -q 'DNF_TOWN_DEMO ran .* facing=left motion=Rest cameraX=0 leftEdge=True' "$touch_walk_log" \
+      || { echo "触屏摇杆向左奔跑后主角不在预期的状态(应停在可走区域左边界上、朝左、站立、镜头 0):$touch_walk_log" >&2; exit 1; }
+    touch_skill_play="0.2:stick=left,2.5:stick=none,3.0:stick=right,3.1:stick=none,3.3:tap=a,5.0:tap=s,6.0:tap=d,7.0:stick=none"
+    touch_skill_log="$PWD/re/unity-run-town-touch-skill-macos.log"
+    rm -f "$touch_skill_log"
+    set +e
+    "$app" -batchmode -logFile "$touch_skill_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 8 -dnfnodamage -dnftouchscript "$touch_skill_play"
+    rc=$?
+    set -e
+    echo "播放器退出码(房间里触屏放技能): $rc"
+    grep -E 'DNF_TOUCH|DNF_TOWN_DEMO' "$touch_skill_log" || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$touch_skill_log"; then
+      echo "触屏放技能的日志里有异常:$touch_skill_log" >&2
+      exit 1
+    fi
+    grep -q -E 'DNF_TOWN_DEMO ran .* room=true monsters=[0-9]+/4 hits=[1-9][0-9]* .* casts=3 ' "$touch_skill_log" \
+      || { echo "触屏放技能里 A、S、D 没有各放出一次、或没有命中过怪物(应有 casts=3 与 hits>=1):$touch_skill_log" >&2; exit 1; }
 
     # 死亡(证据 E-084):时间表是 "0.2 秒向左走、2.5 秒停下、2.6/3.3/4.0/4.7 秒各按一下攻击"。白闪与淡出从血量归零算起,腾空的尸体也是白的。
     # 4.3 秒:第一只被打死的怪物纯白、还在飞;4.45 秒:它淡出到一半;5.0 秒:第二只被打死的怪物纯白、在主角左前方;5.2 秒:它淡出到一半、躺在地上。

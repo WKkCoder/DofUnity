@@ -94,24 +94,24 @@
 
 | 包 | 生产代码文件 | 引用了证据的文件 | 占比 | 行数 | 引用证据的文件所含行数占比 |
 |---|---:|---:|---:|---:|---:|
-| `com.dnfunity.client` | 7 | 7 | 100% | 2,571 | 100% |
+| `com.dnfunity.client` | 7 | 7 | 100% | 2,705 | 100% |
 | `com.dnfunity.data` | 13 | 13 | 100% | 2,793 | 100% |
 | `com.dnfunity.game` | 61 | 61 | 100% | 12,514 | 100% |
-| `com.dnfunity.play` | 27 | 27 | 100% | 8,733 | 100% |
+| `com.dnfunity.play` | 28 | 28 | 100% | 9,292 | 100% |
 | `com.dnfunity.render` | 30 | 30 | 100% | 8,951 | 100% |
 | `com.dnfunity.script` | 5 | 5 | 100% | 657 | 100% |
 | `com.dnfunity.squirrel` | 4 | 4 | 100% | 1,450 | 100% |
-| **合计** | 147 | 147 | 100% | 37,669 | 100% |
+| **合计** | 148 | 148 | 100% | 38,362 | 100% |
 
-另有 9 个文件不实现原版规则(测试工具、Unity 自检与封装、小工具),不要求引用证据,不计入上表:`client/RenderSelfTest.cs`、`client/UnityObjects.cs`、`data/Adler32.cs`、`data/DnfFormatException.cs`、`data/Latin1.cs`、`game/Defs/TagTable.cs`、`play/CombatScript.cs`、`play/DungeonBot.cs`、`squirrel/MonoPInvokeCallbackAttribute.cs`。
+另有 11 个文件不实现原版规则(测试工具、Unity 自检与封装、小工具),不要求引用证据,不计入上表:`client/RenderSelfTest.cs`、`client/TouchOverlay.cs`、`client/UnityObjects.cs`、`data/Adler32.cs`、`data/DnfFormatException.cs`、`data/Latin1.cs`、`game/Defs/TagTable.cs`、`play/CombatScript.cs`、`play/DungeonBot.cs`、`play/TouchScript.cs`、`squirrel/MonoPInvokeCallbackAttribute.cs`。
 
 每个文件都引用了证据编号。
 
-### 表 5　对拍与全库读通(`tools/verify-all.sh`,2026-10-21T02:13:45Z)
+### 表 5　对拍与全库读通(`tools/verify-all.sh`,2026-10-21T02:48:57Z)
 
 | 检查 | 类型 | 证据 | 用例 | 不一致/失败 | 通过率 | 说明 |
 |---|---|---|---:|---:|---:|---|
-| 单元测试(合成数据) | 合成数据测试 | — | 1,136 | 0 | 100% | 6 个测试项目(合成数据,不含原版数值);跳过 0 |
+| 单元测试(合成数据) | 合成数据测试 | — | 1,162 | 0 | 100% | 6 个测试项目(合成数据,不含原版数值);跳过 0 |
 | PVF:全部文件逐个核对 CRC 与清单 | 全库读通 | E-008 | 334,998 | 0 | 100% | 目录树校验通过;明文 150 MB |
 | 标记流脚本:全库读通,标签目录与 Python 逐项一致 | 全库读通 | E-008 | 147,273 | 0 | 100% | 3408 种开标签、3232710 次出现;另有 187725 个文件不是标记流(.ani 等,单独检查) |
 | .ani 动画:全部读通,统计与 Python 逐项一致 | 全库读通 | E-008 | 187,365 | 0 | 100% | 1149532 帧、181149 个框 |

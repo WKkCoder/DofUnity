@@ -54,10 +54,14 @@ namespace Dnf.Client
     /// 选定时日志里留一行 DNF_SETTLE choice=…,流程由外面接,证据 E-091)。
     /// 按键(副本房间里的主角,按原版默认键位,证据 E-072、E-076):方向键 走动(按住;同方向再按一下接着按住 = 奔跑);X 普攻(连按接下一段);C 跳跃;
     /// A S D 前三个技能快捷槽(新建的剑士是鬼斩、上挑、后跳,各有冷却);Z 与原版的另一个快捷槽没有确认绑什么,不响应。
-    /// 空格 暂停/继续;暂停时左右方向键按 50 毫秒步进动画时间;H 显示/隐藏文字;Esc 退出;点击/触摸 暂停/继续。
+    /// 空格 暂停/继续;暂停时左右方向键按 50 毫秒步进动画时间;H 显示/隐藏文字;Esc 退出;点击/触摸 暂停/继续(开着触屏操作层时改用右上角的暂停键)。
+    /// 触屏操作层(M13,<see cref="TouchOverlay"/>、<see cref="TouchControls"/>;本项目自己的设计,原版是键盘游戏):手机与平板默认开,桌面带 -dnftouch 开(鼠标左键模拟一根手指)。
+    /// 左下按住拖动是浮动摇杆(八向,推到最外圈 = 奔跑),右下是 ATK(普攻)、JMP(跳跃)与 A S D 三个技能键,右上角是暂停键;只在带主角的场景里出现(选角、副本选择、加载、结算菜单不出现,点菜单照旧)。
+    /// -dnftouchscript 秒:动作,… 按时间表替手指操作(见 <see cref="TouchScript"/>,例如 0.5:stick=left+run,3:stick=none,3.5:tap=attack),-dnftouchshot &lt;png&gt; [-dnftouchshotat &lt;秒&gt;] 把整个窗口(含控件)存成 PNG,
+    /// -dnfnohud 去掉左上角的文字层(手机上默认就没有)。
     /// 声音(<see cref="DnfAudio"/>,证据 E-089、E-090):战斗里有挥击、命中、角色语音、地图音乐与环境声,数据取自用户自备的 audio.xml、SoundPacks 与 Music;
     /// -dnfnosound 关闭;带 -batchmode 的无人值守运行默认静音(整条链路照跑,计数器写进日志的 DNF_AUDIO 行),-dnfsound 才出声;离屏渲染一帧不开声音。
-    /// 画面以整数倍放大并居中(留黑边),所以与原版 800×600 像素一一对应、不糊。
+    /// 桌面上画面以整数倍放大并居中(留黑边),所以与原版 800×600 像素一一对应、不糊;手机、平板与开着触屏操作层时改成填满安全区的高度(倍数不是整数,像素略有不均)。
     /// </summary>
     public sealed class TownDemo : MonoBehaviour
     {
@@ -134,6 +138,12 @@ namespace Dnf.Client
         private double _pausedAtMs;
         private bool _paused;
         private bool _hud = true;
+        private TouchOverlay _touch;
+        private bool _touchForced;                    // -dnftouch:桌面上也开触屏操作层(鼠标模拟一根手指)
+        private string _touchScriptText;              // -dnftouchscript:按时间表替手指操作
+        private string _touchShotPath;                // -dnftouchshot:实时运行到 -dnftouchshotat 秒时把整个窗口(含控件)截成 PNG
+        private double _touchShotAtSeconds = 3.0;
+        private bool _touchShotStarted;
         private int _spriteCount;
         private float _fps = 60f;
         private GUIStyle _label;
@@ -145,6 +155,10 @@ namespace Dnf.Client
             Application.targetFrameRate = 60;
             Application.runInBackground = true;
             Screen.sleepTimeout = SleepTimeout.NeverSleep;
+            if (Application.isMobilePlatform)
+            {
+                _hud = false;                  // 手机上没有 H 键切换文字层,默认不让调试文字盖住画面
+            }
             // 黑边相机:先把整个窗口清成黑色,舞台相机只在中间的 800×600(的整数倍)视口里画
             var go = new GameObject("DnfBars") { hideFlags = HideFlags.HideAndDontSave };
             _bars = go.AddComponent<Camera>();
@@ -265,6 +279,22 @@ namespace Dnf.Client
                         if (value != null && float.TryParse(value, System.Globalization.NumberStyles.Float,
                                 System.Globalization.CultureInfo.InvariantCulture, out float q)) { _quitAfterSeconds = q; i++; }
                         break;
+                    case "-dnftouch":
+                        _touchForced = true;
+                        break;
+                    case "-dnftouchscript":
+                        if (value != null) { TouchScript.Parse(value); _touchScriptText = value; _touchForced = true; i++; }   // 先解析一遍:写错了在启动时就报错
+                        break;
+                    case "-dnftouchshot":
+                        if (value != null) { _touchShotPath = value; _touchForced = true; i++; }
+                        break;
+                    case "-dnftouchshotat":
+                        if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out double tsa)) { _touchShotAtSeconds = tsa; i++; }
+                        break;
+                    case "-dnfnohud":
+                        _hud = false;
+                        break;
                 }
             }
         }
@@ -371,6 +401,7 @@ namespace Dnf.Client
             _originReal = Time.realtimeSinceStartupAsDouble;
             _state = State.Running;
             _runningSince = Time.realtimeSinceStartup;
+            CreateTouch();
             Debug.Log("DNF_TOWN_DEMO running map=" + (_session != null ? _session.MapPath : mapPath) + " npcs=" + _view.NpcCount + " layers=" + _view.LayerCount + HeroLog());
         }
 
@@ -632,6 +663,7 @@ namespace Dnf.Client
             {
                 return;
             }
+            PumpTouch();
             _clockMs = NowMs();
             try
             {
@@ -905,7 +937,95 @@ namespace Dnf.Client
             if (Input.GetKeyDown(KeyCode.A)) { skills |= SkillKeys.A; }
             if (Input.GetKeyDown(KeyCode.S)) { skills |= SkillKeys.S; }
             if (Input.GetKeyDown(KeyCode.D)) { skills |= SkillKeys.D; }
-            return Input.GetKeyDown(KeyCode.X);
+            bool attack = Input.GetKeyDown(KeyCode.X);
+            if (TouchActive)
+            {
+                // 触屏操作层(M13)与键盘并存:方向以键盘为先,没有键盘方向时用摇杆;按钮是边沿,合并
+                TouchFrame f = _touch.Poll();
+                if (dirX == 0) { dirX = f.DirX; }
+                if (dirY == 0) { dirY = f.DirY; }
+                attack |= f.Attack;
+                jump |= f.Jump;
+                skills |= f.Skills;
+            }
+            return attack;
+        }
+
+        /// <summary>
+        /// 触屏操作层有没有在工作:开着(手机、-dnftouch)、在带主角的场景里(城镇或副本,不是选角、副本选择、加载画面、结算菜单)、
+        /// 而且没有被键盘时间表(-dnfautowalk)接管。
+        /// </summary>
+        private bool TouchActive
+        {
+            get
+            {
+                return _touch != null && _state == State.Running && _session != null && _heroInput && _script.IsEmpty && _bot == null
+                    && !InSelect && !InCharacterSelect && !InLoading
+                    && !(_session is DungeonSession settling && settling.SettlementActive);
+            }
+        }
+
+        private void CreateTouch()
+        {
+            _touch?.Dispose();
+            _touch = null;
+            if (!_touchForced && !Application.isMobilePlatform)
+            {
+                return;
+            }
+            // 桌面上(没有触摸屏)用鼠标左键模拟一根手指;手机与平板读真实的触摸
+            _touch = new TouchOverlay(simulateWithMouse: !Application.isMobilePlatform && !Input.touchSupported, script: TouchScript.Parse(_touchScriptText));
+            Debug.Log("DNF_TOUCH on screen=" + Screen.width + "x" + Screen.height + " safe=" + Screen.safeArea + " script=" + (string.IsNullOrEmpty(_touchScriptText) ? "none" : "yes")
+                + " mouse=" + !Application.isMobilePlatform + " mobile=" + Application.isMobilePlatform);
+        }
+
+        /// <summary>每帧读一次触摸:场景里不该有触屏操作时松开所有手指;暂停键在暂停时也要响应;暂停时丢掉攻击、跳跃、技能键的边沿。</summary>
+        private void PumpTouch()
+        {
+            if (_touch == null)
+            {
+                return;
+            }
+            if (!TouchActive)
+            {
+                _touch.Release();
+                return;
+            }
+            _touch.Pump((Time.realtimeSinceStartup - _runningSince) * 1000.0);
+            if (_touch.TakePause())
+            {
+                TogglePause();
+            }
+            if (_paused)
+            {
+                _touch.Release();
+            }
+            if (!string.IsNullOrEmpty(_touchShotPath) && !_touchShotStarted && Time.realtimeSinceStartup - _runningSince >= _touchShotAtSeconds)
+            {
+                _touchShotStarted = true;
+                StartCoroutine(CaptureTouchShot());
+            }
+        }
+
+        /// <summary>等这一帧画完,把整个窗口(含 OnGUI 画的控件)存成 PNG,用来检查控件的摆法。</summary>
+        private IEnumerator CaptureTouchShot()
+        {
+            yield return new WaitForEndOfFrame();
+            Texture2D tex = ScreenCapture.CaptureScreenshotAsTexture();
+            try
+            {
+                string dir = Path.GetDirectoryName(Path.GetFullPath(_touchShotPath));
+                if (!string.IsNullOrEmpty(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
+                File.WriteAllBytes(_touchShotPath, tex.EncodeToPNG());
+                Debug.Log("DNF_TOUCH shot=" + _touchShotPath + " size=" + tex.width + "x" + tex.height);
+            }
+            finally
+            {
+                UnityObjects.Destroy(tex);
+            }
         }
 
         private double NowMs()
@@ -949,19 +1069,27 @@ namespace Dnf.Client
             {
                 return;
             }
-            // 整数倍放大(窗口不到 800×600 时按比例缩小),居中,四周留黑边
+            // 桌面:整数倍放大(窗口不到 800×600 时按比例缩小),居中,四周留黑边,像素与原版一一对应。
+            // 手机与平板(以及开着触屏操作层时):整数倍会让画面只占屏幕高度的一半多一点,所以改成填满安全区的高度(倍数不是整数,像素会略有不均)。
             int w = Screen.width, h = Screen.height;
             if (w <= 0 || h <= 0)
             {
                 return;
             }
-            float scale = Mathf.Min((float)w / PixelScreen.Width, (float)h / PixelScreen.Height);
-            if (scale >= 1f)
+            bool fit = _touch != null || Application.isMobilePlatform;
+            Rect region = new Rect(0f, 0f, w, h);
+            Rect safe = Screen.safeArea;
+            if (fit && safe.width > 0f && safe.height > 0f)
+            {
+                region = safe;
+            }
+            float scale = Mathf.Min(region.width / PixelScreen.Width, region.height / PixelScreen.Height);
+            if (scale >= 1f && !fit)
             {
                 scale = Mathf.Floor(scale);
             }
             float vw = PixelScreen.Width * scale, vh = PixelScreen.Height * scale;
-            _view.Stage.Camera.pixelRect = new Rect(Mathf.Floor((w - vw) * 0.5f), Mathf.Floor((h - vh) * 0.5f), vw, vh);
+            _view.Stage.Camera.pixelRect = new Rect(Mathf.Floor(region.x + (region.width - vw) * 0.5f), Mathf.Floor(region.y + (region.height - vh) * 0.5f), vw, vh);
         }
 
         private void EnsureStyles()
@@ -1005,6 +1133,10 @@ namespace Dnf.Client
                     if (_hud)
                     {
                         DrawHud();
+                    }
+                    if (TouchActive)
+                    {
+                        _touch.Draw(_paused);
                     }
                     break;
                 case State.NeedDirectory:
@@ -1151,9 +1283,9 @@ namespace Dnf.Client
                         _flow.CharacterSelect.Click(cx2, cy2);
                     }
                 }
-                else
+                else if (_touch == null)
                 {
-                    TogglePause(); // 触摸屏上没有空格键
+                    TogglePause(); // 触摸屏上没有空格键(开着触屏操作层时有自己的暂停键,点哪里都不再暂停)
                 }
             }
         }
@@ -1375,6 +1507,8 @@ namespace Dnf.Client
 
         private void OnDestroy()
         {
+            _touch?.Dispose();
+            _touch = null;
             DisposeView();
             if (_bars != null)
             {

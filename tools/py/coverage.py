@@ -79,6 +79,8 @@ INDEPENDENT_CHECK = {
 EXEMPT = {
     "play/DungeonBot.cs": "自动打副本的测试工具,不代表原版 AI",
     "play/CombatScript.cs": "按时间表按键的测试工具",
+    "play/TouchScript.cs": "按时间表替手指操作触屏层的测试工具",
+    "client/TouchOverlay.cs": "触屏控件的绘制与触摸读取(本项目自己的界面,不是原版规则)",
     "client/RenderSelfTest.cs": "Unity 播放器的自检",
     "client/UnityObjects.cs": "Unity 对象封装",
     "game/Defs/TagTable.cs": "按标签名索引的语法层便利,不赋予标签含义",
