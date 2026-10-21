@@ -404,4 +404,16 @@ public class DungeonTests
         gate.Open(500);                                                 // 已经开着:不重新计时
         Assert.Equal(RoomGate.SettledOpenedAtMs, gate.OpenedAtMs);
     }
+
+    [Fact]
+    public void TheMazeNormalizesItsMinimapImageTagToASpritePath()
+    {
+        DungeonMaze without = DungeonMaze.Parse("dungeon/t/t.dgn", MazeDoc())!;
+        Assert.Null(without.MinimapImage);
+        DungeonMaze withTag = DungeonMaze.Parse("dungeon/t/t.dgn", MazeDoc("JJEE LLMM DDGG", Line("[minimap image]", @"Map\MiniMap\Act2.img")))!;
+        Assert.Equal("sprite/map/minimap/act2.img", withTag.MinimapImage);
+        Assert.Equal("sprite/map/minimap/act1.img", DungeonMaze.NormalizeMinimapImage("sprite/Map/MiniMap/Act1.img"));
+        Assert.Null(DungeonMaze.NormalizeMinimapImage("   "));
+        Assert.Null(DungeonMaze.NormalizeMinimapImage(null));
+    }
 }

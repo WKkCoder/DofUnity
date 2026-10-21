@@ -39,7 +39,7 @@
 | `.etc` | 546 | 1034 | 33,623 | 1.0% | 813 / 97.9% | 789 / 88.0% | 6 / 0.7% |  | DamageConstants / HitStun |  |
 | `.key` | 5,864 | 35 | 23,819 | 0.7% | 35 / 100.0% | 1 / 67.6% | — |  |  |  |
 | `.aic` | 544 | 63 | 14,467 | 0.4% | 61 / 99.9% | 61 / 99.9% | — |  |  |  |
-| `.dgn` | 346 | 153 | 11,282 | 0.3% | 153 / 100.0% | 153 / 100.0% | 10 / 31.4% |  | DungeonMaze / DungeonLayout |  |
+| `.dgn` | 346 | 153 | 11,282 | 0.3% | 153 / 100.0% | 153 / 100.0% | 11 / 34.4% |  | DungeonMaze / DungeonLayout |  |
 | `.til` | 3,561 | 4 | 9,571 | 0.3% | 4 / 100.0% | 4 / 100.0% | 3 / 83.5% |  | RoomMap |  |
 | `.als` | 1,179 | 7 | 9,370 | 0.3% | 7 / 100.0% | 0 / 0.0% | — |  |  |  |
 | `.co` | 34 | 39 | 7,859 | 0.2% | 39 / 100.0% | 19 / 61.3% | — |  |  |  |
@@ -69,7 +69,7 @@
 | `.obj` | 81 | `[floating height]` 5,194; `[piercing power]` 4,654; `[basic action]` 3,802; `[team]` 1,426; `[int data]` 1,356; `[string data]` 1,144; `[etc action]` 957 |
 | `.act` | 602 | `[TRIGGER]` 40,315 (仅客户端); `[DO BEHAVIOR]` 36,501 (仅客户端); `[ME]` 33,784 (仅客户端); `[BEHAVIOR]` 32,017 (仅客户端); `[FRAME]` 26,895 (仅客户端); `[POS]` 14,754 (仅客户端); `[INDEX]` 14,644 (仅客户端) |
 | `.ai` | 49 | `[return]` 25,693 (仅客户端); `[think]` 23,690 (仅客户端); `[true]` 21,731; `[false]` 21,473; `[void]` 15,231 (仅客户端); `[ai pattern]` 7,104; `[last result]` 2,550 (仅客户端) |
-| `.dgn` | 143 | `[map specification]` 1,585; `[maze info]` 461; `[name]` 347; `[explain]` 347; `[minimap image]` 342; `[champion]` 342; `[entering title]` 335 |
+| `.dgn` | 142 | `[map specification]` 1,585; `[maze info]` 461; `[name]` 347; `[explain]` 347; `[champion]` 342; `[entering title]` 335; `[background pos]` 326 |
 | `.twn` | 4 | `[dungeon what must be cleared]` 17; `[limit level]` 16; `[only server parsing dungeon what must be cleared]` 4; `[need quest]` 3 |
 | `.etc` | 1,028 | `[list]` 6,031; `[level]` 4,601; `[if]` 1,138 (仅客户端); `[then]` 1,138; `[target]` 1,138; `[attack success]` 1,095; `[probability]` 736 |
 | `.cre` | 84 | `[skill recovery time]` 148; `[skill motion]` 148; `[additional animation]` 137; `[attack info]` 136; `[name]` 135; `[width]` 135; `[floating height]` 135 |
@@ -90,28 +90,28 @@
 
 ### 表 4　证据可追溯性
 
-台账 108 条(E-001 到 E-108),其中 105 条的"复现"栏里有可运行的命令或文件。代码、测试、文档与脚本里一共引用了 106 个不同的证据编号;**台账里找不到的引用:无**;台账里没人引用的编号:E-026、E-040。
+台账 109 条(E-001 到 E-109),其中 106 条的"复现"栏里有可运行的命令或文件。代码、测试、文档与脚本里一共引用了 107 个不同的证据编号;**台账里找不到的引用:无**;台账里没人引用的编号:E-026、E-040。
 
 | 包 | 生产代码文件 | 引用了证据的文件 | 占比 | 行数 | 引用证据的文件所含行数占比 |
 |---|---:|---:|---:|---:|---:|
 | `com.dnfunity.client` | 7 | 7 | 100% | 2,705 | 100% |
 | `com.dnfunity.data` | 13 | 13 | 100% | 2,793 | 100% |
 | `com.dnfunity.game` | 66 | 66 | 100% | 13,686 | 100% |
-| `com.dnfunity.play` | 35 | 35 | 100% | 11,990 | 100% |
-| `com.dnfunity.render` | 30 | 30 | 100% | 9,073 | 100% |
+| `com.dnfunity.play` | 36 | 36 | 100% | 12,362 | 100% |
+| `com.dnfunity.render` | 30 | 30 | 100% | 9,097 | 100% |
 | `com.dnfunity.script` | 5 | 5 | 100% | 657 | 100% |
 | `com.dnfunity.squirrel` | 4 | 4 | 100% | 1,450 | 100% |
-| **合计** | 160 | 160 | 100% | 42,354 | 100% |
+| **合计** | 161 | 161 | 100% | 42,750 | 100% |
 
 另有 11 个文件不实现原版规则(测试工具、Unity 自检与封装、小工具),不要求引用证据,不计入上表:`client/RenderSelfTest.cs`、`client/TouchOverlay.cs`、`client/UnityObjects.cs`、`data/Adler32.cs`、`data/DnfFormatException.cs`、`data/Latin1.cs`、`game/Defs/TagTable.cs`、`play/CombatScript.cs`、`play/DungeonBot.cs`、`play/TouchScript.cs`、`squirrel/MonoPInvokeCallbackAttribute.cs`。
 
 每个文件都引用了证据编号。
 
-### 表 5　对拍与全库读通(`tools/verify-all.sh`,2026-10-21T09:57:05Z)
+### 表 5　对拍与全库读通(`tools/verify-all.sh`,2026-10-21T10:44:47Z)
 
 | 检查 | 类型 | 证据 | 用例 | 不一致/失败 | 通过率 | 说明 |
 |---|---|---|---:|---:|---:|---|
-| 单元测试(合成数据) | 合成数据测试 | — | 1,362 | 0 | 100% | 6 个测试项目(合成数据,不含原版数值);跳过 0 |
+| 单元测试(合成数据) | 合成数据测试 | — | 1,369 | 0 | 100% | 6 个测试项目(合成数据,不含原版数值);跳过 0 |
 | PVF:全部文件逐个核对 CRC 与清单 | 全库读通 | E-008 | 334,998 | 0 | 100% | 目录树校验通过;明文 150 MB |
 | 标记流脚本:全库读通,标签目录与 Python 逐项一致 | 全库读通 | E-008 | 147,273 | 0 | 100% | 3408 种开标签、3232710 次出现;另有 187725 个文件不是标记流(.ani 等,单独检查) |
 | .ani 动画:全部读通,统计与 Python 逐项一致 | 全库读通 | E-008 | 187,365 | 0 | 100% | 1149532 帧、181149 个框 |

@@ -20,7 +20,7 @@ namespace Dnf.Play
     ///     左出口进来朝右、右出口进来朝左,上下出口朝向保持。镜头先放在 0 再按死区跟随主角。
     ///     房间会话按格缓存,回去时怪物不会复活(基线上走回第一个房间时就是清空的)。
     ///   · 首领格清空 → <see cref="BossCleared"/>;迷宫外的出口(只有单格副本的右边有)走进去 → <see cref="ExitReached"/>。
-    ///   · 屏幕右上角的占位小地图。
+    ///   · 屏幕右上角的副本小地图(<see cref="DungeonMinimapArt"/>,证据 E-109;缺图时退回像素格占位)。
     ///   · 首领清空 <see cref="SettlementDelayMs"/> 之后进入结算(证据 E-091):场景压暗(两层黑幕)、主角脚下生营火(<see cref="ClearCamp"/>)、
     ///     右上角出原版的"是否继续?"菜单(<see cref="SettlementArt"/>;再次挑战、选择其它地下城、返回城镇,快速组队没做);选择由 <see cref="Choose"/>、<see cref="Click"/> 记下,
     ///     <see cref="Choice"/> 之后外面决定去哪(流程在 <see cref="DungeonSession"/> 之外)。
@@ -277,18 +277,21 @@ namespace Dnf.Play
         public int LayerCount => Current.LayerCount;
         public int NpcCount => Current.NpcCount;
 
+        private readonly ISpriteSource _sprites;
+
         /// <summary>
         /// 主角对象的编号:进房间落点的随机种子是它乘地图编号(证据 E-074,见 <see cref="GateArrival.SeedFor"/>)。
         /// 原版里它由对象管理器分配,来源没有查明,所以是个可设的参数;缺省 <see cref="GateArrival.DefaultHeroObjectId"/>。
         /// </summary>
         public int HeroObjectId { get; }
 
-        public DungeonSession(DungeonLayout layout, DungeonRoomFactory factory, int heroObjectId = GateArrival.DefaultHeroObjectId, DnfAssets assets = null)
+        public DungeonSession(DungeonLayout layout, DungeonRoomFactory factory, int heroObjectId = GateArrival.DefaultHeroObjectId, DnfAssets assets = null, ISpriteSource sprites = null)
         {
             _layout = layout ?? throw new ArgumentNullException(nameof(layout));
             _factory = factory ?? throw new ArgumentNullException(nameof(factory));
             HeroObjectId = heroObjectId;
             Assets = assets;
+            _sprites = sprites ?? assets;
             _cells = new CellState[layout.Maze.Cols * layout.Maze.Rows];
             for (int y = 0; y < layout.Maze.Rows; y++)
             {
@@ -667,48 +670,86 @@ namespace Dnf.Play
             return MiniMapState.Hidden;
         }
 
+        /// <summary>(<paramref name="x"/>, <paramref name="y"/>) 是否与当前格通过迷宫出口直接相连。</summary>
+        public bool IsConnectedNeighbour(int x, int y)
+        {
+            foreach (GateSide side in new[] { GateSide.Left, GateSide.Right, GateSide.Up, GateSide.Down })
+            {
+                if (Maze.TryNeighbor(CellX, CellY, side, out int nx, out int ny) && nx == x && ny == y)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private List<SceneSprite> BuildHud(CellState cell)
         {
-            var hud = new List<SceneSprite>(12);
+            var hud = new List<SceneSprite>(32);
             if (SettlementActive)
             {
                 AddSettlement(hud, cell);
             }
             else
             {
-                AddMiniMap(hud);
+                AddMiniMap(hud, cell);
             }
             int fade = FadeAlpha;
             if (fade > 0)
             {
                 // 转场的黑幕盖在所有东西(含小地图)上面
-                hud.Add(OverlayArt.Place(_art.Solid(ScreenWidth, ScreenHeight, OverlayArt.Black), 0, 0, 3, "fade", fade));
+                hud.Add(OverlayArt.Place(_art.Solid(ScreenWidth, ScreenHeight, OverlayArt.Black), 0, 0, hud.Count, "fade", fade));
             }
             return hud;
         }
 
-        /// <summary>右上角的占位小地图、清房数,首领清空之后(结算开始之前)加一个大号的 CLEAR 字样。</summary>
-        private void AddMiniMap(List<SceneSprite> hud)
+        /// <summary>右上角的副本小地图(<see cref="DungeonMinimapArt"/>,证据 E-109;缺图时退回像素格占位与清房数),首领清空之后(结算开始之前)加一个大号的 CLEAR 字样。</summary>
+        private void AddMiniMap(List<SceneSprite> hud, CellState currentCell)
         {
             int cols = Maze.Cols, rows = Maze.Rows;
-            var cells = new MiniMapCell[cols * rows];
-            for (int y = 0; y < rows; y++)
+            int order = 0;
+            DungeonMinimapArt realArt = DungeonMinimapArt.For(_sprites, Maze.MinimapImage);
+            if (realArt != null)
             {
-                for (int x = 0; x < cols; x++)
+                var realCells = new DungeonMinimapCell[cols * rows];
+                for (int y = 0; y < rows; y++)
                 {
-                    cells[y * cols + x] = new MiniMapCell(Maze.ExitsAt(x, y), MiniStateOf(x, y), _layout.IsBossCell(x, y));
+                    for (int x = 0; x < cols; x++)
+                    {
+                        RoomCandidate room = _layout.RoomAt(x, y);
+                        int mapId = room != null ? room.MapId : 0;
+                        bool openNeighbour = currentCell.Cleared && IsConnectedNeighbour(x, y);
+                        realCells[y * cols + x] = new DungeonMinimapCell(
+                            Maze.ExitsAt(x, y),
+                            mapId,
+                            MiniStateOf(x, y),
+                            _layout.IsBossCell(x, y),
+                            openNeighbour);
+                    }
                 }
+                realArt.Build(hud, ref order, cols, rows, realCells, currentCell.Cleared, _layout.IsBossCell(currentCell.X, currentCell.Y), _clockMs);
             }
-            SpriteFrame map = _art.MiniMap(cols, rows, cells);
-            int mx = 800 - map.Width - MiniMapMarginRight;
-            hud.Add(OverlayArt.Place(map, mx, MiniMapTop, 0, "minimap"));
-            var inv = System.Globalization.CultureInfo.InvariantCulture;
-            SpriteFrame count = _art.Text(RoomsCleared.ToString(inv) + "/" + (cols * rows).ToString(inv), 2, OverlayArt.White);
-            hud.Add(OverlayArt.Place(count, mx + map.Width - count.Width, MiniMapTop + map.Height + 2, 1, "minimap-count"));
+            else
+            {
+                var cells = new MiniMapCell[cols * rows];
+                for (int y = 0; y < rows; y++)
+                {
+                    for (int x = 0; x < cols; x++)
+                    {
+                        cells[y * cols + x] = new MiniMapCell(Maze.ExitsAt(x, y), MiniStateOf(x, y), _layout.IsBossCell(x, y));
+                    }
+                }
+                SpriteFrame map = _art.MiniMap(cols, rows, cells);
+                int mx = 800 - map.Width - MiniMapMarginRight;
+                hud.Add(OverlayArt.Place(map, mx, MiniMapTop, order++, "minimap"));
+                var inv = System.Globalization.CultureInfo.InvariantCulture;
+                SpriteFrame count = _art.Text(RoomsCleared.ToString(inv) + "/" + (cols * rows).ToString(inv), 2, OverlayArt.White);
+                hud.Add(OverlayArt.Place(count, mx + map.Width - count.Width, MiniMapTop + map.Height + 2, order++, "minimap-count"));
+            }
             if (BossCleared)
             {
                 SpriteFrame clear = _art.Text("CLEAR", 8, OverlayArt.Yellow);
-                hud.Add(OverlayArt.Place(clear, 400 - clear.Width / 2, 190, 2, "clear"));
+                hud.Add(OverlayArt.Place(clear, 400 - clear.Width / 2, 190, order++, "clear"));
             }
         }
 

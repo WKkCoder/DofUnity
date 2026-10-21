@@ -165,7 +165,8 @@ internal static class DungeonCheck
         DungeonMaze maze = layout.Maze;
         Console.WriteLine("副本 " + dungeon + ":迷宫 " + maze.Cols + " 列 × " + maze.Rows + " 行,房间候选 " + pool.Rooms.Count + " 张,"
             + (maze.IsConsistent() ? "相邻格的出口两侧一致" : "相邻格的出口两侧不一致!") + ",出口物件编号 " + (maze.GateSet == null ? "无" : string.Join("/", maze.GateSet.Ids)));
-        Console.WriteLine("  起点格 (" + layout.StartX + "," + layout.StartY + ")" + (layout.HasBoss ? ",首领格 (" + layout.BossX + "," + layout.BossY + ")" : ",没有首领格"));
+        Console.WriteLine("  起点格 (" + layout.StartX + "," + layout.StartY + ")" + (layout.HasBoss ? ",首领格 (" + layout.BossX + "," + layout.BossY + ")" : ",没有首领格")
+            + ",小地图图包 " + (maze.MinimapImage ?? DungeonMinimapArt.DefaultTileImage));
         for (int y = 0; y < maze.Rows; y++)
         {
             for (int x = 0; x < maze.Cols; x++)

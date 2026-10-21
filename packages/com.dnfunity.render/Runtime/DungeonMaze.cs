@@ -87,8 +87,11 @@ namespace Dnf.Render
         /// <summary>出口物件编号;副本定义里没有 [pathgate object] 时为 null。</summary>
         public PathGateSet GateSet { get; }
 
+        /// <summary>小地图房间格图包路径(由 .dgn 的 [minimap image] 转成小写 "sprite/…",证据 E-109);没写时为 null。</summary>
+        public string MinimapImage { get; }
+
         public DungeonMaze(string path, int cols, int rows, int[] exits, int[] second, IReadOnlyList<CellRect> startCells,
-            IReadOnlyList<CellRect> bossCells, PathGateSet gateSet)
+            IReadOnlyList<CellRect> bossCells, PathGateSet gateSet, string minimapImage = null)
         {
             if (cols < 1 || rows < 1)
             {
@@ -106,6 +109,18 @@ namespace Dnf.Render
             StartCells = startCells ?? new List<CellRect>();
             BossCells = bossCells ?? new List<CellRect>();
             GateSet = gateSet;
+            MinimapImage = NormalizeMinimapImage(minimapImage);
+        }
+
+        /// <summary>脚本里写的图名("Map/MiniMap/Act1.img")转成图包名("sprite/map/minimap/act1.img",证据 E-109 0x012fe559)。</summary>
+        public static string NormalizeMinimapImage(string scriptImage)
+        {
+            if (string.IsNullOrWhiteSpace(scriptImage))
+            {
+                return null;
+            }
+            string clean = scriptImage.Trim().Replace('\\', '/').ToLowerInvariant();
+            return clean.StartsWith("sprite/", StringComparison.Ordinal) ? clean : "sprite/" + clean;
         }
 
         public bool InBounds(int x, int y)
@@ -198,6 +213,7 @@ namespace Dnf.Render
             var start = new List<CellRect>();
             var boss = new List<CellRect>();
             PathGateSet gates = null;
+            string minimapImage = null;
             foreach (ScriptLine line in doc)
             {
                 if (line.TagIs("[size]"))
@@ -243,6 +259,14 @@ namespace Dnf.Render
                     List<int> n = line.Ints();
                     gates = n.Count == PathGateSet.Count ? new PathGateSet(n) : null;
                 }
+                else if (line.TagIs("[minimap image]"))
+                {
+                    string img = line.FirstString();
+                    if (!string.IsNullOrEmpty(img))
+                    {
+                        minimapImage = img;
+                    }
+                }
             }
             if (cols < 1 || rows < 1 || letters.Length != cols * rows * 2)
             {
@@ -255,7 +279,7 @@ namespace Dnf.Render
                 first[i] = letters[i * 2] - 'A';
                 second[i] = letters[i * 2 + 1] - 'A';
             }
-            return new DungeonMaze(path, cols, rows, first, second, start, boss, gates);
+            return new DungeonMaze(path, cols, rows, first, second, start, boss, gates, minimapImage);
         }
 
         public static DungeonMaze Read(DnfAssets assets, string path)
