@@ -72,11 +72,18 @@ namespace Dnf.Play
         /// <summary>[hit wav]:命中时放的声音标签(audio.xml 的 ID,证据 E-089);没写为 null(这时命中声取武器的 [weapon wav],推断)。</summary>
         public string HitWav { get; }
 
+        /// <summary>
+        /// [damage reaction] 是 none(0):命中只扣血,不产生受击反应(决策函数的第一步直接返回"不产生反应",证据 E-079、E-105)。
+        /// 缺省(没写 [damage reaction])按受击算,所以 <c>default</c> 与旧的构造都是 false。
+        /// </summary>
+        public bool ReactionNone { get; }
+
         public HeroStrikeInfo(int damageBonus, int pushAside, bool knockDown, int skillRatePercent = 0, int skillFixed = 0,
             int hitValue = -1, bool useWeaponHitDelayRate = false, float hitScale = -1f, int knockBackType = 0, bool noKnockBack = false,
             int forceHitStunMs = 0, bool magical = false, int liftUp = 0, bool bounce = false, bool ignoreWeight = false, bool reactionDamage = false,
-            string hitWav = null)
+            string hitWav = null, bool reactionNone = false)
         {
+            ReactionNone = reactionNone;
             HitWav = string.IsNullOrEmpty(hitWav) ? null : hitWav;
             DamageBonus = damageBonus;
             PushAside = pushAside;
@@ -106,14 +113,15 @@ namespace Dnf.Play
                 : new HeroStrikeInfo(info.DamageBonus, info.PushAside, info.Reaction == DamageReaction.Down, 0, 0, info.HitValue, info.UseWeaponHitDelayRate,
                     info.HitScale, info.KnockBackType, info.HitType == HitKind.Burn, info.ForceHitStunTime, info.AttackType == AttackKind.Magic,
                     info.LiftUp, info.Bounce != 0, info.IgnoreWeight != 0,
-                    info.Reaction == DamageReaction.Damage || info.Reaction == DamageReaction.DamageExceptHuman, info.HitWav);
+                    info.Reaction == DamageReaction.Damage || info.Reaction == DamageReaction.DamageExceptHuman, info.HitWav,
+                    info.Reaction == DamageReaction.None);
         }
 
         /// <summary>同一份攻击信息,换上技能伤害的两个数。</summary>
         public HeroStrikeInfo WithSkillDamage(int ratePercent, int fixedDamage)
         {
             return new HeroStrikeInfo(DamageBonus, PushAside, KnockDown, ratePercent, fixedDamage, HitValue, UseWeaponHitDelayRate,
-                HitScale, KnockBackType, NoKnockBack, ForceHitStunMs, Magical, LiftUp, Bounce, IgnoreWeight, ReactionDamage, HitWav);
+                HitScale, KnockBackType, NoKnockBack, ForceHitStunMs, Magical, LiftUp, Bounce, IgnoreWeight, ReactionDamage, HitWav, ReactionNone);
         }
     }
 
@@ -364,6 +372,9 @@ namespace Dnf.Play
         /// <summary>倒地的随机抖动(水平量 ±20%、高度 ±10%;E-083)用的随机数,与伤害的随机数分开,免得改变伤害序列。</summary>
         private readonly Random _physicsRandom;
 
+        /// <summary>主角的倒地与起身(证据 E-079、E-082、E-085、E-105)。</summary>
+        private readonly HeroKnockdown _heroDown;
+
         /// <summary>怪物出招语音掷骰的种子(客户端的线性同余随机数,<see cref="ClientRandom"/>),与其余随机数分开。</summary>
         private uint _voiceSeed;
 
@@ -473,6 +484,12 @@ namespace Dnf.Play
         /// <summary>主角已经被打死(血量归零)。死后不再接受输入,怪物待机。</summary>
         public bool HeroDead => Vitals != null && !Vitals.IsAlive;
 
+        /// <summary>
+        /// 主角的倒地与起身(证据 E-079、E-082、E-085、E-105):倒地类的攻击、空中与倒地中被打、已死的一击,都会让主角飞起来、落地颠一下、躺着、起身;
+        /// 躺着时累计伤害超过最大血量的 15% 就提前起身。角色脚本没有 [down motion] 时一律走普通受击。
+        /// </summary>
+        public HeroKnockdown HeroDown => _heroDown;
+
         /// <summary>伤害按原版公式算(读到了 Etc/EtcParameter.etc 的公式常量);否则用占位的"攻击力 × 加成"。</summary>
         public bool HasDamageConstants => _damageConstants != null;
 
@@ -518,6 +535,7 @@ namespace Dnf.Play
             _hud = HudArt.For(assets);
             _random = new Random(seed);
             _physicsRandom = new Random(unchecked(seed * 31 + 17));
+            _heroDown = new HeroKnockdown(_room.Hero);
             _voiceSeed = unchecked((uint)seed * 2246822519u + 3266489917u);
             SyncStance();
             _cueMotion = _room.Hero.Motion;
@@ -571,7 +589,7 @@ namespace Dnf.Play
                     _sounds.Add(SwordmanVoice.JumpStart, SoundCueKind.Effect);
                     _sounds.Add(hero.IsBackStep ? SwordmanVoice.Backstep : SwordmanVoice.Jump, SoundCueKind.Voice);
                 }
-                else if (wasAir && !isAir && motion != HeroMotion.Hurt)
+                else if (wasAir && !isAir && motion != HeroMotion.Hurt && motion != HeroMotion.Down)
                 {
                     _sounds.Add(SwordmanVoice.JumpEnd, SoundCueKind.Effect);
                 }
@@ -925,6 +943,7 @@ namespace Dnf.Play
                 _bufferedAttack = false;
                 _bufferedJump = false;
                 _bufferedSkills = SkillKeys.None;
+                _heroDown.Step(heroDelta);     // 倒地在命中停顿里一起冻结(与怪物的倒地一样);先走倒地,摄像机在后面的 Update 里跟着新位置
                 HeroSkillSlot cast = skillsPressed == SkillKeys.None ? null : Skills.TryCast(skillsPressed, _room.Hero, Vitals);
                 if (skillsPressed != SkillKeys.None)
                 {
@@ -1209,8 +1228,9 @@ namespace Dnf.Play
         /// <summary>
         /// 怪物这一击打中了主角:伤害按 <see cref="MonsterDamage"/>(原版公式,输入是推断)、扣血、飘红字;
         /// 主角进受击硬直(硬直与击退按客户端的公式,受击方是主角,攻击方没有所属者所以攻击方恢复项为 0;命中模式 [burn] 不击退,证据 E-080),
-        /// 命中停顿按攻击信息的 [hit info] 整数(怪物没有武器表,没写就是 0,不停顿,证据 E-077);血量归零主角停在受击姿势上(占位的死亡)。
-        /// 倒地类的攻击(<see cref="HeroStrikeInfo.KnockDown"/>)打主角的倒地流程还没做,这里与普通受击一样处理。
+        /// 命中停顿按攻击信息的 [hit info] 整数(怪物没有武器表,没写就是 0,不停顿,证据 E-077)。
+        /// 受击反应按决策函数选(证据 E-079、E-105,见 <see cref="ReactHero"/>):倒地类的攻击、空中与倒地中被打、已死的一击让主角倒地(<see cref="HeroDown"/>),
+        /// 其余走受击硬直;[damage reaction] 为 none 的只扣血;主角没有倒地动作时血量归零停在受击姿势上(占位的死亡)。
         /// </summary>
         private void StrikeHero(MonsterActor monster, TownHero hero)
         {
@@ -1230,16 +1250,8 @@ namespace Dnf.Play
             bool killed = Vitals.Damage(damage);
             HeroHits++;
             HeroDamageTaken += damage;
-            double stunMs = HeroHurtTuning.FallbackStunMs, knockPixels = HeroHurtTuning.FallbackKnockPixels, knockMs = HeroHurtTuning.FallbackKnockMs;
-            if (StunTable != null)
-            {
-                float rate = HitStun.Rate(info.HitScale, -1f, info.UseWeaponHitDelayRate, info.Magical);
-                HitStunResult r = HitStun.Damage(StunTable, Vitals.HitRecovery, 0, rate, info.ForceHitStunMs, info.KnockBackType, info.NoKnockBack);
-                stunMs = r.StunMs;
-                knockPixels = r.KnockPixels;
-                knockMs = r.KnockMs;
-            }
-            hero.BeginHurt(killed ? HeroHurtTuning.DeadHoldMs : stunMs, knockPixels, knockMs, attackerFacingLeft);
+            _heroDown.NoteDamage(damage, Vitals.HpMax);
+            ReactHero(info, attackerFacingLeft, hero, killed);
             // 声音:攻击信息的命中声,加主角的受击或死亡语音(客户端有"职业 → (受击, 死亡)"的全局表,证据 E-089)
             _sounds.Add(info.HitWav, SoundCueKind.Effect);
             _sounds.Add(killed ? SwordmanVoice.Die : SwordmanVoice.Hurt, SoundCueKind.Voice);
@@ -1253,6 +1265,55 @@ namespace Dnf.Play
                 }
             }
             _popups.Add(new HitPopup(damage.ToString(System.Globalization.CultureInfo.InvariantCulture), hero.X, hero.Y, HeroHurtBoxes.HeadHeight(hero, 80), true));
+        }
+
+        /// <summary>
+        /// 主角被打中之后的受击反应(决策函数 0x00822ca0 对"没有霸体、没有异常状态"的主角,证据 E-079、E-105):
+        /// 已死 → 有倒地动作就倒地(请求用这一击自己的推力与抬升;[damage reaction] 为 none 时决策函数不产生反应,由每帧函数补发推力、抬升各 400 的倒地),
+        /// 没有倒地动作就停在受击姿势上(占位的死亡);没死:none → 不产生反应;倒地类的攻击(2),或普通受击(1、3)打中腾空的主角、已在倒地里的主角 →
+        /// 倒地分支(有倒地动作才走,没有退到受击分支);其余走受击分支(交替放 [damage motion 1]、[damage motion 2],硬直与击退按 E-080 的公式)。
+        /// 3([damage except human])按 1 处理:决策函数对"是不是人类"的那一问没有读通(推断)。
+        /// </summary>
+        private void ReactHero(HeroStrikeInfo info, bool attackerFacingLeft, TownHero hero, bool killed)
+        {
+            // 受击硬直与击退按客户端的公式算(E-080);没有硬直表时用占位值
+            double stunMs = HeroHurtTuning.FallbackStunMs, knockPixels = HeroHurtTuning.FallbackKnockPixels, knockMs = HeroHurtTuning.FallbackKnockMs;
+            if (StunTable != null)
+            {
+                float rate = HitStun.Rate(info.HitScale, -1f, info.UseWeaponHitDelayRate, info.Magical);
+                HitStunResult r = HitStun.Damage(StunTable, Vitals.HitRecovery, 0, rate, info.ForceHitStunMs, info.KnockBackType, info.NoKnockBack);
+                stunMs = r.StunMs;
+                knockPixels = r.KnockPixels;
+                knockMs = r.KnockMs;
+            }
+            if (killed)
+            {
+                if (_heroDown.Available)
+                {
+                    if (info.ReactionNone)
+                    {
+                        var fallback = new KnockdownInput(HeroKnockdown.DeadDefaultLift, false, false, false, _physicsRandom.Next(1000), _physicsRandom.Next(1000));
+                        _heroDown.Begin(fallback, HeroKnockdown.DeadDefaultPush, attackerFacingLeft, true);
+                    }
+                    else
+                    {
+                        _heroDown.Begin(DownInput(info), info.PushAside, attackerFacingLeft, true);
+                    }
+                    return;
+                }
+                hero.BeginHurt(HeroHurtTuning.DeadHoldMs, knockPixels, knockMs, attackerFacingLeft);
+                return;
+            }
+            if (info.ReactionNone)
+            {
+                return;
+            }
+            if (_heroDown.Available && (info.KnockDown || (info.ReactionDamage && (_heroDown.Active || hero.Z > 0))))
+            {
+                _heroDown.Begin(DownInput(info), info.PushAside, attackerFacingLeft, false);
+                return;
+            }
+            hero.BeginHurt(stunMs, knockPixels, knockMs, attackerFacingLeft);
         }
 
         /// <summary>这一击的倒地输入(证据 E-083):攻击信息的抬升、弹起、不受体重,外加两个抖动用的随机数。</summary>

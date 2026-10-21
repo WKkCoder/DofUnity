@@ -14,6 +14,9 @@ internal sealed class AvatarFixture : IDisposable
     public const string ChrPath = "character/test/test.chr";
     public const string NoAttackChrPath = "character/test/noattack.chr";
 
+    /// <summary>有受击动作([damage motion 1]、[damage motion 2],同 <see cref="ActionChrPath"/>)但没有倒地动作的角色脚本:被打只走普通受击(证据 E-105)。</summary>
+    public const string HurtOnlyChrPath = "character/test/hurtonly.chr";
+
     /// <summary>
     /// 带奔跑与跳跃的角色脚本:除了 <see cref="ChrPath"/> 有的之外,还有 [dash motion](四帧 × 100 毫秒、循环)、[dashattack motion](三帧 × 100 毫秒)、
     /// [jump motion](八帧:100、100、80、停留 10000、100、80、停留 10000、落地 50 毫秒)、[jumpattack motion](100、50、50 毫秒)、
@@ -113,6 +116,16 @@ internal sealed class AvatarFixture : IDisposable
     /// </summary>
     public const string Damage1Ani = "character/test/animation/damage1.ani";
     public const string Damage2Ani = "character/test/animation/damage2.ani";
+
+    /// <summary>
+    /// 倒地动作(<see cref="ActionChrPath"/> 的 [down motion],证据 E-105):与原版的主角倒地动画同形的合成版——
+    /// 一帧 80 毫秒的起手、两个长停留帧(各 10000 毫秒:第 2、3 帧,最高点与落地前的两个相位由游戏逻辑放行)、一帧 400 毫秒的躺着(最后一个长停留帧的下一帧);
+    /// 前三帧带站立高度的受击框 <see cref="HeroHurtBox"/>,躺着那一帧的受击框是贴地的扁框 <see cref="HeroLyingBox"/>(z 从 0 起高 20)。
+    /// </summary>
+    public const string DownAni = "character/test/animation/down.ani";
+
+    /// <summary>主角躺着时的受击框(类型 14):x 从 −30 起宽 60,y 从 −6 起深 12,z 从 0 起高 20(纯属测试用的数)。</summary>
+    public static readonly (ushort Type, int[] Values) HeroLyingBox = ((ushort)14, new[] { -30, -6, 0, 60, 12, 20 });
 
     /// <summary>主角基础动作(站立、等待、行走、受击)每一帧的受击框(类型 14):x 从 −12 起宽 24,y 从 −6 起深 12,z 从 0 起高 80(纯属测试用的数)。</summary>
     public static readonly (ushort Type, int[] Values) HeroHurtBox = ((ushort)14, new[] { -12, -6, 0, 24, 12, 80 });
@@ -284,6 +297,14 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[rest motion]").Str("animation/rest.ani")
                 .Tag("[waiting motion]").Str("animation/wait.ani")
                 .Tag("[move motion]").Str("animation/move.ani").Build()),
+            // 有受击动作、没有倒地动作的角色脚本:被打只走普通受击
+            (HurtOnlyChrPath, NewScript()
+                .Tag("[body image path]").Str("Character/Test/Equipment/Avatar/skin/tt_body%04d.img")
+                .Tag("[rest motion]").Str("animation/rest.ani")
+                .Tag("[waiting motion]").Str("animation/wait.ani")
+                .Tag("[move motion]").Str("animation/move.ani")
+                .Tag("[damage motion 1]").Str("animation/damage1.ani")
+                .Tag("[damage motion 2]").Str("Animation/Damage2.ani").Build()),
             (ActionChrPath, NewScript()
                 .Tag("[body image path]").Str("Character/Test/Equipment/Avatar/skin/tt_body%04d.img")
                 .Tag("[rest motion]").Str("animation/rest.ani")
@@ -292,6 +313,7 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[move speed]").Float(MoveSpeedStat)
                 .Tag("[damage motion 1]").Str("animation/damage1.ani")
                 .Tag("[damage motion 2]").Str("Animation/Damage2.ani")
+                .Tag("[down motion]").Str("animation/down.ani")
                 .Tag("[dash motion]").Str("animation/dash.ani")
                 .Tag("[dashattack motion]").Str("Animation/DashAttack.ani")
                 .Tag("[jump motion]").Str("animation/jump.ani")
@@ -376,11 +398,14 @@ internal sealed class AvatarFixture : IDisposable
             (WaitAni, BuildAni(new[] { (1, 100), (0, 100) }, true)),
             (Damage1Ani, BuildBoxAni((0, 10000, new[] { HeroHurtBox }))),
             (Damage2Ani, BuildBoxAni((1, 10000, new[] { HeroHurtBox }))),
+            (DownAni, BuildBoxAni((0, 80, new[] { HeroHurtBox }), (1, 10000, new[] { HeroHurtBox }), (0, 10000, new[] { HeroHurtBox }), (1, 400, new[] { HeroLyingBox }))),
             // 奔跑(循环)、奔跑攻击;跳跃动画有两个停留帧(最高点与落地前,各 10000 毫秒),最后一帧是 50 毫秒的落地帧;空中攻击 200 毫秒
             (DashAni, BuildAni(new[] { (0, 100), (1, 100), (0, 100), (1, 100) })),
             // 奔跑攻击在第 1 帧(100 到 200 毫秒)、空中攻击在第 1 帧(100 到 150 毫秒)各有一个攻击框:x 从 +20 起宽 40,y 从 −10 起深 20,z 从 0 起高 50
             (DashAttackAni, BuildBoxAni((0, 100, null), (1, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 40, 20, 50 }) }), (0, 100, null))),
-            (JumpAni, BuildBoxAni((0, 100, null), (1, 100, null), (0, 80, null), (1, 10000, null), (0, 100, null), (1, 80, null), (0, 10000, null), (1, 50, null))),
+            // 跳跃动画每一帧都带站立高度的受击框(原版的跳跃动画也有受击框),空中的主角才能被打中
+            (JumpAni, BuildBoxAni((0, 100, new[] { HeroHurtBox }), (1, 100, new[] { HeroHurtBox }), (0, 80, new[] { HeroHurtBox }), (1, 10000, new[] { HeroHurtBox }),
+                (0, 100, new[] { HeroHurtBox }), (1, 80, new[] { HeroHurtBox }), (0, 10000, new[] { HeroHurtBox }), (1, 50, new[] { HeroHurtBox }))),
             (JumpAttackAni, BuildBoxAni((0, 100, null), (1, 50, new[] { ((ushort)15, new[] { 20, -10, 0, 40, 20, 50 }) }), (0, 50, null))),
             // 三段普攻:四帧 × 100、三帧 × 100、两帧 × 200 毫秒;攻击框(类型 15)在武器图层的动画里,第三段的基础动画自己带一个
             (Attack1Ani, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, null), (1, 100, null))),

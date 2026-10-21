@@ -48,6 +48,7 @@ internal static class CombatCheck
             + F(session.Hero.X) + "," + F(session.Hero.Y) + ") 朝" + (session.Hero.FacingLeft ? "左" : "右") + ",镜头 x " + session.Camera.IntX
             + ",主角脚本 [move speed] " + session.Hero.MoveSpeedStat + ",武器命中停顿 " + (session.WeaponStunMs > 0 ? "有" : "无") + "(E-077)"
             + ",受击硬直 " + (session.StunTable != null ? "按客户端公式" : "占位值") + "(E-080),倒地 按客户端的开始处理与三阶段(E-083)"
+            + (session.HeroDown.Available ? ",主角倒地与起身 按同一套三阶段 + 受击决策 + 提前起身(E-105)" : ",主角没有倒地动作(只有受击硬直)")
             + (session.Vitals != null
                 ? ",怪物还手(E-086):主角生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax + ",伤害 " + (session.HasDamageConstants ? "按原版公式(输入是推断)" : "占位")
                 : ",怪物不还手(--no-damage)"));
@@ -98,16 +99,18 @@ internal static class CombatCheck
             {
                 Console.WriteLine("  t=" + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s  主角被打中 +" + (session.HeroHits - lastHeroHits) + "  累计 "
                     + session.HeroHits + " 次,共 " + session.HeroDamageTaken + " 点  生命 " + session.Vitals!.Hp + "/" + session.Vitals.HpMax
-                    + "  受击硬直 " + F(session.Hero.HurtSpanMs) + " 毫秒" + (session.HeroDead ? "  主角死亡" : string.Empty)
+                    + (session.HeroDown.Active ? "  倒地阶段 " + session.HeroDown.Stage + " 离地 " + F(session.Hero.Z) : "  受击硬直 " + F(session.Hero.HurtSpanMs) + " 毫秒")
+                    + (session.HeroDead ? "  主角死亡" : string.Empty)
                     + (session.HeroPauseMs > 0 ? "  定住 " + F(session.HeroPauseMs) + " 毫秒" : string.Empty));
                 lastHeroHits = session.HeroHits;
             }
-            string state = session.Hero.Motion + "/" + session.Hero.AttackStage;
+            string state = session.Hero.Motion + "/" + session.Hero.AttackStage + (session.HeroDown.Active ? "/倒地" + session.HeroDown.Stage : string.Empty);
             if (state != lastState)
             {
                 Console.WriteLine("  t=" + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s  主角 " + session.Hero.Motion
                     + (session.Hero.IsAttacking && session.Hero.AttackKind == HeroAttackKind.Normal ? " 第 " + (session.Hero.AttackStage + 1) + " 段" : string.Empty)
-                    + (session.Hero.IsAirborne ? " 离地 " + F(session.Hero.Z) : string.Empty)
+                    + (session.HeroDown.Active ? " 倒地阶段 " + session.HeroDown.Stage : string.Empty)
+                    + (session.Hero.Z > 0 ? " 离地 " + F(session.Hero.Z) : string.Empty)
                     + " (" + F(session.Hero.X) + "," + F(session.Hero.Y) + ") 朝" + (session.Hero.FacingLeft ? "左" : "右") + " 镜头 " + session.Camera.IntX);
                 lastState = state;
             }
@@ -134,6 +137,9 @@ internal static class CombatCheck
                 ? ",主角被打中 " + session.HeroHits + " 次(共 " + session.HeroDamageTaken + " 点),生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax
                     + ",魔法 " + session.Vitals.Mp + "/" + session.Vitals.MpMax
                     + ",动作 " + session.Hero.Motion
+                    + (session.HeroDown.Begun > 0
+                        ? ",主角倒地 " + session.HeroDown.Begun + " 次(起身 " + session.HeroDown.GetUps + " 次,其中提前起身 " + session.HeroDown.EarlyEnds + " 次)"
+                        : string.Empty)
                 : string.Empty));
         foreach (MonsterActor m in session.Monsters)
         {

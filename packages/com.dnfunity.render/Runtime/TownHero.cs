@@ -127,6 +127,13 @@ namespace Dnf.Render
         /// (<see cref="TownHero.BeginHurt"/>),期间被往后推一小段,硬直一到回到站立。
         /// </summary>
         Hurt,
+
+        /// <summary>
+        /// 倒地(.chr 的 [down motion]):被击飞、落地颠一下、躺着、起身。运动(位置、离地高度、动画时钟)不由主角自己算,
+        /// 而是由外面的倒地状态机(<c>Dnf.Play.KnockdownFlight</c>,与怪物共用)用 <see cref="TownHero.SetDownPose"/> 一帧一帧摆过来
+        /// (证据 E-079、E-082、E-083、E-105);<see cref="TownHero.EndDown"/> 起身回到站立。倒地期间不接受任何操作。
+        /// </summary>
+        Down,
     }
 
     /// <summary>当前这一击属于哪一类:连招里的普攻、奔跑攻击、跳跃攻击、技能。</summary>
@@ -380,6 +387,12 @@ namespace Dnf.Render
         private double _hurtPushDone;
         private double _hurtPushMs;
         private double _hurtPushEaseMs;
+
+        // 倒地:[down motion](没写就是 null,倒地不生效),外面的倒地状态机每帧摆过来的动画时钟(毫秒)
+        private AniFile _down;
+        private string _downPath;
+        private AniTimeline _downTimeline;
+        private double _downAniMs;
 
         // 双击检测:上一帧的水平方向、最近一次按下的方向与距今的时间;本次更新里刚好完成了一次双击(只在这一次更新里有效)
         private int _prevDirX;
@@ -738,6 +751,9 @@ namespace Dnf.Render
                 case HeroMotion.Hurt:
                     Motion = HeroMotion.Rest;   // 受击带着硬直与击退的进度,要用 BeginHurt 进入
                     break;
+                case HeroMotion.Down:
+                    Motion = HeroMotion.Rest;   // 倒地的位置与时钟由倒地状态机给,要用 BeginDown 进入
+                    break;
                 default:
                     Motion = motion;
                     break;
@@ -895,7 +911,7 @@ namespace Dnf.Render
         /// </summary>
         public bool BeginSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel)
         {
-            if (IsAirborne || IsAttacking || IsHurt)
+            if (IsAirborne || IsAttacking || IsHurt || IsDown)
             {
                 return false;
             }
@@ -915,7 +931,7 @@ namespace Dnf.Render
         /// </summary>
         public bool BeginSkillWindup(int skillId, int windupStage, int untilFrame, int thenEtcIndex, double slideSpeed, double slideAccel)
         {
-            if (IsAirborne || IsAttacking || IsHurt || (uint)windupStage >= (uint)_attacks.Length)
+            if (IsAirborne || IsAttacking || IsHurt || IsDown || (uint)windupStage >= (uint)_attacks.Length)
             {
                 return false;
             }
@@ -935,7 +951,7 @@ namespace Dnf.Render
         /// </summary>
         public bool BeginSkillStrike(int skillId, int stage)
         {
-            if (IsAirborne || IsAttacking || IsHurt || (uint)stage >= (uint)_attacks.Length)
+            if (IsAirborne || IsAttacking || IsHurt || IsDown || (uint)stage >= (uint)_attacks.Length)
             {
                 return false;
             }
@@ -967,7 +983,7 @@ namespace Dnf.Render
         /// </summary>
         public bool BeginBackStep(int skillId, double power)
         {
-            if (_jump == null || IsAirborne || IsAttacking || IsHurt)
+            if (_jump == null || IsAirborne || IsAttacking || IsHurt || IsDown)
             {
                 return false;
             }
@@ -1323,12 +1339,16 @@ namespace Dnf.Render
             LoadMotion(assets, chrPath, doc, "[dashattack motion]", out _dashAttack, out _dashAttackPath, out _dashAttackTimeline);
         }
 
-        /// <summary>读 .chr 的 [damage motion 1] 与 [damage motion 2](相对角色脚本所在目录)。两个都没有时 <see cref="CanBeHurt"/> 为假。</summary>
+        /// <summary>
+        /// 读 .chr 的 [damage motion 1] 与 [damage motion 2](相对角色脚本所在目录)。两个都没有时 <see cref="CanBeHurt"/> 为假。
+        /// 同时读 [down motion](倒地,<see cref="CanBeKnockedDown"/>;证据 E-105)。
+        /// </summary>
         public void LoadHurtMotions(DnfAssets assets, string chrPath)
         {
             ScriptLine[] doc = ReadChr(assets, chrPath);
             LoadMotion(assets, chrPath, doc, "[damage motion 1]", out _damage1, out _damage1Path, out _damage1Timeline);
             LoadMotion(assets, chrPath, doc, "[damage motion 2]", out _damage2, out _damage2Path, out _damage2Timeline);
+            LoadMotion(assets, chrPath, doc, "[down motion]", out _down, out _downPath, out _downTimeline);
         }
 
         /// <summary>有受击动作([damage motion 1] 或 [damage motion 2])。</summary>
@@ -1350,13 +1370,18 @@ namespace Dnf.Render
         /// 被打中:放受击动作(第一次放 [damage motion 1],之后与 [damage motion 2] 交替),硬直 <paramref name="stunMs"/> 毫秒,
         /// 期间往 <paramref name="pushToLeft"/> 的方向被推 <paramref name="pushPixels"/> 像素(先快后慢,<paramref name="pushMs"/> 毫秒内推完,走不过可走区域与障碍)。
         /// 正在挥击、放技能、奔跑里被打会被打断;已经在受击里再被打,换另一段动作、硬直与击退重新计时(与怪物挨打一致)。
-        /// 腾空中或者没有受击动作时什么也不做并返回 false(腾空被打的倒地流程还没做)。受击不转向:朝向保持不变。
+        /// 离地(z &gt; 0)、倒地中或者没有受击动作时什么也不做并返回 false(腾空被打走倒地流程,见 <see cref="BeginDown"/>,E-105);
+        /// 跳跃的蹲姿与落地硬直还在地面上(z = 0),被打会打断它们、回到站立。受击不转向:朝向保持不变。
         /// </summary>
         public bool BeginHurt(double stunMs, double pushPixels, double pushMs, bool pushToLeft)
         {
-            if (IsAirborne || !CanBeHurt)
+            if ((IsAirborne && Z > 0) || IsDown || !CanBeHurt)
             {
                 return false;
+            }
+            if (IsAirborne)
+            {
+                ResetAir();         // 跳跃的蹲姿与落地硬直还在地面上(z = 0):被打断,回到地面状态
             }
             bool first = _hurtCount++ % 2 == 0;
             if ((first && _damage1 != null) || _damage2 == null)
@@ -1426,6 +1451,81 @@ namespace Dnf.Render
                 Motion = HeroMotion.Rest;
                 _motionMs = 0;
             }
+        }
+
+        // ---- 倒地(.chr 的 [down motion],证据 E-079、E-082、E-083、E-105) ----
+
+        /// <summary>有倒地动作([down motion])。没有时被打中只走普通受击(与旧行为一致)。</summary>
+        public bool CanBeKnockedDown => _down != null;
+
+        /// <summary>倒地动画(没有时为 null)。倒地状态机据它的长停留帧识别"最高点换帧"与"躺着的那一帧"。</summary>
+        public AniFile DownAni => _down;
+
+        /// <summary>正在倒地里(腾空、颠一下、躺着;已死的主角躺着不动也算)。</summary>
+        public bool IsDown => Motion == HeroMotion.Down;
+
+        /// <summary>倒地动画的时钟(毫秒);不在倒地里是最近一次的值。</summary>
+        public double DownAnimationMs => _downAniMs;
+
+        /// <summary>从开始玩起进入倒地的次数(每次 <see cref="BeginDown"/> 成功加 1;倒地中再被击飞不算新的一次)。</summary>
+        public int DownCount { get; private set; }
+
+        /// <summary>
+        /// 进入倒地:打断当前的挥击、技能、奔跑、受击与跳跃(离地高度保留,由倒地状态机接着算),放倒地动画。
+        /// 没有倒地动作时什么也不做并返回 false。已经在倒地里时不重新开始,返回 true。位置、离地高度与动画时钟之后由
+        /// <see cref="SetDownPose"/> 一帧一帧给。
+        /// </summary>
+        public bool BeginDown()
+        {
+            if (_down == null)
+            {
+                return false;
+            }
+            if (Motion == HeroMotion.Down)
+            {
+                return true;
+            }
+            double z = Z;
+            Motion = HeroMotion.Down;
+            _motionMs = 0;
+            AttackStage = 0;
+            SkillId = 0;
+            _skillWindupStage = -1;
+            _attackQueued = false;
+            _dashTrigger = false;
+            ResetAir();
+            Z = z;
+            _downAniMs = 0;
+            DownCount++;
+            return true;
+        }
+
+        /// <summary>
+        /// 把倒地中的主角摆到倒地状态机算出来的位置:水平位置 <paramref name="x"/>、离地高度 <paramref name="z"/>、朝向与倒地动画的时钟。
+        /// 不在倒地里时什么也不做。
+        /// </summary>
+        public void SetDownPose(double x, double z, bool facingLeft, double animationMs)
+        {
+            if (Motion != HeroMotion.Down)
+            {
+                return;
+            }
+            X = x;
+            Z = z < 0 ? 0 : z;
+            FacingLeft = facingLeft;
+            _downAniMs = animationMs < 0 ? 0 : animationMs;
+        }
+
+        /// <summary>起身:落回地面回到站立。不在倒地里时什么也不做。</summary>
+        public void EndDown()
+        {
+            if (Motion != HeroMotion.Down)
+            {
+                return;
+            }
+            Motion = HeroMotion.Rest;
+            _motionMs = 0;
+            Z = 0;
         }
 
         /// <summary>
@@ -1578,6 +1678,8 @@ namespace Dnf.Render
                 case HeroMotion.Hurt:
                     AdvanceHurt(deltaMs);
                     return;
+                case HeroMotion.Down:
+                    return;                       // 倒地的运动由外面的倒地状态机算(SetDownPose);倒地期间不接受操作
                 case HeroMotion.Jump:
                 case HeroMotion.JumpAttack:
                     AdvanceAir(deltaMs, dirX, dirY, attackPressed);
@@ -2036,6 +2138,8 @@ namespace Dnf.Render
                         return _jumpAttack;
                     case HeroMotion.Hurt:
                         return _hurtAni;
+                    case HeroMotion.Down:
+                        return _down;
                     default:
                         return _battleStance ? _battleRest : _rest;
                 }
@@ -2064,6 +2168,8 @@ namespace Dnf.Render
                         return _jumpAttackPath;
                     case HeroMotion.Hurt:
                         return _hurtPath;
+                    case HeroMotion.Down:
+                        return _downPath;
                     default:
                         return _battleStance ? _battleRestPath : _restPath;
                 }
@@ -2092,6 +2198,8 @@ namespace Dnf.Render
                         return JumpFrame();
                     case HeroMotion.Hurt:
                         return _hurtTimeline.FrameAt(MotionMs);
+                    case HeroMotion.Down:
+                        return _downTimeline.FrameAt((long)_downAniMs);
                     default:
                         return (_battleStance ? _battleRestTimeline : _restTimeline).FrameAt(MotionMs);
                 }

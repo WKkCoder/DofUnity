@@ -1387,7 +1387,7 @@ namespace Dnf.Client
                 TownHero h = _session.Hero;
                 hero = "hero (" + ((int)h.X) + ", " + ((int)h.Y) + ")  " + (h.FacingLeft ? "facing left" : "facing right") + "  " + h.Motion
                     + (h.IsAttacking && h.AttackKind == HeroAttackKind.Normal ? " stage " + (h.AttackStage + 1) : string.Empty)
-                    + (h.IsAirborne ? "  z " + (int)h.Z : string.Empty)
+                    + (h.Z > 0 ? "  z " + (int)h.Z : string.Empty)
                     + "  camera x " + _session.Camera.IntX + "\n";
                 if (_session is DungeonSession dungeon)
                 {

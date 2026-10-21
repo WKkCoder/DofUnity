@@ -48,7 +48,7 @@
 | `.rep` | 484 | 12 | 5,808 | 0.2% | 12 / 100.0% | 5 / 41.7% | — |  |  |  |
 | `.cre` | 136 | 101 | 5,338 | 0.2% | 101 / 100.0% | 101 / 100.0% | 17 / 0.3% |  | DamageConstants |  |
 | `.wrd` | 117 | 38 | 3,913 | 0.1% | 9 / 23.2% | 7 / 17.2% | — |  |  |  |
-| `.chr` | 11 | 71 | 2,771 | 0.1% | 71 / 100.0% | 71 / 100.0% | 30 / 50.6% |  | CharacterDef / TownHero / Avatar |  |
+| `.chr` | 11 | 71 | 2,771 | 0.1% | 71 / 100.0% | 71 / 100.0% | 31 / 51.0% |  | CharacterDef / TownHero / Avatar |  |
 | `.wdm` | 26 | 9 | 256 | 0.0% | 9 / 100.0% | 9 / 100.0% | 3 / 30.5% |  | WorldMapDef |  |
 | `.twn` | 17 | 8 | 168 | 0.0% | 8 / 100.0% | 8 / 100.0% | 4 / 76.2% |  | TownDef |  |
 | 其余 34 类 | 908 | — | 10,956 | 0.3% | 95.3% | 71.3% | — |  | (没有加载器) |  |
@@ -64,7 +64,7 @@
 | `.atk` | 21 | `[no element]` 4,147; `[hit horizontal]` 148 (都不认识); `[no elemental]` 71 (都不认识); `[noblood]` 32 (都不认识); `[none element]` 31 (都不认识); `[hit]` 15; `[knock]` 13 (都不认识) |
 | `.mob` | 141 | `[face image]` 2,065; `[die effect]` 1,637; `[hero]` 1,440; `[cooltime]` 1,391; `[easy]` 1,383; `[medium]` 1,374; `[hard]` 1,374 |
 | `.skl` | 77 | `[name]` 1,952; `[basic explain]` 1,952; `[growtype maximum level]` 1,951; `[explain]` 1,950; `[skill class]` 1,949; `[skill fitness growtype]` 1,940; `[name2]` 1,738 |
-| `.chr` | 41 | `[physical attack]` 181; `[magical attack]` 181; `[inventory limit]` 181; `[module damage rate]` 174; `[awakening skill]` 106; `[skill]` 64; `[awakening name]` 53 |
+| `.chr` | 40 | `[physical attack]` 181; `[magical attack]` 181; `[inventory limit]` 181; `[module damage rate]` 174; `[awakening skill]` 106; `[skill]` 64; `[awakening name]` 53 |
 | `.map` | 80 | `[player number]` 2,948; `[pvp start area]` 2,948; `[map name]` 2,948; `[dungeon]` 2,724; `[background animation]` 2,557; `[monster specific AI]` 2,337; `[event monster position]` 2,040 |
 | `.obj` | 81 | `[floating height]` 5,194; `[piercing power]` 4,654; `[basic action]` 3,802; `[team]` 1,426; `[int data]` 1,356; `[string data]` 1,144; `[etc action]` 957 |
 | `.act` | 602 | `[TRIGGER]` 40,315 (仅客户端); `[DO BEHAVIOR]` 36,501 (仅客户端); `[ME]` 33,784 (仅客户端); `[BEHAVIOR]` 32,017 (仅客户端); `[FRAME]` 26,895 (仅客户端); `[POS]` 14,754 (仅客户端); `[INDEX]` 14,644 (仅客户端) |
@@ -90,18 +90,18 @@
 
 ### 表 4　证据可追溯性
 
-台账 104 条(E-001 到 E-104),其中 101 条的"复现"栏里有可运行的命令或文件。代码、测试、文档与脚本里一共引用了 102 个不同的证据编号;**台账里找不到的引用:无**;台账里没人引用的编号:E-026、E-040。
+台账 105 条(E-001 到 E-105),其中 102 条的"复现"栏里有可运行的命令或文件。代码、测试、文档与脚本里一共引用了 103 个不同的证据编号;**台账里找不到的引用:无**;台账里没人引用的编号:E-026、E-040。
 
 | 包 | 生产代码文件 | 引用了证据的文件 | 占比 | 行数 | 引用证据的文件所含行数占比 |
 |---|---:|---:|---:|---:|---:|
 | `com.dnfunity.client` | 7 | 7 | 100% | 2,705 | 100% |
 | `com.dnfunity.data` | 13 | 13 | 100% | 2,793 | 100% |
 | `com.dnfunity.game` | 65 | 65 | 100% | 13,429 | 100% |
-| `com.dnfunity.play` | 30 | 30 | 100% | 10,048 | 100% |
-| `com.dnfunity.render` | 30 | 30 | 100% | 8,965 | 100% |
+| `com.dnfunity.play` | 32 | 32 | 100% | 10,504 | 100% |
+| `com.dnfunity.render` | 30 | 30 | 100% | 9,073 | 100% |
 | `com.dnfunity.script` | 5 | 5 | 100% | 657 | 100% |
 | `com.dnfunity.squirrel` | 4 | 4 | 100% | 1,450 | 100% |
-| **合计** | 154 | 154 | 100% | 40,047 | 100% |
+| **合计** | 156 | 156 | 100% | 40,611 | 100% |
 
 另有 11 个文件不实现原版规则(测试工具、Unity 自检与封装、小工具),不要求引用证据,不计入上表:`client/RenderSelfTest.cs`、`client/TouchOverlay.cs`、`client/UnityObjects.cs`、`data/Adler32.cs`、`data/DnfFormatException.cs`、`data/Latin1.cs`、`game/Defs/TagTable.cs`、`play/CombatScript.cs`、`play/DungeonBot.cs`、`play/TouchScript.cs`、`squirrel/MonoPInvokeCallbackAttribute.cs`。
 

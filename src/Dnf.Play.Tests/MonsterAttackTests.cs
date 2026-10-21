@@ -409,9 +409,10 @@ public class MonsterAttackTests
     }
 
     [Fact]
-    public void WhenHpReachesZeroTheHeroStaysInTheDamagePoseAndNothingMoreHappens()
+    public void WhenHpReachesZeroAHeroWithoutADownMotionStaysInTheDamagePoseAndNothingMoreHappens()
     {
-        using var arena = new StrikerArena(vitals: Vitals(hpMax: 20));
+        // 没有 [down motion] 的角色脚本:死亡退回占位的"停在受击姿势上"(有倒地动作的主角见 HeroKnockdownTests)
+        using var arena = new StrikerArena(vitals: Vitals(hpMax: 20), chr: AvatarFixture.HurtOnlyChrPath);
         RoomCombatSession s = arena.Session;
         arena.RunToFirstHit();
         Assert.True(s.HeroDead);

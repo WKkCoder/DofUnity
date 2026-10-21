@@ -167,14 +167,25 @@ public class HeroHurtTests
     }
 
     [Fact]
-    public void AHeroInTheAirIsNotHurtYet()
+    public void AHeroOffTheGroundIsNotHurtButOneStillCrouchingForTheJumpIs()
     {
         using var fx = new AvatarFixture();
         using DnfAssets assets = DnfAssets.Open(fx.Root);
         TownHero hero = NewHero(assets);
-        hero.Update(10, 0, 0, false, true);
+        hero.Update(10, 0, 0, false, true);                             // 蹲姿:在跳跃状态里,但还没离地(z = 0)
         Assert.True(hero.IsAirborne);
-        Assert.False(hero.BeginHurt(300, 0, 0, true));                  // 腾空被打的倒地流程还没做:不进入受击
+        Assert.Equal(0.0, hero.Z);
+        Assert.True(hero.BeginHurt(300, 0, 0, true));                   // 蹲姿被打断,回到地面的受击(证据 E-105)
+        Assert.Equal((HeroMotion.Hurt, false, 1), (hero.Motion, hero.IsAirborne, hero.HurtCount));
+
+        hero = NewHero(assets);
+        hero.Update(10, 0, 0, false, true);
+        for (int i = 0; i < 100 && hero.Z <= 0; i++)
+        {
+            hero.Update(10, 0, 0, false, false);
+        }
+        Assert.True(hero.Z > 0);
+        Assert.False(hero.BeginHurt(300, 0, 0, true));                  // 离地之后被打走倒地流程(HeroKnockdown),不进入受击硬直
         Assert.True(hero.IsAirborne);
         Assert.Equal(0, hero.HurtCount);
     }

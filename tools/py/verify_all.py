@@ -207,24 +207,31 @@ def check_sweep():
 
 
 def check_flow():
+    # (标题, 参数, 日志文件, 输出里必须出现的正则, 输出里不许出现的正则)
     runs = [
-        ("选角→城镇→副本→结算→回城", ["flow-check", "--from", "char"]),
-        ("城镇起(含加载画面与出口)", ["flow-check", "--from", "town"]),
-        ("副本选择起", ["flow-check", "--from", "select"]),
-        ("副本起", ["flow-check", "--from", "dungeon"]),
-        ("旧版单图城镇", ["flow-check", "--legacy-town", "--from", "char"]),
+        ("选角→城镇→副本→结算→回城", ["flow-check", "--from", "char"], "flow_char.txt", [], []),
+        ("城镇起(含加载画面与出口)", ["flow-check", "--from", "town"], "flow_town.txt", [], []),
+        ("副本选择起", ["flow-check", "--from", "select"], "flow_select.txt", [], []),
+        ("副本起", ["flow-check", "--from", "dungeon"], "flow_dungeon.txt", [], []),
+        ("旧版单图城镇", ["flow-check", "--legacy-town", "--from", "char"], "flow_legacy.txt", [], []),
+        # 主角不动站着挨打:一座首领房间里被打死,倒地、躺平不再动(E-105)
+        ("首领房间里主角被打死后倒地躺平", ["combat-check", "--map", "map/lorien/b1.map", "--seconds", "120"], "flow_hero_down.txt",
+         [r"主角死亡", r"主角倒地 [1-9]\d* 次", r"动作 Down"], []),
+        # 站着挨打的主角被一击打倒(没死),躺着、起身回到站立(E-105;这座房间里的怪有倒地类攻击,是扫全库找到的几座之一)
+        ("真实房间里主角活着被打倒又起身", ["combat-check", "--map", "map/deadtower/021f.map", "--seconds", "30"], "flow_hero_getup.txt",
+         [r"主角倒地 [1-9]\d* 次\(起身 [1-9]\d* 次", r"动作 Rest", r"生命 [1-9]\d*/"], [r"主角死亡"]),
     ]
     bad = 0
     total = 0.0
     names = []
-    for title, args in runs:
-        code, text, sec = sh(DNF + args, "flow_%s.txt" % args[-1].replace("-", ""))
+    for title, args, log, expect, forbid in runs:
+        code, text, sec = sh(DNF + args, log)
         total += sec
         names.append(title)
-        if code != 0:
+        if code != 0 or any(re.search(pattern, text) is None for pattern in expect) or any(re.search(pattern, text) is not None for pattern in forbid):
             bad += 1
-    return [item("flow", "整条流程无人值守检查(真实数据,自动机从起点打到结算、再回城镇)", "整条流程", "E-093、E-096、E-097", len(runs), bad, total,
-                 "五个起点:" + "、".join(names) + ";退出码 0 = 切换次数、首领清空、音乐序列、读文件失败数全部符合预期")]
+    return [item("flow", "整条流程无人值守检查(真实数据,自动机从起点打到结算、再回城镇;外加主角被打死倒地、活着被打倒又起身)", "整条流程", "E-093、E-096、E-097、E-105", len(runs), bad, total,
+                 "七项:" + "、".join(names) + ";退出码 0 = 切换次数、首领清空、音乐序列、读文件失败数全部符合预期;后两项另查输出里的倒地与起身")]
 
 
 def check_sound():
