@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 
+// 证据:PVF 头、目录树、文件解密与校验规则见 E-001、E-011、E-013;与 Python 参考实现的全库对拍见 E-008。
 namespace Dnf.Data
 {
     /// <summary>

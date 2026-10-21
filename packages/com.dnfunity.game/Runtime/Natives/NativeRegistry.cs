@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Dnf.Squirrel;
 
+// 证据:每个原生接口的状态与依据见 docs/native-audit.tsv(E-046、E-048);脚本需要的接口清单见 E-034。
 namespace Dnf.Game
 {
     /// <summary>一个原生接口实现的可信程度。</summary>

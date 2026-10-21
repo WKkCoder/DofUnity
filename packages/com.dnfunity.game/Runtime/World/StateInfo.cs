@@ -1,5 +1,6 @@
 using Dnf.Script;
 
+// 证据:状态登记(pushState)与回调命名的约定见 E-035;逐技能扫描见 E-038。
 namespace Dnf.Game
 {
     /// <summary>一个状态在脚本里的登记(来自 pushState):回调函数名 = 回调前缀 + "_" + <see cref="Suffix"/>。</summary>

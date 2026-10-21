@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
+// 证据:NPK 与 IMG 容器的布局见 E-002;与 Python 参考实现的全库对拍见 E-008。
 namespace Dnf.Data
 {
     public readonly struct NpkEntry

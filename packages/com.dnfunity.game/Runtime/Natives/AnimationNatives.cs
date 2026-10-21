@@ -2,6 +2,7 @@ using System;
 using Dnf.Data;
 using Dnf.Squirrel;
 
+// 证据:每个接口的状态与依据见 docs/native-audit.tsv(E-046、E-048)。
 namespace Dnf.Game
 {
     /// <summary>

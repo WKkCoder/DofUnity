@@ -4,6 +4,7 @@ using Dnf.Data;
 using Dnf.Script;
 using Dnf.Squirrel;
 
+// 证据:脚本与数据文件之间的契约见 E-036;IceCrash 整条技能流程见 E-037,逐技能扫描见 E-038。
 namespace Dnf.Game
 {
     /// <summary>

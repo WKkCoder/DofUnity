@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 
+// 证据:标记流脚本的语法(5 字节标记、类型 2 到 10)见 E-003;全库对拍见 E-008。
 namespace Dnf.Data
 {
     /// <summary>标记流脚本里的标记类型。含义来自对全库的统计与结构验证,个别名字是推断。</summary>

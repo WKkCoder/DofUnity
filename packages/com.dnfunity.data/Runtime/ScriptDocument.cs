@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 
+// 证据:标记流脚本的语法(5 字节标记、类型 2 到 10)见 E-003;全库对拍见 E-008。
 namespace Dnf.Data
 {
     /// <summary>脚本值的种类(来自标记类型;含义见 <see cref="TokenType"/>)。</summary>

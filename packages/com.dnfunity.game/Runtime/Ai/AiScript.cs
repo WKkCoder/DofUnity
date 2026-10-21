@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 
+// 证据:.ai 决策树语言的结构与全库读通见 E-052;条件求值的方向见 E-053。
 namespace Dnf.Game.Ai
 {
     /// <summary>一个分支(或整个脚本)的结果种类。</summary>

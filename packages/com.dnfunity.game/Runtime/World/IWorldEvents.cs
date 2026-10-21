@@ -1,3 +1,4 @@
+// 证据:最小世界对外报告的表现层事件(声音、粒子等)与脚本接口的对应见 docs/native-audit.tsv(E-046、E-048)。
 namespace Dnf.Game
 {
     /// <summary>

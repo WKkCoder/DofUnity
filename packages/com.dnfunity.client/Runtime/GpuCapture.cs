@@ -1,6 +1,7 @@
 using System;
 using UnityEngine;
 
+// 证据:GPU 输出与 CPU 合成器逐字节一致见 E-028。
 namespace Dnf.Client
 {
     /// <summary>用一台相机渲染一帧到离屏目标并读回 CPU(RGBA8888,第一行在上)。</summary>

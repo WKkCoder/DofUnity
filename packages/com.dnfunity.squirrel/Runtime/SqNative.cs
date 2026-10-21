@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
+// 证据:原生接口的登记与调用约定见 E-034、E-035;每个接口的核对状态见 docs/native-audit.tsv(E-046、E-048)。
 namespace Dnf.Squirrel
 {
     /// <summary>

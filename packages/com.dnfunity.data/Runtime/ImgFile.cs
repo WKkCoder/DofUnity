@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.IO;
 using System.IO.Compression;
 
+// 证据:IMG v2 的帧头、压缩方式与截断占位帧见 E-002;全库对拍见 E-008,像素规则见 E-023。
 namespace Dnf.Data
 {
     public static class ImgPixelFormat

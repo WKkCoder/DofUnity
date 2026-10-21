@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Dnf.Render;
 using UnityEngine;
 
+// 证据:GPU 输出与 CPU 合成器逐字节一致见 E-028。
 namespace Dnf.Client
 {
     /// <summary>

@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 
+// 证据:stringtable 的布局见 E-001;与 Python 参考实现的全库对拍见 E-008。
 namespace Dnf.Data
 {
     /// <summary>

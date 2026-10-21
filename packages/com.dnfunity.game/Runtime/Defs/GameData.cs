@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Dnf.Data;
 using Dnf.Script;
 
+// 证据:脚本与数据文件(.chr、.skl、.atk、.ani、.lst)之间的契约见 E-036;.atk 的读法见 E-047。
 namespace Dnf.Game
 {
     /// <summary>

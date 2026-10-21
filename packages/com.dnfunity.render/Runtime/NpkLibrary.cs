@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Dnf.Data;
 
+// 证据:NPK 目录表与 IMG 名字的合并索引依据见 E-002。
 namespace Dnf.Render
 {
     /// <summary>

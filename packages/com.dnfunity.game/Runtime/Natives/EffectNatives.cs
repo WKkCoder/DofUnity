@@ -1,5 +1,6 @@
 using Dnf.Squirrel;
 
+// 证据:每个接口的状态与依据见 docs/native-audit.tsv(E-046、E-048)。
 namespace Dnf.Game
 {
     /// <summary>表现层与世界查询类的原生接口:声音、粒子、震屏、判断对象能否被抓取、强制发送命中等。</summary>

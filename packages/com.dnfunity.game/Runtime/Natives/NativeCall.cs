@@ -1,5 +1,6 @@
 using Dnf.Squirrel;
 
+// 证据:原生接口的状态与依据见 docs/native-audit.tsv(E-046、E-048)。
 namespace Dnf.Game
 {
     /// <summary>

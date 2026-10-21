@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 
+// 证据:Squirrel 3.2(逐字节未修改)的 C# 封装;212 个 .nut 全部能编译见 E-033,引擎加载脚本的约定见 E-035。
 namespace Dnf.Squirrel
 {
     /// <summary>

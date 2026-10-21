@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.RegularExpressions;
 
+// 证据:212 个 .nut 都是明文、按一个字节一个字符处理见 E-033。
 namespace Dnf.Script
 {
     /// <summary>脚本里定义的一个函数:名字与形参名(含默认值的形参只取名字;`...` 变长参数记为 "...")。</summary>

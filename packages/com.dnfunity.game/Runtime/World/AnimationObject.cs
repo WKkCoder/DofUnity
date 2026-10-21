@@ -1,3 +1,4 @@
+// 证据:脚本拿到的动画对象及其接口的核对状态见 docs/native-audit.tsv(E-046、E-048);最小世界的整条技能流程见 E-037。
 namespace Dnf.Game
 {
     /// <summary>

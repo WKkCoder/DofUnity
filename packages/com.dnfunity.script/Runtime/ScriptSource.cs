@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Dnf.Data;
 
+// 证据:脚本文件的来源与路径规则(规范化的 PVF 路径、大小写不敏感)见 E-013、E-035。
 namespace Dnf.Script
 {
     /// <summary>脚本文件的来源。路径是规范化后的 PVF 路径(小写、'/' 分隔、相对 PVF 根,例如 "sqr/loadstate.nut")。</summary>

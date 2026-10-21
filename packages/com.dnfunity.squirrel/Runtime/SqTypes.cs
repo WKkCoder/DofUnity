@@ -1,5 +1,6 @@
 using System;
 
+// 证据:Squirrel 3.2(逐字节未修改)的 C# 封装,见 E-033。
 namespace Dnf.Squirrel
 {
     /// <summary>Squirrel 值的基本类型(已去掉内部标志位)。</summary>

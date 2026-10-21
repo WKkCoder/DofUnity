@@ -1,5 +1,6 @@
 using System;
 
+// 证据:PVF 文件与目录树的 CRC-32 校验规则见 E-011。
 namespace Dnf.Data
 {
     /// <summary>

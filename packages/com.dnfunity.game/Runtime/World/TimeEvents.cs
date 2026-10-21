@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 
+// 证据:最小世界里对象的计时器与计时事件的语义见 E-036、E-037;每个接口的核对状态见 docs/native-audit.tsv(E-046、E-048)。
 namespace Dnf.Game
 {
     /// <summary>一个计时事件:每隔 IntervalMs 触发一次,最多触发 Count 次(setTimeEvent(index, 间隔, 次数, 是否立刻触发))。</summary>

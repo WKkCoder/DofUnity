@@ -1,5 +1,6 @@
 using System;
 
+// 证据:最小世界里对象的计时器与计时事件的语义见 E-036、E-037;每个接口的核对状态见 docs/native-audit.tsv(E-046、E-048)。
 namespace Dnf.Game
 {
     /// <summary>

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Dnf.Data;
 
+// 证据:Script.pvf 与 ImagePacks2 的布局见 E-001、E-002;像素规则见 E-023。
 namespace Dnf.Render
 {
     /// <summary>

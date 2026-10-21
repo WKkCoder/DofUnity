@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Dnf.Data;
 
+// 证据:.act 的语法结构与"标签 → 记录类型号"表见 E-050;运行模型见 E-054。
 namespace Dnf.Game.Act
 {
     /// <summary>

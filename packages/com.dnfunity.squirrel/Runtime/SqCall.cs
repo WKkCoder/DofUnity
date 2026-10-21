@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
+// 证据:Squirrel 3.2(逐字节未修改)的 C# 封装;212 个 .nut 全部能编译见 E-033,引擎加载脚本的约定见 E-035。
 namespace Dnf.Squirrel
 {
     /// <summary>字节串与 .NET 字符串之间的转换:一个字节对应一个字符(Latin-1),不假设 UTF-8,任意字节都能往返。</summary>
