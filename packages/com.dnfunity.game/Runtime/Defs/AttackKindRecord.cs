@@ -151,6 +151,12 @@ namespace Dnf.Game
         public const int RollModulus = 10000;
 
         /// <summary>
+        /// 怪物每次进入出招状态时放出招语音的概率(百分数):客户端的出招状态进入函数掷一次"随机数 % 100 &lt; 15",中了才放(证据 E-104)。
+        /// 重复投掷时每次重新进入出招状态都各掷一次。
+        /// </summary>
+        public const int AttackVoicePercent = 15;
+
+        /// <summary>
         /// 目标是否落在第 <paramref name="r"/> 条记录描述的射程里(客户端的"目标在这一招射程里"函数,证据 E-101)。
         /// 坐标与尺寸都是整数(客户端取整后的位置、目标的碰撞宽度与进深);目标的半边按宽度、进深各除以 4(向零取整)放宽。
         /// <paramref name="margin"/> 是怪物自己的一个沿朝向方向推移射程窗口的偏移(客户端里缺省视为 0)。
@@ -212,6 +218,12 @@ namespace Dnf.Game
         public static bool Roll(int random, float percent)
         {
             return (float)(random % RollModulus) < percent * 100.0f;
+        }
+
+        /// <summary>出招语音的抽签:随机数对 100 取余小于 <paramref name="percent"/> 算中(证据 E-104)。</summary>
+        public static bool RollAttackVoice(int random, int percent = AttackVoicePercent)
+        {
+            return random % 100 < percent;
         }
 
         /// <summary>

@@ -163,6 +163,29 @@ public class AttackKindRecordTests
     }
 
     [Fact]
+    public void TheAttackVoiceRollHitsWhenTheRandomNumberModuloOneHundredIsBelowFifteen()
+    {
+        Assert.Equal(15, MonsterAttackRules.AttackVoicePercent);
+        Assert.True(MonsterAttackRules.RollAttackVoice(14));
+        Assert.False(MonsterAttackRules.RollAttackVoice(15));
+        Assert.True(MonsterAttackRules.RollAttackVoice(100 + 3));                    // 先对 100 取余
+        Assert.False(MonsterAttackRules.RollAttackVoice(100 + 99));
+        Assert.False(MonsterAttackRules.RollAttackVoice(0, 0));                     // 0% 永不中
+        Assert.True(MonsterAttackRules.RollAttackVoice(99, 100));                   // 100% 必中
+        // 长期比例约 15%(固定种子,不是统计显著性检验)
+        var random = new Random(7);
+        int hits = 0;
+        for (int i = 0; i < 20000; i++)
+        {
+            if (MonsterAttackRules.RollAttackVoice(random.Next()))
+            {
+                hits++;
+            }
+        }
+        Assert.InRange(hits, 2700, 3300);
+    }
+
+    [Fact]
     public void TheNextDecisionIsOneDelayPlusARandomJitterOfTenPercentEitherSideAndNoJitterWhenTheSpanIsZero()
     {
         // 延迟 1000:范围 (int)(1000 × 0.2) = 200,抖动 = 随机 % 200 − 100

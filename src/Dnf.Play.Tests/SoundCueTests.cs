@@ -374,6 +374,7 @@ public class SoundCueTests
     public void AMonsterSwingEmitsItsAttackSoundOnceAndAHitEmitsTheHitWavAndTheHeroHurtVoice()
     {
         using var arena = new SoundArena(null, 340, new MonsterSounds(null, null, null, "MON_ATK"), striker: true, vitals: Vitals(), frozen: true);
+        arena.Session.AttackVoicePercent = 100;              // 出招语音默认只有 15% 的概率(E-104);这里要每次都中才好数
         arena.Drain();
         List<SoundCue> cues = arena.Run(800);
         string[] keys = Keys(cues);
@@ -384,6 +385,18 @@ public class SoundCueTests
         Assert.Equal((int)arena.Monster.SwingNumber, keys.Count(k => k == "Voice:MON_ATK"));
         // 每次打中主角一次受击语音
         Assert.Equal(arena.Session.HeroHits, keys.Count(k => k == "Voice:" + SwordmanVoice.Hurt));
+    }
+
+    [Fact]
+    public void TheMonsterAttackVoiceIsRolledPerSwingAndNeverPlaysAtZeroPercent()
+    {
+        Assert.Equal(15, MonsterAttackRules.AttackVoicePercent);
+        using var arena = new SoundArena(null, 340, new MonsterSounds(null, null, null, "MON_ATK"), striker: true, vitals: Vitals(), frozen: true);
+        Assert.Equal(15, arena.Session.AttackVoicePercent);                  // 缺省就是客户端的 15%
+        arena.Session.AttackVoicePercent = 0;
+        string[] keys = Keys(arena.Run(800));
+        Assert.True(arena.Monster.SwingNumber >= 1);                         // 出招了,但一次语音也没放
+        Assert.DoesNotContain("Voice:MON_ATK", keys);
     }
 
     [Fact]

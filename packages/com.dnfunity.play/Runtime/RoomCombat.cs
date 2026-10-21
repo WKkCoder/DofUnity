@@ -363,6 +363,12 @@ namespace Dnf.Play
 
         /// <summary>倒地的随机抖动(水平量 ±20%、高度 ±10%;E-083)用的随机数,与伤害的随机数分开,免得改变伤害序列。</summary>
         private readonly Random _physicsRandom;
+
+        /// <summary>怪物出招语音掷骰的种子(客户端的线性同余随机数,<see cref="ClientRandom"/>),与其余随机数分开。</summary>
+        private uint _voiceSeed;
+
+        /// <summary>怪物每次进入出招状态放出招语音的概率(百分数,缺省 15,证据 E-104);测试可以改。</summary>
+        public int AttackVoicePercent { get; set; } = MonsterAttackRules.AttackVoicePercent;
         private long _evalSwing = -1;
         private int _evalFrame = -1;
         private double _targetMs = double.MaxValue;
@@ -512,6 +518,7 @@ namespace Dnf.Play
             _hud = HudArt.For(assets);
             _random = new Random(seed);
             _physicsRandom = new Random(unchecked(seed * 31 + 17));
+            _voiceSeed = unchecked((uint)seed * 2246822519u + 3266489917u);
             SyncStance();
             _cueMotion = _room.Hero.Motion;
             _cueSwing = _room.Hero.SwingNumber;
@@ -633,7 +640,10 @@ namespace Dnf.Play
             }
         }
 
-        /// <summary>怪物开始新的一次出招:放它的 [attack sound]。</summary>
+        /// <summary>
+        /// 怪物开始新的一次出招:按 <see cref="AttackVoicePercent"/>(15%,证据 E-104)掷骰,中了放它的 [attack sound]。
+        /// 客户端是进入出招状态时掷一次"随机数 % 100 &lt; 15"再调语音;语音类别向量由哪个 .mob 标签填充没读到,这里按 [attack sound] 推断。
+        /// </summary>
         private void EmitMonsterCues()
         {
             foreach (MonsterActor m in _monsters)
@@ -646,7 +656,10 @@ namespace Dnf.Play
                 if (m.SwingNumber != seen)
                 {
                     _cueMonsterSwing[m] = m.SwingNumber;
-                    _sounds.Add(m.Sounds.Attack, SoundCueKind.Voice, m.Index + 1);
+                    if (MonsterAttackRules.RollAttackVoice(ClientRandom.Next(ref _voiceSeed), AttackVoicePercent))
+                    {
+                        _sounds.Add(m.Sounds.Attack, SoundCueKind.Voice, m.Index + 1);
+                    }
                 }
             }
         }
