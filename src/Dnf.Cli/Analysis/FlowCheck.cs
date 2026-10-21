@@ -70,6 +70,9 @@ internal static class FlowCheck
             opts.LegacyTown ? null : path => SplashCatalog.ForDungeon(assets, path),
             () => new CharacterSelectScreen(CharacterRoster.Local(), characterScene));
         var bot = new FlowBot(opts.Explore, choices);
+        // 背景音乐(E-097):照播放器的做法把流程发出的声音提示交给调度器,只记音乐通道开始放的那几次(不出声、不读音频文件内容)
+        using SoundLibrary soundLibrary = SoundLibrary.Open(loc.DnfDir);
+        MusicTrace? music = soundLibrary.HasCatalog ? new MusicTrace(soundLibrary) : null;
 
         double seconds = opts.SecondsGiven ? opts.Seconds : DefaultSeconds;
         double frameMs = opts.FrameMs > 0 ? opts.FrameMs : CombatScript.StepMs;
@@ -98,6 +101,7 @@ internal static class FlowCheck
         int printed = 0;
         int shotIndex = 0;
         PrintNew(flow, t, ref printed);
+        music?.Step(flow, t, 0, false);
         while (t < totalMs && !bot.Done)
         {
             DungeonSession? before = flow.Run as DungeonSession;
@@ -110,6 +114,7 @@ internal static class FlowCheck
                 Console.WriteLine("  上一局:" + stats[^1]);
             }
             PrintNew(flow, t, ref printed);
+            music?.Step(flow, t, frameMs, flow.StageSerial != serialBefore);
             while (shotIndex < shotTimes.Count && shotTimes[shotIndex] * 1000.0 <= t)
             {
                 WriteShot(flow, shotTimes[shotIndex], opts.PngFile!);
@@ -132,7 +137,98 @@ internal static class FlowCheck
             + flow.Settlements + " 次选择(清单 " + choices.Count + " 个),阶段切换 " + flow.History.Count + " 次");
         bool allCleared = stats.Count > 0 && stats.All(s => s.BossCleared);
         Console.WriteLine("  每一局都打到首领清空:" + (allCleared ? "是" : "否"));
-        return bot.Done && allCleared && bot.ChoicesMade == choices.Count ? 0 : 2;
+        bool musicOk = true;
+        if (music == null)
+        {
+            Console.WriteLine("  背景音乐:数据目录里没有 audio.xml,没有检查");
+        }
+        else
+        {
+            int settlementsShown = stats.Count(s => s.SettlementShown);
+            musicOk = music.Check(opts.FlowFrom == "char", settlementsShown);
+            Console.WriteLine("  背景音乐:开始 " + music.Starts.Count + " 次,标签都在 audio.xml 里且文件读得到:" + (music.Starts.All(s => s.Playable) ? "是" : "否")
+                + ";调度器里找不到的标签 " + music.UnknownCount + " 个" + (opts.FlowFrom == "char" ? ";第一首是选角音乐:" + (music.Starts.Count > 0 && music.Starts[0].Id == SceneMusic.CharacterSelect ? "是" : "否") : string.Empty));
+            Console.WriteLine("  结算音:放了 " + music.ResultSounds + " 次(结算界面出现 " + settlementsShown + " 次),文件读得到:" + (music.ResultPlayable ? "是" : "否"));
+        }
+        return bot.Done && allCleared && bot.ChoicesMade == choices.Count && musicOk ? 0 : 2;
+    }
+
+    /// <summary>
+    /// 把流程发出的声音提示照播放器的样子交给 <see cref="SoundScheduler"/>(换阶段先停掉旧声音,城镇换区域除外),
+    /// 只记背景音乐开始放的几次:哪个阶段、哪个标签、标签在不在 audio.xml 里、文件读不读得到。
+    /// </summary>
+    private sealed class MusicTrace
+    {
+        public readonly record struct Start(double T, GameStage Stage, string Id, bool Playable);
+
+        private readonly SoundLibrary _library;
+        private readonly SoundScheduler _scheduler;
+        private readonly List<SoundCue> _cues = new List<SoundCue>();
+        private readonly List<SoundCommand> _commands = new List<SoundCommand>();
+
+        public List<Start> Starts { get; } = new List<Start>();
+
+        public long UnknownCount => _scheduler.UnknownCount;
+
+        public MusicTrace(SoundLibrary library)
+        {
+            _library = library;
+            var random = new Random(1);
+            _scheduler = new SoundScheduler(library.Catalog, () => random.NextDouble());
+        }
+
+        public void Step(GameFlow flow, double t, double deltaMs, bool switched)
+        {
+            _commands.Clear();
+            if (switched && !flow.LastSwitchStaysInTown)
+            {
+                _scheduler.StopAll(_commands);
+            }
+            _cues.Clear();
+            flow.DrainSounds(_cues);
+            _scheduler.Update(deltaMs, _cues, _commands);
+            foreach (SoundCommand c in _commands)
+            {
+                if (c.Kind != SoundCommandKind.Play)
+                {
+                    continue;
+                }
+                if (c.Channel == SoundChannel.Ui && string.Equals(c.Id, SceneMusic.ResultSound, StringComparison.OrdinalIgnoreCase))
+                {
+                    ResultSounds++;
+                    bool resultPlayable = _library.Catalog.CollectFiles(c.Id).Any(_library.Exists);
+                    ResultPlayable &= resultPlayable;
+                    Console.WriteLine("  t=" + Sec(t) + "s  结算音 " + c.Id + "(界面音)  阶段 " + flow.Stage + (resultPlayable ? string.Empty : "  (文件读不到)"));
+                    continue;
+                }
+                if (c.Channel != SoundChannel.Music)
+                {
+                    continue;
+                }
+                bool playable = _library.Catalog.CollectFiles(c.Id).Any(_library.Exists);
+                Starts.Add(new Start(t, flow.Stage, c.Id, playable));
+                Console.WriteLine("  t=" + Sec(t) + "s  音乐 " + c.Id + "  阶段 " + flow.Stage + (playable ? string.Empty : "  (文件读不到)"));
+            }
+        }
+
+        /// <summary>结算界面出现时放过几次 M_RESULT(界面通道),以及它的文件是不是都读得到。</summary>
+        public int ResultSounds { get; private set; }
+
+        public bool ResultPlayable { get; private set; } = true;
+
+        /// <summary>音乐都放得出来;从选角开始时第一首是选角音乐;结算音放的次数等于结算出现的次数、文件读得到。</summary>
+        public bool Check(bool fromCharacterSelect, int settlementsShown)
+        {
+            if (Starts.Count == 0 || Starts.Any(s => !s.Playable))
+            {
+                return false;
+            }
+            if (ResultSounds != settlementsShown || !ResultPlayable)
+            {
+                return false;
+            }
+            return !fromCharacterSelect || Starts[0].Id == SceneMusic.CharacterSelect;
+        }
     }
 
     private sealed class RunStats

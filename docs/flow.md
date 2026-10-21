@@ -1,4 +1,4 @@
-# 游戏流程骨架(M9b,证据 E-093;M9d 起城镇可走、阶段之间有加载画面,证据 E-095;M9e 起从选角界面开始,证据 E-096)
+# 游戏流程骨架(M9b,证据 E-093;M9d 起城镇可走、阶段之间有加载画面,证据 E-095;M9e 起从选角界面开始,证据 E-096;M10 起流程发出声音提示,证据 E-097)
 
 目标:把"选角 → 登录进城 → 选副本 → 副本 → 结算 → 再来一次 / 换副本 / 回城"这条主线连成一个能自己跑完的循环,
 并且能在没有人的环境里整条走一遍(命令行 `flow-check`、播放器 `-dnfflow -dnfbot`)。
@@ -22,6 +22,7 @@
 
 - `Dnf.Render.ISceneSource`:能给出某一时刻整屏绘制列表的东西(`Build(timeMs)`);`IHeroSession` 继承它。视图层只依赖它,所以有主角的场景与没有主角的整屏界面走同一条画图管线(Unity `TownView`、CPU 合成器)。
 - `Dnf.Play.GameFlow`:流程本体,纯逻辑。构造时给城镇世界(`ITownWorld`;老式的单会话工厂用 `LegacyTownWorld` 包一层)、副本工厂(按副本路径与局序号造一局)、副本列表,可选世界地图与副本加载画面素材;`EnterTown` / `EnterSelect` / `StartDungeon` 进入某个阶段;`Poll` 看当前阶段有没有出结果(结算菜单选定、副本选择确认或返回、城镇里走进出口)并切到下一个阶段(需要加载画面的先进 `Loading`);`StageSerial` 每次切换加一,宿主靠它换视图;`History` 记录每次切换(从哪到哪、为什么);`Place` 是主角所在的城镇区域,`Splash` 是加载阶段的画面。
+- `Dnf.Play.GameFlow` 也是声音源(`ISoundSource`,M10,证据 E-097):进选角界面发选角音乐,进城镇区域发那块地图 `[sound]` 里的音乐与环境声,副本与结算转发当前会话发出的提示(结算开始一声 `M_RESULT`);换阶段时上一阶段没取走的提示作废,宿主换阶段先把旧声音全停(城镇 → 城镇除外,`LastSwitchStaysInTown`)。细节见 [audio.md](audio.md) §7。
 - `Dnf.Play.IRunSession`:流程对"一局副本"的全部要求——一个 `Choice`。`DungeonSession` 实现它,所以流程的逻辑可以用不带原版数据的假会话来测。
 - `Dnf.Play.DungeonSelectScreen`:副本选择界面的逻辑(上下移动不循环、确认、返回、结果只认第一次、鼠标点击)、世界地图画面(M9c,`docs/dungeon-select.md`)与没有地图数据时的占位画面;`GameFlow` 构造时可以带地图数据(`WorldMapScene`)。
 - `Dnf.Play.CharacterSelectScreen`(M9e):选角界面的逻辑(方向键在 6×2 的网格里移动不循环、确认、返回、鼠标点格子与按钮、结果只认第一次)、原版画面(`CharacterSelectArt`,头像 `ICharacterAvatars`,背景光束 `UiAnimation`)与没有素材时的占位画面;`GameFlow` 构造时带一个选角界面工厂才有这个阶段,`EnterCharacterSelect` 进入,`Poll` 看到 `Start` 就 `GoTown(Start, null, "login")`。
@@ -34,8 +35,9 @@
 
 - 合成数据单元测试(`GameFlowTests`、`FlowBotTests`,共 23 条):阶段转移表、三个选项各去哪里、局序号、记录次序、没选时不动、到头不循环、空列表、自动机的停止条件与确定性(不依赖帧长);M9d 又加了 `TownFlowTests` 19 条(出口换区域、加载画面规则、自动机沿出口走完整条、超时等,见 [town.md](town.md) §6);M9e 又加了 `CharacterSelectTests` 47 条,其中流程与自动机 9 条(从选角起步、确认后经登录加载画面进城、没有加载画面直接进城、结束游戏不动流程、缺工厂时报错、每次进来是新界面、登录后的城镇落脚点、自动机停留后确认并等加载画面,见 [char-select.md](char-select.md) §9)。
 - 命令行 `flow-check`(真实数据,默认清单 `retry,select,town`):登录加载 → 城镇(走出口换区域、走进地下城入口)→ 选择 → 副本加载 → 副本(首领清空)→ 再次挑战 → 副本 → 选择其它地下城 → 选择 → 副本 → 返回城镇(加载),十五次阶段切换、三局副本、三次菜单选择,每局首领清空,墙钟约 1 秒;`--explore`(逛遍 6 个房间)同样走完(十五次切换);`--from select`(十次)、`--from dungeon`(九次)同样走完;`--legacy-town` 仍是 M9b 的七次切换;M9e:`--from char` 从选角界面开始(进入选角记一次、停 1.5 秒后确认、登录经加载画面进城),十六次切换,`--explore` 同样十六次,`--legacy-town --from char` 八次。
-- 全套测试 1117 条通过(Squirrel 22、Script 7、Data 92、Game 369、Render 266、Play 361);Unity EditMode 44 条(34 通过、10 条要显卡的跳过、0 失败)。
+- 全套测试 1129 条通过(Squirrel 22、Script 7、Data 92、Game 369、Render 267、Play 372);Unity EditMode 44 条(34 通过、10 条要显卡的跳过、0 失败)。
 - macOS 播放器(`tools/unity-build-town.sh macos`):副本选择界面离屏一帧与 CPU 合成逐字节一致(M9b),M9d 起又加了加载画面两帧与城镇图册三块区域各一帧,全部 45 帧对拍零差异(M9e 又加了选角界面 0、0.7、1.4 秒三帧);无人值守实时从选角界面开始走完整条流程(时间步 ×4,墙钟 32.9 秒),日志里十六行 `DNF_FLOW`(第一行进入选角界面、第二行登录进加载画面)、末尾 `flow=Town serial=16 runs=3 settlements=3 botDone=True choicesMade=3`、声音计数没有读失败。
+- 场景音乐(M10,证据 E-097):命令行 `flow-check` 逐行打印背景音乐开始与结算音(见 [audio.md](audio.md) §7.3),任何一首读不到文件、从选角开始时第一首不是选角音乐、结算音次数不等于结算界面出现的次数都退出码 2(`--from char|town|select|dungeon`、`--explore`、`--legacy-town` 都过);播放器实时整局(静音)日志里第一首 `DNF_MUSIC` 是选角音乐、背景音乐至少开始七次、三个结算界面各一行 `DNF_RESULT_SOUND`,汇总计数与日志行数一致、读文件失败 0。对拍帧不变(45 帧零差异):离屏渲染不开声音。
 
 ## 4 推断与占位
 
@@ -47,9 +49,9 @@
 ## 5 没做
 
 - ~~副本选择界面的原版样子~~:M9c 已做(`docs/dungeon-select.md`);选难度、中文文字、气泡样式的其余几何仍没做。
-- ~~可走的艾尔文防线、副本入口触发、进城加载画面~~:M9d 已做(`docs/town.md`);加载画面里的文字(提示带、队伍加载条)与淡入淡出、城镇音乐与小地图仍没做。
+- ~~可走的艾尔文防线、副本入口触发、进城加载画面~~:M9d 已做(`docs/town.md`);加载画面里的文字(提示带、队伍加载条)与淡入淡出、小地图仍没做;~~城镇音乐~~M10 已做(见 [audio.md](audio.md) §7)。
 - ~~选角界面与登录占位(基线 S02)~~:M9e 已做(`docs/char-select.md`);账号、频道、创建与删除角色、中文文字、职业头像与光环仍没做,登录要等 P7。
-- 加载画面之外的过渡(淡入淡出);选了菜单之后的音乐与音效衔接(目前是瞬间全停再起)。
+- 加载画面之外的过渡(淡入淡出);选了菜单之后的音乐与音效衔接(M10 起每个界面有自己的音乐,但换阶段仍是瞬间全停再起,城镇换区域除外)。
 - 结算上的掉落物、评分、经验、德利拉的对话与修理(见 `docs/settlement.md`)。
 
 ## 6 复现

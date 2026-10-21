@@ -14,4 +14,13 @@ namespace Dnf.Render
         /// </summary>
         List<SceneSprite> Build(long timeMs);
     }
+
+    /// <summary>
+    /// 带地图 [sound] 的场景(城镇区域,证据 E-097):背景音乐与环境声的标签(audio.xml 的 ID)按地图里写的顺序。
+    /// 流程进这块区域时据此发房间声音提示;没有 [sound] 的地图是空列表。
+    /// </summary>
+    public interface IMapSoundSource
+    {
+        IReadOnlyList<string> MapSounds { get; }
+    }
 }

@@ -70,9 +70,14 @@ namespace Dnf.Play
     /// 流程的起点可以是选角界面(<see cref="EnterCharacterSelect"/>,证据 E-096):确认之后用选中的角色登录,落在城镇世界的第一站
     /// (与 <see cref="EnterTown"/> 在流程刚开始时一样,中间照样经过加载画面);选角界面里"结束游戏"只是界面的结果(<see cref="CharacterSelectOutcome.Quit"/>),
     /// 流程不换阶段,由宿主决定怎么退出。
+    /// 流程也是声音源(<see cref="ISoundSource"/>,证据 E-097):进选角界面发选角的背景音乐、进城镇区域发那块地图 [sound] 里的音乐与环境声
+    /// (<see cref="SoundCueKind.RoomEnter"/> 标记加每一项 <see cref="SoundCueKind.RoomSound"/>),其余时候转发当前会话(副本房间、结算)发出的提示;
+    /// 加载画面、副本选择界面没有自己的声音(宿主在换阶段时把旧声音停掉)。
     /// </summary>
-    public sealed class GameFlow
+    public sealed class GameFlow : ISoundSource
     {
+        private readonly SoundCueQueue _sounds = new SoundCueQueue();
+        private readonly List<SoundCue> _soundScratch = new List<SoundCue>();
         private readonly ITownWorld _townWorld;
         private readonly Func<string, int, IRunSession> _dungeon;
         private readonly Func<string, SplashScene> _dungeonSplash;
@@ -154,6 +159,13 @@ namespace Dnf.Play
 
         /// <summary>每次阶段切换的记录,按先后排。</summary>
         public IReadOnlyList<FlowEvent> History => _history;
+
+        /// <summary>
+        /// 最近一次切换是不是城镇换区域(城镇 → 城镇,没有经过加载阶段):宿主这时不必把旧声音全停掉——
+        /// 新区域的地图声音与旧的有相同的音乐标签时音乐接着放,只换环境声(调度器按标签对比,E-097;原版这一步的行为是推断)。
+        /// 流程的第一次切换(没有"上一个阶段")不算。
+        /// </summary>
+        public bool LastSwitchStaysInTown => _history.Count > 1 && _history[_history.Count - 1].From == GameStage.Town && _history[_history.Count - 1].To == GameStage.Town;
 
         /// <summary>
         /// 打开选角界面(造一个新的,选中第一个角色)。通常是流程的起点;确认之后 <see cref="Poll"/> 用选中的角色登录进城
@@ -375,6 +387,45 @@ namespace Dnf.Play
             CharacterSelect = characterSelect;
             StageSerial++;
             _history.Add(new FlowEvent(StageSerial, first ? to : from, to, reason));
+            AddStageSounds(to, session);
+        }
+
+        /// <summary>
+        /// 新阶段自己的声音提示(证据 E-097):选角界面放选角的音乐;城镇区域放那块地图 [sound] 里的音乐与环境声(会话不带地图声音的老式单张地图没有)。
+        /// 副本的声音由副本会话自己发(进房间、结算),加载画面与副本选择界面没有声音。
+        /// </summary>
+        private void AddStageSounds(GameStage to, IHeroSession session)
+        {
+            _sounds.Drain(_soundScratch);        // 上一阶段还没被取走的提示作废(它们属于已经离开的场景)
+            _soundScratch.Clear();
+            if (to == GameStage.CharacterSelect)
+            {
+                _sounds.Add(SceneMusic.CharacterSelectScene, SoundCueKind.RoomEnter);
+                _sounds.Add(SceneMusic.CharacterSelect, SoundCueKind.RoomSound);
+            }
+            else if (to == GameStage.Town && session is IMapSoundSource source)
+            {
+                // 地图没写 [sound] 也发场景标记:调度器据此停掉上一块区域的环境声(音乐沿用),宿主换区域时不必把旧声音全停
+                _sounds.Add(session.MapPath, SoundCueKind.RoomEnter);
+                foreach (string id in source.MapSounds)
+                {
+                    _sounds.Add(id, SoundCueKind.RoomSound);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 取走流程这一刻等着的声音提示:先是阶段自己的(选角、城镇区域的音乐),再是当前会话(副本房间、结算)发出的。
+        /// 每次阶段切换时,上一阶段还没被取走的提示作废;换了阶段之后,宿主要先停掉旧声音(城镇换区域除外,见 <see cref="LastSwitchStaysInTown"/>)、再取新提示。
+        /// </summary>
+        public void DrainSounds(List<SoundCue> into)
+        {
+            if (into == null)
+            {
+                throw new ArgumentNullException(nameof(into));
+            }
+            _sounds.Drain(into);
+            (Session as ISoundSource)?.DrainSounds(into);
         }
     }
 }

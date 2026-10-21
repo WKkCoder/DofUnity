@@ -753,7 +753,7 @@ namespace Dnf.Client
                 Quit();                              // 选角界面上的"结束游戏"(或 Esc):流程不动,宿主退出
                 return;
             }
-            _audio?.Tick(deltaMs, _flow.Session as ISoundSource);
+            _audio?.Tick(deltaMs, _flow);          // 流程自己是声音源:选角与城镇区域的音乐、结算曲子,加上当前副本会话的提示(E-097)
             UpdateSettlement();
         }
 
@@ -768,7 +768,10 @@ namespace Dnf.Client
             previous?.Dispose();
             _shownSerial = _flow.StageSerial;
             _loggedChoice = SettlementChoice.None;
-            _audio?.StopAll();
+            if (!_flow.LastSwitchStaysInTown)
+            {
+                _audio?.StopAll();                   // 城镇换区域时不停:相同的音乐标签接着放,只换环境声(E-097)
+            }
             LogNewFlowEvents();
         }
 

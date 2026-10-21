@@ -359,6 +359,29 @@ public class RoomTests
     }
 
     [Fact]
+    public void ATownSessionReportsTheMapSoundsOfItsRoomContentAndHasNoneWithoutIt()
+    {
+        using var avatar = new AvatarFixture();
+        using DnfAssets avatarAssets = DnfAssets.Open(avatar.Root);
+        var tiles = new List<TileFile> { new TileFile("t0", new List<KeyValuePair<string, int>>(), 80, RoomFixture.PassTable().Select(v => (byte)v).ToArray()) };
+        var sounds = new List<string> { "TEST_MUSIC", "TEST_AMBIENT" };
+        var map = new RoomMap("map/test/town-sounds.map", "[town]", tiles, 50, 80, 120, new List<RoomBackground>(), new List<MapAnimation>(),
+            new List<int[]> { null, null, null, null }, null, null, null, null, sounds);
+        TownHero hero = RoomHero(avatarAssets, new RoomWalkArea(map), 300, 40);
+        var camera = new TownCamera(0, map.MaxCameraX, hero.X);
+
+        // 房间式内容(城镇图册里的区域):地图 [sound] 的标签按写的顺序(证据 E-097);流程据此发出区域的音乐与环境声
+        var withRoom = new TownSession(avatarAssets, AvatarFixture.AreaMap, hero, camera, TownSession.DefaultGroundY, new RoomContent(map, null, null, null, null), null);
+        IMapSoundSource source = withRoom;
+        Assert.Equal(new[] { "TEST_MUSIC", "TEST_AMBIENT" }, source.MapSounds.ToArray());
+
+        // 老式的单张地图会话没读地图的声音:空列表(不是 null),所以那条路径没有声音
+        var plain = new TownSession(avatarAssets, AvatarFixture.AreaMap, hero, camera);
+        Assert.Empty(plain.MapSounds);
+        Assert.NotNull(plain.MapSounds);
+    }
+
+    [Fact]
     public void ARoomSessionFollowsTheHeroWithTheDeadZoneCameraInsideTheRoom()
     {
         using var avatar = new AvatarFixture();

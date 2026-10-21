@@ -405,6 +405,8 @@ namespace Dnf.Play
                 {
                     // 营火生在主角脚下(推断,见 ClearCamp);营地从这一刻开始播放
                     _camp = ClearCamp.Create(Assets, cell.Session.MapPath, cell.Session.Hero.X, cell.Session.Hero.Y);
+                    // 结算界面出现:放一声 M_RESULT(界面音;客户端里它是结果窗口显示时放的短音效,不是背景音乐,E-097)
+                    _sounds.Add(SceneMusic.ResultSound, SoundCueKind.Ui);
                 }
                 else
                 {

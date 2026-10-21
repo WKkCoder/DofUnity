@@ -16,7 +16,8 @@
 #      选角界面(E-096)0、0.7、1.4 秒三帧与命令行 charselect-shot 逐字节对照;
 #      加载画面(E-095)进城与进图两帧、城镇图册里的三块区域(赛丽亚房间、艾尔文防线、地下城入口区域)各一帧,分别与命令行 flow-check --shots-at、town-shot 逐字节对照;
 #      再让流程自动机在播放器里实时走完 选角 → 登录加载 → 赛丽亚房间 → 走出口 → 艾尔文防线 → 走出口 → 地下城入口区域 → 走出口 → 选择 → 副本 → 结算 → 再次挑战 → 副本 → 结算 →
-#      选择其它地下城 → 选择 → 副本 → 结算 → 返回城镇(时间步放大 4 倍),检查十六次阶段切换、三局副本与声音计数。
+#      选择其它地下城 → 选择 → 副本 → 结算 → 返回城镇(时间步放大 4 倍),检查十六次阶段切换、三局副本与声音计数;
+#      场景音乐(E-097):日志里第一首 DNF_MUSIC 是选角音乐 M_CHARACTER_SELECT、背景音乐至少开始七次、三个结算界面各有一行 DNF_RESULT_SOUND(M_RESULT)。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -464,6 +465,18 @@ if [ "$platform" = "macos" ]; then
     echo "$flow_audio"
     echo "$flow_audio" | grep -q -E 'cues=[1-9][0-9]* .* started=[1-9][0-9]* .* loaded=[1-9][0-9]* failed=0 ' \
       || { echo "整条流程的声音计数不对(应有 cues>=1、started>=1、loaded>=1、failed=0):$flow_log" >&2; exit 1; }
+    # 场景音乐(E-097):第一首是选角音乐;城镇区域与副本房间各自换音乐(至少七次);三个结算界面各放一声 M_RESULT;日志行数与计数器一致
+    grep -E 'DNF_MUSIC id=|DNF_RESULT_SOUND' "$flow_log" | cut -c1-120 || true
+    first_music="$(grep -E 'DNF_MUSIC id=' "$flow_log" | head -1)"
+    echo "$first_music" | grep -q -E 'DNF_MUSIC id=M_CHARACTER_SELECT ' \
+      || { echo "第一首背景音乐应是选角音乐 M_CHARACTER_SELECT:$flow_log" >&2; exit 1; }
+    music_lines="$(grep -c -E 'DNF_MUSIC id=' "$flow_log")"
+    [ "$music_lines" -ge 7 ] \
+      || { echo "整条流程里背景音乐应至少开始七次(选角、城镇区域、三局副本),实际 $music_lines:$flow_log" >&2; exit 1; }
+    [ "$(grep -c -E 'DNF_RESULT_SOUND id=M_RESULT ' "$flow_log")" -eq 3 ] \
+      || { echo "三个结算界面应各放一声 M_RESULT(DNF_RESULT_SOUND 行):$flow_log" >&2; exit 1; }
+    echo "$flow_audio" | grep -q -E "musicStarts=$music_lines resultSounds=3 " \
+      || { echo "声音计数里的 musicStarts/resultSounds 与日志行数不一致:$flow_log" >&2; exit 1; }
   else
     echo "没有设置 DNF_DIR:跳过离屏渲染校验"
   fi

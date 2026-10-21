@@ -95,6 +95,12 @@ namespace Dnf.Client
         /// <summary>同一时刻最多有多少个声音在途(已开始放或在等剪辑)。</summary>
         public int MaxInFlight { get; private set; }
 
+        /// <summary>背景音乐开始放的次数(调度器发出的音乐通道 Play 命令;每次开始在日志里留一行 DNF_MUSIC,E-097)。</summary>
+        public int MusicStarts { get; private set; }
+
+        /// <summary>结算界面出现时放的 M_RESULT(界面通道)次数(每次在日志里留一行 DNF_RESULT_SOUND,E-097)。</summary>
+        public int ResultSounds { get; private set; }
+
         public SoundScheduler Scheduler => _scheduler;
 
         public SoundLibrary Library => _library;
@@ -235,6 +241,16 @@ namespace Dnf.Client
             {
                 StopPlayback(c.Handle);
                 return;
+            }
+            if (c.Channel == SoundChannel.Music)
+            {
+                MusicStarts++;
+                Debug.Log("DNF_MUSIC id=" + c.Id + " loop=" + c.Loop + " n=" + MusicStarts);
+            }
+            else if (c.Channel == SoundChannel.Ui && string.Equals(c.Id, SceneMusic.ResultSound, StringComparison.OrdinalIgnoreCase))
+            {
+                ResultSounds++;
+                Debug.Log("DNF_RESULT_SOUND id=" + c.Id + " n=" + ResultSounds);
             }
             string key = Key(c.File);
             var playback = new Playback
@@ -647,7 +663,7 @@ namespace Dnf.Client
                 + " coalesced=" + _scheduler.CoalescedCount + " unknown=" + _scheduler.UnknownCount
                 + " loaded=" + LoadedCount + " failed=" + FailedCount + " late=" + LateCount + " stolen=" + StolenCount
                 + " inFlight=" + _playbacks.Count + " maxInFlight=" + MaxInFlight + " clips=" + _clips.Count
-                + " roomSounds=" + _scheduler.RoomSoundCount + " music=" + (_scheduler.MusicId ?? "none") + " audible=" + _audible;
+                + " roomSounds=" + _scheduler.RoomSoundCount + " music=" + (_scheduler.MusicId ?? "none") + " musicStarts=" + MusicStarts + " resultSounds=" + ResultSounds + " audible=" + _audible;
         }
 
         private void OnDestroy()

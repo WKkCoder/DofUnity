@@ -953,6 +953,33 @@ public class DungeonSessionTests
     }
 
     [Fact]
+    public void TheSettlementStartPlaysTheResultSoundExactlyOnceAsAUiSoundWithoutTouchingTheRoomSounds()
+    {
+        using var d = new Dungeon(TwoRoomBossLayout(), (cx, cy) => None());
+        DungeonSession s = d.Session;
+        var cues = new List<SoundCue>();
+        RunUntil(s, () => s.BossCleared, 1, 0);
+        s.DrainSounds(cues);                                              // 进房间时的提示先取走
+        cues.Clear();
+
+        Run(s, 2990);
+        s.DrainSounds(cues);
+        Assert.DoesNotContain(cues, c => c.Key == SceneMusic.ResultSound);   // 结算还没开始
+
+        Run(s, 10);                                                       // 清空后整 3 秒:结算开始
+        Assert.True(s.SettlementActive);
+        s.DrainSounds(cues);
+        SoundCue result = Assert.Single(cues, c => c.Key == SceneMusic.ResultSound);
+        Assert.Equal(SoundCueKind.Ui, result.Kind);                       // 界面音:不是背景音乐
+        Assert.DoesNotContain(cues, c => c.Kind == SoundCueKind.RoomEnter || c.Kind == SoundCueKind.RoomSound);   // 房间的音乐与环境声照旧
+
+        cues.Clear();
+        Run(s, 3000);                                                     // 之后不再重复
+        s.DrainSounds(cues);
+        Assert.DoesNotContain(cues, c => c.Key == SceneMusic.ResultSound);
+    }
+
+    [Fact]
     public void TheMenuChoiceIsOnlyAcceptedOnceAfterTheSettlementStartsAndOnlyForEnabledRows()
     {
         using var d = new Dungeon(TwoRoomBossLayout(), (cx, cy) => None());
