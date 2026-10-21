@@ -335,7 +335,21 @@ namespace Dnf.Game
         }
 
         private MonsterBaseTables _monsterBaseTables;
+        private HpGaugeFactors _hpGaugeFactors;
         private readonly Dictionary<MonsterDef, MonsterBaseTable> _ownTables = new Dictionary<MonsterDef, MonsterBaseTable>();
+
+        /// <summary>目标怪物血条长度的三个系数(monster/monsterapcdifficultybonus.tbl 的 [adjust hp gauge];缺文件或缺块全是 1;证据 E-106)。</summary>
+        public HpGaugeFactors HpGaugeFactors
+        {
+            get
+            {
+                if (_hpGaugeFactors == null)
+                {
+                    _hpGaugeFactors = HpGaugeFactors.Parse(ReadScript(HpGaugeFactors.Path));
+                }
+                return _hpGaugeFactors;
+            }
+        }
 
         /// <summary>五张公共怪物基础属性表(第一次用到时读取并缓存;缺的表为空表)。</summary>
         public MonsterBaseTables MonsterBaseTables

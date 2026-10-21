@@ -358,6 +358,12 @@ namespace Dnf.Play
 
         /// <summary>原版的底栏(血魔球、技能槽等,证据 E-088);图包里没有时为 null,退回占位的色块血条。</summary>
         private readonly HudArt _hud;
+
+        /// <summary>原版样式的目标怪物血条窗口(证据 E-106);图包里没有 monster_hp.img 时为 null,退回占位的色块血条(<see cref="Target"/>)。</summary>
+        private MonsterHpWindow _monsterHp;
+
+        /// <summary>界面计时用的墙钟(毫秒):每一小步累加,与命中停顿无关(目标血条的闪光与缩短、死亡 X 的闪烁都按它走)。</summary>
+        private double _hudClockMs;
         private readonly List<HitPopup> _popups = new List<HitPopup>();
         private readonly List<AnimatedEffect> _effects = new List<AnimatedEffect>();
         private readonly List<MonsterProjectile> _projectiles = new List<MonsterProjectile>();
@@ -413,8 +419,17 @@ namespace Dnf.Play
         /// <summary>其中打中主角的个数。</summary>
         public int ProjectileHits { get; private set; }
 
-        /// <summary>最近一次被打中的怪物(用来画左上角的血条);久未再中就不画。</summary>
+        /// <summary>最近一次被打中的怪物(占位血条用,<see cref="TargetBarMs"/> 毫秒内没再被打中就清空);原版样式的窗口见 <see cref="MonsterWindow"/>。</summary>
         public MonsterActor Target { get; private set; }
+
+        /// <summary>原版样式的目标怪物血条窗口(证据 E-106);图包里没有对应的图时为 null。</summary>
+        public MonsterHpWindow MonsterWindow => _monsterHp;
+
+        /// <summary>用另一个图源重建目标血条窗口(没有原版图包的测试里喂合成的图);传 null,或图源里没有窗口的基本两帧,就退回占位的色块血条。</summary>
+        public void UseMonsterWindowArt(ISpriteSource sprites)
+        {
+            _monsterHp = sprites == null ? null : MonsterHpWindow.For(sprites, _art);
+        }
 
         public int Hits { get; private set; }
         public int Kills { get; private set; }
@@ -533,6 +548,7 @@ namespace Dnf.Play
             _jumpStrike = jumpStrike;
             _boxes = new HeroStrikeBoxes(assets);
             _hud = HudArt.For(assets);
+            _monsterHp = MonsterHpWindow.For(assets, _art);
             _random = new Random(seed);
             _physicsRandom = new Random(unchecked(seed * 31 + 17));
             _heroDown = new HeroKnockdown(_room.Hero);
@@ -784,6 +800,7 @@ namespace Dnf.Play
                 }
                 actor.PhysicalAttack = stats.PhysicalAttack;
                 actor.MagicalAttack = stats.MagicalAttack;
+                actor.Panel = MonsterPanelInfo.From(def, kind, level, stats.HpMax, data);   // 目标血条窗口的资料(证据 E-106)
                 actor.Sounds = new MonsterSounds(def.AppearSound, def.DamageSound, def.DieSound, def.AttackSound, def.AmbientSound);
                 actors.Add(actor);
             }
@@ -997,6 +1014,8 @@ namespace Dnf.Play
             }
             _targetMs += deltaMs;
             _comboMs += deltaMs;
+            _hudClockMs += deltaMs;
+            _monsterHp?.Update(_hudClockMs);
             if (_comboMs >= ComboMs)
             {
                 Combo = 0;
@@ -1112,6 +1131,7 @@ namespace Dnf.Play
                 : PlaceholderDamage.Roll(info.DamageBonus, _random);
             // 受击硬直与击退按客户端的公式算(证据 E-080);没有硬直表时 StunInput 无效,怪物走占位值。
             // 倒地(以及空中、倒地中又挨打)按客户端的开始处理算:体重缩放的击飞、z 抛物线、落地后颠一下再躺下(证据 E-082、E-083)
+            _monsterHp?.SetTarget(monster, _hudClockMs);    // 先选中再结算:血条先取这一击之前的生命,这一击才会掉出一段闪光(证据 E-106)
             bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, hero.FacingLeft, StunInput(info), DownInput(info));
             EmitHitCues(hero, info, monster, killed);
             int stun = HitStop.StunMs(info.HitValue, info.UseWeaponHitDelayRate, WeaponStunMs);
@@ -1382,7 +1402,11 @@ namespace Dnf.Play
         {
             int order = 0;
             MonsterActor target = Target;
-            if (target != null)
+            if (_monsterHp != null)
+            {
+                _monsterHp.Build(into, ref order);
+            }
+            else if (target != null)
             {
                 int filled = (int)Math.Round((double)(TargetBarWidth - 2) * target.Hp / target.HpMax);
                 if (target.Hp > 0 && filled < 1)

@@ -121,6 +121,21 @@ namespace Dnf.Game
             }
         }
 
+        /// <summary>
+        /// [face image]:怪物头像所在的图(形如 "Monster/MonsterFace.img",原样保留大小写)与帧号(证据 E-106:目标血条窗口里的 24×24 小头像);
+        /// 没写这个标签则 <see cref="FaceImage"/> 为 null、<see cref="FaceIndex"/> 为 -1。
+        /// </summary>
+        public string FaceImage => Tags.FirstString("[face image]");
+
+        public int FaceIndex
+        {
+            get
+            {
+                int[] v = Tags.Ints("[face image]");
+                return FaceImage != null && v.Length > 0 ? v[0] : -1;
+            }
+        }
+
         /// <summary>[level]:怪物等级范围(缺省 0 0)。怪物实际等级由出场它的地图给出,属性在这个范围内插值。</summary>
         public IntPair Level { get; }
 

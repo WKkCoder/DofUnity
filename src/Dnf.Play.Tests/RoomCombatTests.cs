@@ -554,6 +554,62 @@ public class RoomCombatTests
     }
 
     [Fact]
+    public void TheOriginalStyleWindowReplacesThePlaceholderBarAndFollowsItsOwnClock()
+    {
+        using var arena = new Arena(new[] { (340, 100) });
+        RoomCombatSession s = arena.Session;
+        Assert.Null(s.MonsterWindow);                                     // 合成图包里没有 monster_hp.img:退回占位血条
+        s.UseMonsterWindowArt(WindowSprites.Window());
+        MonsterHpWindow w = Assert.IsType<MonsterHpWindow>(s.MonsterWindow);
+        MonsterActor m = s.Monsters[0];
+        m.Panel = new MonsterPanelInfo(MonsterKind.Normal, WindowSprites.FaceImage, 3, new[] { "[human]" }, 100);
+        Assert.False(w.Visible);
+        Assert.DoesNotContain(s.Build(0), x => x.AnimationPath != null && x.AnimationPath.StartsWith("mhp-"));
+
+        arena.Run(250, 0);                                                // 命中发生在 200 毫秒
+        Assert.Equal(1, s.Hits);
+        Assert.Same(m, w.Target);
+        Assert.True(w.Visible);
+        // 窗口先选中再结算,所以这一击掉出一段闪光;当前填充 = 剩余生命占最大生命的比例
+        Assert.Equal(HpGauge.Fill(100, m.Hp, m.HpMax), w.Value);
+        Assert.Equal(1, w.HistoryCount);
+        List<SceneSprite> overlay = s.Build(0).Where(x => x.LayerRank == OverlayArt.UiRank).ToList();
+        Assert.Contains(overlay, x => x.AnimationPath == "mhp-body");
+        Assert.Contains(overlay, x => x.AnimationPath == "mhp-flash");
+        Assert.Contains(overlay, x => x.AnimationPath == "damage");       // 伤害数字照旧
+        Assert.DoesNotContain(overlay, x => x.AnimationPath == "target-bar" || x.AnimationPath == "target-label");
+
+        // 窗口不受占位血条 3.5 秒超时的限制:很久没再打,窗口还在,掉血历史早已播完(白闪 500 毫秒 + 缩短 125 毫秒)
+        arena.Run(4000);
+        Assert.Null(s.Target);
+        Assert.True(w.Visible);
+        Assert.Equal(0, w.HistoryCount);
+        Assert.Equal(1, s.Hits);
+    }
+
+    [Fact]
+    public void KillingTheTargetKeepsTheWindowForAboutASecondThenHidesIt()
+    {
+        using var arena = new Arena(new[] { (340, 100) }, new[] { new HeroStrikeInfo(2000, 0, false), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false) },
+            hp: 10);
+        RoomCombatSession s = arena.Session;
+        s.UseMonsterWindowArt(WindowSprites.Window());
+        MonsterHpWindow w = s.MonsterWindow!;
+        s.Monsters[0].Panel = new MonsterPanelInfo(MonsterKind.Normal, WindowSprites.FaceImage, 3, new string[0], 60);
+        arena.Run(300, 0);                                                // 加成 2000%:200 毫秒那一击秒杀
+        Assert.Equal((1, 1), (s.Hits, s.Kills));
+        Assert.True(w.Dead);
+        Assert.Equal(0, w.Value);
+        Assert.True(w.Visible);
+        Assert.Contains(s.Build(0), x => x.AnimationPath == "mhp-face");
+        arena.Run(800);                                                   // 死后约 900 毫秒:窗口还在
+        Assert.True(w.Visible);
+        arena.Run(200);                                                   // 死后约 1100 毫秒:消失
+        Assert.False(w.Visible);
+        Assert.DoesNotContain(s.Build(0), x => x.AnimationPath != null && x.AnimationPath.StartsWith("mhp-"));
+    }
+
+    [Fact]
     public void BuildAddsTheMonstersAndTheOverlayAboveTheScene()
     {
         using var arena = new Arena(new[] { (340, 100), (700, 100) });
