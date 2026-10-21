@@ -11,6 +11,7 @@ namespace Dnf.Cli.Analysis;
 /// `dnf mob-check [--dump &lt;文件&gt;] [--json &lt;文件&gt;]`(证据 E-062):用 Dnf.Game 的 MonsterDef 读全库 monster/monster.lst 列出的 .mob,
 ///   统计:列表项数、文件缺失、不是标记流、成对标签(两个整数)的不规整、[level] 范围的形状、[ability category] 的类别与运算符直方图、
 ///   基础属性表的选择与命中情况、引用到的 .act/.ani/.atk/.ai 路径是否存在(按相对 .mob 目录解析),
+///   [attack kind] 的结构(整数个数是 12 的倍数、三个概率在 0 到 100、射程非负;记录条数与 [attack motion] 个数的对应只报告,证据 E-100),
 ///   以及按等级算出属性后的基本合理性(生命上限为正)。
 ///   --dump 写出每个怪物在若干等级与种类下算出的完整数值块(每行 编号、等级、种类、整数列表),
 ///   可与 `tools/py/mob_ability_ref.py --dump` 的输出逐行对拍(两份独立实现)。
@@ -57,6 +58,10 @@ internal static class MobCheck
         int ownTableDefs = 0, ownTableLoaded = 0, ownTableShorterThanCommon = 0;
         int rowMissingMin = 0, rowMissingMax = 0, hpNonPositiveMin = 0, hpNonPositiveMax = 0, computed = 0;
         int statusResistanceTagsAbsentAll = 0;
+        // [attack kind](E-100):有标签的文件数、整数个数不是 12 的倍数的文件数、记录总数、记录条数与 [attack motion] 个数对不上的文件数、
+        // 有射程范围的记录数、有攻击动作却没有这个标签的文件数、概率超出 0 到 100 的记录数。只统计个数,不输出任何数值。
+        int attackKindDefs = 0, attackKindBadShape = 0, attackKindRecords = 0, attackKindCountMismatch = 0, attackKindWithExtents = 0;
+        int attackKindMissing = 0, attackKindChanceOutOfRange = 0, attackKindNegativeReach = 0;
         var assets = new SortedDictionary<string, AssetCounter>(StringComparer.Ordinal);
         var dump = new StringBuilder();
 
@@ -182,6 +187,38 @@ internal static class MobCheck
                 }
                 categoryEntries += triples;
                 categoryDroppedEntries += triples - def.AbilityCategories.Length;
+            }
+
+            if (def.Tags.TryGetLine("[attack kind]", out ScriptLine kindLine))
+            {
+                attackKindDefs++;
+                if (kindLine.Values.Length % AttackKindRecord.TokensPerRecord != 0)
+                {
+                    attackKindBadShape++;
+                }
+                AttackKindRecord[] kinds = AttackKindRecord.Parse(def.Tags);
+                attackKindRecords += kinds.Length;
+                if (kinds.Length != def.AttackMotions.Length)
+                {
+                    attackKindCountMismatch++;
+                }
+                foreach (AttackKindRecord rec in kinds)
+                {
+                    attackKindWithExtents += rec.HasExtents ? 1 : 0;
+                    if (rec.ChanceInRange < 0 || rec.ChanceInRange > 100 || rec.ChanceAnywhere < 0 || rec.ChanceAnywhere > 100
+                        || rec.ChanceObject < 0 || rec.ChanceObject > 100)
+                    {
+                        attackKindChanceOutOfRange++;
+                    }
+                    if (rec.FrontReach < 0 || rec.BackReach < 0 || rec.YMinusReach < 0 || rec.YPlusReach < 0)
+                    {
+                        attackKindNegativeReach++;
+                    }
+                }
+            }
+            else if (def.AttackMotions.Length > 0)
+            {
+                attackKindMissing++;
             }
 
             MonsterBaseTable? own = null;
@@ -336,6 +373,10 @@ internal static class MobCheck
             + " 个文件,被解析器丢弃(不认识的类别名)" + categoryDroppedEntries + " 项");
         Console.WriteLine("  类别名:" + string.Join(",", categoryNames.Select(kv => kv.Key + "×" + kv.Value)));
         Console.WriteLine("  运算符:" + string.Join(",", categoryOps.Select(kv => "\"" + kv.Key + "\"×" + kv.Value)));
+        Console.WriteLine("[attack kind](E-100):" + attackKindDefs + " 个文件,共 " + attackKindRecords + " 条记录,整数个数不是 12 的倍数 " + attackKindBadShape
+            + " 个文件,记录条数与 [attack motion] 个数对不上 " + attackKindCountMismatch + " 个文件,有射程范围的记录 " + attackKindWithExtents
+            + " 条,概率超出 0 到 100 的记录 " + attackKindChanceOutOfRange + " 条,射程为负的记录 " + attackKindNegativeReach
+            + " 条;有攻击动作却没有这个标签的文件 " + attackKindMissing);
         Console.WriteLine("选基础属性表(等级取最小、普通种类、不带副本参数):" + string.Join(",", tableChosen.Select(kv => "表" + kv.Key + "×" + kv.Value)));
         Console.WriteLine("带 [base table] 的怪物:" + ownTableDefs + ",其中读到表的 " + ownTableLoaded + ",自带表比公共表行数少的 " + ownTableShorterThanCommon);
         Console.WriteLine("按等级算属性:共 " + computed + " 次(最小/最大等级各一次)。查不到表行:最小 " + rowMissingMin + "、最大 " + rowMissingMax
@@ -374,6 +415,14 @@ internal static class MobCheck
                 ["categoryDroppedEntries"] = categoryDroppedEntries,
                 ["categoryNames"] = categoryNames,
                 ["categoryOps"] = categoryOps,
+                ["attackKindDefs"] = attackKindDefs,
+                ["attackKindBadShape"] = attackKindBadShape,
+                ["attackKindRecords"] = attackKindRecords,
+                ["attackKindCountMismatch"] = attackKindCountMismatch,
+                ["attackKindWithExtents"] = attackKindWithExtents,
+                ["attackKindMissing"] = attackKindMissing,
+                ["attackKindChanceOutOfRange"] = attackKindChanceOutOfRange,
+                ["attackKindNegativeReach"] = attackKindNegativeReach,
                 ["tableChosen"] = tableChosen.ToDictionary(kv => kv.Key.ToString(CultureInfo.InvariantCulture), kv => kv.Value),
                 ["ownTableDefs"] = ownTableDefs,
                 ["ownTableLoaded"] = ownTableLoaded,
@@ -387,7 +436,9 @@ internal static class MobCheck
             Console.WriteLine("已写出 " + opts.JsonFile);
         }
 
-        bool ok = missingFile == 0 && notParsed == 0 && categoryDroppedEntries == 0;
+        // [attack kind] 的结构应当规整:整数个数是 12 的倍数、三个概率在 0 到 100、四个射程非负(这是 E-100 对各项含义的旁证);记录条数与动作个数对不上只报告
+        bool ok = missingFile == 0 && notParsed == 0 && categoryDroppedEntries == 0
+            && attackKindBadShape == 0 && attackKindChanceOutOfRange == 0 && attackKindNegativeReach == 0;
         return ok ? 0 : 1;
     }
 

@@ -30,7 +30,7 @@
 | `.stk` | 10,350 | 211 | 198,664 | 6.1% | 208 / 100.0% | 206 / 100.0% | — |  |  |  |
 | `.ai` | 7,104 | 49 | 126,089 | 3.9% | 49 / 100.0% | 16 / 41.3% | 0 / 0.0% | 49 / 100.0% | AiVocabulary / AiParser(词表与解析) | E-052:全库读通(没有独立参照) |
 | `.atk` | 6,394 | 103 | 103,256 | 3.2% | 83 / 99.7% | 78 / 99.2% | 82 / 95.7% |  | AttackInfoLoader | E-047:全库逐字段对 Python 参照 |
-| `.mob` | 2,070 | 214 | 93,698 | 2.9% | 207 / 99.7% | 204 / 99.6% | 71 / 69.9% |  | MonsterDef / MonsterAbility | E-062、E-063:数值块对 Python 参照与原版机器码 |
+| `.mob` | 2,070 | 214 | 93,698 | 2.9% | 207 / 99.7% | 204 / 99.6% | 72 / 70.6% |  | MonsterDef / MonsterAbility / AttackKindRecord | E-062、E-063:数值块对 Python 参照与原版机器码 |
 | `.map` | 2,948 | 103 | 74,883 | 2.3% | 91 / 100.0% | 91 / 100.0% | 23 / 69.0% |  | RoomMap / MapScript / TownScene |  |
 | `.qst` | 3,224 | 63 | 62,751 | 1.9% | 62 / 100.0% | 62 / 100.0% | — |  |  |  |
 | `.obj` | 6,867 | 90 | 52,939 | 1.6% | 89 / 100.0% | 89 / 100.0% | 9 / 54.0% |  | PassiveObjectDef / ObjectDef |  |
@@ -62,7 +62,7 @@
 | 类型 | 没读入的种数 | 出现最多的没读标签(次数) |
 |---|---|---|
 | `.atk` | 21 | `[no element]` 4,147; `[hit horizontal]` 148 (都不认识); `[no elemental]` 71 (都不认识); `[noblood]` 32 (都不认识); `[none element]` 31 (都不认识); `[hit]` 15; `[knock]` 13 (都不认识) |
-| `.mob` | 143 | `[face image]` 2,065; `[die effect]` 1,637; `[hero]` 1,440; `[cooltime]` 1,391; `[easy]` 1,383; `[medium]` 1,374; `[hard]` 1,374 |
+| `.mob` | 142 | `[face image]` 2,065; `[die effect]` 1,637; `[hero]` 1,440; `[cooltime]` 1,391; `[easy]` 1,383; `[medium]` 1,374; `[hard]` 1,374 |
 | `.skl` | 77 | `[name]` 1,952; `[basic explain]` 1,952; `[growtype maximum level]` 1,951; `[explain]` 1,950; `[skill class]` 1,949; `[skill fitness growtype]` 1,940; `[name2]` 1,738 |
 | `.chr` | 41 | `[physical attack]` 181; `[magical attack]` 181; `[inventory limit]` 181; `[module damage rate]` 174; `[awakening skill]` 106; `[skill]` 64; `[awakening name]` 53 |
 | `.map` | 80 | `[player number]` 2,948; `[pvp start area]` 2,948; `[map name]` 2,948; `[dungeon]` 2,724; `[background animation]` 2,557; `[monster specific AI]` 2,337; `[event monster position]` 2,040 |
@@ -90,18 +90,18 @@
 
 ### 表 4　证据可追溯性
 
-台账 99 条(E-001 到 E-099),其中 96 条的"复现"栏里有可运行的命令或文件。代码、测试、文档与脚本里一共引用了 97 个不同的证据编号;**台账里找不到的引用:无**;台账里没人引用的编号:E-026、E-040。
+台账 102 条(E-001 到 E-102),其中 99 条的"复现"栏里有可运行的命令或文件。代码、测试、文档与脚本里一共引用了 100 个不同的证据编号;**台账里找不到的引用:无**;台账里没人引用的编号:E-026、E-040。
 
 | 包 | 生产代码文件 | 引用了证据的文件 | 占比 | 行数 | 引用证据的文件所含行数占比 |
 |---|---:|---:|---:|---:|---:|
 | `com.dnfunity.client` | 7 | 7 | 100% | 2,705 | 100% |
 | `com.dnfunity.data` | 13 | 13 | 100% | 2,793 | 100% |
-| `com.dnfunity.game` | 61 | 61 | 100% | 12,514 | 100% |
-| `com.dnfunity.play` | 28 | 28 | 100% | 9,292 | 100% |
+| `com.dnfunity.game` | 62 | 62 | 100% | 12,742 | 100% |
+| `com.dnfunity.play` | 29 | 29 | 100% | 9,627 | 100% |
 | `com.dnfunity.render` | 30 | 30 | 100% | 8,951 | 100% |
 | `com.dnfunity.script` | 5 | 5 | 100% | 657 | 100% |
 | `com.dnfunity.squirrel` | 4 | 4 | 100% | 1,450 | 100% |
-| **合计** | 148 | 148 | 100% | 38,362 | 100% |
+| **合计** | 150 | 150 | 100% | 38,925 | 100% |
 
 另有 11 个文件不实现原版规则(测试工具、Unity 自检与封装、小工具),不要求引用证据,不计入上表:`client/RenderSelfTest.cs`、`client/TouchOverlay.cs`、`client/UnityObjects.cs`、`data/Adler32.cs`、`data/DnfFormatException.cs`、`data/Latin1.cs`、`game/Defs/TagTable.cs`、`play/CombatScript.cs`、`play/DungeonBot.cs`、`play/TouchScript.cs`、`squirrel/MonoPInvokeCallbackAttribute.cs`。
 

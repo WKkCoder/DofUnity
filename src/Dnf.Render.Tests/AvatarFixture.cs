@@ -135,6 +135,12 @@ internal sealed class AvatarFixture : IDisposable
     public const string BlobShortDownMobPath = "monster/blob/short.mob";
 
     /// <summary>
+    /// 有两个攻击动作的迷你怪物([attack motion] 依次是 Attack1.ani、<see cref="BlobStrikeAni"/>,[attack info] 依次是一个不存在的脚本与 <see cref="BlobStrikerAtk"/>):
+    /// 测"决策挑了第几招就放第几招的动画与攻击信息"。其余动作与 <see cref="BlobMobPath"/> 相同。
+    /// </summary>
+    public const string BlobDuoMobPath = "monster/blob/duo.mob";
+
+    /// <summary>
     /// 会伤人的迷你怪物:出招动画 <see cref="BlobStrikeAni"/> 四帧各 80 毫秒,第 2 帧(160 到 240 毫秒)带一个攻击框(类型 15):
     /// x 从 +10 起宽 40,y 从 −10 起深 20,z 从 0 起高 50(纯属测试用的数);出招的攻击信息 <see cref="BlobStrikerAtk"/> 是 [damage bonus]
     /// <see cref="StrikerDamageBonus"/>、普通受击([damage reaction] [damage])。其余动作与 <see cref="BlobMobPath"/> 相同。
@@ -416,6 +422,14 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
                 .Tag("[damage motion 1]").Str("Animation_Blob/Damage1.ani")
                 .Tag("[down motion]").Str("Animation_Blob/Attack1.ani").Build()),
+            (BlobDuoMobPath, NewScript()
+                .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
+                .Tag("[move motion]").Str("Animation_Blob/Move.ani")
+                .Tag("[damage motion 1]").Str("Animation_Blob/Damage1.ani")
+                .Tag("[damage motion 2]").Str("Animation_Blob/Damage2.ani")
+                .Tag("[down motion]").Str("Animation_Blob/Down.ani")
+                .Tag("[attack motion]").Str("Animation_Blob/Attack1.ani").Str("Animation_Blob/Strike.ani")
+                .Tag("[attack info]").Str("AttackInfo/Missing.atk").Str("AttackInfo/Striker.atk").Build()),
             ("monster/blob/big.mob", NewScript()
                 .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani").Build()),
             // 受击动画只有一帧、停留 10000 毫秒(原版的受击动画就是这样:停多久由游戏逻辑决定);倒地动画的中间两帧同理

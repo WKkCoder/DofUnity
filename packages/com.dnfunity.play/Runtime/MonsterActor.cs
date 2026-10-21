@@ -140,7 +140,18 @@ namespace Dnf.Play
         private int _rollState;
         private int[] _holdFrames;
         private bool _dyingFromDown;
-        private List<AniBox> _strikeBoxes;
+        private readonly Dictionary<int, List<AniBox>> _strikeBoxes = new Dictionary<int, List<AniBox>>();
+
+        // 默认 AI 的出招决策(证据 E-100、E-101):有 [attack kind] 记录时由 MonsterAttackChooser 决定出哪一招、什么时候出;没有时走旧的"够得着就出招 + 冷却"占位
+        private MonsterAttackChooser _chooser;
+        private double _aiClockMs;
+        private int _attackIndex;
+        private HeroStrikeInfo _strike;
+        private HeroStrikeInfo[] _strikes;
+        private Func<int, bool> _reachTest;
+        private double _reachDx;
+        private double _reachDy;
+        private IReadOnlyList<Aabb> _reachBoxes;
 
         /// <summary>血已经没了、但还在走倒地流程(腾空、颠一下);躺下的那一刻转入死亡(证据 E-079 第 3 步、E-082、E-084)。</summary>
         private bool _dead;
@@ -254,7 +265,50 @@ namespace Dnf.Play
             AttackRate = attackSpeed > 0 ? attackSpeed / MonsterTuning.AttackSpeedUnit : 1.0;
             Phase = MonsterPhase.Wait;
             _cooldownMs = 0;
+            _reachTest = ReachesTarget;
         }
+
+        /// <summary>
+        /// 装上 .mob 的 [attack kind] 记录(第 i 条对应第 i 个 [attack motion]),之后出招改由 <see cref="MonsterAttackChooser"/> 决定(证据 E-100、E-101)。
+        /// 没有动画的那几招不参与;<paramref name="records"/> 为空时仍走旧的占位(够得着就出招 + 冷却)。<paramref name="seed"/> 决定这只怪物的随机数序列。
+        /// </summary>
+        public void SetAttackKinds(IReadOnlyList<AttackKindRecord> records, uint seed)
+        {
+            if (records == null || records.Count == 0)
+            {
+                _chooser = null;
+                return;
+            }
+            uint state = seed;
+            var chooser = new MonsterAttackChooser(records, AttackDelayMs, () => ClientRandom.Next(ref state));
+            bool any = false;
+            for (int i = 0; i < records.Count; i++)
+            {
+                if (i >= _model.Attacks.Count || _model.Attacks[i] == null)
+                {
+                    chooser.Disable(i);
+                }
+                else
+                {
+                    any = true;
+                }
+            }
+            _chooser = any ? chooser : null;           // 一招动画都没有:不出招,走旧的占位(够近就站住)
+        }
+
+        /// <summary>出招决策器;没有装 [attack kind] 记录时为 null(旧的占位逻辑)。</summary>
+        public MonsterAttackChooser AttackChooser => _chooser;
+
+        /// <summary>这一次(或最近一次)出的是第几招(<see cref="MonsterModel.Attacks"/> 的下标)。</summary>
+        public int AttackIndex => _attackIndex;
+
+        /// <summary>怪物自己的时钟:出生以来过去的毫秒数(命中停顿里不走);出招决策的"出生后 3 秒内不决策"按它算。</summary>
+        public long AiClockMs => (long)_aiClockMs;
+
+        /// <summary>出招决策里目标(主角)的碰撞宽度与进深;射程判断把目标的半边按它们的四分之一放宽(证据 E-101)。缺省 40 与 20。</summary>
+        public int TargetWidth { get; set; } = 40;
+
+        public int TargetDepth { get; set; } = 20;
 
         /// <summary>当前阶段播放的动画。</summary>
         public AniFile CurrentAni
@@ -268,7 +322,7 @@ namespace Dnf.Play
                         ani = _model.Move;
                         break;
                     case MonsterPhase.Attack:
-                        ani = _model.Attacks.Count > 0 ? _model.Attacks[0] : null;
+                        ani = _attackIndex < _model.Attacks.Count ? _model.Attacks[_attackIndex] : null;
                         break;
                     case MonsterPhase.Hurt:
                         ani = _hurtAni;
@@ -347,6 +401,7 @@ namespace Dnf.Play
                 }
             }
             _phaseMs += deltaMs;
+            _aiClockMs += deltaMs;
             if (Hp <= 0)
             {
                 _deathMs += deltaMs;
@@ -412,8 +467,21 @@ namespace Dnf.Play
         /// <summary>这一次出招已经打中过主角(同一次出招的多个攻击框、多帧只算一次)。</summary>
         public bool HitHeroThisSwing { get; set; }
 
-        /// <summary>怪物这次出招用的攻击信息(<see cref="MonsterModel.AttackInfoPaths"/> 里与 <see cref="MonsterModel.Attacks"/> 第 0 项对应的那一个);没有时是全默认值。</summary>
-        public HeroStrikeInfo Strike { get; set; }
+        /// <summary>
+        /// 怪物这次出招用的攻击信息(<see cref="MonsterModel.AttackInfoPaths"/> 里与当前这一招 <see cref="AttackIndex"/> 对应的那一个);没有时是全默认值。
+        /// 设置它等于设置第 0 招的攻击信息;各招分别的攻击信息用 <see cref="SetStrikes"/> 给。
+        /// </summary>
+        public HeroStrikeInfo Strike
+        {
+            get => _strikes != null && _attackIndex < _strikes.Length ? _strikes[_attackIndex] : _strike;
+            set => _strike = value;
+        }
+
+        /// <summary>各招的攻击信息(与 <see cref="MonsterModel.Attacks"/> 同下标);下标越界的招回退到 <see cref="Strike"/> 里设置的那一个。</summary>
+        public void SetStrikes(HeroStrikeInfo[] strikes)
+        {
+            _strikes = strikes;
+        }
 
         /// <summary>怪物的物理攻击力(<see cref="MonsterStats.PhysicalAttack"/>):打主角的占位伤害用;没给就是 0。</summary>
         public int PhysicalAttack { get; set; }
@@ -452,15 +520,15 @@ namespace Dnf.Play
             return result;
         }
 
-        /// <summary>出招动画(第 0 个 [attack motion])所有帧里的攻击框(原始坐标,朝右):判断"这一击能不能够到主角"用。</summary>
-        private List<AniBox> StrikeBoxes()
+        /// <summary>出招动画(第 <paramref name="attackIndex"/> 个 [attack motion])所有帧里的攻击框(原始坐标,朝右):判断"这一击能不能够到主角"用。</summary>
+        private List<AniBox> StrikeBoxes(int attackIndex = 0)
         {
-            if (_strikeBoxes != null)
+            if (_strikeBoxes.TryGetValue(attackIndex, out List<AniBox> cached))
             {
-                return _strikeBoxes;
+                return cached;
             }
-            _strikeBoxes = new List<AniBox>();
-            AniFile ani = _model.Attacks.Count > 0 ? _model.Attacks[0] : null;
+            var boxes = new List<AniBox>();
+            AniFile ani = attackIndex >= 0 && attackIndex < _model.Attacks.Count ? _model.Attacks[attackIndex] : null;
             if (ani != null)
             {
                 foreach (AniFrame frame in ani.Frames)
@@ -469,23 +537,24 @@ namespace Dnf.Play
                     {
                         if (box.Type == AniBoxType.Attack)
                         {
-                            _strikeBoxes.Add(box);
+                            boxes.Add(box);
                         }
                     }
                 }
             }
-            return _strikeBoxes;
+            _strikeBoxes[attackIndex] = boxes;
+            return boxes;
         }
 
         /// <summary>
         /// 按此刻的位置与朝向出招,攻击框(任意一帧的)会不会碰到主角此刻的受击框。这是个几何近似:原版的怪物(C++ 默认 AI,
         /// 读 [attack kind] 等标签)是按什么距离出招的还没读通,取"挥出去能打中"作为靠近的标准,走到够得着就停(出招条件的推断,P5.M5)。
         /// </summary>
-        private bool CanReach(IReadOnlyList<Aabb> heroBoxes)
+        private bool CanReach(IReadOnlyList<Aabb> heroBoxes, int attackIndex = 0)
         {
             int direction = FacingLeft ? Direction.Left : Direction.Right;
             int wx = (int)Math.Floor(X), wy = (int)Math.Floor(Y), wz = (int)Math.Floor(Z);
-            foreach (AniBox box in StrikeBoxes())
+            foreach (AniBox box in StrikeBoxes(attackIndex))
             {
                 Aabb strike = Combat.ToWorld(box, wx, wy, wz, direction);
                 for (int i = 0; i < heroBoxes.Count; i++)
@@ -500,9 +569,32 @@ namespace Dnf.Play
         }
 
         /// <summary>
+        /// 出招决策里"没有射程范围的那一招够不够得着目标"(推断,证据 E-101):只对第 0 招(基础攻击)用旧的几何判断——
+        /// 给了主角的受击框、而且这一招的动画有攻击框时看攻击框能不能碰到(<see cref="CanReach"/>),否则用固定距离;其余招不靠它触发。
+        /// </summary>
+        private bool ReachesTarget(int attackIndex)
+        {
+            if (attackIndex != 0)
+            {
+                return false;
+            }
+            bool geometric = _reachBoxes != null && _reachBoxes.Count > 0 && StrikeBoxes(0).Count > 0;
+            return geometric
+                ? CanReach(_reachBoxes, 0)
+                : Math.Abs(_reachDx) <= MonsterTuning.AttackRangeX && Math.Abs(_reachDy) <= MonsterTuning.AttackRangeY;
+        }
+
+        private static int RoundToInt(double value)
+        {
+            return (int)Math.Round(value, MidpointRounding.AwayFromZero);
+        }
+
+        /// <summary>
         /// 待机与行走时的决策:够近就出招,在视野里就走过去,否则站着。
-        /// 给了主角的受击框、而且出招动画有攻击框时,"够近"= 这一击能打到(<see cref="CanReach"/>),走到够得着为止(最近停在 <see cref="MonsterTuning.MinSeparationX"/> 之外);
-        /// 否则用固定的距离(<see cref="MonsterTuning.AttackRangeX"/>、<see cref="MonsterTuning.AttackRangeY"/>)。
+        /// 没装 [attack kind] 记录时(旧占位):给了主角的受击框、而且出招动画有攻击框时,"够近"= 这一击能打到(<see cref="CanReach"/>),走到够得着为止
+        /// (最近停在 <see cref="MonsterTuning.MinSeparationX"/> 之外),够近且冷却完了就出招;否则用固定的距离(<see cref="MonsterTuning.AttackRangeX"/>、<see cref="MonsterTuning.AttackRangeY"/>)。
+        /// 装了记录时(证据 E-100、E-101):站着时由 <see cref="MonsterAttackChooser"/> 按 [attack delay] 的节奏决定出不出、出哪一招,
+        /// "够近"= 有一条可用的记录够得着目标(射程范围或第 0 招的几何判断)。移动与视野仍是占位(原版的移动与朝目标走的细节没有读通)。
         /// </summary>
         private void Think(double deltaMs, double heroX, double heroY, bool heroPresent, IWalkArea walk, IReadOnlyList<Aabb> heroBoxes)
         {
@@ -521,13 +613,37 @@ namespace Dnf.Play
                 FacingLeft = dx < 0;
             }
             bool geometric = heroBoxes != null && heroBoxes.Count > 0 && StrikeBoxes().Count > 0;
-            bool near = geometric
-                ? CanReach(heroBoxes)
-                : Math.Abs(dx) <= MonsterTuning.AttackRangeX && Math.Abs(dy) <= MonsterTuning.AttackRangeY;
+            bool near;
+            if (_chooser != null)
+            {
+                _reachDx = dx;
+                _reachDy = dy;
+                _reachBoxes = heroBoxes;
+                _chooser.EnterHostile();                       // 看到主角就算进入敌对状态(推断:原版是进入主动出击的状态时放大概率)
+                var target = new AttackTarget(RoundToInt(heroX), RoundToInt(heroY), TargetWidth, TargetDepth);
+                int selfX = RoundToInt(X), selfY = RoundToInt(Y);
+                int pick = Phase == MonsterPhase.Wait
+                    ? _chooser.Decide(AiClockMs, selfX, selfY, FacingLeft, true, target, _reachTest)
+                    : -1;
+                if (pick >= 0)
+                {
+                    _attackIndex = pick;
+                    EnterPhase(MonsterPhase.Attack);
+                    return;
+                }
+                near = _chooser.AnyInRange(selfX, selfY, FacingLeft, target, _reachTest);
+            }
+            else
+            {
+                near = geometric
+                    ? CanReach(heroBoxes)
+                    : Math.Abs(dx) <= MonsterTuning.AttackRangeX && Math.Abs(dy) <= MonsterTuning.AttackRangeY;
+            }
             if (near)
             {
-                if (_cooldownMs <= 0 && _model.Attacks.Count > 0 && _model.Attacks[0] != null)
+                if (_chooser == null && _cooldownMs <= 0 && _model.Attacks.Count > 0 && _model.Attacks[0] != null)
                 {
+                    _attackIndex = 0;
                     EnterPhase(MonsterPhase.Attack);
                 }
                 else if (Phase != MonsterPhase.Wait)
@@ -542,7 +658,7 @@ namespace Dnf.Play
             }
             double seconds = deltaMs / 1000.0;
             double stepX = 0, stepY = 0;
-            if (Math.Abs(dx) > (geometric ? MonsterTuning.MinSeparationX : MonsterTuning.AttackRangeX * 0.8))
+            if (Math.Abs(dx) > (geometric || _chooser != null ? MonsterTuning.MinSeparationX : MonsterTuning.AttackRangeX * 0.8))
             {
                 stepX = Math.Sign(dx) * Math.Min(SpeedX * seconds, Math.Abs(dx));
             }

@@ -702,6 +702,8 @@ namespace Dnf.Play
             var models = new Dictionary<int, MonsterModel>();
             var actors = new List<MonsterActor>();
             int index = 0;
+            // 主角的碰撞宽度与进深(.chr 的 [width]):怪物出招的射程判断把目标的半边按它们的四分之一放宽(证据 E-101)
+            int[] heroWidth = chr?.Tags.Ints("[width]");
             foreach (RoomMonsterSpawn spawn in room.Map.Monsters)
             {
                 if (!models.TryGetValue(spawn.Code, out MonsterModel model))
@@ -720,10 +722,23 @@ namespace Dnf.Play
                 MonsterStats stats = MonsterAbility.Compute(def, data.MonsterBaseTables, data.GetMonsterOwnTable(def), level, 0, kind);
                 var actor = new MonsterActor(index++, spawn, model, level, stats.HpMax, WalkSpeed(room.Hero, stats.MoveSpeed > 0 ? stats.MoveSpeed : def.Tags.IntOr("[move speed]", 0)),
                     def.Tags.IntOr("[attack delay]", 0), def.Tags.IntOr("[attack speed]", 0), stats.HitRecovery, stats.Weight);
-                // 出招的攻击信息:[attack info] 与 [attack motion] 同下标,出招固定用第 0 个动作(证据 E-086)
-                actor.Strike = model.AttackInfoPaths.Count > 0 && !string.IsNullOrEmpty(model.AttackInfoPaths[0])
-                    ? HeroStrikeInfo.Read(data, model.AttackInfoPaths[0])
-                    : new HeroStrikeInfo(0, 0, false);
+                // 出招的攻击信息:[attack info] 与 [attack motion] 同下标(证据 E-086);出哪一招由 [attack kind] 的记录决定(证据 E-100、E-101),
+                // 没有记录的怪物仍固定用第 0 个动作
+                var attackStrikes = new HeroStrikeInfo[model.AttackInfoPaths.Count];
+                for (int a = 0; a < attackStrikes.Length; a++)
+                {
+                    attackStrikes[a] = !string.IsNullOrEmpty(model.AttackInfoPaths[a])
+                        ? HeroStrikeInfo.Read(data, model.AttackInfoPaths[a])
+                        : new HeroStrikeInfo(0, 0, false);
+                }
+                actor.Strike = attackStrikes.Length > 0 ? attackStrikes[0] : new HeroStrikeInfo(0, 0, false);
+                actor.SetStrikes(attackStrikes);
+                actor.SetAttackKinds(AttackKindRecord.Parse(def.Tags), unchecked((uint)seed * 2654435761u + (uint)actor.Index * 40503u + 12345u));
+                if (heroWidth != null && heroWidth.Length >= 2)
+                {
+                    actor.TargetWidth = heroWidth[0];
+                    actor.TargetDepth = heroWidth[1];
+                }
                 actor.PhysicalAttack = stats.PhysicalAttack;
                 actor.MagicalAttack = stats.MagicalAttack;
                 actor.Sounds = new MonsterSounds(def.AppearSound, def.DamageSound, def.DieSound, def.AttackSound, def.AmbientSound);
