@@ -64,6 +64,7 @@ internal static class CombatCheck
         int lastHits = 0;
         int lastHeroHits = 0;
         int lastThrown = 0;
+        int lastCombo = 0;
         double t = 0;
         string lastState = string.Empty;
         while (script.TimeMs < totalMs)
@@ -75,7 +76,9 @@ internal static class CombatCheck
             {
                 var sb = new StringBuilder();
                 sb.Append("  t=" + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s  命中 +" + (session.Hits - lastHits) + "  累计 " + session.Hits
-                    + " 击杀 " + session.Kills + " 连击 " + session.Combo + "  第 " + (session.Hero.AttackStage + 1) + " 段"
+                    + " 击杀 " + session.Kills + " 连击 " + session.Combo
+                    + (session.ComboState.Shown > 0 ? "(显示,第 " + (session.ComboState.Tier + 1) + " 档,标签 x " + session.ComboState.LabelX + ")" : "(不显示)")
+                    + "  第 " + (session.Hero.AttackStage + 1) + " 段"
                     + (session.HeroPauseMs > 0 ? "  定住 " + F(session.HeroPauseMs) + " 毫秒" : string.Empty));
                 foreach (MonsterActor m in session.Monsters)
                 {
@@ -96,6 +99,11 @@ internal static class CombatCheck
                 Console.WriteLine(sb.ToString());
                 lastHits = session.Hits;
             }
+            if (lastCombo > 0 && session.Combo == 0)
+            {
+                Console.WriteLine("  t=" + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s  连击清零(上一次累计 " + lastCombo + ",窗口 " + session.ComboState.WindowMs + " 毫秒)");
+            }
+            lastCombo = session.Combo;
             if (session.ProjectilesThrown != lastThrown)
             {
                 // 投射物(E-103):谁扔的、扔出了几个、飞行中的位置与朝向(这些数来自原版数据与我们的推断,只打印、不入库)

@@ -552,7 +552,7 @@ public class RoomCombatTests
         Assert.Empty(s.Popups);                                           // 距命中 1050 毫秒:数字消失
         Assert.NotNull(s.Target);
         Assert.Equal(1, s.Combo);
-        arena.Run(1800);                                                  // 距命中 2850 毫秒 > 2600:连击清零
+        arena.Run(1800);                                                  // 距命中 2850 毫秒 > 1200:连击清零
         Assert.Equal(0, s.Combo);
         Assert.NotNull(s.Target);
         arena.Run(1000);                                                  // 距命中 3850 毫秒 > 3500:血条消失
@@ -742,6 +742,53 @@ public class RoomCombatTests
         arena.Run(500, 0);
         Assert.Equal(2, s.Combo);
         Assert.Contains(s.Build(0), x => x.AnimationPath == "combo");
+    }
+
+    [Fact]
+    public void TheComboShowsTheBitmapArtFromTheSecondHitAndClearsWhenTheWindowRunsOut()
+    {
+        using var arena = new Arena(new[] { (340, 100) });
+        RoomCombatSession s = arena.Session;
+        Assert.Null(s.ComboPicture);                                      // 合成图包里没有 combo.img:先是占位文字
+        s.UseComboArt(new ComboSprites());
+        Assert.NotNull(s.ComboPicture);
+
+        arena.Run(250, 0);                                                // 第一击命中:计数 1,还不显示
+        Assert.Equal((1, 0), (s.Combo, s.ComboState.Shown));
+        Assert.DoesNotContain(s.Build(0), x => x.AnimationPath == "combo");
+
+        arena.Run(500, 0);                                                // 排队的第二段命中:显示 2
+        Assert.Equal((2, 2), (s.Combo, s.ComboState.Shown));
+        List<SceneSprite> combo = s.Build(0).Where(x => x.AnimationPath == "combo").ToList();
+        Assert.Equal("0:-1,0:2", string.Join(",", combo.Select(x =>
+        {
+            (int tier, int digit) = ComboSprites.Decode(x.Frame);
+            return tier + ":" + digit;
+        })));                                                             // 青色一档:标签,再一位数字 2
+        Assert.All(combo, x => Assert.Equal(OverlayArt.UiRank, x.LayerRank));
+        Assert.Equal(ComboCounter.LabelXAt(2, s.ComboState.AgeMs) + ComboSprites.LabelOffsetX, combo[0].ScreenX);
+
+        // 窗口按界面时钟走:最后一击之后满 1200 毫秒才清零,清零之后连击图消失
+        for (int guard = 0; s.Combo > 0 && guard < 400; guard++)
+        {
+            arena.Run(10);
+        }
+        Assert.Equal(0, s.Combo);
+        Assert.InRange(s.ComboState.AgeMs, 1200, 1209);
+        Assert.DoesNotContain(s.Build(0), x => x.AnimationPath == "combo");
+    }
+
+    [Fact]
+    public void WithoutTheComboArtThePlaceholderTextShowsFromTheSecondHit()
+    {
+        using var arena = new Arena(new[] { (340, 100) });
+        RoomCombatSession s = arena.Session;
+        Assert.Null(s.ComboPicture);
+        arena.Run(250, 0);
+        Assert.DoesNotContain(s.Build(0), x => x.AnimationPath == "combo");
+        arena.Run(500, 0);
+        SceneSprite text = Assert.Single(s.Build(0), x => x.AnimationPath == "combo");
+        Assert.Equal(OverlayArt.UiRank, text.LayerRank);
     }
 
     [Fact]

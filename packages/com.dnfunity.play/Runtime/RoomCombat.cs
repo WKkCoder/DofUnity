@@ -362,7 +362,9 @@ namespace Dnf.Play
         public const int NumberRise = 60;
 
         public const double TargetBarMs = 3500;
-        public const double ComboMs = 2600;
+
+        /// <summary>连击窗口(毫秒):最后一击之后多久清零。原来的占位是 2600,现在取界面窗口的基线标定值(证据 E-108)。</summary>
+        public const double ComboMs = ComboCounter.DefaultWindowMs;
 
         public const int TargetBarX = 36;
         public const int TargetBarY = 118;
@@ -389,6 +391,12 @@ namespace Dnf.Play
 
         /// <summary>伤害数字的位图字画法(证据 E-107);图包里没有 combo_big.img 时为 null,退回占位的文字。</summary>
         private DamageNumberArt _numberArt;
+
+        /// <summary>连击计数(累计、窗口、滑入与抖动的计时,证据 E-108);按界面时钟走,与命中停顿无关。</summary>
+        private readonly ComboCounter _combo = new ComboCounter();
+
+        /// <summary>连击图的画法(证据 E-108);图包里没有 combo.img 时为 null,退回占位的文字。</summary>
+        private ComboArt _comboArt;
 
         /// <summary>伤害数字位置抖动用的随机数(客户端用的是全局随机数;这里单独一个,免得改变伤害序列)。</summary>
         private readonly Random _numberRandom;
@@ -417,7 +425,6 @@ namespace Dnf.Play
         private long _evalSwing = -1;
         private int _evalFrame = -1;
         private double _targetMs = double.MaxValue;
-        private double _comboMs = double.MaxValue;
         private double _heroPauseMs;
         private bool _bufferedAttack;
         private bool _bufferedJump;
@@ -468,9 +475,23 @@ namespace Dnf.Play
         /// <summary>伤害数字的位图字画法;图包里没有数字图时为 null。</summary>
         public DamageNumberArt NumberArt => _numberArt;
 
+        /// <summary>用另一个图源重建连击图的画法(测试里喂合成的图);传 null,或图源里没有连击图,就退回占位的文字。</summary>
+        public void UseComboArt(ISpriteSource sprites)
+        {
+            _comboArt = ComboArt.For(sprites);
+        }
+
+        /// <summary>连击图的画法;图包里没有连击图时为 null。</summary>
+        public ComboArt ComboPicture => _comboArt;
+
+        /// <summary>连击计数的状态(显示数、颜色档、显示计时器的年龄)。</summary>
+        public ComboCounter ComboState => _combo;
+
         public int Hits { get; private set; }
         public int Kills { get; private set; }
-        public int Combo { get; private set; }
+
+        /// <summary>累计连击数:窗口(<see cref="ComboMs"/>)内每一击加 1,最后一击之后走满窗口清零;屏幕上从第 2 击起才显示(证据 E-108)。</summary>
+        public int Combo => _combo.Count;
         public long TotalDamage { get; private set; }
 
         /// <summary>放出来的技能次数(冷却中、忙碌或没绑定的按键不算)。</summary>
@@ -587,6 +608,7 @@ namespace Dnf.Play
             _hud = HudArt.For(assets);
             _monsterHp = MonsterHpWindow.For(assets, _art);
             _numberArt = DamageNumberArt.For(assets);
+            _comboArt = ComboArt.For(assets);
             _random = new Random(seed);
             _physicsRandom = new Random(unchecked(seed * 31 + 17));
             _numberRandom = new Random(unchecked(seed * 53 + 41));
@@ -1052,13 +1074,9 @@ namespace Dnf.Play
                 }
             }
             _targetMs += deltaMs;
-            _comboMs += deltaMs;
             _hudClockMs += deltaMs;
             _monsterHp?.Update(_hudClockMs);
-            if (_comboMs >= ComboMs)
-            {
-                Combo = 0;
-            }
+            _combo.Update(_hudClockMs);
             if (_targetMs >= TargetBarMs)
             {
                 Target = null;
@@ -1201,8 +1219,7 @@ namespace Dnf.Play
                 }
             }
             Hits++;
-            Combo++;
-            _comboMs = 0;
+            _combo.Hit(_hudClockMs);
             TotalDamage += damage;
             Target = monster;
             _targetMs = 0;
@@ -1511,9 +1528,11 @@ namespace Dnf.Play
                 int sy = (int)Math.Floor(p.WorldY) + projection.GroundY - p.Z + (int)Math.Round(pose.YOffset);
                 into.Add(OverlayArt.Place(text, sx, sy, order++, "damage", pose.Alpha));
             }
-            if (Combo > 1)
+            int shown = _combo.Shown;
+            if (shown >= ComboCounter.ShowFrom && (_comboArt == null || !_comboArt.Build(shown, _combo.AgeMs, into, ref order)))
             {
-                SpriteFrame combo = _art.Text(Combo.ToString(System.Globalization.CultureInfo.InvariantCulture) + " HIT", 4, OverlayArt.Orange);
+                // 图包里没有连击图(或缺帧)时的占位文字
+                SpriteFrame combo = _art.Text(shown.ToString(System.Globalization.CultureInfo.InvariantCulture) + " HIT", 4, OverlayArt.Orange);
                 into.Add(OverlayArt.Place(combo, 800 - combo.Width - 24, 236, order++, "combo"));
             }
         }
