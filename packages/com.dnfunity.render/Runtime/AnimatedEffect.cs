@@ -19,9 +19,9 @@ namespace Dnf.Render
         /// <summary>.ani 的 PVF 路径(只用来标记精灵)。</summary>
         public string Path { get; }
 
-        public double X { get; }
-        public double Y { get; }
-        public double Z { get; }
+        public double X { get; private set; }
+        public double Y { get; private set; }
+        public double Z { get; private set; }
         public bool FacingLeft { get; }
 
         /// <summary>画家算法的排序键:世界 y 加这个偏移;比主角大 1 就画在主角前面。</summary>
@@ -63,8 +63,22 @@ namespace Dnf.Render
             {
                 return null;
             }
-            AniFile ani = assets.LoadAni(path);
+            return CreateFromAni(assets.LoadAni(path), path, x, y, z, facingLeft, sortBias, persistent, layerRank);
+        }
+
+        /// <summary>用已经读好的动画 <paramref name="ani"/> 放在 (x, y, z);<paramref name="path"/> 只用来标记精灵。动画为 null 或没有帧时返回 null。</summary>
+        public static AnimatedEffect CreateFromAni(AniFile ani, string path, double x, double y, double z, bool facingLeft, int sortBias = 1, bool persistent = false,
+            int layerRank = TownScene.NormalRank)
+        {
             return ani == null || ani.Frames.Length == 0 ? null : new AnimatedEffect(ani, path, x, y, z, facingLeft, sortBias, persistent, layerRank);
+        }
+
+        /// <summary>把特效挪到世界 (x, y, z)(飞行的投射物每一步换一次位置;朝向不变)。</summary>
+        public void MoveTo(double x, double y, double z)
+        {
+            X = x;
+            Y = y;
+            Z = z;
         }
 
         /// <summary>播放推进 <paramref name="deltaMs"/> 毫秒。</summary>

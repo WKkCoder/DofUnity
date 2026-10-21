@@ -12,6 +12,7 @@ namespace Dnf.Cli.Analysis;
 ///   统计:列表项数、文件缺失、不是标记流、成对标签(两个整数)的不规整、[level] 范围的形状、[ability category] 的类别与运算符直方图、
 ///   基础属性表的选择与命中情况、引用到的 .act/.ani/.atk/.ai 路径是否存在(按相对 .mob 目录解析),
 ///   [attack kind] 的结构(整数个数是 12 的倍数、三个概率在 0 到 100、射程非负;记录条数与 [attack motion] 个数的对应只报告,证据 E-100),
+///   [throw attack] 的结构(各个数表与 [passive object number] 个数相同、招号在 [attack motion] 范围内、被动对象编号能在 passiveobject.lst 里找到并读到基础动画、.ptl 读得到;证据 E-103),
 ///   以及按等级算出属性后的基本合理性(生命上限为正)。
 ///   --dump 写出每个怪物在若干等级与种类下算出的完整数值块(每行 编号、等级、种类、整数列表),
 ///   可与 `tools/py/mob_ability_ref.py --dump` 的输出逐行对拍(两份独立实现)。
@@ -62,6 +63,12 @@ internal static class MobCheck
         // 有射程范围的记录数、有攻击动作却没有这个标签的文件数、概率超出 0 到 100 的记录数。只统计个数,不输出任何数值。
         int attackKindDefs = 0, attackKindBadShape = 0, attackKindRecords = 0, attackKindCountMismatch = 0, attackKindWithExtents = 0;
         int attackKindMissing = 0, attackKindChanceOutOfRange = 0, attackKindNegativeReach = 0;
+        // [throw attack](E-103):有这个块的文件数、块数、个数表与 [passive object number] 对不上的块数、招号不在 [attack motion] 范围里的块数、
+        // 没有 [throw frame] 的块数、被动对象编号为 0 的块数、编号不在列表里或读不到基础动画的块数、引用的 .ptl 数与读不到的数、
+        // .ptl 只在 x 轴直线飞的数与其余运动方式的数、没有 [life time] 的 .ptl 数、带发射声音的块数、[attack number] 大于 1 的块数。只统计个数,不输出任何数值。
+        int throwDefs = 0, throwBlocks = 0, throwBadShape = 0, throwBadAttackIndex = 0, throwNoFrame = 0, throwNoObject = 0, throwObjectMissing = 0;
+        int throwParticleAbsolute = 0, throwParticleEmpty = 0;
+        int throwParticleRefs = 0, throwParticleMissing = 0, throwPlainShots = 0, throwOtherShots = 0, throwNoLife = 0, throwWithSound = 0, throwRepeating = 0;
         var assets = new SortedDictionary<string, AssetCounter>(StringComparer.Ordinal);
         var dump = new StringBuilder();
 
@@ -221,6 +228,75 @@ internal static class MobCheck
                 attackKindMissing++;
             }
 
+            IReadOnlyList<ThrowAttackRecord> throwRecords = ThrowAttackRecord.Parse(def.Tags);
+            if (throwRecords.Count > 0)
+            {
+                throwDefs++;
+            }
+            foreach (ThrowAttackRecord rec in throwRecords)
+            {
+                throwBlocks++;
+                int n = rec.PassiveObjectNumber;
+                if (n < 0 || rec.ParticleFiles.Count != n || rec.StartX.Count != n || rec.StartY.Count != n || rec.StartZ.Count != n
+                    || (rec.Directions.Count != 0 && rec.Directions.Count != n))
+                {
+                    throwBadShape++;
+                }
+                if (rec.AttackIndex < 0 || rec.AttackIndex >= def.AttackMotions.Length)
+                {
+                    throwBadAttackIndex++;
+                }
+                throwNoFrame += rec.ThrowFrame < 0 ? 1 : 0;
+                throwWithSound += rec.ThrowSound != null ? 1 : 0;
+                throwRepeating += rec.AttackNumber > 1 ? 1 : 0;
+                if (rec.PassiveObjectIndex == 0)
+                {
+                    throwNoObject++;
+                }
+                else
+                {
+                    string? objPath = data.GetPassiveObjectPath(rec.PassiveObjectIndex);
+                    Check("[throw attack] 被动对象 .obj", def, objPath);
+                    string? motion = objPath == null ? null : data.GetPassiveObject(rec.PassiveObjectIndex)?.BasicMotionPath;
+                    Check("[throw attack] 被动对象基础动画", def, motion);
+                    if (objPath == null || motion == null || !pvf.TryGetEntry(objPath, out _) || !pvf.TryGetEntry(motion, out _))
+                    {
+                        throwObjectMissing++;
+                    }
+                }
+                foreach (string ptl in rec.ParticleFiles)
+                {
+                    if (string.IsNullOrEmpty(ptl))
+                    {
+                        throwParticleEmpty++;                     // 写成空串:放出的被动对象不带粒子定义(客户端走"没有 .ptl"的创建路径)
+                        continue;
+                    }
+                    throwParticleRefs++;
+                    string resolved = PvfPath.ResolveRelativeTo(def.Path, ptl);
+                    if (!pvf.TryGetEntry(resolved, out _) && pvf.TryGetEntry(PvfPath.Normalize(ptl), out _))
+                    {
+                        resolved = PvfPath.Normalize(ptl);        // 写的是从 PVF 根目录起的完整路径
+                        throwParticleAbsolute++;
+                    }
+                    Check("[passive object filename]", def, resolved);
+                    ParticleDef? particle = data.GetParticle(resolved);
+                    if (particle == null)
+                    {
+                        throwParticleMissing++;
+                        continue;
+                    }
+                    if (particle.IsPlainHorizontalShot)
+                    {
+                        throwPlainShots++;
+                    }
+                    else
+                    {
+                        throwOtherShots++;
+                    }
+                    throwNoLife += particle.LifeTimeMs <= 0 ? 1 : 0;
+                }
+            }
+
             MonsterBaseTable? own = null;
             if (def.BaseTablePaths.Length > 0)
             {
@@ -377,6 +453,11 @@ internal static class MobCheck
             + " 个文件,记录条数与 [attack motion] 个数对不上 " + attackKindCountMismatch + " 个文件,有射程范围的记录 " + attackKindWithExtents
             + " 条,概率超出 0 到 100 的记录 " + attackKindChanceOutOfRange + " 条,射程为负的记录 " + attackKindNegativeReach
             + " 条;有攻击动作却没有这个标签的文件 " + attackKindMissing);
+        Console.WriteLine("[throw attack](E-103):" + throwDefs + " 个文件,共 " + throwBlocks + " 个块,个数表与 [passive object number] 对不上 " + throwBadShape
+            + " 个块,招号不在 [attack motion] 范围里 " + throwBadAttackIndex + " 个块,没有 [throw frame] " + throwNoFrame + " 个块,被动对象编号为 0 " + throwNoObject
+            + " 个块,编号不在列表里或读不到基础动画 " + throwObjectMissing + " 个块,带发射声音 " + throwWithSound + " 个块,[attack number] 大于 1 " + throwRepeating
+            + " 个块;写成空串(不带粒子定义)的 " + throwParticleEmpty + " 个;引用 .ptl " + throwParticleRefs + " 个(其中写成从 PVF 根目录起的完整路径的 " + throwParticleAbsolute + " 个),读不到 " + throwParticleMissing + " 个,只在 x 轴直线飞 " + throwPlainShots + " 个,其余运动方式 " + throwOtherShots
+            + " 个,没有 [life time] " + throwNoLife + " 个");
         Console.WriteLine("选基础属性表(等级取最小、普通种类、不带副本参数):" + string.Join(",", tableChosen.Select(kv => "表" + kv.Key + "×" + kv.Value)));
         Console.WriteLine("带 [base table] 的怪物:" + ownTableDefs + ",其中读到表的 " + ownTableLoaded + ",自带表比公共表行数少的 " + ownTableShorterThanCommon);
         Console.WriteLine("按等级算属性:共 " + computed + " 次(最小/最大等级各一次)。查不到表行:最小 " + rowMissingMin + "、最大 " + rowMissingMax
@@ -423,6 +504,18 @@ internal static class MobCheck
                 ["attackKindMissing"] = attackKindMissing,
                 ["attackKindChanceOutOfRange"] = attackKindChanceOutOfRange,
                 ["attackKindNegativeReach"] = attackKindNegativeReach,
+                ["throwDefs"] = throwDefs,
+                ["throwBlocks"] = throwBlocks,
+                ["throwBadShape"] = throwBadShape,
+                ["throwBadAttackIndex"] = throwBadAttackIndex,
+                ["throwNoFrame"] = throwNoFrame,
+                ["throwObjectMissing"] = throwObjectMissing,
+                ["throwParticleRefs"] = throwParticleRefs,
+                ["throwParticleMissing"] = throwParticleMissing,
+                ["throwParticleAbsolute"] = throwParticleAbsolute,
+                ["throwParticleEmpty"] = throwParticleEmpty,
+                ["throwPlainShots"] = throwPlainShots,
+                ["throwOtherShots"] = throwOtherShots,
                 ["tableChosen"] = tableChosen.ToDictionary(kv => kv.Key.ToString(CultureInfo.InvariantCulture), kv => kv.Value),
                 ["ownTableDefs"] = ownTableDefs,
                 ["ownTableLoaded"] = ownTableLoaded,
@@ -437,8 +530,11 @@ internal static class MobCheck
         }
 
         // [attack kind] 的结构应当规整:整数个数是 12 的倍数、三个概率在 0 到 100、四个射程非负(这是 E-100 对各项含义的旁证);记录条数与动作个数对不上只报告
+        // [throw attack] 的规整度同理(E-103):招号在 [attack motion] 范围里、有发射帧与被动对象编号、编号能找到 .obj 与基础动画、写了路径的 .ptl 都读得到;
+        // 个数表与 [passive object number] 对不上的块只报告(数据里的不规整,客户端按个数读)
         bool ok = missingFile == 0 && notParsed == 0 && categoryDroppedEntries == 0
-            && attackKindBadShape == 0 && attackKindChanceOutOfRange == 0 && attackKindNegativeReach == 0;
+            && attackKindBadShape == 0 && attackKindChanceOutOfRange == 0 && attackKindNegativeReach == 0
+            && throwBadAttackIndex == 0 && throwNoFrame == 0 && throwNoObject == 0 && throwObjectMissing == 0 && throwParticleMissing == 0;
         return ok ? 0 : 1;
     }
 

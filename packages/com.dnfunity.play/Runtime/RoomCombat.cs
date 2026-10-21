@@ -352,6 +352,8 @@ namespace Dnf.Play
         private readonly HudArt _hud;
         private readonly List<HitPopup> _popups = new List<HitPopup>();
         private readonly List<AnimatedEffect> _effects = new List<AnimatedEffect>();
+        private readonly List<MonsterProjectile> _projectiles = new List<MonsterProjectile>();
+        private readonly List<string> _throwSoundScratch = new List<string>();
         private readonly HashSet<MonsterActor> _hitThisSwing = new HashSet<MonsterActor>();
         private readonly Random _random;
 
@@ -384,6 +386,15 @@ namespace Dnf.Play
 
         /// <summary>正在播的技能特效(鬼斩的斩击光影等)。</summary>
         public IReadOnlyList<AnimatedEffect> Effects => _effects;
+
+        /// <summary>怪物扔出来、还在飞的东西(证据 E-103)。</summary>
+        public IReadOnlyList<MonsterProjectile> Projectiles => _projectiles;
+
+        /// <summary>从开始玩起怪物一共扔出过多少个投射物(含已经消失的)。</summary>
+        public int ProjectilesThrown { get; private set; }
+
+        /// <summary>其中打中主角的个数。</summary>
+        public int ProjectileHits { get; private set; }
 
         /// <summary>最近一次被打中的怪物(用来画左上角的血条);久未再中就不画。</summary>
         public MonsterActor Target { get; private set; }
@@ -734,6 +745,7 @@ namespace Dnf.Play
                 actor.Strike = attackStrikes.Length > 0 ? attackStrikes[0] : new HeroStrikeInfo(0, 0, false);
                 actor.SetStrikes(attackStrikes);
                 actor.SetAttackKinds(AttackKindRecord.Parse(def.Tags), unchecked((uint)seed * 2654435761u + (uint)actor.Index * 40503u + 12345u));
+                actor.SetThrows(MonsterThrows.Load(assets, data, def.Path, ThrowAttackRecord.Parse(def.Tags)));   // [throw attack]:出招动画到发射帧时扔东西(证据 E-103)
                 if (heroWidth != null && heroWidth.Length >= 2)
                 {
                     actor.TargetWidth = heroWidth[0];
@@ -919,13 +931,20 @@ namespace Dnf.Play
             // 有主角的生命值时,怪物按"这一击能不能打到主角的受击框"决定靠近与出招,主角死了就待机;没有时按固定距离(旧行为)
             bool heroAlive = !HeroDead;
             List<Aabb> heroBoxes = Vitals == null ? null : HeroHurtBoxes.At(hero);
+            foreach (MonsterProjectile p in _projectiles)
+            {
+                p.Update(deltaMs);
+            }
             foreach (MonsterActor m in _monsters)
             {
                 m.Update(deltaMs, hero.X, hero.Y, heroAlive, hero.Walk, heroBoxes);
             }
+            CollectThrown();
             EmitMonsterCues();
             ResolveHits();
             ResolveMonsterHits();
+            ResolveProjectileHits();
+            _projectiles.RemoveAll(p => p.Finished);
             SyncStance();
             EmitCooldownCues();
             for (int i = _popups.Count - 1; i >= 0; i--)
@@ -1122,6 +1141,58 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>取走怪物这一步发射出来的投射物(从此归会话管)并放发射声音(攻击信息之外的"扔"的声音标签,证据 E-103)。</summary>
+        private void CollectThrown()
+        {
+            foreach (MonsterActor m in _monsters)
+            {
+                int before = _projectiles.Count;
+                if (!m.TakeThrown(_projectiles, _throwSoundScratch))
+                {
+                    continue;
+                }
+                ProjectilesThrown += _projectiles.Count - before;
+                foreach (string sound in _throwSoundScratch)
+                {
+                    _sounds.Add(sound, SoundCueKind.Effect);
+                }
+                _throwSoundScratch.Clear();
+            }
+        }
+
+        /// <summary>
+        /// 飞行中的投射物打主角:当前帧的攻击框与主角的受击框相交就打中,投射物随即消失(推断:原版有穿透与"同一对象只打一次"的规则,没有读通);
+        /// 攻击信息取投射物配方里 .obj 的 [attack info],伤害按发射者的等级与攻击力算,与怪物自己的攻击走同一条受击流程。
+        /// </summary>
+        private void ResolveProjectileHits()
+        {
+            if (Vitals == null || !Vitals.IsAlive || _projectiles.Count == 0)
+            {
+                return;
+            }
+            TownHero hero = _room.Hero;
+            List<Aabb> hurt = HeroHurtBoxes.At(hero);
+            foreach (MonsterProjectile p in _projectiles)
+            {
+                if (p.Finished)
+                {
+                    continue;
+                }
+                List<Aabb> strike = p.AttackBoxes();
+                if (strike.Count == 0 || !Touches(strike, hurt))
+                {
+                    continue;
+                }
+                p.Vanish();
+                ProjectileHits++;
+                StrikeHero(p.Owner, p.Template.Strike, p.FacingLeft, hero, null);
+                if (!Vitals.IsAlive)
+                {
+                    break;
+                }
+            }
+        }
+
         /// <summary>
         /// 怪物这一击打中了主角:伤害按 <see cref="MonsterDamage"/>(原版公式,输入是推断)、扣血、飘红字;
         /// 主角进受击硬直(硬直与击退按客户端的公式,受击方是主角,攻击方没有所属者所以攻击方恢复项为 0;命中模式 [burn] 不击退,证据 E-080),
@@ -1130,10 +1201,18 @@ namespace Dnf.Play
         /// </summary>
         private void StrikeHero(MonsterActor monster, TownHero hero)
         {
-            HeroStrikeInfo info = monster.Strike;
-            int attack = info.Magical ? monster.MagicalAttack : monster.PhysicalAttack;
+            StrikeHero(monster, monster.Strike, monster.FacingLeft, hero, monster);
+        }
+
+        /// <param name="owner">攻击的所有者(取等级与攻击力;投射物的所有者是扔它的怪物)。</param>
+        /// <param name="info">这一击的攻击信息。</param>
+        /// <param name="attackerFacingLeft">攻击者(怪物或投射物)朝左:主角被打退的方向。</param>
+        /// <param name="attacker">命中停顿时一起定住的攻击者;投射物打中就消失,传 null。</param>
+        private void StrikeHero(MonsterActor owner, HeroStrikeInfo info, bool attackerFacingLeft, TownHero hero, MonsterActor attacker)
+        {
+            int attack = info.Magical ? owner.MagicalAttack : owner.PhysicalAttack;
             int damage = _damageConstants != null
-                ? MonsterDamage.Roll(info, monster.Level, attack, Vitals, _damageConstants, unchecked((uint)_monsterRandom.Next()))
+                ? MonsterDamage.Roll(info, owner.Level, attack, Vitals, _damageConstants, unchecked((uint)_monsterRandom.Next()))
                 : Math.Max(1, (int)Math.Round(attack * (100.0 + info.DamageBonus) / 100.0));
             bool killed = Vitals.Damage(damage);
             HeroHits++;
@@ -1147,14 +1226,14 @@ namespace Dnf.Play
                 knockPixels = r.KnockPixels;
                 knockMs = r.KnockMs;
             }
-            hero.BeginHurt(killed ? HeroHurtTuning.DeadHoldMs : stunMs, knockPixels, knockMs, monster.FacingLeft);
+            hero.BeginHurt(killed ? HeroHurtTuning.DeadHoldMs : stunMs, knockPixels, knockMs, attackerFacingLeft);
             // 声音:攻击信息的命中声,加主角的受击或死亡语音(客户端有"职业 → (受击, 死亡)"的全局表,证据 E-089)
             _sounds.Add(info.HitWav, SoundCueKind.Effect);
             _sounds.Add(killed ? SwordmanVoice.Die : SwordmanVoice.Hurt, SoundCueKind.Voice);
             int pause = HitStop.StunMs(info.HitValue, info.UseWeaponHitDelayRate, 0);
             if (pause > 0)
             {
-                monster.Pause(pause);
+                attacker?.Pause(pause);
                 if (pause > _heroPauseMs)
                 {
                     _heroPauseMs = pause;
@@ -1204,6 +1283,14 @@ namespace Dnf.Play
             foreach (AnimatedEffect e in _effects)
             {
                 SceneSprite s = e.Sprite(_assets, projection);
+                if (s != null)
+                {
+                    extra.Add(s);
+                }
+            }
+            foreach (MonsterProjectile p in _projectiles)
+            {
+                SceneSprite s = p.Sprite(_assets, projection);
                 if (s != null)
                 {
                     extra.Add(s);

@@ -152,6 +152,32 @@ internal sealed class AvatarFixture : IDisposable
 
     /// <summary>出招攻击框(类型 15)的数。</summary>
     public static readonly (ushort Type, int[] Values) BlobStrikeBox = ((ushort)15, new[] { 10, -10, 0, 40, 20, 50 });
+
+    /// <summary>
+    /// 会扔东西的迷你怪物(M15,证据 E-103):出招动画 <see cref="BlobThrowAni"/> 四帧各 80 毫秒(只有受击框,自己不伤人);.mob 里一个 [throw attack] 块:
+    /// 第 0 招、放 1 个被动对象 <see cref="ShotObjectId"/>、发射帧 1(动画到第 2 帧、160 毫秒时发射)、起点偏移 (<see cref="ShotStartX"/>, 0, <see cref="ShotStartZ"/>)、
+    /// 发射声音 <see cref="ShotThrowSound"/>。投射物:.ptl <see cref="ShotParticle"/> 沿 x 轴直线飞,速度 <see cref="ShotSpeed"/>(像素/秒)、[life time] <see cref="ShotLifeMs"/> 毫秒;
+    /// .obj <see cref="ShotObj"/> 的 [basic motion] 是两帧循环(各 100 毫秒)的 <see cref="ShotAni"/>,带一个攻击框(类型 15):x 从 −8 起宽 16,y 从 −8 起深 16,z 从 0 起高 16;
+    /// [attack info] 是 [damage bonus] <see cref="ShotDamageBonus"/> 的 <see cref="ShotAtk"/>。数全是测试用的。
+    /// </summary>
+    public const string BlobThrowerMobPath = "monster/blob/thrower.mob";
+    public const string BlobThrowAni = "monster/blob/animation_blob/throw.ani";
+    public const string ShotParticle = "monster/blob/particle/shot.ptl";
+
+    /// <summary>另一个 .ptl,放在 PVF 根目录下的完整路径上(.mob 里写 "Common/Particle/Shot.ptl"),速度 <see cref="AbsShotSpeed"/>:用来证明读 .ptl 时先按 .mob 目录找、再按根目录找。</summary>
+    public const string AbsShotParticle = "common/particle/shot.ptl";
+    public const int AbsShotSpeed = 120;
+    public const int ShotObjectId = 9001;
+    public const string ShotObj = "passiveobject/blob/shot.obj";
+    public const string ShotAni = "passiveobject/blob/animation/shot.ani";
+    public const string ShotAtk = "passiveobject/blob/attackinfo/shot.atk";
+    public const int ShotSpeed = 200;
+    public const int ShotLifeMs = 1000;
+    public const int ShotStartX = 30;
+    public const int ShotStartZ = 40;
+    public const int ShotDamageBonus = 25;
+    public const string ShotThrowSound = "THROW_BLOB";
+    public static readonly (ushort Type, int[] Values) ShotBox = ((ushort)15, new[] { -8, -8, 0, 16, 16, 16 });
     public const string BlobAnimationDir = "monster/blob/animation_blob";
     public const string BlobImage = "sprite/monster/blob/blob.img";
 
@@ -411,6 +437,45 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[attack motion]").Str("Animation_Blob/Strike.ani")
                 .Tag("[attack info]").Str("AttackInfo/Striker.atk").Build()),
             (BlobStrikerAtk, NewScript().Tag("[damage bonus]").Int(StrikerDamageBonus).Tag("[damage reaction]").Tag("[damage]").Build()),
+            // 会扔东西的迷你怪物:出招动画 + 一个 [throw attack] 块;被动对象目录、.obj、.ptl、投射物的 .atk 与动画(证据 E-103)
+            (BlobThrowerMobPath, NewScript()
+                .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
+                .Tag("[move motion]").Str("Animation_Blob/Move.ani")
+                .Tag("[damage motion 1]").Str("Animation_Blob/Damage1.ani")
+                .Tag("[damage motion 2]").Str("Animation_Blob/Damage2.ani")
+                .Tag("[down motion]").Str("Animation_Blob/Down.ani")
+                .Tag("[attack motion]").Str("Animation_Blob/Throw.ani")
+                .Tag("[throw attack]")
+                .Str("[attack index]").Int(0)
+                .Str("[passive object number]").Int(1)
+                .Str("[passive object filename]").Str("Particle/Shot.ptl")
+                .Str("[object type]").Int(0)
+                .Str("[passive object index]").Int(ShotObjectId)
+                .Str("[power]").Int(0)
+                .Str("[throw frame]").Int(1)
+                .Str("[passive object start x cood]").Int(ShotStartX)
+                .Str("[passive object start y cood]").Int(0)
+                .Str("[passive object start z cood]").Int(ShotStartZ)
+                .Str("[attack number]").Int(1)
+                .Str("[throw sound]").Str(ShotThrowSound)
+                .Tag("[/throw attack]").Build()),
+            ("passiveobject/passiveobject.lst", NewScript().Int(ShotObjectId).Str("blob/shot.obj").Build()),
+            (ShotObj, NewScript().Tag("[basic motion]").Str("animation/shot.ani").Tag("[attack info]").Str("attackinfo/shot.atk").Build()),
+            (ShotAtk, NewScript().Tag("[damage bonus]").Int(ShotDamageBonus).Tag("[damage reaction]").Tag("[damage]").Build()),
+            (ShotParticle, NewScript()
+                .Tag("[x axis]")
+                .Tag("[move type]").Str("[straight line]")
+                .Tag("[move variable 1]").Int(ShotSpeed, ShotSpeed)
+                .Tag("[life time]").Int(ShotLifeMs)
+                .Tag("[landing type]").Str("[vanish]").Build()),
+            (AbsShotParticle, NewScript()
+                .Tag("[x axis]")
+                .Tag("[move type]").Str("[straight line]")
+                .Tag("[move variable 1]").Int(AbsShotSpeed, AbsShotSpeed)
+                .Tag("[life time]").Int(ShotLifeMs)
+                .Tag("[landing type]").Str("[vanish]").Build()),
+            (ShotAni, BuildBlobBoxesAni(true, (0, 100, new[] { ShotBox }), (1, 100, new[] { ShotBox }))),
+            (BlobThrowAni, BuildBlobAni(false, (0, 80, BlobHurtBox), (1, 80, BlobHurtBox), (2, 80, BlobHurtBox), (3, 80, BlobHurtBox))),
             (BlobBoxedDownMobPath, NewScript()
                 .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
                 .Tag("[move motion]").Str("Animation_Blob/Move.ani")

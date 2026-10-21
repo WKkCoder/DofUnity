@@ -61,6 +61,7 @@ internal static class CombatCheck
         int shotIndex = 0;
         int lastHits = 0;
         int lastHeroHits = 0;
+        int lastThrown = 0;
         double t = 0;
         string lastState = string.Empty;
         while (script.TimeMs < totalMs)
@@ -84,6 +85,14 @@ internal static class CombatCheck
                 }
                 Console.WriteLine(sb.ToString());
                 lastHits = session.Hits;
+            }
+            if (session.ProjectilesThrown != lastThrown)
+            {
+                // 投射物(E-103):谁扔的、扔出了几个、飞行中的位置与朝向(这些数来自原版数据与我们的推断,只打印、不入库)
+                Console.WriteLine("  t=" + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s  怪物扔出 +" + (session.ProjectilesThrown - lastThrown) + "  累计 "
+                    + session.ProjectilesThrown + "  飞行中 " + session.Projectiles.Count
+                    + string.Concat(session.Projectiles.Select(p => "  [怪物 " + p.Owner.Index + " (" + F(p.X) + "," + F(p.Y) + "," + F(p.Z) + ") 朝" + (p.FacingLeft ? "左" : "右") + "]")));
+                lastThrown = session.ProjectilesThrown;
             }
             if (session.HeroHits != lastHeroHits)
             {
@@ -120,7 +129,7 @@ internal static class CombatCheck
 
         Console.WriteLine();
         Console.WriteLine("结束:主角 (" + F(session.Hero.X) + "," + F(session.Hero.Y) + "),命中 " + session.Hits + " 次,放技能 " + session.SkillCasts + " 次,击杀 " + session.Kills + " 个,总伤害 " + session.TotalDamage
-            + ",剩余 " + session.AliveCount + " 个"
+            + ",剩余 " + session.AliveCount + " 个,怪物扔出投射物 " + session.ProjectilesThrown + " 个,打中主角 " + session.ProjectileHits + " 个(E-103)"
             + (session.Vitals != null
                 ? ",主角被打中 " + session.HeroHits + " 次(共 " + session.HeroDamageTaken + " 点),生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax
                     + ",魔法 " + session.Vitals.Mp + "/" + session.Vitals.MpMax

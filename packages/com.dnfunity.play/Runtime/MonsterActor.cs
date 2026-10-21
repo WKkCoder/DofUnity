@@ -149,6 +149,11 @@ namespace Dnf.Play
         private HeroStrikeInfo _strike;
         private HeroStrikeInfo[] _strikes;
         private Func<int, bool> _reachTest;
+
+        // 投掷(证据 E-103):.mob 的 [throw attack] 记录与它们的投射物模板;发射出来的投射物与声音先存在这里,由房间会话取走
+        private MonsterThrows _throws;
+        private readonly List<MonsterProjectile> _thrownProjectiles = new List<MonsterProjectile>();
+        private readonly List<string> _throwSounds = new List<string>();
         private double _reachDx;
         private double _reachDy;
         private IReadOnlyList<Aabb> _reachBoxes;
@@ -299,6 +304,63 @@ namespace Dnf.Play
         /// <summary>出招决策器;没有装 [attack kind] 记录时为 null(旧的占位逻辑)。</summary>
         public MonsterAttackChooser AttackChooser => _chooser;
 
+        /// <summary>
+        /// 装上 .mob 的 [throw attack] 记录与投射物模板(证据 E-103):出招动画的当前帧超过某条记录的 [throw frame] 时,在身边放出它的投射物。
+        /// 传 null 表示这只怪物不投掷。
+        /// </summary>
+        public void SetThrows(MonsterThrows throws)
+        {
+            _throws = throws;
+        }
+
+        public MonsterThrows Throws => _throws;
+
+        /// <summary>
+        /// 取走自上次以来发射出来的投射物与发射声音标签(各追加到传入的表里,取走后清空);没有投掷或什么都没发射时返回 false。
+        /// 房间会话每一步调一次:投射物从此归会话管(移动、命中、绘制)。
+        /// </summary>
+        public bool TakeThrown(List<MonsterProjectile> projectiles, List<string> sounds)
+        {
+            if (_thrownProjectiles.Count == 0 && _throwSounds.Count == 0)
+            {
+                return false;
+            }
+            projectiles.AddRange(_thrownProjectiles);
+            sounds.AddRange(_throwSounds);
+            _thrownProjectiles.Clear();
+            _throwSounds.Clear();
+            return true;
+        }
+
+        /// <summary>
+        /// 出招状态的一帧里做投掷的判断(证据 E-103):满足条件的记录放出投射物(起点 = 怪物位置 + 起点偏移,x 偏移随投射物的朝向镜像),
+        /// 发射声音存起来;要求"再来一遍"时返回 true,调用方让出招从头开始。
+        /// </summary>
+        private bool TickThrows()
+        {
+            ThrowTick tick = _throws.Runner.Tick(_attackIndex, CurrentFrame);
+            if (!tick.Any)
+            {
+                return false;
+            }
+            foreach (ThrowShot shot in tick.Shots)
+            {
+                ProjectileTemplate template = _throws.TemplateFor(shot.Record, shot.Slot);
+                if (template == null)
+                {
+                    continue;
+                }
+                (int ox, int oy, int oz) = _throws.Runner.Record(shot.Record).StartOffset(shot.Slot);
+                bool left = FacingLeft ^ shot.Reversed;
+                _thrownProjectiles.Add(new MonsterProjectile(this, template, X + (left ? -ox : ox), Y + oy, Z + oz, left));
+            }
+            foreach (string sound in tick.Sounds)
+            {
+                _throwSounds.Add(sound);
+            }
+            return tick.RepeatAttack;
+        }
+
         /// <summary>这一次(或最近一次)出的是第几招(<see cref="MonsterModel.Attacks"/> 的下标)。</summary>
         public int AttackIndex => _attackIndex;
 
@@ -429,6 +491,11 @@ namespace Dnf.Play
                     ApplyPush(deltaMs, walk);
                     break;
                 case MonsterPhase.Attack:
+                    if (_throws != null && TickThrows())
+                    {
+                        EnterPhase(MonsterPhase.Attack);          // 记录的剩余次数还在 2 以上:这一招从头再来一遍(证据 E-103)
+                        break;
+                    }
                     if (_phaseMs * AttackRate >= Duration(CurrentAni))
                     {
                         _cooldownMs = AttackDelayMs;
@@ -436,6 +503,10 @@ namespace Dnf.Play
                     }
                     break;
                 default:
+                    if (Phase == MonsterPhase.Wait)
+                    {
+                        _throws?.Runner.Idle();                    // 站立状态的每一帧把投掷的剩余次数重置(证据 E-103)
+                    }
                     Think(deltaMs, heroX, heroY, heroPresent, walk, heroBoxes);
                     break;
             }
@@ -455,6 +526,7 @@ namespace Dnf.Play
                 SwingNumber++;
                 AttackEvalFrame = -1;
                 HitHeroThisSwing = false;
+                _throws?.Runner.EnterAttack();
             }
         }
 

@@ -35,7 +35,9 @@ PKG = os.path.join(ROOT, "packages", "com.dnfunity.")
 CONSUMERS = {
     "atk": [("S", "game/Runtime/Defs/AttackInfoLoader.cs"), ("S", "game/Runtime/Defs/WeaponHitInfo.cs")],
     "mob": [("S", "game/Runtime/Defs/MonsterDef.cs"), ("S", "game/Runtime/Defs/MonsterAbility.cs"),
-            ("S", "game/Runtime/Defs/AttackKindRecord.cs"), ("S", "render/Runtime/MonsterModel.cs"), ("S", "play/Runtime/RoomCombat.cs")],
+            ("S", "game/Runtime/Defs/AttackKindRecord.cs"), ("S", "game/Runtime/Defs/ThrowAttackRecord.cs"),
+            ("S", "render/Runtime/MonsterModel.cs"), ("S", "play/Runtime/RoomCombat.cs")],
+    "ptl": [("S", "game/Runtime/Defs/ParticleDef.cs")],
     "skl": [("S", "game/Runtime/Defs/SkillDef.cs"), ("S", "play/Runtime/HeroSkills.cs")],
     "chr": [("S", "game/Runtime/Defs/CharacterDef.cs"), ("S", "game/Runtime/Defs/WeaponSound.cs"),
             ("S", "game/Runtime/Defs/WeaponHitInfo.cs"), ("S", "render/Runtime/TownHero.cs"),
@@ -60,7 +62,7 @@ CONSUMERS = {
 }
 
 LOADER_NAMES = {
-    "atk": "AttackInfoLoader", "mob": "MonsterDef / MonsterAbility / AttackKindRecord", "skl": "SkillDef", "chr": "CharacterDef / TownHero / Avatar",
+    "atk": "AttackInfoLoader", "mob": "MonsterDef / MonsterAbility / AttackKindRecord / ThrowAttackRecord", "ptl": "ParticleDef(只读运动与寿命)", "skl": "SkillDef", "chr": "CharacterDef / TownHero / Avatar",
     "equ": "Avatar(只读换装图层)", "map": "RoomMap / MapScript / TownScene", "til": "RoomMap", "obj": "PassiveObjectDef / ObjectDef",
     "act": "ActParser(语法树)", "ai": "AiVocabulary / AiParser(词表与解析)", "dgn": "DungeonMaze / DungeonLayout",
     "twn": "TownDef", "wdm": "WorldMapDef", "ui": "WorldMapDef(只读副本选择界面用到的几项)", "etc": "DamageConstants / HitStun",

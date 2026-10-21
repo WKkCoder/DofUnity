@@ -254,6 +254,39 @@ namespace Dnf.Game
             return def;
         }
 
+        private readonly Dictionary<string, ParticleDef> _particles = new Dictionary<string, ParticleDef>(StringComparer.Ordinal);
+
+        /// <summary>读一个 .ptl 粒子定义(完整路径;相对路径调用方先用 <see cref="PvfPath.ResolveRelativeTo"/> 解析);找不到返回 null。结果会缓存。</summary>
+        public ParticleDef GetParticle(string path)
+        {
+            if (path == null)
+            {
+                return null;
+            }
+            string key = PvfPath.Normalize(path);
+            if (_particles.TryGetValue(key, out ParticleDef cached))
+            {
+                return cached;
+            }
+            ScriptLine[] lines = ReadScript(key);
+            ParticleDef def = lines == null ? null : ParticleDef.Parse(key, lines);
+            _particles[key] = def;
+            return def;
+        }
+
+        /// <summary>
+        /// 读 .mob 里 [passive object filename] 写的 .ptl:先按相对 .mob 所在目录解析,没有再按 PVF 根目录下的完整路径找(两种写法在数据里都有,同一个引用不会两种都存在,证据 E-103)。
+        /// 读不到返回 null。
+        /// </summary>
+        public ParticleDef GetParticleFor(string mobPath, string file)
+        {
+            if (string.IsNullOrEmpty(file))
+            {
+                return null;
+            }
+            return GetParticle(PvfPath.ResolveRelativeTo(mobPath, file)) ?? GetParticle(PvfPath.Normalize(file));
+        }
+
         /// <summary>怪物编号对应的 .mob 路径(经 monster/monster.lst);找不到返回 null。</summary>
         public string GetMonsterPath(int id)
         {
