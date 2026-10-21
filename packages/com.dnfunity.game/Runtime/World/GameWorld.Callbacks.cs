@@ -143,15 +143,32 @@ namespace Dnf.Game
         }
 
         // ---------------------------------------------------------------- 状态切换
+        /// <summary>怪物在"当前状态或待处理状态是死亡"时不再接受新的切换请求(STATE_DIE,E-099)。</summary>
+        private const int StateDie = 5;
+
         /// <summary>
-        /// "切换状态"请求的落地(sq_AddSetStatePacket、addSetStatePacket、sendStatePacket 等):放进对象的队列,在本次回调结束后由 <see cref="DrainPackets"/> 处理。
+        /// "切换状态"请求的落地(sq_AddSetStatePacket、addSetStatePacket、sendStatePacket 等):放进对象的待处理位置,在本次回调结束后由 <see cref="DrainPackets"/> 处理。
         /// 数据数组由调用方给出(sq_AddSetStatePacket 只在第 3 个参数为真时带上对象的数据数组)。
-        /// 与客户端的差异(E-046):客户端的 setState(0x008779b0)只保留<b>一个</b>待处理的请求,新请求在"没有待处理请求"或
-        /// "新请求优先级不低于待处理请求"时才替换它,并且对象已处于死亡状态(STATE_DIE)时拒绝某些请求;这里先按先进先出逐个执行,
-        /// 优先级只传给状态回调。要不要改成"单槽 + 优先级"取决于客户端'何时取走待处理请求'(未读到)。
+        /// 规则读自客户端的 setState(0x008779b0,E-099):对象只有<b>一个</b>待处理的请求;没有待处理请求,或待处理请求的优先级不高于新请求
+        /// (待处理 ≤ 新)时,新请求替换它(数据数组一并替换);否则新请求被丢弃。怪物(类型位 0x211)在当前状态或待处理状态已是 STATE_DIE 时
+        /// 一律拒绝;客户端对"类型位 0x111 且角色里 +0x551D 标志为真"的角色也是这样,那个标志的含义没查,这里不处理。
+        /// 客户端另有两道门:对象里一个标志字节(+0x660,含义没查)、"本机控制或强制发送";单机里所有对象都归本机控制,后者不影响,前者当作恒为真。
+        /// 与客户端的差异:客户端把待处理的请求作为网络消息发给服务端,收到回应才真正切换;这里在回调结束后、同一帧里切换。
         /// </summary>
         internal void QueueState(GameObject obj, int state, int priority, bool resetTimer, long[] data)
         {
+            if (obj.Kind == ObjectKind.Monster && (obj.State == StateDie || (obj.Packets.Count > 0 && obj.Packets.Peek().State == StateDie)))
+            {
+                return;
+            }
+            if (obj.Packets.Count > 0)
+            {
+                if (obj.Packets.Peek().Priority > priority)
+                {
+                    return;
+                }
+                obj.Packets.Clear();
+            }
             obj.Packets.Enqueue(new StatePacket
             {
                 State = state,
@@ -229,10 +246,11 @@ namespace Dnf.Game
             }
             if (resetTimer)
             {
-                obj.Timer.Reset();
+                // 客户端的状态执行函数(0x008360e0)第 3 个参数为真时重置的是"状态计时器"(sq_GetStateTimer 读的那个,对象 +0x30A0),
+                // 不碰 getTimer() 的对象计时器(+0x54,脚本里只有依附体在用)(E-099)。它在脚本的 onSetState 之后才重置,这里先于脚本重置(已知差异)
+                obj.StateTimeMs = 0;
             }
             obj.State = newState;
-            obj.StateTimeMs = 0;
             StateInfo info = obj.Job >= 0 ? FindState(obj.Module, obj.Job, newState) : null;
             obj.StateInfo = info;
             if (info == null && newState == 0 && obj.Character != null)

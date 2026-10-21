@@ -111,7 +111,7 @@ namespace Dnf.Game
         /// <summary>只画不算的特效对象:动画播完(非循环)后自动销毁(sq_CreatePooledObject / sq_CreateDrawOnlyObject 的布尔参数为真时,依据用法推断)。</summary>
         internal bool AutoDestroyOnAnimationEnd { get; set; }
 
-        /// <summary>进入当前状态后经过的毫秒数(脚本里 sq_GetStateTimer)。</summary>
+        /// <summary>进入当前状态后经过的毫秒数(脚本里 sq_GetStateTimer);状态执行的 isResetTimer 为真时清零(客户端的状态计时器在对象 +0x30A0 处,E-099)。</summary>
         public int StateTimeMs { get; internal set; }
 
         /// <summary>角色用的状态脚本模块:<see cref="GameWorld.GenericModule"/>(默认)或 <see cref="GameWorld.AvengerModule"/>。</summary>
@@ -138,7 +138,7 @@ namespace Dnf.Game
 
         private GameTimer _timer;
 
-        /// <summary>对象自己的计时器(obj.getTimer());切换状态时若 isResetTimer 为真会重置。</summary>
+        /// <summary>对象自己的计时器(obj.getTimer(),客户端里在对象 +0x54 处);切换状态不会重置它——状态执行时重置的是状态计时器 <see cref="StateTimeMs"/>(E-099)。</summary>
         public GameTimer Timer => _timer ?? (_timer = new GameTimer(World));
 
         private VarTables _varTables;

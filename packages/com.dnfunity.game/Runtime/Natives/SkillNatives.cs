@@ -40,7 +40,9 @@ namespace Dnf.Game
 
             foreach (string n in new[] { "sq_GetSkillLevel" })
             {
-                Define(n, I, "技能等级(未学为 0);全局写法传入 null 返回 -1。客户端 0x005ae4f0:空则 -1,否则取对象的 getSkillLevel(技能)(虚表槽 0x7d0,E-046)", B, c =>
+                Define(n, I,
+                    "技能等级(未学为 0);全局写法传入 null 返回 -1。客户端 0x005ae4f0:空则 -1,否则取对象的 getSkillLevel(技能)(虚表槽 0x7d0,E-046);"
+                    + "只有角色类的虚表里这个槽有实现(0x0084EE40),别的类的虚表没有这一项,所以脚本只会对角色调用;对非角色取所属角色是这里的推断(E-099)", B, c =>
                 {
                     GameObject o = ObjOrNull(c);
                     return c.Return(o == null ? -1 : SkillOwner(o).GetSkillLevel(c.Int32(0)));
@@ -140,14 +142,15 @@ namespace Dnf.Game
             });
             foreach (string n in new[] { "sq_AddSetStatePacket", "sq_addSetStatePacket" })
             {
-                Define(n, I,
+                Define(n, NativeStatus.Verified,
                     "请求对象切换状态 (状态, 优先级, 是否带数据):第 3 个参数为真时随请求发出对象当前的数据数组(sq_IntVectPush 攒的那个),为假时不带数据(onSetState 收到空数组);回调结束后处理。"
-                    + "客户端 0x0067cba0:真走 setState(状态, 数据数组, 优先级),假走 setState(状态, 空, 优先级)(E-046)。接口本身只是转交,'请求'与'执行'之间的优先级规则见 QueueState", B, c =>
+                    + "客户端 0x0067cba0(sq_addSetStatePacket 在另一个类里是 0x00BB1500,数组位置不同,逻辑一样):真走 setState(状态, 数据数组, 优先级),假走 setState(状态, 空, 优先级),"
+                    + "后两个参数都给 0(E-046、E-099)。'请求'与'执行'之间的优先级规则(单槽、优先级不低于待处理的才替换、死亡后拒绝)见 QueueState", B, c =>
                 {
                     GameObject o = c.SelfAs<GameObject>();
                     bool sendData = c.BoolOr(2, false);
-                    // 状态执行时的 isResetTimer 实参:客户端的执行函数(0x00863020)只是把调用者给的两个标志原样传给脚本回调;
-                    // 它的直接调用点给的都是 1,请求路径上的取值没有读到,暂按 true(推断)
+                    // 状态执行时的 isResetTimer 实参:客户端的执行函数(0x008360e0)的第 3 个参数,为真就重置状态计时器;
+                    // 它的调用点没有一个给常量 0(见 PassiveNatives 里的统计),请求路径上的取值没有读到,按 true(推断)
                     QueueState(o, c.Int32(0), c.Int32(1), true, sendData ? o.DataVector.Values.ToArray() : Array.Empty<long>());
                     return c.ReturnNothing();
                 });
@@ -186,7 +189,8 @@ namespace Dnf.Game
                 return c.ReturnNothing();
             });
             Define("sq_GetCurrentAttackInfo", I,
-                "对象当前的攻击信息对象;对象为 null 时返回 null(客户端 0x005ae8e0:非空才调用对象的第 0x204 号虚函数,空则返回 0;虚函数的内容没读,E-048)", B, c =>
+                "对象当前的攻击信息对象;对象为 null 时返回 null(客户端 0x005ae8e0:非空才调用对象的第 0x204 号虚函数,空则返回 0)。"
+                + "虚函数(所有对象类共用 0x00442C60)返回对象内嵌的攻击信息(对象 +0x2D4 处),所以客户端里它永远不是空;这里没设过攻击信息时返回 null,是已知差异(E-099)", B, c =>
                 c.Return(c.Self is GameObject o ? o.CurrentAttackInfo : null));
             foreach (string n in new[] { "sq_SetCurrentAttackBonusRate", "sq_setCurrentAttackBonusRate" })
             {

@@ -133,7 +133,7 @@ function setCustomData_po_Bar(obj, reciveData)
     }
 
     [Fact]
-    public void LeftFacingCreatorMirrorsTheOffsetButNeutralDirectionDoesNot()
+    public void ExplicitLeftMirrorsTheOffsetAndNeutralFollowsARightFacingCreator()
     {
         (GameWorld w, GameObject hero) = Build(@"
 	sq_SendCreatePassiveObjectPacket(obj, 24001, 0, 30, 0, 0, ENUM_DIRECTION_LEFT);
@@ -144,8 +144,29 @@ function setCustomData_po_Bar(obj, reciveData)
         Assert.Equal(2, made.Count);
         Assert.Equal(70, made[0].X);   // 朝左:向前的偏移镜像
         Assert.Equal(Direction.Left, made[0].Direction);
-        Assert.Equal(130, made[1].X);  // NEUTRAL:偏移不镜像,朝向取创建者的
+        Assert.Equal(130, made[1].X);  // NEUTRAL 先换成创建者的朝向(右),不镜像
         Assert.Equal(hero.Direction, made[1].Direction);
+    }
+
+    [Fact]
+    public void NeutralDirectionTakesTheCreatorsFacingAndMirrorsLikeAnyOtherDirection()
+    {
+        // 客户端创建函数 0x00878470(E-099):NEUTRAL 先换成创建者自己的朝向;朝向是"右"才加 x 偏移,其余(左、上、下)都减
+        (GameWorld w, GameObject hero) = Build(@"
+	obj.setCurrentDirection(ENUM_DIRECTION_LEFT);
+	sq_SendCreatePassiveObjectPacket(obj, 24001, 0, 30, 0, 0, ENUM_DIRECTION_NEUTRAL);
+	sq_SendCreatePassiveObjectPacket(obj, 24001, 0, 30, 0, 0, ENUM_DIRECTION_RIGHT);
+	sq_SendCreatePassiveObjectPacket(obj, 24001, 0, 30, 0, 0, 2);
+", @"function setCustomData_po_Bar(obj, reciveData) {}");
+        Assert.Empty(w.Errors);
+        Assert.Equal(Direction.Left, hero.Direction);
+        List<GameObject> made = w.Objects.Where(o => o.Kind == ObjectKind.PassiveObject).OrderBy(o => o.Id).ToList();
+        Assert.Equal(3, made.Count);
+        Assert.Equal(70, made[0].X);                    // NEUTRAL → 创建者朝左 → 镜像
+        Assert.Equal(Direction.Left, made[0].Direction);
+        Assert.Equal(130, made[1].X);                   // 显式朝右:不镜像
+        Assert.Equal(Direction.Right, made[1].Direction);
+        Assert.Equal(70, made[2].X);                    // 朝上(2):x 偏移同样取负
     }
 
     [Fact]

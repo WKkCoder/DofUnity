@@ -79,39 +79,39 @@
 
 | 状态 | 名字个数 | 调用点 | 占调用点 |
 |---|---:|---:|---:|
-| Verified:读过客户端实现并核对 | 66 | 6,115 | 44.8% |
-| Inferred:按调用点与语义推断实现 | 286 | 6,106 | 44.7% |
+| Verified:读过客户端实现并核对 | 83 | 7,340 | 53.8% |
+| Inferred:按调用点与语义推断实现 | 269 | 4,881 | 35.8% |
 | Trace:只占位(记录调用,不做事) | 153 | 893 | 6.5% |
 | 宿主内置:加载脚本用的 `pushState` 等,由脚本宿主实现 | 5 | 215 | 1.6% |
 | 没登记 | 194 | 318 | 2.3% |
 | **合计** | 704 | 13,647 | 100% |
 
-登记表(`docs/native-audit.tsv`)共 520 项:Verified 72、Inferred 294、Trace 154(其中 10 项脚本里没人调用)。下一批该核对的(Inferred 里调用最多的 12 个):`sq_IntVectPush`(212)、`sq_LoadSkillEffectAni`(195)、`sq_GetSkillLevel`(167)、`getXPos`(165)、`sq_AddSetStatePacket`(160)、`sq_PlaySound`(145)、`getYPos`(143)、`getZPos`(133)、`getDirection`(129)、`sq_GetCurrentAttackInfo`(129)、`GetAnimationMap`(105)、`getState`(102)。最常被调用却没登记的:`DamageTest`(6)、`GetCurrentFrame`(5)、`SetEnable`(5)、`getThrowState`(5)、`GetGraphicEffect`(4)、`SetVisible`(4)、`getSendState`(4)、`getSlotindex`(4)。
+登记表(`docs/native-audit.tsv`)共 520 项:Verified 89、Inferred 277、Trace 154(其中 10 项脚本里没人调用)。下一批该核对的(Inferred 里调用最多的 12 个):`sq_IntVectPush`(212)、`sq_LoadSkillEffectAni`(195)、`sq_GetSkillLevel`(167)、`sq_PlaySound`(145)、`sq_GetCurrentAttackInfo`(129)、`GetAnimationMap`(105)、`setValid`(98)、`sq_SendDestroyPacketPassiveObject`(98)、`sq_SetCurrentAttackBonusRate`(89)、`sq_IntVectorPush`(87)、`Get`(79)、`get_ct_vector`(74)。最常被调用却没登记的:`DamageTest`(6)、`GetCurrentFrame`(5)、`SetEnable`(5)、`getThrowState`(5)、`GetGraphicEffect`(4)、`SetVisible`(4)、`getSendState`(4)、`getSlotindex`(4)。
 
 ### 表 4　证据可追溯性
 
-台账 98 条(E-001 到 E-098),其中 95 条的"复现"栏里有可运行的命令或文件。代码、测试、文档与脚本里一共引用了 96 个不同的证据编号;**台账里找不到的引用:无**;台账里没人引用的编号:E-026、E-040。
+台账 99 条(E-001 到 E-099),其中 96 条的"复现"栏里有可运行的命令或文件。代码、测试、文档与脚本里一共引用了 97 个不同的证据编号;**台账里找不到的引用:无**;台账里没人引用的编号:E-026、E-040。
 
 | 包 | 生产代码文件 | 引用了证据的文件 | 占比 | 行数 | 引用证据的文件所含行数占比 |
 |---|---:|---:|---:|---:|---:|
 | `com.dnfunity.client` | 7 | 7 | 100% | 2,571 | 100% |
 | `com.dnfunity.data` | 13 | 13 | 100% | 2,793 | 100% |
-| `com.dnfunity.game` | 61 | 61 | 100% | 12,458 | 100% |
+| `com.dnfunity.game` | 61 | 61 | 100% | 12,514 | 100% |
 | `com.dnfunity.play` | 27 | 27 | 100% | 8,733 | 100% |
 | `com.dnfunity.render` | 30 | 30 | 100% | 8,951 | 100% |
 | `com.dnfunity.script` | 5 | 5 | 100% | 657 | 100% |
 | `com.dnfunity.squirrel` | 4 | 4 | 100% | 1,450 | 100% |
-| **合计** | 147 | 147 | 100% | 37,613 | 100% |
+| **合计** | 147 | 147 | 100% | 37,669 | 100% |
 
 另有 9 个文件不实现原版规则(测试工具、Unity 自检与封装、小工具),不要求引用证据,不计入上表:`client/RenderSelfTest.cs`、`client/UnityObjects.cs`、`data/Adler32.cs`、`data/DnfFormatException.cs`、`data/Latin1.cs`、`game/Defs/TagTable.cs`、`play/CombatScript.cs`、`play/DungeonBot.cs`、`squirrel/MonoPInvokeCallbackAttribute.cs`。
 
 每个文件都引用了证据编号。
 
-### 表 5　对拍与全库读通(`tools/verify-all.sh`,2026-10-21T01:24:30Z)
+### 表 5　对拍与全库读通(`tools/verify-all.sh`,2026-10-21T02:13:45Z)
 
 | 检查 | 类型 | 证据 | 用例 | 不一致/失败 | 通过率 | 说明 |
 |---|---|---|---:|---:|---:|---|
-| 单元测试(合成数据) | 合成数据测试 | — | 1,129 | 0 | 100% | 6 个测试项目(合成数据,不含原版数值);跳过 0 |
+| 单元测试(合成数据) | 合成数据测试 | — | 1,136 | 0 | 100% | 6 个测试项目(合成数据,不含原版数值);跳过 0 |
 | PVF:全部文件逐个核对 CRC 与清单 | 全库读通 | E-008 | 334,998 | 0 | 100% | 目录树校验通过;明文 150 MB |
 | 标记流脚本:全库读通,标签目录与 Python 逐项一致 | 全库读通 | E-008 | 147,273 | 0 | 100% | 3408 种开标签、3232710 次出现;另有 187725 个文件不是标记流(.ani 等,单独检查) |
 | .ani 动画:全部读通,统计与 Python 逐项一致 | 全库读通 | E-008 | 187,365 | 0 | 100% | 1149532 帧、181149 个框 |

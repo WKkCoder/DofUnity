@@ -40,17 +40,26 @@ namespace Dnf.Game
             const NativeForm B = NativeForm.Both;
             const NativeStatus I = NativeStatus.Inferred;
 
-            foreach (string n in new[] { "getXPos", "sq_GetXPos", "GetXPos" })
+            // 位置读取的客户端实现(E-099):全局写法(0x005adf40 / 0x005adf60 / 0x005adf80)对空返回 -1,否则成员写法(0x005b7060 / 0x005b7240 / 0x005b6d10)
+            // 都跳进虚函数槽 0xA4 / 0xA8 / 0xAC → 0x00406390 / 0x004063A0 / 0x004063B0 → 槽 0xA0(0x007f9e40,参数是轴 0/1/2)。
+            // 它读对象的位置组件的浮点值并四舍五入成整数(0x00767630,.5 远离 0),所以这里的整数坐标等价;客户端另有"位置依附"
+            // (组件 +0x78 处的依附者且 +0x7c 处的开关为真时,坐标取依附者的),这里没有实现。
+            foreach (string n in new[] { "getXPos", "sq_GetXPos" })
             {
-                Define(n, I, "对象的 x 坐标;全局写法传入 null 返回 -1(客户端 0x005adf40)", B, c => c.Return(ObjOrNull(c)?.X ?? -1));
+                Define(n, NativeStatus.Verified, "对象的 x 坐标;全局写法传入 null 返回 -1(客户端 0x005adf40、0x005b7060,E-099)", B, c => c.Return(ObjOrNull(c)?.X ?? -1));
             }
-            foreach (string n in new[] { "getYPos", "sq_GetYPos", "GetYPos" })
+            foreach (string n in new[] { "getYPos", "sq_GetYPos" })
             {
-                Define(n, I, "对象的 y(纵深)坐标;全局写法传入 null 返回 -1(客户端 0x005adf60)", B, c => c.Return(ObjOrNull(c)?.Y ?? -1));
+                Define(n, NativeStatus.Verified, "对象的 y(纵深)坐标;全局写法传入 null 返回 -1(客户端 0x005adf60、0x005b7240,E-099)", B, c => c.Return(ObjOrNull(c)?.Y ?? -1));
             }
             foreach (string n in new[] { "getZPos", "sq_GetZPos" })
             {
-                Define(n, I, "对象的 z(高度)坐标;全局写法传入 null 返回 -1(客户端 0x005adf80)", B, c => c.Return(ObjOrNull(c)?.Z ?? -1));
+                Define(n, NativeStatus.Verified, "对象的 z(高度)坐标;全局写法传入 null 返回 -1(客户端 0x005adf80、0x005b6d10,E-099)", B, c => c.Return(ObjOrNull(c)?.Z ?? -1));
+            }
+            foreach (string n in new[] { "GetXPos", "GetYPos" })
+            {
+                // 大写写法在别的类里注册(实现 0x0042FF60 / 0x011BE300 / 0x011C7DC0 等),没有读,按同名的小写写法推断
+                Define(n, I, "同 getXPos / getYPos 的推断(另一个类里的同名接口,客户端实现没读)", B, c => c.Return(n == "GetXPos" ? (ObjOrNull(c)?.X ?? -1) : (ObjOrNull(c)?.Y ?? -1)));
             }
             foreach (string n in new[] { "setCurrentPos", "SetPos" })
             {
@@ -106,7 +115,9 @@ namespace Dnf.Game
             });
             foreach (string n in new[] { "getDirection", "sq_GetDirection" })
             {
-                Define(n, I, "对象的朝向(ENUM_DIRECTION_*);全局写法传入 null 返回 -1(客户端 0x005addb0)", B, c => c.Return(ObjOrNull(c)?.Direction ?? -1));
+                Define(n, NativeStatus.Verified,
+                    "对象的朝向(ENUM_DIRECTION_*);全局写法传入 null 返回 -1(客户端 0x005addb0、0x00BB14B0、成员写法 0x005b6c40,都跳进虚函数槽 0xF8 → 0x007f9e90:读位置组件里的一个有符号字节,E-099)", B,
+                    c => c.Return(ObjOrNull(c)?.Direction ?? -1));
             }
             Define("setCurrentDirection", I, "设置对象的朝向", B, c =>
             {
@@ -125,7 +136,9 @@ namespace Dnf.Game
             });
             foreach (string n in new[] { "getState", "sq_GetState", "sq_GetSTATE" })
             {
-                Define(n, I, "对象当前的状态编号;全局写法传入 null 返回 -1(客户端 0x005adc10)", B, c => c.Return(ObjOrNull(c)?.State ?? -1));
+                Define(n, NativeStatus.Verified,
+                    "对象当前的状态编号;全局写法传入 null 返回 -1(客户端 0x005adc10 → 虚函数槽 0xB8;主动对象与角色 0x0067e810 读受保护值,被动对象 0x0046fc80 读一个整数字段;"
+                    + "碰撞对象 0x005af410 恒为 -1,这里没有这一类),E-099", B, c => c.Return(ObjOrNull(c)?.State ?? -1));
             }
             foreach (string n in new[] { "isMyControlObject", "sq_IsMyControlObject" })
             {

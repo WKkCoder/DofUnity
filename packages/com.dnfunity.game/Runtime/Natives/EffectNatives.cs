@@ -12,9 +12,15 @@ namespace Dnf.Game
             const NativeStatus I = NativeStatus.Inferred;
             const NativeStatus T = NativeStatus.Trace;
 
-            Define("sq_PlaySound", I, "播放声音 (声音键[, 其他]);只发出事件,不播放", B, c =>
+            Define("sq_PlaySound", I,
+                "播放声音 (声音键[, 其他]);只发出事件,不播放。客户端 0x005aba30 转给虚函数 0x007fbd90(以对象位置播放),键为空串或空指针时什么也不做(E-099);"
+                + "其余参数(声音大小之类)与对象上的两个开关没有建模", B, c =>
             {
-                Events.PlaySound(c.Self as GameObject, c.Str(0));
+                string key = c.Str(0);
+                if (!string.IsNullOrEmpty(key))
+                {
+                    Events.PlaySound(c.Self as GameObject, key);
+                }
                 return c.ReturnNothing();
             });
             Define("stopSound", I, "停止声音:占位(事件里没有停止)", B, c => c.ReturnNothing());

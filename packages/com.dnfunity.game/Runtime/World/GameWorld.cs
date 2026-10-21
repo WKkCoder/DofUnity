@@ -159,7 +159,7 @@ namespace Dnf.Game
             obj.IsMyControl = true;
             obj.MaxHp = obj.Hp = 1000;
             obj.MaxMp = obj.Mp = 1000;
-            EnterState(obj, 0, Array.Empty<long>(), false, 0);
+            EnterState(obj, 0, Array.Empty<long>(), true, 0);   // 客户端创建角色后调的是 (状态 0, 无数据, 1, 1)(0x00822180、0x00805cd0)
             return obj;
         }
 

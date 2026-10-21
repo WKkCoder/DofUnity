@@ -154,8 +154,10 @@ namespace Dnf.Game
         // ---------------------------------------------------------------- 创建与销毁
         /// <summary>
         /// 创建被动对象。位置:相对创建者 (offsetX 向前、offsetY 纵深、offsetZ 高度);
-        /// 朝向参数为 NEUTRAL 时偏移不随创建者朝向镜像、新对象朝向取创建者的;为左或右时新对象朝该方向、偏移在朝左时镜像;
+        /// 规则读自客户端的创建函数(0x00878470,E-099):朝向参数为 NEUTRAL 时先换成创建者自己的朝向;然后朝向不是"右"就把 x 偏移取负
+        /// (朝左镜像;上、下也取负),新对象朝向取这个朝向(上、下无法表示,取创建者的朝向);
         /// absolute 为真时偏移就是世界坐标。创建后调用 setCustomData_po_名字(对象, 读取端)。找不到 .obj 返回 null 并记入 <see cref="Errors"/>。
+        /// 原先的推断是"NEUTRAL 时偏移不镜像",与客户端不符,已改。
         /// </summary>
         internal GameObject CreatePassiveObject(GameObject creator, int id, int offsetX, int offsetY, int offsetZ, int direction, bool absolute, byte[] data)
         {
@@ -165,8 +167,9 @@ namespace Dnf.Game
                 Errors.Add("被动对象 " + id + " 找不到 .obj");
                 return null;
             }
-            int facing = direction == Direction.Left || direction == Direction.Right ? direction : creator.Direction;
-            bool mirror = !absolute && direction != Direction.Neutral && facing == Direction.Left;
+            int resolved = direction == Direction.Neutral ? creator.Direction : direction;
+            int facing = resolved == Direction.Left || resolved == Direction.Right ? resolved : creator.Direction;
+            bool mirror = !absolute && resolved != Direction.Right;
             int x = absolute ? offsetX : creator.X + (mirror ? -offsetX : offsetX);
             int y = absolute ? offsetY : creator.Y + offsetY;
             int z = absolute ? offsetZ : creator.Z + offsetZ;

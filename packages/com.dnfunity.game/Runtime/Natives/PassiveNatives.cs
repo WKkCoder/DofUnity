@@ -75,8 +75,9 @@ namespace Dnf.Game
 
             // ---- 创建与销毁被动对象
             Define("sq_SendCreatePassiveObjectPacket", I,
-                "创建被动对象 (编号, 未知 0, x, y, z[, 朝向]):位置相对创建者(x 向前、朝向左时镜像),朝向参数为 NEUTRAL 时偏移不镜像;"
-                + "发送缓冲里写好的数据随消息交给 setCustomData_po_*;对象为 null 时返回 -1(客户端 0x005ae780,E-048);其余情况返回 0(客户端返回第 0x340 号虚函数的结果,含义未知)", B, c => SendCreatePassive(c, false, true));
+                "创建被动对象 (编号, 未知 0, x, y, z[, 朝向]):位置相对创建者;朝向参数为 NEUTRAL 时先换成创建者自己的朝向,朝向不是“右”时 x 偏移取负"
+                + "(客户端创建函数 0x00878470,E-099);发送缓冲里写好的数据随消息交给 setCustomData_po_*;对象为 null 时返回 -1(客户端 0x005ae780,E-048);"
+                + "其余情况返回 0(客户端返回第 0x340 号虚函数的结果,含义未知)", B, c => SendCreatePassive(c, false, true));
             Define("sq_p00_sendCreatePassiveObjectPacket", I, "同 sq_SendCreatePassiveObjectPacket(复仇者模块的写法)", M, c => SendCreatePassive(c, false));
             Define("sq_SendCreatePassiveObjectPacketPos", I, "创建被动对象 (创建者, 编号, 未知 0, x, y, z):位置是世界坐标", G, c => SendCreatePassive(c, true));
             Define("sq_SendCreatePassiveObjectPacketFromPassivePos", I,
@@ -118,27 +119,36 @@ namespace Dnf.Game
             });
 
             // ---- 状态消息
-            Define("sendStateOnlyPacket", I, "给对象发'切换状态'消息 (状态),没有数据", M, c =>
+            // 这一族接口在客户端都落到同一个"请求切换状态"的虚函数(槽 0x30c,0x008779b0,E-099):参数 (状态, 数据数组, 优先级, 强制发送, 日志字符串)。
+            // 其中第 4 个参数不是“重置计时器”:它只是“对象不是本机控制时也允许发送”的开关,单机里所有对象都归本机控制,不起作用。
+            // 状态真正执行时的 isResetTimer:客户端 0x008360e0 的第 3 个参数,为真就重置状态计时器;它的 126 个调用点里 117 个给常量 1,
+            // 其余 9 个实参来自寄存器或另有布局,没有一个是常量 0,所以请求路径一律按 true(收到回应后的调用点没有定位,属推断)。
+            Define("sendStateOnlyPacket", NativeStatus.Verified,
+                "给对象发'切换状态'消息 (状态),没有数据:客户端 0x00442d00:对象由本机控制时,请求 (状态, 无数据, 优先级 0) 并立刻发送(E-099)", M, c =>
             {
-                QueueState(c.SelfAs<GameObject>(), c.Int32(0), 0, false, Array.Empty<long>());
+                QueueState(c.SelfAs<GameObject>(), c.Int32(0), 0, true, Array.Empty<long>());
                 return c.ReturnNothing();
             });
-            Define("sendStatePacket", I, "给对象发'切换状态'消息 (状态, 参数):数据数组只有这一个参数", M, c =>
+            Define("sendStatePacket", NativeStatus.Verified,
+                "给对象发'切换状态'消息 (状态, 参数):数据数组只有这一个参数;客户端 0x00443180:对象由本机控制时,请求 (状态, [参数], 优先级 0) 并立刻发送(E-099)", M, c =>
             {
                 long[] data = c.Has(1) && !c.IsNull(1) ? new[] { c.Int(1) } : Array.Empty<long>();
-                QueueState(c.SelfAs<GameObject>(), c.Int32(0), 0, false, data);
+                QueueState(c.SelfAs<GameObject>(), c.Int32(0), 0, true, data);
                 return c.ReturnNothing();
             });
-            Define("addSetStatePacket", I, "给对象发'切换状态'消息 (状态, 整数数组, 优先级, 是否重置计时器, 字符串)", M, c =>
+            Define("addSetStatePacket", NativeStatus.Verified,
+                "给对象发'切换状态'消息 (状态, 整数数组, 优先级, 强制发送, 字符串):客户端直接跳进请求函数 0x008779b0;第 4 个参数是“非本机控制也发送”,不是重置计时器;"
+                + "第 5 个只用于日志(E-099)。请求的优先级规则见 QueueState", M, c =>
             {
-                QueueState(c.SelfAs<GameObject>(), c.Int32(0), c.Int32(2), c.BoolOr(3, false), ToArray(c.Arg<IntVector>(1)));
+                QueueState(c.SelfAs<GameObject>(), c.Int32(0), c.Int32(2), true, ToArray(c.Arg<IntVector>(1)));
                 return c.ReturnNothing();
             });
-            Define("sq_AddSetStatePacketActiveObject", I, "给主动对象发'切换状态'消息 (对象, 状态, 整数数组, 优先级)", G, c =>
+            Define("sq_AddSetStatePacketActiveObject", NativeStatus.Verified,
+                "给主动对象发'切换状态'消息 (对象, 状态, 整数数组, 优先级):客户端 0x005adc30:对象为空什么也不做,否则请求 (状态, 数组, 优先级) 并立刻发送(E-099)", G, c =>
             {
                 if (c.Self is GameObject o)
                 {
-                    QueueState(o, c.Int32(0), c.Int32(2), false, ToArray(c.Arg<IntVector>(1)));
+                    QueueState(o, c.Int32(0), c.Int32(2), true, ToArray(c.Arg<IntVector>(1)));
                 }
                 return c.ReturnNothing();
             });

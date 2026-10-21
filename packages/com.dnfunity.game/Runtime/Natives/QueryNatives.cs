@@ -199,7 +199,9 @@ namespace Dnf.Game
                 QueueWorldPacket(() => Destroy(o));
                 return c.ReturnNothing();
             });
-            Define("sq_GetStateTimer", I, "当前状态已经过的毫秒数(自上次进入状态起)", M, c => c.Return(c.SelfAs<GameObject>().StateTimeMs));
+            Define("sq_GetStateTimer", I,
+                "当前状态已经过的毫秒数(自上次进入状态起):客户端 0x0067cf60 读对象 +0x30A0 处的状态计时器(状态执行时的 isResetTimer 为真就重置它,E-099);计时器的暂停、上限等细节没读", M,
+                c => c.Return(c.SelfAs<GameObject>().StateTimeMs));
             Define("sq_getStateTimer", I, "同 sq_GetStateTimer", M, c => c.Return(c.SelfAs<GameObject>().StateTimeMs));
             Define("sq_GetParentState", I, "父对象的当前状态编号;没有父对象为 -1", M, c => c.Return(c.SelfAs<GameObject>().Parent?.State ?? -1));
             Define("sq_GetParentSkillSubState", I, "父对象的技能子状态;没有父对象为 0", M, c => c.Return(c.SelfAs<GameObject>().Parent?.SkillSubState ?? 0));

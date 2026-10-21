@@ -598,15 +598,20 @@ function onProc_Foo(obj)
     }
 
     [Fact]
-    public void ParametersWrittenByStatePacketsStartTheTimerWhenResetIsRequested()
+    public void EnteringAStateResetsTheStateTimerButNotTheObjectTimer()
     {
+        // 客户端的状态执行函数(0x008360e0)第 3 个参数为真时重置的是状态计时器(sq_GetStateTimer 读的),不碰 getTimer() 的对象计时器(E-099)
         (GameWorld w, GameObject hero) = Run("");
+        Assert.NotNull(hero.Timer);                  // 对象计时器从这里开始走
         for (int i = 0; i < 100; i++)
         {
             w.Step(1);
         }
-        long before = hero.Timer.Get();
-        Assert.InRange(before, 95, 105);
+        Assert.InRange(hero.StateTimeMs, 95, 105);   // 状态计时器自进入状态起一直在走
+        Assert.InRange(hero.Timer.Get(), 95, 105);
+        w.ForceState(hero, World.StateFoo);          // 再次进入状态:状态计时器清零,对象计时器照走
+        Assert.Equal(0, hero.StateTimeMs);
+        Assert.InRange(hero.Timer.Get(), 95, 105);
     }
 
     [Fact]
