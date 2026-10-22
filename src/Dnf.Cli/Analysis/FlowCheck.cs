@@ -64,9 +64,12 @@ internal static class FlowCheck
         CharacterSelectScene characterScene = CharacterSelectScene.From(assets);
         // 主角的等级进度跟着整个流程(几局副本之间等级与经验留着;E-111)
         HeroProgress? progress = ExpCheck.ProgressFor(assets, opts);
+        // 复活币库存也跟着整个流程(用掉的币不会回来;每局副本的"已用次数"在副本里重新数,证据 E-115)
+        var coins = new ReviveCoins(opts.Coins);
         var flow = new GameFlow(
             townWorld,
-            (path, run) => DungeonSession.Create(assets, path, opts.Seed + run, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage, progress: progress),
+            (path, run) => DungeonSession.Create(assets, path, opts.Seed + run, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage, progress: progress,
+                coins: coins, monsterDamageScale: opts.MonsterDamageScale),
             entries,
             realSelect ? world!.Scene : null,
             opts.LegacyTown ? null : path => SplashCatalog.ForDungeon(assets, path),
@@ -136,7 +139,7 @@ internal static class FlowCheck
 
         Console.WriteLine();
         Console.WriteLine("结束:t=" + Sec(t) + "s  " + (bot.Done ? "流程走完" : "到时间了没走完") + ",停在 " + flow.Stage + ";开了 " + flow.Runs + " 局副本,结算上做了 "
-            + flow.Settlements + " 次选择(清单 " + choices.Count + " 个),阶段切换 " + flow.History.Count + " 次");
+            + flow.Settlements + " 次选择(清单 " + choices.Count + " 个),副本失败回城 " + flow.Failures + " 次,复活币剩 " + coins.Count + " 个,阶段切换 " + flow.History.Count + " 次");
         bool allCleared = stats.Count > 0 && stats.All(s => s.BossCleared);
         Console.WriteLine("  每一局都打到首领清空:" + (allCleared ? "是" : "否"));
         bool musicOk = true;
@@ -243,12 +246,18 @@ internal static class FlowCheck
         public double ClockMs { get; private set; }
         public bool SettlementShown { get; private set; }
         public SettlementChoice Choice { get; private set; }
+        public bool Failed { get; private set; }
+        public int Deaths { get; private set; }
+        public int Revives { get; private set; }
 
         public static RunStats Of(DungeonSession s, int run)
         {
             return new RunStats
             {
                 Run = run,
+                Failed = s.Failed,
+                Deaths = s.Revive?.Deaths ?? 0,
+                Revives = s.Revive?.Revives ?? 0,
                 BossCleared = s.BossCleared,
                 Kills = s.Kills,
                 Hits = s.Hits,
@@ -261,8 +270,9 @@ internal static class FlowCheck
 
         public override string ToString()
         {
-            return "第 " + Run + " 局 " + (BossCleared ? "首领清空" : "没打完") + ",用时 " + Sec(ClockMs) + " 秒,清空 " + RoomsCleared + " 个房间,击杀 " + Kills
-                + " 个,命中 " + Hits + " 次;结算菜单 " + (SettlementShown ? "出现过" : "没出现") + ",选择 " + Name(Choice);
+            return "第 " + Run + " 局 " + (BossCleared ? "首领清空" : Failed ? "副本失败" : "没打完") + ",用时 " + Sec(ClockMs) + " 秒,清空 " + RoomsCleared + " 个房间,击杀 " + Kills
+                + " 个,命中 " + Hits + " 次;" + (Deaths > 0 ? "死亡 " + Deaths + " 次、复活 " + Revives + " 次;" : string.Empty)
+                + "结算菜单 " + (SettlementShown ? "出现过" : "没出现") + ",选择 " + Name(Choice);
         }
     }
 

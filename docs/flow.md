@@ -13,7 +13,7 @@
 | `Loading` 加载 | 整屏加载画面(`SplashScreen`:过场图 + 上下边条 + 标题,M9d);停够时间后切到目标阶段 | 进城镇(登录、换城镇、进出网关区域、副本回城)或进副本 |
 | `Town` 城镇 | 有主角的场景会话(城镇图册里的一块区域,M9d,见 [town.md](town.md));走进地图边缘的出口换区域 | 地下城入口区域里通往世界地图的出口 → 打开副本选择;其他出口 → 换区域(必要时先加载);老式的单会话城镇(`--legacy-town`)没有出口,由宿主调 `EnterSelect`(播放器里按回车)占位 |
 | `DungeonSelect` 副本选择 | 没有主角的整屏界面(`DungeonSelectScreen`):有世界地图数据时画原版的世界地图(M9c);没有时是占位(深色底、像素字列表、选中行高亮、底栏提示) | 确认 → 进选中的副本;返回 → 回城镇 |
-| `Dungeon` 副本 | 整座副本会话(`DungeonSession`);首领清空 3 秒后出结算菜单(E-091) | 结算菜单上选:再次挑战 → 同一座副本重开一局;选择其它地下城 → 回副本选择,选中刚打过的那座;返回城镇 → 回城镇 |
+| `Dungeon` 副本 | 整座副本会话(`DungeonSession`);首领清空 3 秒后出结算菜单(E-091) | 结算菜单上选:再次挑战 → 同一座副本重开一局;选择其它地下城 → 回副本选择,选中刚打过的那座;返回城镇 → 回城镇;主角死后没有复活、10 秒窗口走完 → 副本失败回城镇(不算结算,§8);Esc 系统菜单里选"放弃回城"也回城镇(§8) |
 
 结算菜单里的"快速组队"在原版没有队伍时是灰的,流程里没有对应的去向,不会被选中。
 加载画面:登录、换城镇、进出网关区域、进副本都先停在 `Loading`(规则与时长见 [town.md](town.md) §2.3,是推断与占位);没给加载画面素材的流程(`--legacy-town`、测试里的假世界)瞬间切换,与 M9b 一致。
@@ -84,3 +84,26 @@ tools/play-dungeon.sh flow [bot|explore] [nodamage] [nosound]                   
 dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll dungeon-check --dungeon <副本定义> --bot --explore --seconds 600 --no-damage   # 单座副本
 dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --room --map <地图> --cam-x 0 --cam-y <镜头 y> --png <输出.png>   # 合成带扩展瓦片的房间
 ```
+
+## 8 死亡、复活与副本失败;Esc 系统菜单(M23,证据 E-115)
+
+**主角死了怎么办**(副本里;规则来自服务端静态读码,地址见账本 E-115):
+
+- **复活币规则**读副本定义里的三项(`[coin limit]`、`[party member coin limit]`、`[coin info]`,`DungeonCoinRules`):先看这一难度的免费复活,再依次看身上有没有币、队伍上限、难度上限、总上限;总上限没写是不限,队伍上限没写是不设;"上限 ≤ 已用次数"就算到顶。
+- **10 秒窗口**(`HeroRevive`):主角躺平的那一刻打开(倒地飞行与落地不算,和服务端"躺平之后才通知死亡"一致,E-084),窗口里按攻击键使用一枚复活币——满血满蓝起身、短暂无敌、身上放一个使用复活币的动画;没有币、到上限、这一难度不能花币时窗口里换一句提示,窗口走完副本失败。躺着的主角走 `KnockdownFlight.Resurrect` 的"躺着保持一会儿再起身"路径。
+- **副本失败**:`IRunSession.Failed` → `GameFlow` 回城镇(`Failures` 加一,不算结算,不动 `Settlements`);下一局照常开始。原版失败还要扣疲劳(设为 10),这一条没做。
+- **复活币库存**跨整个流程(`ReviveCoins`,占位起始 5 枚——没有背包,等 M25 并入),每一局副本的"已用次数"重新数。
+- **画面**(`ReviveArt`):倒计时用客户端的 `coin_countdown` 大数字、库存用 `coin_stock`、币图标用 `countdown` 的第 0 帧;原版文字(`ui.kor.str` 的 `use_coin_*`)没有 CJK 字体系统可用,提示是占位英文。
+- **测试旋钮**(不是原版规则):命令行 `--coins N`(0 到 99)、`--monster-damage-scale N`,播放器 `-dnfcoins N`、`-dnfmonsterdamage N`——把怪物伤害放大到一击必杀,才能无人值守地走到死亡。
+
+**Esc 系统菜单**(`SystemMenu`、`SystemMenuArt`、`GameFlow.ToggleMenu`):流程模式下在城镇与副本里按 Esc 打开,游戏暂停(宿主 `TownDemo` 负责暂停,菜单本身是纯逻辑);上下键或鼠标悬停选行,回车、空格、数字键或点击确定,再按 Esc 关上。副本里三项:继续 / 放弃回城 / 退出游戏;城镇里三项:继续 / 回选角 / 退出游戏。选定的项在下一次 `Poll` 里执行:放弃回城计入 `GiveUps`(不是结算也不是失败),回选角进选角界面,退出只置 `QuitRequested` 让宿主去退。换阶段时菜单自动关上;加载、选角、副本选择阶段没有系统菜单,Esc 照旧(选择界面里是返回城镇)。**版式与条目是本项目自己的占位设计**——原版 Esc 菜单的界面脚本还没读,英文文字也是占位。
+
+**验证**:
+
+- 合成数据单元测试:`DungeonCoinRulesTests`(判定顺序与默认值)、`HeroReviveTests`(窗口、币、上限、倒计时)、`HeroReviveSessionTests`(房间里死、复活、无敌、跨房间共用)、`ReviveArtTests`、`HeroKnockdownTests` 的复活路径、`GameFlowTests` 的失败回城、`SystemMenuTests`(菜单状态、点击判定、画法、在流程里的执行)。
+- `verify-all` 的 flow 项加了两条:一击必杀且币给足时自动机死后用币复活、打完整座副本;没有币时倒下后窗口走完副本失败(退出码 2 是预期)。
+- 播放器实机三段(`tools/unity-build-town.sh macos`,无人值守):无币一击必杀 → 日志里死一次、没复活、`reason="dungeon fail"`、`failures=1 settlements=0`;币给足一击必杀 → 日志里有 `DNF_REVIVE` 复活行、不失败;`-dnfmenuat 3 -dnfmenuchoose 2` → 探针打开菜单(`DNF_MENU open`)、选"放弃回城"、`reason="menu return"`、`giveups=1`。
+
+**推断与占位(非 REA)**:复活满血满蓝、无敌 3 秒外加躺着保持的一段、倒计时 10 到 0 的显示、窗口位置、起始库存 5 枚、菜单版式与文字都是我的取值;客户端收到复活之后的处理(回血比例、无敌时长)没读。
+
+**没做**:队伍里别人复活你、复活币从背包扣、放弃与失败的疲劳惩罚、原版系统菜单的样子与中文文字、结算页上失败后的任何提示。

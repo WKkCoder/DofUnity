@@ -55,12 +55,24 @@ namespace Dnf.Client
             Stage = SpriteStage.Create(background, "DnfTown");
         }
 
+        /// <summary>
+        /// 叠在场景之上的外挂精灵(宿主的系统菜单等):每次 <see cref="ShowAt"/> 取一次,返回 null 或空表就什么也不叠。
+        /// 叠加不改场景自己的绘制列表(返回给调用方的是合并后的新表,场景的缓存表不被污染)。
+        /// </summary>
+        public Func<List<SceneSprite>> Overlay { get; set; }
+
         /// <summary>把场景摆到 <paramref name="timeMs"/> 时刻并返回这次的绘制列表(与 CPU 合成共用)。</summary>
         public List<SceneSprite> ShowAt(long timeMs)
         {
             List<SceneSprite> sprites = _source != null
                 ? _source.Build(timeMs)
                 : TownScene.BuildResolvedScene(_assets, _layers, _npcs, _projection, timeMs);
+            List<SceneSprite> extra = Overlay?.Invoke();
+            if (extra != null && extra.Count > 0)
+            {
+                sprites = new List<SceneSprite>(sprites);
+                sprites.AddRange(extra);
+            }
             Stage.SetSprites(sprites);
             return sprites;
         }

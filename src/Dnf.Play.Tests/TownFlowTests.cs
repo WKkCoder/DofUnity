@@ -106,6 +106,8 @@ public class TownFlowTests : IDisposable
         public int Run { get; }
         public SettlementChoice Choice { get; set; }
 
+        public bool Failed => false;
+
         public FakeRun(string path, int run)
         {
             Path = path;

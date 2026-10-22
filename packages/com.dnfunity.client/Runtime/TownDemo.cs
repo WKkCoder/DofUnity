@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using Dnf.Play;
 using Dnf.Render;
@@ -54,7 +55,9 @@ namespace Dnf.Client
     /// 选定时日志里留一行 DNF_SETTLE choice=…,流程由外面接,证据 E-091)。
     /// 按键(副本房间里的主角,按原版默认键位,证据 E-072、E-076):方向键 走动(按住;同方向再按一下接着按住 = 奔跑);X 普攻(连按接下一段);C 跳跃;
     /// A S D 前三个技能快捷槽(新建的剑士是鬼斩、上挑、后跳,各有冷却);Z 与原版的另一个快捷槽没有确认绑什么,不响应。
-    /// 空格 暂停/继续;暂停时左右方向键按 50 毫秒步进动画时间;H 显示/隐藏文字;Esc 退出;点击/触摸 暂停/继续(开着触屏操作层时改用右上角的暂停键)。
+    /// 空格 暂停/继续;暂停时左右方向键按 50 毫秒步进动画时间;H 显示/隐藏文字;Esc 退出(流程模式的城镇与副本里改为打开系统菜单,见下);点击/触摸 暂停/继续(开着触屏操作层时改用右上角的暂停键)。
+    /// 主角死后(副本里,证据 E-115):躺平那一刻起屏幕上方是 10 秒倒计时,攻击键 X 就是使用复活币(原地满血复活、短暂无敌),币用完、到上限或计时走完副本失败、回城镇;-dnfcoins N 指定起始复活币数(默认 5,占位:没有背包),-dnfmonsterdamage N(测试旋钮)让怪物伤害乘上 N 以便无人值守地检查死亡。
+    /// 系统菜单(本项目自己的占位设计,原版 Esc 菜单的版式没有读到,<see cref="SystemMenu"/>):流程模式下在城镇与副本里按 Esc 打开,游戏暂停;上下键(或鼠标悬停)选,回车、空格、数字键或点击确定,再按 Esc 关上;副本里是 继续 / 放弃回城 / 退出游戏,城镇里是 继续 / 回选角 / 退出游戏。-dnfmenuat 秒 [-dnfmenuchoose N] 无人值守地走一遍(副本阶段开始后第几秒打开、再过一秒选第 N 项),日志里留 DNF_MENU 行。
     /// 触屏操作层(M13,<see cref="TouchOverlay"/>、<see cref="TouchControls"/>;本项目自己的设计,原版是键盘游戏):手机与平板默认开,桌面带 -dnftouch 开(鼠标左键模拟一根手指)。
     /// 左下按住拖动是浮动摇杆(八向,推到最外圈 = 奔跑),右下是 ATK(普攻)、JMP(跳跃)与 A S D 三个技能键,右上角是暂停键;只在带主角的场景里出现(选角、副本选择、加载、结算菜单不出现,点菜单照旧)。
     /// -dnftouchscript 秒:动作,… 按时间表替手指操作(见 <see cref="TouchScript"/>,例如 0.5:stick=left+run,3:stick=none,3.5:tap=attack),-dnftouchshot &lt;png&gt; [-dnftouchshotat &lt;秒&gt;] 把整个窗口(含控件)存成 PNG,
@@ -109,6 +112,19 @@ namespace Dnf.Client
         private bool _noExp;
         private int _heroLevel = 1;
         private HeroProgress _progress;
+        private ReviveCoins _coins;
+        private int _coinStock = ReviveCoins.DefaultStock;
+        private int _monsterDamageScale = 1;
+        private readonly OverlayArt _menuArt = new OverlayArt();
+        private bool _menuWasOpen;
+        private double _menuProbeAtSeconds = -1.0;
+        private int _menuProbeChoice = 2;
+        private float _stageRealStart;
+        private float _menuProbeOpenedAt = -1f;
+        private bool _menuProbeDone;
+        private bool _menuPausedIt;
+        private int _noteDeaths;
+        private int _noteRevives;
         private double _playAtSeconds = -1.0;
         private double _afterClearSeconds;
         private SettlementChoice _loggedChoice;
@@ -228,6 +244,22 @@ namespace Dnf.Client
                     case "-dnflevel":
                         if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
                                 System.Globalization.CultureInfo.InvariantCulture, out int heroLevel) && heroLevel >= 1 && heroLevel <= 85) { _heroLevel = heroLevel; i++; }
+                        break;
+                    case "-dnfcoins":
+                        if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                                System.Globalization.CultureInfo.InvariantCulture, out int stock) && stock >= 0 && stock <= 99) { _coinStock = stock; i++; }
+                        break;
+                    case "-dnfmonsterdamage":
+                        if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                                System.Globalization.CultureInfo.InvariantCulture, out int mds) && mds >= 1 && mds <= 100000) { _monsterDamageScale = mds; i++; }
+                        break;
+                    case "-dnfmenuat":
+                        if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out double mat) && mat >= 0.0) { _menuProbeAtSeconds = mat; i++; }
+                        break;
+                    case "-dnfmenuchoose":
+                        if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                                System.Globalization.CultureInfo.InvariantCulture, out int mch) && mch >= 1 && mch <= 9) { _menuProbeChoice = mch; i++; }
                         break;
                     case "-dnfplayat":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
@@ -516,7 +548,8 @@ namespace Dnf.Client
         private DungeonSession CreateDungeon(string path, int seed)
         {
             bool shot = !string.IsNullOrEmpty(_shotPath);
-            DungeonSession dungeon = DungeonSession.Create(_assets, path, seed, _randomLayout, heroVitals: !_noDamage, progress: HeroProgressForRun());
+            DungeonSession dungeon = DungeonSession.Create(_assets, path, seed, _randomLayout, heroVitals: !_noDamage, progress: HeroProgressForRun(),
+                coins: CoinsForRun(), monsterDamageScale: _monsterDamageScale);
             _heroInput = true;
             if (_useBot && !_flowMode)
             {
@@ -552,6 +585,19 @@ namespace Dnf.Client
                 _progress = HeroProgress.CreateForLocalHero(_assets, _heroLevel);
             }
             return _progress;
+        }
+
+        /// <summary>
+        /// 复活币库存(证据 E-115):整次运行一个(流程里几局副本之间币数留着;每局副本的"已用几次"在副本里重新数)。
+        /// 占位:没有背包,起始库存是 <see cref="ReviveCoins.DefaultStock"/> 个,-dnfcoins N 指定(0 就是死了只能等失败回城)。
+        /// </summary>
+        private ReviveCoins CoinsForRun()
+        {
+            if (_coins == null)
+            {
+                _coins = new ReviveCoins(_coinStock);
+            }
+            return _coins;
         }
 
         /// <summary>x,y,left|right,rest|move,毫秒[,镜头x]:不带镜头 x 时镜头取"主角居中再夹住"。</summary>
@@ -595,7 +641,8 @@ namespace Dnf.Client
                 return string.Empty;
             }
             return " flow=" + _flow.Stage + " serial=" + _flow.StageSerial + " runs=" + _flow.Runs + " settlements=" + _flow.Settlements
-                + (_flowBot != null ? " botDone=" + _flowBot.Done + " choicesMade=" + _flowBot.ChoicesMade : string.Empty);
+                + (_flowBot != null ? " botDone=" + _flowBot.Done + " choicesMade=" + _flowBot.ChoicesMade : string.Empty)
+                + " failures=" + _flow.Failures + " giveups=" + _flow.GiveUps;
         }
 
         private string HeroOnlyLog()
@@ -693,6 +740,7 @@ namespace Dnf.Client
                 return;
             }
             PumpTouch();
+            PumpMenu();
             _clockMs = NowMs();
             try
             {
@@ -738,6 +786,79 @@ namespace Dnf.Client
                 _quitAfterSeconds = -1f;
                 Application.Quit(0);
             }
+        }
+
+        /// <summary>
+        /// 系统菜单(Esc;<see cref="SystemMenu"/>)的宿主部分:菜单开着时游戏暂停(合上或选定后恢复,选定的项在下一次流程轮询里执行),鼠标悬停选行,
+        /// 带 -dnfmenuat 时无人值守地走一遍同样的路(阶段开始后第几秒打开、再过一秒选第几项),日志里留 DNF_MENU 行。
+        /// </summary>
+        private void PumpMenu()
+        {
+            if (_flow == null)
+            {
+                return;
+            }
+            RunMenuProbe();
+            bool open = _flow.Menu.Open;
+            if (open != _menuWasOpen)
+            {
+                _menuWasOpen = open;
+                Debug.Log("DNF_MENU " + (open ? "open stage=" + _flow.Stage : "closed") + " paused=" + _paused);
+                if (open)
+                {
+                    _menuPausedIt = !_paused;        // 已经被空格暂停着就不碰:合上菜单也不替人恢复
+                    if (_menuPausedIt)
+                    {
+                        TogglePause();
+                    }
+                }
+                else if (_menuPausedIt)
+                {
+                    _menuPausedIt = false;
+                    if (_paused)
+                    {
+                        TogglePause();
+                    }
+                }
+            }
+            if (open && TryGetCanvasPoint(Input.mousePosition, out int mx, out int my))
+            {
+                _flow.Menu.SetPointer(mx, my);
+            }
+        }
+
+        /// <summary>-dnfmenuat 的无人值守探针:副本阶段开始后过了指定秒数就像按 Esc 一样打开菜单,再过一秒按数字键选一项(各只做一次)。</summary>
+        private void RunMenuProbe()
+        {
+            if (_menuProbeAtSeconds < 0.0 || _menuProbeDone || _flow == null)
+            {
+                return;
+            }
+            float now = Time.realtimeSinceStartup;
+            if (_menuProbeOpenedAt < 0f)
+            {
+                if (_flow.Stage == GameStage.Dungeon && now - _stageRealStart >= _menuProbeAtSeconds && _flow.ToggleMenu())
+                {
+                    _menuProbeOpenedAt = now;
+                    Debug.Log("DNF_MENU probe open items=" + _flow.Menu.Items.Count);
+                }
+            }
+            else if (now - _menuProbeOpenedAt >= 1f)
+            {
+                _menuProbeDone = true;
+                Debug.Log("DNF_MENU probe choose " + _menuProbeChoice);
+                _flow.Menu.ChooseNumber(_menuProbeChoice);
+            }
+        }
+
+        /// <summary>当前系统菜单的叠加精灵(菜单没开返回 null);挂在 <see cref="TownView.Overlay"/> 上。</summary>
+        private List<SceneSprite> BuildMenuOverlay()
+        {
+            if (_flow == null || !_flow.Menu.Open)
+            {
+                return null;
+            }
+            return SystemMenuArt.Build(_flow.Menu, _menuArt);
         }
 
         /// <summary>
@@ -808,10 +929,17 @@ namespace Dnf.Client
             {
                 SwitchView();
             }
+            NoteRevive();
             if (_flow.CharacterSelect != null && _flow.CharacterSelect.Outcome == CharacterSelectOutcome.Quit)
             {
                 Debug.Log("DNF_FLOW quit from character select");
                 Quit();                              // 选角界面上的"结束游戏"(或 Esc):流程不动,宿主退出
+                return;
+            }
+            if (_flow.QuitRequested)
+            {
+                Debug.Log("DNF_FLOW quit from system menu");
+                Quit();                              // 系统菜单里选了"退出游戏"
                 return;
             }
             _audio?.Tick(deltaMs, _flow);          // 流程自己是声音源:选角与城镇区域的音乐、结算曲子,加上当前副本会话的提示(E-097)
@@ -826,9 +954,13 @@ namespace Dnf.Client
             TownView previous = _view;
             _session = _flow.Session;
             _view = new TownView(_assets, _flow.Scene, StageBackground);
+            _view.Overlay = BuildMenuOverlay;        // 系统菜单叠在每个阶段的画面之上(没开时不叠)
+            _stageRealStart = Time.realtimeSinceStartup;
             previous?.Dispose();
             _shownSerial = _flow.StageSerial;
             _loggedChoice = SettlementChoice.None;
+            _noteDeaths = 0;
+            _noteRevives = 0;
             if (!_flow.LastSwitchStaysInTown)
             {
                 _audio?.StopAll();                   // 城镇换区域时不停:相同的音乐标签接着放,只换环境声(E-097)
@@ -842,7 +974,24 @@ namespace Dnf.Client
             {
                 FlowEvent e = _flow.History[_loggedEvents++];
                 Debug.Log("DNF_FLOW serial=" + e.Serial + " from=" + e.From + " to=" + e.To + " reason=\"" + e.Reason + "\" runs=" + _flow.Runs
-                    + " settlements=" + _flow.Settlements + (e.To == GameStage.Dungeon ? " dungeon=" + _flow.DungeonPath : string.Empty));
+                    + " settlements=" + _flow.Settlements + (e.To == GameStage.Dungeon ? " dungeon=" + _flow.DungeonPath : string.Empty)
+                    + " failures=" + _flow.Failures + " giveups=" + _flow.GiveUps);
+            }
+        }
+
+        /// <summary>副本里主角死亡或复活的次数变了就写一行 DNF_REVIVE(死了几次、复活了几次、复活币还剩几枚),无人值守的检查靠它确认复活真的发生。</summary>
+        private void NoteRevive()
+        {
+            if (!(_flow.Run is DungeonSession dungeon) || dungeon.Revive == null)
+            {
+                return;
+            }
+            HeroRevive revive = dungeon.Revive;
+            if (revive.Deaths != _noteDeaths || revive.Revives != _noteRevives)
+            {
+                _noteDeaths = revive.Deaths;
+                _noteRevives = revive.Revives;
+                Debug.Log("DNF_REVIVE deaths=" + revive.Deaths + " revives=" + revive.Revives + " coins=" + (revive.Coins == null ? 0 : revive.Coins.Count));
             }
         }
 
@@ -1178,8 +1327,57 @@ namespace Dnf.Client
             }
         }
 
+        /// <summary>
+        /// 系统菜单开着时的输入(开着就独占:别的键都不响应):上下键选、回车/空格/数字键确定、Esc 关上、鼠标点行确定(悬停选行在 <see cref="PumpMenu"/>)。
+        /// </summary>
+        private void HandleMenuInput(Event e)
+        {
+            SystemMenu menu = _flow.Menu;
+            if (e.type == EventType.KeyDown)
+            {
+                switch (e.keyCode)
+                {
+                    case KeyCode.Escape:
+                        _flow.ToggleMenu();
+                        break;
+                    case KeyCode.UpArrow:
+                        menu.Move(-1);
+                        break;
+                    case KeyCode.DownArrow:
+                        menu.Move(1);
+                        break;
+                    case KeyCode.Return:
+                    case KeyCode.KeypadEnter:
+                    case KeyCode.Space:
+                        menu.Choose();
+                        break;
+                    case KeyCode.Alpha1:
+                    case KeyCode.Keypad1:
+                        menu.ChooseNumber(1);
+                        break;
+                    case KeyCode.Alpha2:
+                    case KeyCode.Keypad2:
+                        menu.ChooseNumber(2);
+                        break;
+                    case KeyCode.Alpha3:
+                    case KeyCode.Keypad3:
+                        menu.ChooseNumber(3);
+                        break;
+                }
+            }
+            else if (e.type == EventType.MouseDown && e.button == 0 && TryGetCanvasPoint(Input.mousePosition, out int cx, out int cy))
+            {
+                menu.Click(cx, cy);
+            }
+        }
+
         private void HandleRunningInput(Event e)
         {
+            if (_flow != null && _flow.Menu.Open)
+            {
+                HandleMenuInput(e);
+                return;
+            }
             if (e.type == EventType.KeyDown)
             {
                 switch (e.keyCode)
@@ -1257,7 +1455,11 @@ namespace Dnf.Client
                         _hud = !_hud;
                         break;
                     case KeyCode.Escape:
-                        if (InSelect)
+                        if (_flow != null && _flow.ToggleMenu())
+                        {
+                            // 城镇与副本里:打开系统菜单(游戏暂停,PumpMenu 接着处理)
+                        }
+                        else if (InSelect)
                         {
                             _flow.Select.Back();
                         }
@@ -1450,7 +1652,7 @@ namespace Dnf.Client
                 if (_session is DungeonSession)
                 {
                     help = (_bot != null ? "Auto-play bot is driving (bot input only)   " : "Arrow keys: walk (double-tap Left/Right: run)   X: attack (again to chain; while running: dash attack)   C: jump (X in the air: jump attack)   A: Hard Attack   S: Upper Slash   D: Back Step   ")
-                        + "Space: pause   H: hide text   Esc: quit   (clear a room to open its gates, then walk into a gate; placeholder damage; skills cost MP; monsters hit back unless -dnfnodamage; Z not bound)";
+                        + "Space: pause   H: hide text   " + (_flow != null ? "Esc: menu" : "Esc: quit") + "   (clear a room to open its gates, then walk into a gate; placeholder damage; skills cost MP; monsters hit back unless -dnfnodamage; Z not bound; X on the death screen uses a revive coin)";
                 }
                 else
                 {
@@ -1484,8 +1686,8 @@ namespace Dnf.Client
                 else if (_flow.Stage == GameStage.Town)
                 {
                     help = _flow.TownWorld is LegacyTownWorld
-                        ? "Arrow keys: walk   Enter: open the dungeon map (placeholder: this legacy town has no exits)   Space: pause   H: hide text   Esc: quit"
-                        : "Arrow keys: walk (push into a map edge exit to change area; the last area's right-hand exit opens the dungeon map)   Space: pause   H: hide text   Esc: quit";
+                        ? "Arrow keys: walk   Enter: open the dungeon map (placeholder: this legacy town has no exits)   Space: pause   H: hide text   Esc: menu"
+                        : "Arrow keys: walk (push into a map edge exit to change area; the last area's right-hand exit opens the dungeon map)   Space: pause   H: hide text   Esc: menu";
                 }
             }
             string shownMap = _session != null ? _session.MapPath : InSelect ? "(dungeon select)" : InCharacterSelect ? "(character select)" : mapPath;

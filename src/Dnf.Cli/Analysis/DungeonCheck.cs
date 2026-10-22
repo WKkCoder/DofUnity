@@ -46,7 +46,7 @@ internal static class DungeonCheck
         }
 
         DungeonSession session = DungeonSession.Create(assets, opts.Dungeon, opts.Seed, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage,
-            progress: ExpCheck.ProgressFor(assets, opts), heroDamageScale: opts.DamageScale);
+            progress: ExpCheck.ProgressFor(assets, opts), heroDamageScale: opts.DamageScale, coins: new ReviveCoins(opts.Coins), monsterDamageScale: opts.MonsterDamageScale);
         var bot = new DungeonBot(opts.Explore);
         CombatScript script = ParsePlay(opts.Play);
         if (!opts.Bot && script.IsEmpty)
@@ -71,6 +71,8 @@ internal static class DungeonCheck
         double afterClearMs = opts.AfterClearSeconds * 1000.0;
         double finishedAt = -1;
         bool settleLogged = false;
+        int lastDeaths = 0;
+        int lastRevives = 0;
         while (t < totalMs && (!session.Finished || (finishedAt >= 0 && t - finishedAt < afterClearMs)))
         {
             int fromX = session.CellX, fromY = session.CellY;
@@ -107,9 +109,30 @@ internal static class DungeonCheck
                     + " 层动画、站着的 NPC " + (camp?.NpcCount ?? 0) + " 个");
             }
 
-            if (session.HeroDead)
+            HeroRevive? revive = session.Revive;
+            if (revive != null)
             {
-                // 占位:主角死了没有复活与结算,继续模拟没有意义
+                // 死亡与复活(证据 E-115):躺平的那一刻窗口打开算一次死亡;自动机会按键用币复活
+                if (revive.Deaths != lastDeaths)
+                {
+                    lastDeaths = revive.Deaths;
+                    Console.WriteLine("  t=" + Sec(t) + "s  主角倒下(第 " + revive.Deaths + " 次;格 (" + session.CellX + "," + session.CellY + "),被打中 " + session.HeroHits
+                        + " 次);复活窗口 " + F(HeroRevive.CountdownMs / 1000.0) + " 秒,库存 " + (revive.Coins?.Count ?? 0) + " 个币");
+                }
+                if (revive.Revives != lastRevives)
+                {
+                    lastRevives = revive.Revives;
+                    Console.WriteLine("  t=" + Sec(t) + "s  主角复活(第 " + revive.Revives + " 次;已用币 " + revive.Used + ",库存 " + (revive.Coins?.Count ?? 0) + ")");
+                }
+                if (session.Failed)
+                {
+                    Console.WriteLine("  t=" + Sec(t) + "s  副本失败(复活窗口走完、主角没有复活;格 (" + session.CellX + "," + session.CellY + "),死亡 " + revive.Deaths + " 次,复活 " + revive.Revives + " 次)");
+                    break;
+                }
+            }
+            else if (session.HeroDead)
+            {
+                // 没有复活对象(旧行为):主角死了就躺着,继续模拟没有意义
                 Console.WriteLine("  t=" + Sec(t) + "s  主角死亡(格 (" + session.CellX + "," + session.CellY + "),被打中 " + session.HeroHits + " 次)");
                 break;
             }
@@ -151,10 +174,15 @@ internal static class DungeonCheck
         }
 
         Console.WriteLine();
-        Console.WriteLine("结束:t=" + Sec(t) + "s  " + (session.BossCleared ? "首领清空" : session.ExitReached ? "走出迷宫" : "未走完")
+        Console.WriteLine("结束:t=" + Sec(t) + "s  " + (session.BossCleared ? "首领清空" : session.ExitReached ? "走出迷宫" : session.Failed ? "副本失败" : "未走完")
             + "  进过 " + session.RoomsEntered + " 个房间,清空 " + session.RoomsCleared + " 个,换房间 " + session.Transitions + " 次;命中 " + session.Hits
             + " 次,击杀 " + session.Kills + " 个,总伤害 " + session.TotalDamage
             + (session.Vitals != null ? ";主角被打中 " + session.HeroHits + " 次,生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax + ",魔法 " + session.Vitals.Mp + "/" + session.Vitals.MpMax : ";怪物不还手(--no-damage)"));
+        if (session.Revive != null && session.Revive.Deaths > 0)
+        {
+            Console.WriteLine("死亡与复活(E-115):死亡 " + session.Revive.Deaths + " 次,复活 " + session.Revive.Revives + " 次,用币 " + session.Revive.Used + " 个,库存剩 "
+                + (session.Revive.Coins?.Count ?? 0) + " 个" + (session.Failed ? ",副本失败" : string.Empty));
+        }
         if (session.Progress != null)
         {
             Console.WriteLine(ExpCheck.Summary(session.Progress, opts.HeroLevel));

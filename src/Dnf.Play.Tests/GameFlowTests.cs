@@ -42,6 +42,8 @@ public class GameFlowTests
 
         public SettlementChoice Choice { get; set; }
 
+        public bool Failed { get; set; }
+
         public FakeRun(string path, int run) : base("run " + path + " #" + run)
         {
             Path = path;
@@ -168,6 +170,44 @@ public class GameFlowTests
         Assert.Equal(SettlementChoice.None, second.Choice);
         Assert.False(flow.Poll());                                  // 新的一局还没结算:选择不会被重复执行
         Assert.Equal(2, flow.StageSerial);
+    }
+
+    [Fact]
+    public void AFailedRunSendsTheHeroBackToTownWithoutASettlement()
+    {
+        var towns = new List<FakeHero>();
+        GameFlow flow = NewFlow(towns: towns);
+        flow.StartDungeon(A.Path, "start");
+        Assert.False(flow.Poll());                                  // 还没失败
+        ((FakeRun)flow.Run).Failed = true;
+
+        Assert.True(flow.Poll());
+        Assert.Equal(GameStage.Town, flow.Stage);
+        Assert.Null(flow.Run);
+        Assert.Equal((1, 0, 1), (flow.Runs, flow.Settlements, flow.Failures));   // 失败不是结算选择
+        Assert.Equal("dungeon fail", flow.History[^1].Reason);
+        Assert.Single(towns);
+        Assert.False(flow.Poll());                                  // 回城之后没有副本可轮询
+    }
+
+    [Fact]
+    public void AFailureWinsOverAnyPendingSettlementChoiceAndTheNextRunStartsFresh()
+    {
+        var started = new List<(string Path, int Run)>();
+        GameFlow flow = NewFlow(started);
+        flow.StartDungeon(A.Path, "start");
+        var run = (FakeRun)flow.Run;
+        run.Choice = SettlementChoice.Retry;
+        run.Failed = true;
+        Assert.True(flow.Poll());
+        Assert.Equal((GameStage.Town, 0, 1), (flow.Stage, flow.Settlements, flow.Failures));
+
+        flow.EnterSelect();
+        flow.Select.Confirm();
+        Assert.True(flow.Poll());                                   // 失败回城之后还能再进副本:局序号接着数
+        Assert.Equal(new[] { (A.Path, 0), (A.Path, 1) }, started);
+        Assert.Equal((GameStage.Dungeon, 2, 1), (flow.Stage, flow.Runs, flow.Failures));
+        Assert.False(((FakeRun)flow.Run).Failed);
     }
 
     [Fact]

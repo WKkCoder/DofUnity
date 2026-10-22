@@ -521,7 +521,7 @@ internal static class SoundCheck
         Console.WriteLine("== 自动机打 " + opts.Dungeon + ",收集声音提示 ==");
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
         DungeonSession session = DungeonSession.Create(assets, opts.Dungeon, opts.Seed, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage,
-            progress: ExpCheck.ProgressFor(assets, opts));
+            progress: ExpCheck.ProgressFor(assets, opts), coins: new ReviveCoins(opts.Coins), monsterDamageScale: opts.MonsterDamageScale);
         var bot = new DungeonBot(opts.Explore);
         double seconds = opts.SecondsGiven ? opts.Seconds : 900;
         double frameMs = CombatScript.StepMs;
@@ -529,7 +529,7 @@ internal static class SoundCheck
         var cues = new List<(double T, SoundCue Cue)>();
         var scratch = new List<SoundCue>();
         long drained = 0;
-        while (t < seconds * 1000.0 && !session.Finished && !session.HeroDead)
+        while (t < seconds * 1000.0 && !session.Finished && !session.Failed)
         {
             bot.Advance(session, frameMs);
             t += frameMs;
@@ -541,7 +541,7 @@ internal static class SoundCheck
             }
             drained += scratch.Count;
         }
-        Console.WriteLine("模拟 " + (t / 1000.0).ToString("F1", CultureInfo.InvariantCulture) + " 秒:" + (session.BossCleared ? "首领清空" : session.HeroDead ? "主角死亡" : "未走完")
+        Console.WriteLine("模拟 " + (t / 1000.0).ToString("F1", CultureInfo.InvariantCulture) + " 秒:" + (session.BossCleared ? "首领清空" : session.Failed ? "副本失败" : "未走完")
             + ",命中 " + session.Hits + ",击杀 " + session.Kills + ",进过 " + session.RoomsEntered + " 个房间;收到声音提示 " + drained + " 条(队列累计 " + session.Sounds.TotalCount + ")");
 
         var byKind = new SortedDictionary<string, long>(StringComparer.Ordinal);

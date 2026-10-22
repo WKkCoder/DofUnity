@@ -122,6 +122,12 @@ namespace Dnf.Cli
         /// <summary>dungeon-check --damage-scale N:测试旋钮,主角打出的每一击伤害乘上 N(默认 1;用于全库副本扫描排除"一级主角打不动高等级怪物"的干扰,不是原版规则)。</summary>
         public int DamageScale { get; set; } = 1;
 
+        /// <summary>dungeon-check、flow-check、sound-check --coins N:复活币的起始库存(0 到 99,默认 5;占位,没有背包,证据 E-115);0 就是主角死了只能等失败计时走完。</summary>
+        public int Coins { get; set; } = Dnf.Play.ReviveCoins.DefaultStock;
+
+        /// <summary>dungeon-check、flow-check、sound-check --monster-damage-scale N:测试旋钮,怪物打中主角的每一击伤害乘上 N(默认 1;死亡、复活与失败回城的无人值守检查用它让主角几下就死,不是原版规则)。</summary>
+        public int MonsterDamageScale { get; set; } = 1;
+
         public int Seed { get; set; } = 1;
         public bool RandomLayout { get; set; }
 
@@ -287,6 +293,8 @@ namespace Dnf.Cli
             "      经验与升级(证据 E-111):读升级经验表、技能点表、三张经验倍率表、主角 .chr 的成长块与全部副本的经验权重,检查结构(递增、读得到、一级属性与老路径一致),\n" +
             "      再把升级循环从 1 级走到封顶;--level N 另外打印这一级的属性、升级所需经验与同级怪物的击杀经验(数值来自本机的数据,只打印在终端,不要抄进入库的文件)。\n" +
             "      combat-check、dungeon-check、flow-check、sound-check 默认带主角的等级进度(杀怪给经验、升级、底栏有经验条):--level N 指定起始等级,--no-exp 关掉(--no-damage 时本来就没有)。\n" +
+            "      dungeon-check、flow-check、sound-check 里主角死了会开复活窗口(证据 E-115:躺平后 10 秒失败计时,攻击键用币复活,计时走完副本失败、流程回城):--coins N 指定复活币的起始库存(默认 5,占位),\n" +
+            "      --monster-damage-scale N(测试旋钮,不是原版规则)让怪物打中主角的伤害乘上 N,用来无人值守地检查死亡、复活与失败回城。\n" +
             "  dnf damage-check [--cases <文件>]\n" +
             "      伤害公式(证据 E-049)。不带 --cases:读 PVF 里的 Etc/EtcParameter.etc 与 Creature/Common/creatureCommon.cre,只报告个数与完整性(不输出原版数值);\n" +
             "      带 --cases:读 tools/py/damage_ref.py --gen 生成的随机用例,用 C# 公式复算并与 Python 参考实现逐项比较。\n" +
@@ -496,6 +504,16 @@ namespace Dnf.Cli
                         opts.DamageScale = int.TryParse(NextValue(args, ref i), out int scaleValue) && scaleValue >= 1 && scaleValue <= 100000
                             ? scaleValue
                             : throw new UserError("--damage-scale 需要 1 到 100000 的整数");
+                        break;
+                    case "--coins":
+                        opts.Coins = int.TryParse(NextValue(args, ref i), out int coinsValue) && coinsValue >= 0 && coinsValue <= 99
+                            ? coinsValue
+                            : throw new UserError("--coins 需要 0 到 99 的整数");
+                        break;
+                    case "--monster-damage-scale":
+                        opts.MonsterDamageScale = int.TryParse(NextValue(args, ref i), out int monsterScaleValue) && monsterScaleValue >= 1 && monsterScaleValue <= 100000
+                            ? monsterScaleValue
+                            : throw new UserError("--monster-damage-scale 需要 1 到 100000 的整数");
                         break;
                     case "--level":
                         opts.HeroLevel = int.TryParse(NextValue(args, ref i), out int levelValue) && levelValue >= 1 && levelValue <= 85

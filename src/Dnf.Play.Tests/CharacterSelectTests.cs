@@ -799,6 +799,8 @@ public class CharacterSelectTests
         }
 
         public SettlementChoice Choice => SettlementChoice.None;
+
+        public bool Failed => false;
     }
 
     private static GameFlow NewFlow(StubWorld world, List<CharacterSelectScreen> screens = null, bool withFactory = true)

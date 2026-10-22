@@ -223,18 +223,25 @@ def check_flow():
         # 时限停在两次被打之间(怪物 AI 的时序一变,这里要跟着调)
         ("真实房间里主角活着被打倒又起身", ["combat-check", "--map", "map/deadtower/021f.map", "--start", "300,330,left", "--seconds", "9.5"], "flow_hero_getup.txt",
          [r"主角倒地 [1-9]\d* 次\(起身 [1-9]\d* 次", r"动作 Rest", r"生命 [1-9]\d*/"], [r"主角死亡"]),
+        # 死亡与复活(E-115):怪物伤害放大到一击必杀(测试旋钮,不是原版规则);自动机在死亡窗口里按攻击键用币复活,
+        # 币给足时继续打完整座副本(首领清空,退出码 0);币给 0 枚时 10 秒窗口走完、副本失败(退出码 2,倒下与失败之间正好一个窗口)
+        ("一击必杀下用币复活后打完副本", ["dungeon-check", "--dungeon", "dungeon/act1/lorien.dgn", "--bot", "--monster-damage-scale", "100000", "--coins", "99", "--seconds", "120"],
+         "flow_revive.txt", [r"主角倒下\(第 1 次", r"主角复活\(第 1 次", r"首领清空"], [r"副本失败"]),
+        ("没有复活币的主角死后窗口走完副本失败", ["dungeon-check", "--dungeon", "dungeon/act1/lorien.dgn", "--bot", "--monster-damage-scale", "100000", "--coins", "0", "--seconds", "120"],
+         "flow_fail.txt", [r"主角倒下\(第 1 次", r"副本失败\(复活窗口走完", r"死亡 1 次,复活 0 次"], [r"主角复活"], (2,)),
     ]
     bad = 0
     total = 0.0
     names = []
-    for title, args, log, expect, forbid in runs:
+    for title, args, log, expect, forbid, *rest in runs:
+        codes = rest[0] if rest else (0,)           # 可选的第六项:这一项允许的退出码(默认只有 0)
         code, text, sec = sh(DNF + args, log)
         total += sec
         names.append(title)
-        if code != 0 or any(re.search(pattern, text) is None for pattern in expect) or any(re.search(pattern, text) is not None for pattern in forbid):
+        if code not in codes or any(re.search(pattern, text) is None for pattern in expect) or any(re.search(pattern, text) is not None for pattern in forbid):
             bad += 1
-    return [item("flow", "整条流程无人值守检查(真实数据,自动机从起点打到结算、再回城镇;外加主角被打死倒地、活着被打倒又起身)", "整条流程", "E-093、E-096、E-097、E-105", len(runs), bad, total,
-                 "七项:" + "、".join(names) + ";退出码 0 = 切换次数、首领清空、音乐序列、读文件失败数全部符合预期;后两项另查输出里的倒地与起身")]
+    return [item("flow", "整条流程无人值守检查(真实数据,自动机从起点打到结算、再回城镇;外加主角被打死倒地、活着被打倒又起身、死亡后用币复活、没有币时副本失败)", "整条流程", "E-093、E-096、E-097、E-105、E-115", len(runs), bad, total,
+                 "%d 项:" % len(runs) + "、".join(names) + ";前五项退出码 0 = 切换次数、首领清空、音乐序列、读文件失败数全部符合预期;后四项另查输出里的倒地与起身、复活与失败(没有币那一项退出码 2 是预期)")]
 
 
 def check_dungeons():

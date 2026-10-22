@@ -28,7 +28,7 @@ public class HeroKnockdownTests
     }
 
     /// <summary>怪物的出招信息:[damage bonus] 25;倒地类(<paramref name="down"/>)、普通受击(1)、none 三种反应;[push aside] 默认 0(主角原地起落)。</summary>
-    private static HeroStrikeInfo Strike(bool down = false, bool none = false, int push = 0, int lift = 300, bool bounce = false, int hitValue = -1)
+    internal static HeroStrikeInfo Strike(bool down = false, bool none = false, int push = 0, int lift = 300, bool bounce = false, int hitValue = -1)
     {
         return new HeroStrikeInfo(AvatarFixture.StrikerDamageBonus, push, down, 0, 0, hitValue, false, -1f, 0, false, 0, false, lift, bounce, false,
             reactionDamage: !down && !none, hitWav: null, reactionNone: none);
@@ -39,7 +39,7 @@ public class HeroKnockdownTests
         return new KnockdownInput(lift, bounce, false, false, 500, 500);
     }
 
-    private sealed class Arena : IDisposable
+    internal sealed class Arena : IDisposable
     {
         private readonly AvatarFixture _fx = new AvatarFixture();
 
@@ -499,5 +499,58 @@ public class HeroKnockdownTests
         Assert.True(hero.Z < z);
         StepUntil(knock, () => knock.Stage == 2);
         Assert.Equal(0.0, hero.Z);
+    }
+
+    // ------------------------------------------------------------------ 复活(E-115)
+
+    [Fact]
+    public void ReviveStandsADeadHeroUpAfterTheLyingHold()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TownHero hero = NewHero(assets);
+        var knock = new HeroKnockdown(hero);
+        Assert.True(knock.Begin(Input(), 0, false, dead: true));
+        StepUntil(knock, () => !knock.Active);                            // 飞起、落地、躺下的那一刻转入死亡:躺在地上不动
+        Assert.Equal((true, HeroMotion.Down, 3, 0.0), (hero.IsDown, hero.Motion, hero.CurrentFrame, hero.Z));
+        Assert.Equal(0, knock.GetUps);
+
+        Assert.True(knock.Revive());
+        Assert.Equal((true, 2), (knock.Active, knock.Stage));              // 回到躺着:躺满之后起身
+        Assert.Equal((3, 0.0), (hero.CurrentFrame, hero.Z));
+        knock.Step(10);
+        Assert.True(hero.IsDown);                                          // 不是一复活就站起来
+        StepUntil(knock, () => !knock.Active);
+        Assert.Equal((false, HeroMotion.Rest, 0.0, 1), (hero.IsDown, hero.Motion, hero.Z, knock.GetUps));
+        Assert.Equal((false, false), (knock.Armed, knock.EarlyEndPending));
+    }
+
+    [Fact]
+    public void ReviveWhileStillFlyingJustCancelsTheDeathSoTheHeroLandsAndGetsUp()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TownHero hero = NewHero(assets);
+        var knock = new HeroKnockdown(hero);
+        knock.Begin(Input(), 0, false, dead: true);
+        knock.Step(10);
+        Assert.True(knock.Active);
+        Assert.True(knock.Revive());
+        StepUntil(knock, () => !knock.Active);                             // 落地、颠一下、躺着:不再转入死亡,躺完起身
+        Assert.Equal((false, HeroMotion.Rest, 1), (hero.IsDown, hero.Motion, knock.GetUps));
+    }
+
+    [Fact]
+    public void ReviveDoesNothingForAHeroWhoIsNotDown()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TownHero hero = NewHero(assets);
+        var knock = new HeroKnockdown(hero);
+        Assert.False(knock.Revive());
+        Assert.Equal((HeroMotion.Rest, false), (hero.Motion, knock.Active));
+
+        TownHero hurtOnly = NewHero(assets, AvatarFixture.HurtOnlyChrPath);    // 没有倒地动作的占位死亡:不在倒地姿势里,由调用方另行处理
+        Assert.False(new HeroKnockdown(hurtOnly).Revive());
     }
 }

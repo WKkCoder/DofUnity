@@ -38,6 +38,8 @@ public class SceneMusicTests
 
         public SettlementChoice Choice { get; set; }
 
+        public bool Failed => false;
+
         public SoundyRun(string label) : base(label)
         {
         }

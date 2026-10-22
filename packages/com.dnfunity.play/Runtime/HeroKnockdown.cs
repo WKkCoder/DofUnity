@@ -157,6 +157,21 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>
+        /// 复活(证据 E-115):已死而躺着的主角回到"躺着"、躺完起身(<see cref="KnockdownFlight.Resurrect"/>);还在倒地飞行里的照常落地起身,不再转入死亡。
+        /// 主角不在倒地姿势里(没有倒地动作的占位死亡)时什么也不做并返回 false,由调用方另行结束受击姿势。
+        /// </summary>
+        public bool Revive()
+        {
+            if (!_hero.IsDown)
+            {
+                return false;
+            }
+            _flight.Resurrect();
+            Settle();
+            return true;
+        }
+
         private void Disarm()
         {
             _armed = false;

@@ -275,6 +275,32 @@ namespace Dnf.Play
         }
 
         /// <summary>
+        /// 复活(只用于主角,证据 E-115):取消"已死"标记。还在倒地的飞行里时它照常落地、颠一下、躺着、起身;已经躺平死了(<see cref="Die"/> 之后)就回到阶段 2 躺着,
+        /// 躺满 <see cref="MonsterTuning.KnockDownHoldMs"/>(动画放完)再起身。客户端复活时的起身表现没有读到,这是按"躺着的流程接着走完"的推断。
+        /// </summary>
+        public void Resurrect()
+        {
+            DieOnLying = false;
+            _died = false;
+            if (_active)
+            {
+                return;
+            }
+            _active = true;
+            _ended = false;
+            _stage = 2;
+            _stage2Ms = 0;
+            _vx = 0;
+            _vz = 0;
+            Z = 0;
+            IReadOnlyList<int> holds = _anim.HoldFrames;
+            if (_anim.HasAnimation && holds.Count > 0 && _anim.LyingFrame >= 0)
+            {
+                _aniMs = _anim.StartMs(_anim.LyingFrame);
+            }
+        }
+
+        /// <summary>
         /// 推进倒地状态机 <paramref name="deltaMs"/> 毫秒:阶段 0、1 按重力走 z 抛物线(与主角跳跃同一个步内精确触地算法),
         /// 水平匀速(没有摩擦:每次落地后的再请求马上改写水平速度,阶段 2 是 0,E-083);落地后按 <see cref="Knockdown.AfterLanding"/> 再请求;
         /// 阶段 2 躺着,动画放完(或提前结束)就起身(<see cref="TakeEnded"/>)。

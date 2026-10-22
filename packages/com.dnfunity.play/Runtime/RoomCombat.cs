@@ -452,6 +452,12 @@ namespace Dnf.Play
         /// <summary>主角的倒地与起身(证据 E-079、E-082、E-085、E-105)。</summary>
         private readonly HeroKnockdown _heroDown;
 
+        /// <summary>复活倒计时的画法(证据 E-115 的界面图);图包里没有时为 null,退回占位文字。</summary>
+        private ReviveArt _reviveArt;
+
+        /// <summary>复活后还剩的无敌毫秒(墙钟,每一小步递减)。</summary>
+        private double _invincibleMs;
+
         /// <summary>怪物出招语音掷骰的种子(客户端的线性同余随机数,<see cref="ClientRandom"/>),与其余随机数分开。</summary>
         private uint _voiceSeed;
 
@@ -595,8 +601,58 @@ namespace Dnf.Play
         /// </summary>
         public int HeroDamageScale { get; set; } = 1;
 
+        /// <summary>
+        /// 测试旋钮:怪物打中主角的每一击伤害乘上这个数(默认 1,正常游戏恒为 1)。死亡、复活与失败回城的无人值守检查用它让主角几下就死,
+        /// 不必等一个一级主角被慢慢磨死;它不是原版规则。
+        /// </summary>
+        public int MonsterDamageScale { get; set; } = 1;
+
         /// <summary>主角已经被打死(血量归零)。死后不再接受输入,怪物待机。</summary>
         public bool HeroDead => Vitals != null && !Vitals.IsAlive;
+
+        /// <summary>
+        /// 主角的死亡窗口与复活(证据 E-115):主角躺下之后窗口打开、失败计时开始,按攻击键(X)用币复活,计时走完副本失败(<see cref="HeroRevive.Failed"/>)。
+        /// 副本里各房间的会话共用同一个对象(已用次数、计时按整座副本算);没给(null)就是老行为:主角死了一直躺着、没有复活也没有失败(测试与无复活的工具用)。
+        /// </summary>
+        public HeroRevive Revive { get; set; }
+
+        /// <summary>复活窗口开着而且此刻按复活键能复活(<see cref="HeroRevive.CanRevive"/>)。</summary>
+        public bool CanRevive => Revive != null && Revive.CanRevive;
+
+        /// <summary>从开始玩起这个房间里主角复活了几次。</summary>
+        public int Revived { get; private set; }
+
+        /// <summary>复活之后还剩多少毫秒的无敌(推断的占位,见 <see cref="HeroRevive.InvincibleMs"/>);0 表示不无敌。</summary>
+        public double InvincibleMs => _invincibleMs;
+
+        /// <summary>主角此刻无敌:怪物的攻击与投射物都打不到他(攻击框照常走完、不会攒到无敌结束后一起结算)。</summary>
+        public bool HeroInvincible => _invincibleMs > 0;
+
+        /// <summary>复活时放在主角身上的特效动画(<c>UseCoin.ani</c>;客户端用币的特效函数 0x00865b50 加载它,放约 1 秒,挂在主角身上是推断)。</summary>
+        public const string ReviveEffectPath = "Common/Etc/Animation/UseCoin.ani";
+
+        /// <summary>用另一个图源重建复活倒计时的画法(测试里喂合成的图);传 null,或图源里没有倒计时的数字图,就退回占位的文字。</summary>
+        public void UseReviveArt(ISpriteSource sprites)
+        {
+            _reviveArt = ReviveArt.For(sprites);
+        }
+
+        /// <summary>复活倒计时的画法;图包里没有数字图时为 null。</summary>
+        public ReviveArt RevivePicture => _reviveArt;
+
+        /// <summary>
+        /// 用复活键(X):窗口开着、检查通过就扣币、让主角原地站起来(<see cref="ReviveHero"/>)并返回 true;否则什么也不变。
+        /// 玩家按攻击键、自动机的"攻击"都走 <see cref="Step"/> 里的同一条路;这个入口留给测试与不经过按键的调用方。
+        /// </summary>
+        public bool TryReviveHero()
+        {
+            if (Revive == null || Vitals == null || !HeroDead || !Revive.TryRevive())
+            {
+                return false;
+            }
+            ReviveHero();
+            return true;
+        }
 
         /// <summary>
         /// 主角的倒地与起身(证据 E-079、E-082、E-085、E-105):倒地类的攻击、空中与倒地中被打、已死的一击,都会让主角飞起来、落地颠一下、躺着、起身;
@@ -692,6 +748,7 @@ namespace Dnf.Play
             _monsterHp = MonsterHpWindow.For(assets, _art);
             _numberArt = DamageNumberArt.For(assets);
             _comboArt = ComboArt.For(assets);
+            _reviveArt = ReviveArt.For(assets);
             _random = new Random(seed);
             _physicsRandom = new Random(unchecked(seed * 31 + 17));
             _numberRandom = new Random(unchecked(seed * 53 + 41));
@@ -1079,10 +1136,16 @@ namespace Dnf.Play
             SyncProgress();   // 别的房间里升了级的话,换上新等级的生命上限与攻击面板(证据 E-111)
             Skills.Advance(deltaMs);
             Vitals?.RegenMp(deltaMs);   // 魔法值按墙钟恢复(证据 E-087);死了不恢复在 RegenMp 里判断
+            if (_invincibleMs > 0)
+            {
+                _invincibleMs = Math.Max(0.0, _invincibleMs - deltaMs);   // 复活后的无敌也按墙钟走
+            }
 
+            bool reviveKey = false;
             if (HeroDead)
             {
-                // 主角死了:不再接受任何输入(占位:没有复活与结算)
+                // 主角死了:不再接受任何输入;攻击键(X)在复活窗口开着时就是"使用复活币"(证据 E-115)
+                reviveKey = attackPressed || _bufferedAttack;
                 dirX = 0;
                 dirY = 0;
                 attackPressed = false;
@@ -1136,6 +1199,7 @@ namespace Dnf.Play
                 _room.Update(heroDelta, dirX, dirY, attackPressed, jumpPressed);
             }
             EmitHeroCues();
+            UpdateRevive(deltaMs, reviveKey);
             TownHero hero = _room.Hero;
             // 有主角的生命值时,怪物按"这一击能不能打到主角的受击框"决定靠近与出招,主角死了就待机;没有时按固定距离(旧行为)
             bool heroAlive = !HeroDead;
@@ -1185,6 +1249,55 @@ namespace Dnf.Play
             if (_targetMs >= TargetBarMs)
             {
                 Target = null;
+            }
+        }
+
+        /// <summary>
+        /// 复活窗口(证据 E-115):主角躺平(倒地的飞行与颠簸结束,对应服务端收到死亡通知的那一刻,E-084)时打开、失败计时开始;
+        /// 窗口开着时推进计时,按了复活键(这一小步的攻击键)而且检查通过就复活。没有复活对象时什么也不做。
+        /// </summary>
+        private void UpdateRevive(double deltaMs, bool reviveKey)
+        {
+            HeroRevive revive = Revive;
+            if (revive == null || !HeroDead || _heroDown.Active)
+            {
+                return;
+            }
+            if (!revive.Open && !revive.Failed)
+            {
+                revive.Begin();
+            }
+            if (!revive.Open)
+            {
+                return;
+            }
+            revive.Tick(deltaMs);
+            if (reviveKey && revive.Open && revive.TryRevive())
+            {
+                ReviveHero();
+            }
+        }
+
+        /// <summary>
+        /// 主角原地复活:生命魔法回满(推断:满血满蓝)、躺着的主角起身(<see cref="HeroKnockdown.Revive"/>,没有倒地动作的占位死亡就结束受击姿势)、
+        /// 起身期间与之后 <see cref="HeroRevive.InvincibleMs"/> 毫秒无敌(推断)、身上放币的特效。
+        /// </summary>
+        private void ReviveHero()
+        {
+            TownHero hero = _room.Hero;
+            Vitals.Restore();
+            if (!_heroDown.Revive())
+            {
+                hero.EndHurt();
+            }
+            _invincibleMs = HeroRevive.InvincibleMs + (_heroDown.Active ? MonsterTuning.KnockDownHoldMs : 0.0);
+            _heroPauseMs = 0;
+            Revived++;
+            AnimatedEffect effect = AnimatedEffect.Create(_assets, ReviveEffectPath, hero.X, hero.Y, hero.Z, hero.FacingLeft);
+            if (effect != null)
+            {
+                _effects.Add(effect);
+                _followEffects.Add(effect);
             }
         }
 
@@ -1477,6 +1590,7 @@ namespace Dnf.Play
                 return;
             }
             TownHero hero = _room.Hero;
+            bool hurtable = !HeroInvincible;   // 无敌时攻击框照常走完(评估到的帧推进),只是打不中
             foreach (MonsterActor m in _monsters)
             {
                 if (!m.IsAlive || m.Phase != MonsterPhase.Attack)
@@ -1487,7 +1601,7 @@ namespace Dnf.Play
                 for (int f = m.AttackEvalFrame + 1; f <= frame && !m.HitHeroThisSwing; f++)
                 {
                     List<Aabb> strike = m.AttackBoxesAt(f);
-                    if (strike.Count > 0 && TryHit(strike, HeroHurtBoxes.At(hero), out Aabb hit))
+                    if (hurtable && strike.Count > 0 && TryHit(strike, HeroHurtBoxes.At(hero), out Aabb hit))
                     {
                         m.HitHeroThisSwing = true;
                         StrikeHero(m, hero, hit);
@@ -1525,7 +1639,7 @@ namespace Dnf.Play
         /// </summary>
         private void ResolveProjectileHits()
         {
-            if (Vitals == null || !Vitals.IsAlive || _projectiles.Count == 0)
+            if (Vitals == null || !Vitals.IsAlive || _projectiles.Count == 0 || HeroInvincible)
             {
                 return;
             }
@@ -1575,6 +1689,10 @@ namespace Dnf.Play
             int damage = _damageConstants != null
                 ? MonsterDamage.Roll(info, owner.Level, attack, Vitals, _damageConstants, unchecked((uint)_monsterRandom.Next()))
                 : Math.Max(1, (int)Math.Round(attack * (100.0 + info.DamageBonus) / 100.0));
+            if (MonsterDamageScale > 1)
+            {
+                damage = (int)Math.Min(int.MaxValue, (long)damage * MonsterDamageScale);
+            }
             bool killed = Vitals.Damage(damage);
             HeroHits++;
             HeroDamageTaken += damage;
@@ -1739,8 +1857,7 @@ namespace Dnf.Play
                 }
                 if (!Vitals.IsAlive)
                 {
-                    SpriteFrame dead = _art.Text("DEAD", 8, HeroPopupColor);
-                    into.Add(OverlayArt.Place(dead, (800 - dead.Width) / 2, 220, order++, "hero-dead"));
+                    AddDeathOverlay(into, ref order);
                 }
             }
             foreach (HitPopup p in _popups)
@@ -1768,6 +1885,30 @@ namespace Dnf.Play
                 // 图包里没有连击图(或缺帧)时的占位文字
                 SpriteFrame combo = _art.Text(shown.ToString(System.Globalization.CultureInfo.InvariantCulture) + " HIT", 4, OverlayArt.Orange);
                 into.Add(OverlayArt.Place(combo, 800 - combo.Width - 24, 236, order++, "combo"));
+            }
+        }
+
+        /// <summary>
+        /// 主角死后的画面(证据 E-115):有复活对象时,窗口开着画倒计时、提示与币存量(<see cref="ReviveArt"/>),窗口没开(还在倒地、或副本已失败)什么也不画;
+        /// 没有复活对象(老行为)仍是占位的大号 DEAD。
+        /// </summary>
+        private void AddDeathOverlay(List<SceneSprite> into, ref int order)
+        {
+            HeroRevive revive = Revive;
+            if (revive == null)
+            {
+                SpriteFrame dead = _art.Text("DEAD", 8, HeroPopupColor);
+                into.Add(OverlayArt.Place(dead, (800 - dead.Width) / 2, 220, order++, "hero-dead"));
+                return;
+            }
+            if (!revive.Open)
+            {
+                return;
+            }
+            int stock = revive.Coins == null ? 0 : revive.Coins.Count;
+            if (_reviveArt == null || !_reviveArt.Build(into, ref order, _art, revive.Seconds, revive.Verdict, stock))
+            {
+                ReviveArt.BuildPlaceholder(into, ref order, _art, revive.Seconds, revive.Verdict, stock);
             }
         }
 

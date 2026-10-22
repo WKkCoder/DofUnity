@@ -525,6 +525,68 @@ if [ "$platform" = "macos" ]; then
       || { echo "三个结算界面应各放一声 M_RESULT(DNF_RESULT_SOUND 行):$flow_log" >&2; exit 1; }
     echo "$flow_audio" | grep -q -E "musicStarts=$music_lines resultSounds=3 " \
       || { echo "声音计数里的 musicStarts/resultSounds 与日志行数不一致:$flow_log" >&2; exit 1; }
+    # 失败分支(证据 E-115):怪物伤害放大到一击必杀、复活币 0 枚,无人值守地打副本——主角死后没有币可用,躺平 10 秒的计时走完,副本失败回城镇,
+    # 不算结算(回城先经过加载画面,所以从副本出去的第一行是 to=Loading);一并看 DNF_REVIVE 行(死了一次、没复活)与流程计数(failures=1、settlements=0)
+    fail_log="$PWD/re/unity-run-town-fail-macos.log"
+    rm -f "$fail_log"
+    set +e
+    "$app" -batchmode -logFile "$fail_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" \
+      -dnfmonsterdamage 100000 -dnfcoins 0 -dnftimescale 4 -dnfquitafter 30
+    rc=$?
+    set -e
+    echo "播放器退出码(失败回城): $rc"
+    grep -E 'DNF_FLOW|DNF_REVIVE' "$fail_log" | cut -c1-260 || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$fail_log"; then
+      echo "失败回城的日志里有异常:$fail_log" >&2
+      exit 1
+    fi
+    grep -q -E 'DNF_REVIVE deaths=1 revives=0 coins=0' "$fail_log" \
+      || { echo "没有币的主角应死一次、没有复活(DNF_REVIVE deaths=1 revives=0 coins=0):$fail_log" >&2; exit 1; }
+    grep -q -E 'DNF_FLOW serial=[0-9]+ from=Dungeon to=(Loading|Town) reason="dungeon fail" runs=1 settlements=0 failures=1 giveups=0' "$fail_log" \
+      || { echo "失败计时走完应回城镇、不算结算(reason=dungeon fail、settlements=0、failures=1):$fail_log" >&2; exit 1; }
+    # 复活分支:同样一击必杀、币给足,无人值守的自动机在死亡窗口里按攻击键用币,复活之后继续打,不应失败回城
+    revive_log="$PWD/re/unity-run-town-revive-macos.log"
+    rm -f "$revive_log"
+    set +e
+    "$app" -batchmode -logFile "$revive_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" \
+      -dnfmonsterdamage 100000 -dnfcoins 99 -dnftimescale 4 -dnfquitafter 25
+    rc=$?
+    set -e
+    echo "播放器退出码(死亡复活): $rc"
+    grep -E 'DNF_FLOW|DNF_REVIVE' "$revive_log" | cut -c1-260 | head -12 || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$revive_log"; then
+      echo "死亡复活的日志里有异常:$revive_log" >&2
+      exit 1
+    fi
+    grep -q -E 'DNF_REVIVE deaths=[1-9][0-9]* revives=[1-9][0-9]* coins=' "$revive_log" \
+      || { echo "币给足的主角死后应用币复活(DNF_REVIVE 行里 deaths 与 revives 都不为 0):$revive_log" >&2; exit 1; }
+    if grep -q -E 'reason="dungeon fail"' "$revive_log"; then
+      echo "币给足时不应失败回城:$revive_log" >&2
+      exit 1
+    fi
+    # Esc 系统菜单:无伤害打副本,阶段开始 3 秒后探针像按 Esc 一样打开菜单(游戏暂停)、再过一秒选第 2 项"放弃回城";
+    # 流程应回城镇,算一次放弃(giveups=1),不算结算也不算失败
+    menu_log="$PWD/re/unity-run-town-menu-macos.log"
+    rm -f "$menu_log"
+    set +e
+    "$app" -batchmode -logFile "$menu_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfnodamage -dnfdungeon "$dungeon" \
+      -dnfmenuat 3 -dnfmenuchoose 2 -dnftimescale 4 -dnfquitafter 20
+    rc=$?
+    set -e
+    echo "播放器退出码(系统菜单放弃回城): $rc"
+    grep -E 'DNF_FLOW|DNF_MENU' "$menu_log" | cut -c1-260 || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$menu_log"; then
+      echo "系统菜单的日志里有异常:$menu_log" >&2
+      exit 1
+    fi
+    for pat in 'DNF_MENU probe open items=3' 'DNF_MENU open stage=Dungeon' 'DNF_MENU probe choose 2' 'DNF_MENU closed'; do
+      grep -q -F "$pat" "$menu_log" || { echo "系统菜单的日志里缺 \"$pat\":$menu_log" >&2; exit 1; }
+    done
+    grep -q -E 'DNF_FLOW serial=[0-9]+ from=Dungeon to=(Loading|Town) reason="menu return" runs=1 settlements=0 failures=0 giveups=1' "$menu_log" \
+      || { echo "菜单放弃回城应回城镇、算一次放弃(reason=menu return、settlements=0、failures=0、giveups=1):$menu_log" >&2; exit 1; }
   else
     echo "没有设置 DNF_DIR:跳过离屏渲染校验"
   fi

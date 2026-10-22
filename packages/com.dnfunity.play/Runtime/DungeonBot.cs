@@ -127,7 +127,7 @@ namespace Dnf.Play
             }
             double t = 0;
             double finishedAt = -1;
-            while (t < toMs && (!session.Finished || (finishedAt >= 0 && t - finishedAt < afterClearMs)))
+            while (t < toMs && !session.Failed && (!session.Finished || (finishedAt >= 0 && t - finishedAt < afterClearMs)))
             {
                 bool attack = Next(session, out int dx, out int dy);   // 走完之后全是 0 / false:只让时间走
                 session.Update(CombatScript.StepMs, dx, dy, attack);
@@ -154,7 +154,7 @@ namespace Dnf.Play
             }
             _debtMs = Math.Min(_debtMs + Math.Max(0.0, deltaMs), MaxDebtMs);
             int beats = 0;
-            while (beats < MaxBeatsPerFrame && _debtMs >= CombatScript.StepMs && !session.Finished)
+            while (beats < MaxBeatsPerFrame && _debtMs >= CombatScript.StepMs && !session.Finished && !session.Failed)
             {
                 bool attack = Next(session, out int dx, out int dy);
                 session.Update(CombatScript.StepMs, dx, dy, attack);
@@ -173,6 +173,15 @@ namespace Dnf.Play
             if (session.Finished)
             {
                 return false;
+            }
+            if (session.HeroDead)
+            {
+                // 主角死了:复活窗口里能复活就按复活键(与玩家一样是攻击键),否则站着等(窗口没开、没币、到上限),失败计时走完流程自会回城(证据 E-115)
+                _stuck = 0;
+                _lastX = double.NaN;
+                _lastY = double.NaN;
+                Intent = session.CanRevive ? "复活" : "等待复活窗口";
+                return session.CanRevive;
             }
             if (session.InTransition)
             {

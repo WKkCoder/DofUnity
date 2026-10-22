@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Dnf.Data;
+using Dnf.Game;
 using Dnf.Render;
 
 namespace Dnf.Play
@@ -247,8 +248,22 @@ namespace Dnf.Play
         /// <summary>主角的生命与魔法(当前房间会话的那一份,换房间时抄过去,见 <see cref="Travel"/>);没有时为 null。</summary>
         public HeroVitals Vitals => Current.Vitals;
 
-        /// <summary>主角已经死了(占位:没有复活与结算)。</summary>
+        /// <summary>主角已经死了(血量归零;躺着、复活窗口开着或副本已失败都算)。</summary>
         public bool HeroDead => Current.HeroDead;
+
+        /// <summary>
+        /// 主角的死亡窗口与复活(证据 E-115),整座副本一个;创建时没给复活币库存就是 null(老行为:死了一直躺着、不会失败)。
+        /// </summary>
+        public HeroRevive Revive => Current.Revive;
+
+        /// <summary>复活窗口开着而且此刻按复活键(X,即攻击键)能复活。</summary>
+        public bool CanRevive => Current.CanRevive;
+
+        /// <summary>
+        /// 副本失败(证据 E-115):主角死后复活窗口的失败计时走完了还没复活。外面(流程)据此让主角出副本回城,不进结算;
+        /// 没有复活对象时永远是假。
+        /// </summary>
+        public bool Failed => Revive != null && Revive.Failed;
 
         /// <summary>整座副本里主角被怪物打中的总次数。</summary>
         public int HeroHits => Sum(s => s.HeroHits);
@@ -310,7 +325,7 @@ namespace Dnf.Play
         /// </summary>
         public static DungeonSession Create(DnfAssets assets, string dungeonPath, int seed = 1, bool randomLayout = false,
             string weaponEqu = DemoHero.StarterWeapon, int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true, HeroProgress progress = null,
-            int heroDamageScale = 1)
+            int heroDamageScale = 1, ReviveCoins coins = null, int monsterDamageScale = 1)
         {
             Random random = randomLayout ? new Random(seed) : null;
             DungeonMaze maze = DungeonMaze.Read(assets, dungeonPath, random)
@@ -318,7 +333,9 @@ namespace Dnf.Play
             DungeonRoomPool pool = DungeonRoomPool.ReadFor(assets, dungeonPath);
             DungeonLayout layout = DungeonLayout.Create(maze, pool, random);
             AvatarOutfit outfit = DemoRoom.DefaultOutfit(assets, weaponEqu);
-            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals, progress, maze.ExpWeight, heroDamageScale), heroObjectId, assets);
+            // 给了复活币库存就有复活窗口与副本失败(证据 E-115):整座副本一个 HeroRevive,各房间共用;没给就是老行为(死了一直躺着)
+            HeroRevive revive = coins == null ? null : new HeroRevive(DungeonCoinRules.Parse(assets.ReadScript(dungeonPath)), coins);
+            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals, progress, maze.ExpWeight, heroDamageScale, revive, monsterDamageScale), heroObjectId, assets);
         }
 
         /// <summary>
@@ -333,7 +350,7 @@ namespace Dnf.Play
         /// </summary>
         public static DungeonRoomFactory CreateAssetFactory(DnfAssets assets, DungeonLayout layout, AvatarOutfit outfit, int seed,
             int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true, HeroProgress progress = null, float expWeight = 1f,
-            int heroDamageScale = 1)
+            int heroDamageScale = 1, HeroRevive revive = null, int monsterDamageScale = 1)
         {
             return (cx, cy) =>
             {
@@ -360,6 +377,8 @@ namespace Dnf.Play
                 }
                 RoomCombatSession combat = RoomCombatSession.Create(assets, room, seed + cy * layout.Maze.Cols + cx, heroVitals, progress, expWeight);
                 combat.HeroDamageScale = heroDamageScale;
+                combat.Revive = revive;
+                combat.MonsterDamageScale = monsterDamageScale;
                 return combat;
             };
         }

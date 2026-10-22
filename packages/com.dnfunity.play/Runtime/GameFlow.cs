@@ -26,6 +26,11 @@ namespace Dnf.Play
     {
         /// <summary>结算菜单上选定的项;还没选(或还没到结算)是 <see cref="SettlementChoice.None"/>。</summary>
         SettlementChoice Choice { get; }
+
+        /// <summary>
+        /// 副本失败(证据 E-115):主角死后复活窗口的失败计时走完了还没复活。流程据此让主角出副本回城,不进结算菜单、不计入 <see cref="GameFlow.Settlements"/>。
+        /// </summary>
+        bool Failed { get; }
     }
 
     /// <summary>流程里的一次阶段切换(日志与检查用)。</summary>
@@ -155,6 +160,39 @@ namespace Dnf.Play
         /// <summary>结算菜单上做过多少次选择(再次挑战、选择其它地下城、返回城镇各算一次)。</summary>
         public int Settlements { get; private set; }
 
+        /// <summary>副本失败(主角死后没复活、失败计时走完)回城的次数(证据 E-115);不计入 <see cref="Settlements"/>。</summary>
+        public int Failures { get; private set; }
+
+        /// <summary>从系统菜单主动放弃副本回城的次数(原版放弃有疲劳惩罚,这里没做);不计入 <see cref="Settlements"/> 与 <see cref="Failures"/>。</summary>
+        public int GiveUps { get; private set; }
+
+        /// <summary>
+        /// 系统菜单(Esc;本项目自己的占位设计,见 <see cref="SystemMenu"/>):只在城镇与副本阶段能打开,开着的时候宿主让游戏暂停;
+        /// 选定的项在下一次 <see cref="Poll"/> 里执行。换阶段时自动关上。
+        /// </summary>
+        public SystemMenu Menu { get; } = new SystemMenu();
+
+        /// <summary>系统菜单里选了"退出游戏":宿主看到它就退出(流程自己不退出)。</summary>
+        public bool QuitRequested { get; private set; }
+
+        /// <summary>
+        /// Esc 键:菜单开着就关上;没开且当前阶段有系统菜单(城镇、副本)就打开。返回有没有处理这次按键
+        /// (加载、选角、副本选择阶段返回 false,Esc 在那些界面里另有含义,由宿主照旧处理)。
+        /// </summary>
+        public bool ToggleMenu()
+        {
+            if (StageSerial == 0)
+            {
+                return false;
+            }
+            if (Menu.Open)
+            {
+                Menu.Close();
+                return true;
+            }
+            return Menu.Show(Stage);
+        }
+
         public IReadOnlyList<DungeonEntry> Entries => _entries;
 
         /// <summary>每次阶段切换的记录,按先后排。</summary>
@@ -271,6 +309,15 @@ namespace Dnf.Play
             {
                 return false;
             }
+            SystemMenuAction picked = Menu.TakeAction();
+            if (picked != SystemMenuAction.None)
+            {
+                return ApplyMenuAction(picked);
+            }
+            if (Menu.Open)
+            {
+                return false;   // 菜单开着:游戏暂停,各阶段的结果(出口、结算)等关上之后再处理
+            }
             switch (Stage)
             {
                 case GameStage.Town:
@@ -283,6 +330,29 @@ namespace Dnf.Play
                     return PollSelect();
                 case GameStage.CharacterSelect:
                     return PollCharacterSelect();
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// 执行系统菜单选中的项:继续什么也不做;副本里"放弃回城"算一次放弃、回城镇(没有结算,也不算失败);城镇里"回选角"回到选角界面;
+        /// "退出"只置 <see cref="QuitRequested"/>。项与当前阶段对不上(菜单开着时阶段变了)就忽略。
+        /// </summary>
+        private bool ApplyMenuAction(SystemMenuAction action)
+        {
+            switch (action)
+            {
+                case SystemMenuAction.ReturnToTown when Stage == GameStage.Dungeon:
+                    GiveUps++;
+                    EnterTown("menu return");
+                    return true;
+                case SystemMenuAction.CharacterSelect when Stage == GameStage.Town && _characterSelect != null:
+                    EnterCharacterSelect("menu");
+                    return true;
+                case SystemMenuAction.Quit:
+                    QuitRequested = true;
+                    return false;
                 default:
                     return false;
             }
@@ -339,6 +409,13 @@ namespace Dnf.Play
             {
                 return false;
             }
+            if (run.Failed)
+            {
+                // 失败:服务端失败计时到点让所有人出副本回城(party_dungeon_fail,E-115);没有结算,不算结算选择
+                Failures++;
+                EnterTown("dungeon fail");
+                return true;
+            }
             SettlementChoice choice = run.Choice;
             switch (choice)
             {
@@ -380,6 +457,7 @@ namespace Dnf.Play
         {
             GameStage from = Stage;
             bool first = StageSerial == 0;
+            Menu.Close();                        // 换阶段时系统菜单作废(没取走的选择也一起丢)
             Stage = to;
             Session = session;
             Select = select;

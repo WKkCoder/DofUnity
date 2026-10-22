@@ -1482,6 +1482,17 @@ namespace Dnf.Render
             return true;
         }
 
+        /// <summary>立刻结束受击硬直、回到站立(复活用:没有倒地动作的占位死亡会一直停在受击姿势上)。不在受击里时什么也不做。</summary>
+        public void EndHurt()
+        {
+            if (Motion != HeroMotion.Hurt)
+            {
+                return;
+            }
+            Motion = HeroMotion.Rest;
+            _motionMs = 0;
+        }
+
         /// <summary>
         /// 命中停顿里主角不推进(<see cref="Update(double, int, int, bool, bool)"/> 不被调用),但硬直是一块不被停顿冻结的秒表(与怪物一样,证据 E-080):
         /// 停顿期间调用方用它把这段时间记进硬直。不在受击里时什么也不做。
