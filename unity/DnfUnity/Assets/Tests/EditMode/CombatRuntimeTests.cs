@@ -178,5 +178,26 @@ namespace DnfUnity.Tests
             Assert.AreEqual(4, r.LevelsGained);
             Assert.AreEqual(2 + 3 + 4 + 5, r.SkillPoints);
         }
+
+        /// <summary>
+        /// 底栏技能槽的数(证据 E-112)在 Mono 里的核对:冷却遮罩盖住的行数 = 28 乘剩余比例向零取整(夹在 0 到 28),
+        /// 与 src/Dnf.Play.Tests/HudArtTests.cs 同一组数;技能槽的显示状态结构按构造参数原样读出。
+        /// </summary>
+        [Test]
+        public void HudSkillSlot_CooldownRowsAreHandComputed()
+        {
+            Assert.AreEqual(0, HudArt.CooldownRows(0.0));
+            Assert.AreEqual(0, HudArt.CooldownRows(double.NaN));
+            Assert.AreEqual(0, HudArt.CooldownRows(0.03));              // 0.84 → 0
+            Assert.AreEqual(2, HudArt.CooldownRows(0.08));              // 2.24 → 2
+            Assert.AreEqual(14, HudArt.CooldownRows(0.5));
+            Assert.AreEqual(25, HudArt.CooldownRows(0.9));              // 25.2 → 25
+            Assert.AreEqual(27, HudArt.CooldownRows(0.999));
+            Assert.AreEqual(28, HudArt.CooldownRows(1.0));
+            Assert.AreEqual(28, HudArt.CooldownRows(3.0));
+
+            var s = new HudSkillState(1, null, false, 0.25, 3, true);
+            Assert.AreEqual((1, false, 0.25, 3, true), (s.Slot, s.Usable, s.CooldownFraction, s.Level, s.LabelGray));
+        }
     }
 }

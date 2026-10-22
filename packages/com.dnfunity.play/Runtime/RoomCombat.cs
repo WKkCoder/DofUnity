@@ -1787,22 +1787,37 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 原版底栏(<see cref="HudArt"/>,证据 E-088):血球、魔法球、等级牌与 A S D 技能槽(能放亮、冷却或魔法不够时灰)。
+        /// 原版底栏(<see cref="HudArt"/>,证据 E-088):血球、魔法球、等级牌、SP 数字与 A S D 技能槽(能放亮;冷却中、主角腾不出手或魔法不够时灰,冷却中另盖遮罩,证据 E-112)。
         /// 技能槽按 <see cref="Skills"/> 的次序对应 A、S、D。
         /// </summary>
         private void AddHud(List<SceneSprite> into, ref int order)
         {
             HeroVitals v = Vitals;
+            // 经验条(证据 E-111):有等级进度才画;分子是本级已攒的经验,分母是本级一共要攒的,等级 85 盖满级图
+            HudExp? exp = Progress == null ? (HudExp?)null : new HudExp(Progress.ExpInLevel, Progress.LevelSpan, Progress.Level == Leveling.MaxLevel);
+            _hud.Build(into, ref order, v.Level, v.Hp, v.HpMax, v.Mp, v.MpMax, SkillSlotStates(), exp, Progress?.SkillPoints);
+        }
+
+        /// <summary>
+        /// 技能槽此刻的显示状态(证据 E-112):主角此刻腾不出手(挥击、放技能、受伤、腾空、倒下)或魔法不够时,图标变灰、小字变灰;
+        /// 只是冷却中,图标变灰、小字仍是金色,另按剩余比例盖冷却遮罩。没有生命值对象(无伤害模式)时没有底栏,返回空表。
+        /// </summary>
+        public IReadOnlyList<HudSkillState> SkillSlotStates()
+        {
+            HeroVitals v = Vitals;
             var states = new List<HudSkillState>(Skills.Slots.Count);
+            if (v == null)
+            {
+                return states;
+            }
+            bool free = v.IsAlive && Hero.CanBeginSkill;
             for (int i = 0; i < Skills.Slots.Count; i++)
             {
                 HeroSkillSlot s = Skills.Slots[i];
-                bool usable = s.Ready && v.IsAlive && v.Mp >= s.ConsumeMp;
-                states.Add(new HudSkillState(i, s.Def, usable));
+                bool castable = free && v.Mp >= s.ConsumeMp;
+                states.Add(new HudSkillState(i, s.Def, s.Ready && castable, s.CooldownFraction, s.Level, !castable));
             }
-            // 经验条(证据 E-111):有等级进度才画;分子是本级已攒的经验,分母是本级一共要攒的,等级 85 盖满级图
-            HudExp? exp = Progress == null ? (HudExp?)null : new HudExp(Progress.ExpInLevel, Progress.LevelSpan, Progress.Level == Leveling.MaxLevel);
-            _hud.Build(into, ref order, v.Level, v.Hp, v.HpMax, v.Mp, v.MpMax, states, exp);
+            return states;
         }
 
         private static int FilledWidth(int value, int max)

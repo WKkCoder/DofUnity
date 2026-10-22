@@ -566,6 +566,12 @@ namespace Dnf.Render
         /// <summary>是否正在挥击(连招、奔跑攻击、空中攻击或技能)。</summary>
         public bool IsAttacking => Motion == HeroMotion.Attack || Motion == HeroMotion.DashAttack || Motion == HeroMotion.JumpAttack || Motion == HeroMotion.Skill;
 
+        /// <summary>
+        /// 主角此刻腾得出手放技能:没有腾空、挥击(含放技能)、受伤、倒地。<see cref="BeginSkillMotion"/> 等放技能的入口共用这个前提;
+        /// 界面的技能槽也据此变灰(证据 E-112:基线里挥击、放技能与被击中的那几帧,三个槽的图标与小字同时变灰)。
+        /// </summary>
+        public bool CanBeginSkill => !(IsAirborne || IsAttacking || IsHurt || IsDown);
+
         /// <summary>正在挥的这一击的种类;不在攻击时为 <see cref="HeroAttackKind.Normal"/>。</summary>
         public HeroAttackKind AttackKind => Motion == HeroMotion.DashAttack ? HeroAttackKind.Dash
             : (Motion == HeroMotion.JumpAttack ? HeroAttackKind.Jump : (Motion == HeroMotion.Skill ? HeroAttackKind.Skill : HeroAttackKind.Normal));
@@ -911,7 +917,7 @@ namespace Dnf.Render
         /// </summary>
         public bool BeginSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel)
         {
-            if (IsAirborne || IsAttacking || IsHurt || IsDown)
+            if (!CanBeginSkill)
             {
                 return false;
             }
@@ -931,7 +937,7 @@ namespace Dnf.Render
         /// </summary>
         public bool BeginSkillWindup(int skillId, int windupStage, int untilFrame, int thenEtcIndex, double slideSpeed, double slideAccel)
         {
-            if (IsAirborne || IsAttacking || IsHurt || IsDown || (uint)windupStage >= (uint)_attacks.Length)
+            if (!CanBeginSkill || (uint)windupStage >= (uint)_attacks.Length)
             {
                 return false;
             }
@@ -951,7 +957,7 @@ namespace Dnf.Render
         /// </summary>
         public bool BeginSkillStrike(int skillId, int stage)
         {
-            if (IsAirborne || IsAttacking || IsHurt || IsDown || (uint)stage >= (uint)_attacks.Length)
+            if (!CanBeginSkill || (uint)stage >= (uint)_attacks.Length)
             {
                 return false;
             }
@@ -983,7 +989,7 @@ namespace Dnf.Render
         /// </summary>
         public bool BeginBackStep(int skillId, double power)
         {
-            if (_jump == null || IsAirborne || IsAttacking || IsHurt || IsDown)
+            if (_jump == null || !CanBeginSkill)
             {
                 return false;
             }

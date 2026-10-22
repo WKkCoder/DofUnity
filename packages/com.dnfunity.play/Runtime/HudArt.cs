@@ -14,14 +14,32 @@ namespace Dnf.Play
         /// <summary>技能定义(取图标用);没有图标时这个槽只画空格。</summary>
         public SkillDef Def { get; }
 
-        /// <summary>能放(冷却好了、魔法够)就画亮图标,否则画灰图标。</summary>
+        /// <summary>能放(冷却好了、魔法够、主角此刻腾得出手)就画亮图标,否则画灰图标。</summary>
         public bool Usable { get; }
 
-        public HudSkillState(int slot, SkillDef def, bool usable)
+        /// <summary>
+        /// 冷却还剩的比例(0 到 1,0 表示没在冷却,证据 E-112):图标上方盖一层半透明的暗色,盖住的行数是
+        /// <see cref="HudArt.CooldownRows"/>(28 乘比例,向零取整),冷却越到后面盖得越少,亮着的部分从图标底下一行一行长上来。
+        /// </summary>
+        public double CooldownFraction { get; }
+
+        /// <summary>技能等级;大于 0 时在图标右上角画 "Lv.N" 小字(证据 E-112),0 或负数不画。</summary>
+        public int Level { get; }
+
+        /// <summary>
+        /// 小字变灰:主角此刻放不了这个技能(正在挥击、放别的技能、受伤、腾空、魔法不够或已倒下)。
+        /// 只是冷却中不算——基线里冷却的技能小字照旧是金色,只被上面那层暗色压暗(证据 E-112)。
+        /// </summary>
+        public bool LabelGray { get; }
+
+        public HudSkillState(int slot, SkillDef def, bool usable, double cooldownFraction = 0.0, int level = 0, bool labelGray = false)
         {
             Slot = slot;
             Def = def;
             Usable = usable;
+            CooldownFraction = cooldownFraction;
+            Level = level;
+            LabelGray = labelGray;
         }
     }
 
@@ -50,7 +68,9 @@ namespace Dnf.Play
     /// 先画整条底栏(800×91,左右各有一个球的底座),再在左边画血球液体、右边画魔法球液体(液体按比例从下往上露出),
     /// 左下角的等级牌(Lv. 加数字),中间的菜单图标、菜单与商城按钮,右边的技能快捷槽(图标取 .skl 的 [icon],能放时亮、不能放时灰)与热键字母。
     /// 经验条(证据 E-111):<see cref="HudExp"/> 给了才画——hud.img 的 #4(625×4)放在 (88, 591),只露出前 <see cref="ExpBarWidth"/> 列;等级 85 再盖 #60。
-    /// 没做:疲劳条的数据、状态图标、物品快捷栏(1 到 6)、技能等级小字与冷却遮罩、鼠标悬停与点击、球上的高光。
+    /// 技能槽(证据 E-112):图标之上是 "Lv.N" 小字(自己的 3×5 点阵,金色加黑边,不是原版字体)、冷却遮罩(图标自上而下盖一层 (8,8,8) 半透明,盖住行数随冷却减少),
+    /// 热键字母最后画、不受遮罩影响;右球下方的 SP 框里画剩余技能点(<c>sp.img</c> 的数字,居中)。
+    /// 没做:疲劳条的数据、状态图标、物品快捷栏(1 到 6)、鼠标悬停与点击、球上的高光。
     /// 取不到 hud.img 时 <see cref="TryCreate"/> 返回 null,调用方退回占位的色块血条。
     /// </summary>
     public sealed class HudArt
@@ -75,6 +95,34 @@ namespace Dnf.Play
         public const int ExpBarMaxWidth = 625;
         public const int ExpBarX = 88;
         public const int ExpBarY = 591;
+
+        /// <summary>
+        /// SP 数字(证据 E-112):<c>sprite/common/digit/sp/sp.img</c> 的帧 0 是负号,帧 1 到 10 是数字 0 到 9(12×11,"1" 是 8 宽、自带偏移 2);
+        /// 基线里一个两位数的两个数字块落在 x = 755 与 765(逐像素 100% 一致)、y = 585,数字之间间隔 10 像素;
+        /// 底栏里 SP 框的内部是 x = 739 到 791,中心 765,两位数的整体宽度按 10 像素一个数字算正好居中,所以数字串按"总宽 = 位数 × 10"居中(推断,只有一个两位数的样本)。
+        /// </summary>
+        public const string SpDigitImage = "sprite/common/digit/sp/sp.img";
+        public const int SpDigitFirstFrame = 1;
+        public const int SpCenterX = 765;
+        public const int SpDigitPitch = 10;
+        public const int SpDigitY = 585;
+
+        /// <summary>技能图标是 28×28;冷却遮罩是 (8,8,8)、整体不透明度 128/255(基线里被盖住的像素 = 灰图标 / 2 + 4,逐像素吻合)。</summary>
+        public const int SkillIconSize = 28;
+        public const uint CooldownShadeRgb = 0x080808u;
+        public const int CooldownShadeAlpha = 128;
+
+        /// <summary>
+        /// "Lv.N" 小字的颜色(基线里量到的):金色填充加黑边;放不了(忙、没魔法)时填充灰 (132,132,132)、描边 (16,16,16)。
+        /// 位置:"Lv." 三个字的填充从图标内 (10, 1) 起,数字串的填充右端落在图标内 x = 26,五行高(第 1 到 5 行),四周一圈描边。
+        /// </summary>
+        public const uint LabelGoldRgb = 0xFFCE31u;
+        public const uint LabelGoldOutlineRgb = 0x000000u;
+        public const uint LabelGrayRgb = 0x848484u;
+        public const uint LabelGrayOutlineRgb = 0x101010u;
+        public const int LabelPrefixX = 10;
+        public const int LabelRowY = 1;
+        public const int LabelNumberRight = 26;
 
         /// <summary>中间五个菜单图标(24×26)的帧号:四个常态,最后一个是灰的(基线里就是这样)。</summary>
         public static readonly int[] MenuIconFrames = { 5, 8, 11, 14, 97 };
@@ -121,6 +169,8 @@ namespace Dnf.Play
         private readonly Dictionary<int, SpriteFrame> _digits = new Dictionary<int, SpriteFrame>();
         private readonly Dictionary<int, SpriteFrame> _expFills = new Dictionary<int, SpriteFrame>();
         private readonly Dictionary<string, SpriteFrame> _frames = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
+        private readonly Dictionary<string, SpriteFrame> _labelTexts = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
+        private readonly Dictionary<int, SpriteFrame> _shades = new Dictionary<int, SpriteFrame>();
 
         private HudArt(ISpriteSource sprites, SpriteFrame bar, SpriteFrame hpFull, SpriteFrame mpFull, SpriteFrame strip)
         {
@@ -218,11 +268,29 @@ namespace Dnf.Play
         }
 
         /// <summary>
+        /// 冷却遮罩盖住的行数(证据 E-112):<paramref name="fraction"/>(冷却还剩的比例)不大于 0 为 0,不小于 1 为整个图标的 <see cref="SkillIconSize"/> 行,
+        /// 其余是 28 乘比例向零取整(基线里一次冷却过程的 8 个采样点,亮着的行数 = 28 减去它;施放的时刻按 100 毫秒的采样间隔拟合,8 点全部吻合)。
+        /// </summary>
+        public static int CooldownRows(double fraction)
+        {
+            if (!(fraction > 0.0))
+            {
+                return 0;
+            }
+            if (fraction >= 1.0)
+            {
+                return SkillIconSize;
+            }
+            return (int)(SkillIconSize * fraction);
+        }
+
+        /// <summary>
         /// 把底栏的全部精灵按从下到上的顺序加进 <paramref name="into"/>(<paramref name="order"/> 一路递增)。
-        /// 顺序:底栏 → 血球液体 → 魔法球液体 → 经验条(给了才画)→ 等级牌 → 菜单图标 → 菜单、商城按钮 → "I" 按钮 → 技能图标 → 热键字母。
+        /// 顺序:底栏 → 血球液体 → 魔法球液体 → 经验条(给了才画)→ 等级牌 → SP 数字(给了才画)→ 菜单图标 → 菜单、商城按钮 → "I" 按钮
+        /// → 每个技能槽的图标、"Lv.N" 小字、冷却遮罩 → 热键字母。
         /// </summary>
         public void Build(List<SceneSprite> into, ref int order, int level, int hp, int hpMax, int mp, int mpMax, IReadOnlyList<HudSkillState> skills,
-            HudExp? exp = null)
+            HudExp? exp = null, int? skillPoints = null)
         {
             PlaceBlock(into, ref order, _bar, BarX, BarY, "hud-bar");
 
@@ -235,6 +303,10 @@ namespace Dnf.Play
             }
 
             AddLevel(into, ref order, level);
+            if (skillPoints.HasValue)
+            {
+                AddSp(into, ref order, skillPoints.Value);
+            }
 
             for (int i = 0; i < MenuIconFrames.Length; i++)
             {
@@ -271,7 +343,10 @@ namespace Dnf.Play
                     {
                         // 位置是亮图标的像素块位置;灰图标的偏移若不同,按各自偏移相对同一个原点摆
                         SpriteFrame anchor = normal ?? pick;
-                        PlaceFrom(into, ref order, pick, anchor, SkillSlotX + SkillSlotPitch * s.Slot, SkillSlotY, "hud-skill");
+                        int slotX = SkillSlotX + SkillSlotPitch * s.Slot;
+                        PlaceFrom(into, ref order, pick, anchor, slotX, SkillSlotY, "hud-skill");
+                        AddSkillLevel(into, ref order, s, slotX, SkillSlotY);
+                        AddCooldownShade(into, ref order, s, slotX, SkillSlotY);
                     }
                 }
             }
@@ -342,6 +417,159 @@ namespace Dnf.Play
                     into.Add(OverlayArt.Place(digit, LevelDigitX + LevelDigitPitch * i + digit.OffsetX, LevelY + digit.OffsetY, order++, "hud-level"));
                 }
             }
+        }
+
+        /// <summary>
+        /// SP 数字(证据 E-112):<c>sp.img</c> 的数字帧,每个数字按 <see cref="SpDigitPitch"/> 像素一格,整串居中在 <see cref="SpCenterX"/>;
+        /// 数字帧自带偏移("1" 窄一点,偏移 2)要加回去;缺图就不画。
+        /// </summary>
+        private void AddSp(List<SceneSprite> into, ref int order, int skillPoints)
+        {
+            string text = (skillPoints < 0 ? 0 : skillPoints).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            int left = SpCenterX - SpDigitPitch * text.Length / 2;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (Frame(SpDigitImage, SpDigitFirstFrame + (text[i] - '0')) is SpriteFrame digit)
+                {
+                    into.Add(OverlayArt.Place(digit, left + SpDigitPitch * i + digit.OffsetX, SpDigitY + digit.OffsetY, order++, "hud-sp"));
+                }
+            }
+        }
+
+        /// <summary>技能图标右上角的 "Lv.N":"Lv." 三个字的填充从图标内 (10, 1) 起,数字串的填充右端落在图标内 x = 26;帧比填充多一圈描边。</summary>
+        private void AddSkillLevel(List<SceneSprite> into, ref int order, HudSkillState s, int slotX, int slotY)
+        {
+            if (s.Level <= 0)
+            {
+                return;
+            }
+            SpriteFrame prefix = LabelText("Lv.", s.LabelGray);
+            SpriteFrame number = LabelText(s.Level.ToString(System.Globalization.CultureInfo.InvariantCulture), s.LabelGray);
+            into.Add(OverlayArt.Place(prefix, slotX + LabelPrefixX - 1, slotY + LabelRowY - 1, order++, "hud-skill-level"));
+            into.Add(OverlayArt.Place(number, slotX + LabelNumberRight - (number.Width - 2), slotY + LabelRowY - 1, order++, "hud-skill-level"));
+        }
+
+        /// <summary>
+        /// 冷却遮罩:图标自上而下盖 <see cref="CooldownRows"/> 行 (8,8,8)、整体不透明度 <see cref="CooldownShadeAlpha"/>/255 的暗色,
+        /// 压在图标与小字上、在热键字母下面(基线里字母不被压暗)。
+        /// </summary>
+        private void AddCooldownShade(List<SceneSprite> into, ref int order, HudSkillState s, int slotX, int slotY)
+        {
+            int rows = CooldownRows(s.CooldownFraction);
+            if (rows <= 0)
+            {
+                return;
+            }
+            if (!_shades.TryGetValue(rows, out SpriteFrame shade))
+            {
+                var rgba = new byte[SkillIconSize * rows * 4];
+                for (int i = 0; i < SkillIconSize * rows; i++)
+                {
+                    rgba[i * 4] = (byte)((CooldownShadeRgb >> 16) & 0xFF);
+                    rgba[i * 4 + 1] = (byte)((CooldownShadeRgb >> 8) & 0xFF);
+                    rgba[i * 4 + 2] = (byte)(CooldownShadeRgb & 0xFF);
+                    rgba[i * 4 + 3] = 255;
+                }
+                shade = new SpriteFrame(SkillIconSize, rows, 0, 0, SkillIconSize, rows, rgba);
+                _shades[rows] = shade;
+            }
+            into.Add(OverlayArt.Place(shade, slotX, slotY, order++, "hud-skill-cooldown", CooldownShadeAlpha));
+        }
+
+        /// <summary>小字的点阵高度(行)。</summary>
+        public const int LabelGlyphHeight = 5;
+
+        /// <summary>
+        /// "Lv.N" 小字用的点阵(我们自己画的,不是原版字体;原版这行字是系统字体渲染的,量到的形状:字高 5 行、笔画 1 像素、字间 1 列):
+        /// "L"、"v"、"." 与数字 "1" 取自基线里量到的笔画,其余数字是照常见的 3×5 点阵自己排的(没有基线样本)。
+        /// </summary>
+        private static readonly Dictionary<char, string[]> LabelGlyphs = new Dictionary<char, string[]>
+        {
+            ['L'] = new[] { "#..", "#..", "#..", "#..", "###" },
+            ['v'] = new[] { "...", "...", "#.#", "#.#", ".#." },
+            ['.'] = new[] { ".", ".", ".", ".", "#" },
+            ['0'] = new[] { "###", "#.#", "#.#", "#.#", "###" },
+            ['1'] = new[] { ".#", "##", ".#", ".#", ".#" },
+            ['2'] = new[] { "###", "..#", "###", "#..", "###" },
+            ['3'] = new[] { "###", "..#", "###", "..#", "###" },
+            ['4'] = new[] { "#.#", "#.#", "###", "..#", "..#" },
+            ['5'] = new[] { "###", "#..", "###", "..#", "###" },
+            ['6'] = new[] { "###", "#..", "###", "#.#", "###" },
+            ['7'] = new[] { "###", "..#", "..#", "..#", "..#" },
+            ['8'] = new[] { "###", "#.#", "###", "#.#", "###" },
+            ['9'] = new[] { "###", "#.#", "###", "..#", "###" },
+        };
+
+        /// <summary>
+        /// 排出一段小字(<paramref name="gray"/> 为真用灰色),四周一圈 8 邻域描边;帧的宽 = 填充宽 + 2,高 = <see cref="LabelGlyphHeight"/> + 2。
+        /// 字库里没有的字符跳过。同样的参数总是返回同一个对象。
+        /// </summary>
+        private SpriteFrame LabelText(string text, bool gray)
+        {
+            string key = (gray ? "g:" : "n:") + text;
+            if (_labelTexts.TryGetValue(key, out SpriteFrame cached))
+            {
+                return cached;
+            }
+            var glyphs = new List<string[]>();
+            int fillWidth = 0;
+            foreach (char c in text)
+            {
+                if (LabelGlyphs.TryGetValue(c, out string[] g))
+                {
+                    glyphs.Add(g);
+                    fillWidth += g[0].Length + (glyphs.Count > 1 ? 1 : 0);
+                }
+            }
+            int width = fillWidth + 2;
+            int height = LabelGlyphHeight + 2;
+            var fill = new bool[fillWidth, LabelGlyphHeight];
+            int left = 0;
+            foreach (string[] g in glyphs)
+            {
+                for (int y = 0; y < LabelGlyphHeight; y++)
+                {
+                    for (int x = 0; x < g[y].Length; x++)
+                    {
+                        fill[left + x, y] = g[y][x] == '#';
+                    }
+                }
+                left += g[0].Length + 1;
+            }
+            uint fillRgb = gray ? LabelGrayRgb : LabelGoldRgb;
+            uint outlineRgb = gray ? LabelGrayOutlineRgb : LabelGoldOutlineRgb;
+            var rgba = new byte[width * height * 4];
+            for (int pass = 0; pass < 2; pass++)
+            {
+                for (int y = 0; y < LabelGlyphHeight; y++)
+                {
+                    for (int x = 0; x < fillWidth; x++)
+                    {
+                        if (!fill[x, y])
+                        {
+                            continue;
+                        }
+                        // 第一遍铺描边(8 邻域),第二遍铺填充盖在上面
+                        int from = pass == 0 ? -1 : 0;
+                        int to = pass == 0 ? 1 : 0;
+                        for (int dy = from; dy <= to; dy++)
+                        {
+                            for (int dx = from; dx <= to; dx++)
+                            {
+                                int o = ((y + 1 + dy) * width + x + 1 + dx) * 4;
+                                uint rgb = pass == 0 ? outlineRgb : fillRgb;
+                                rgba[o] = (byte)((rgb >> 16) & 0xFF);
+                                rgba[o + 1] = (byte)((rgb >> 8) & 0xFF);
+                                rgba[o + 2] = (byte)(rgb & 0xFF);
+                                rgba[o + 3] = 255;
+                            }
+                        }
+                    }
+                }
+            }
+            var frame = new SpriteFrame(width, height, 0, 0, width, height, rgba);
+            _labelTexts[key] = frame;
+            return frame;
         }
 
         /// <summary>

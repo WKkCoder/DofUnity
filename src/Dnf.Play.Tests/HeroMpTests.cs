@@ -309,4 +309,141 @@ public class HeroMpTests
         Assert.Equal(0, arena.Session.SkillCasts);
         Assert.Equal(20, v.Mp);
     }
+
+    // ------------------------------------------------------------------ 技能槽的显示状态(证据 E-112)
+
+    private static HudSkillState Slot(MpArena arena, SkillKeys key)
+    {
+        HeroSkills skills = arena.Session.Skills;
+        int index = skills.Slots.ToList().IndexOf(skills.SlotOf(key));
+        return arena.Session.SkillSlotStates().Single(s => s.Slot == index);
+    }
+
+    [Fact]
+    public void AnIdleHeroWithMpShowsEverySlotLitWithAGoldLabelAndNoShade()
+    {
+        using var arena = new MpArena(Vitals(regenPerMinute: 0.0));
+        IReadOnlyList<HudSkillState> states = arena.Session.SkillSlotStates();
+        Assert.Equal(arena.Session.Skills.Slots.Count, states.Count);
+        Assert.True(states.Count >= 3);
+        foreach (HudSkillState s in states)
+        {
+            Assert.True(s.Usable);
+            Assert.False(s.LabelGray);
+            Assert.Equal(0.0, s.CooldownFraction);
+            Assert.True(s.Level >= 1);
+        }
+    }
+
+    [Fact]
+    public void WhileTheHeroCastsEverySlotGoesGrayWithAGrayLabelAndOnlyTheCastSkillShowsTheShade()
+    {
+        using var arena = new MpArena(Vitals(regenPerMinute: 0.0));
+        arena.Run(10, SkillKeys.A);
+        Assert.True(arena.Session.Hero.IsAttacking);
+
+        HudSkillState hard = Slot(arena, SkillKeys.A);
+        Assert.False(hard.Usable);
+        Assert.True(hard.LabelGray);
+        Assert.InRange(hard.CooldownFraction, 0.99, 1.0);                // 刚起冷却:几乎整格都盖着
+        Assert.InRange(HudArt.CooldownRows(hard.CooldownFraction), HudArt.SkillIconSize - 1, HudArt.SkillIconSize);
+
+        foreach (SkillKeys other in new[] { SkillKeys.S, SkillKeys.D })
+        {
+            HudSkillState s = Slot(arena, other);
+            Assert.False(s.Usable);                                      // 主角在忙:没在冷却的槽也变灰(基线 S08 的 5 到 15 帧)
+            Assert.True(s.LabelGray);
+            Assert.Equal(0.0, s.CooldownFraction);
+        }
+    }
+
+    [Fact]
+    public void AfterTheCastEndsTheOtherSlotsLightUpAgainAndTheCastSkillKeepsAGoldLabelUnderTheShadeWhileItCools()
+    {
+        using var arena = new MpArena(Vitals(regenPerMinute: 0.0));
+        arena.Run(10, SkillKeys.A);
+        for (int i = 0; i < 400 && arena.Session.Hero.IsAttacking; i++)
+        {
+            arena.Run(10);
+        }
+        Assert.False(arena.Session.Hero.IsAttacking);
+
+        HudSkillState hard = Slot(arena, SkillKeys.A);
+        Assert.False(hard.Usable);                                       // 冷却中:图标还是灰的
+        Assert.False(hard.LabelGray);                                    // 但小字回到金色(基线 S08 的 16 到 29 帧)
+        Assert.InRange(hard.CooldownFraction, 0.01, 0.99);
+        foreach (SkillKeys other in new[] { SkillKeys.S, SkillKeys.D })
+        {
+            HudSkillState s = Slot(arena, other);
+            Assert.True(s.Usable);
+            Assert.False(s.LabelGray);
+        }
+
+        // 冷却走完:遮罩没了,图标亮了
+        arena.Run(AvatarFixture.HardAttackCool);
+        hard = Slot(arena, SkillKeys.A);
+        Assert.True(hard.Usable);
+        Assert.Equal(0.0, hard.CooldownFraction);
+    }
+
+    [Fact]
+    public void NotEnoughMpOrADeadOrAirborneHeroGraysTheLabelToo()
+    {
+        var poor = Vitals(regenPerMinute: 0.0);
+        poor.TrySpendMp(45);                                             // 剩 5:够后跳的 2,不够鬼斩的 13
+        using (var arena = new MpArena(poor))
+        {
+            HudSkillState hard = Slot(arena, SkillKeys.A);
+            Assert.False(hard.Usable);
+            Assert.True(hard.LabelGray);
+            Assert.Equal(0.0, hard.CooldownFraction);                    // 没在冷却:不盖遮罩
+            Assert.True(Slot(arena, SkillKeys.D).Usable);
+            Assert.False(Slot(arena, SkillKeys.D).LabelGray);
+        }
+
+        var dead = Vitals(regenPerMinute: 0.0);
+        using (var arena = new MpArena(dead))
+        {
+            dead.Damage(1000);
+            Assert.All(arena.Session.SkillSlotStates(), s => Assert.True(!s.Usable && s.LabelGray));
+        }
+
+        using (var arena = new MpArena(Vitals(regenPerMinute: 0.0)))
+        {
+            arena.Session.Update(10, 0, 0, false, true, SkillKeys.None);   // 起跳
+            for (int i = 0; i < 20 && !arena.Session.Hero.IsAirborne; i++)
+            {
+                arena.Session.Update(10, 0, 0, false, false, SkillKeys.None);
+            }
+            Assert.True(arena.Session.Hero.IsAirborne);
+            Assert.All(arena.Session.SkillSlotStates(), s => Assert.True(!s.Usable && s.LabelGray));
+        }
+    }
+
+    [Fact]
+    public void WithoutVitalsThereAreNoSlotStatesBecauseThereIsNoHud()
+    {
+        using var arena = new MpArena(Vitals(), giveVitals: false);
+        Assert.Empty(arena.Session.SkillSlotStates());
+    }
+
+    [Fact]
+    public void TheHeroMayBeginASkillOnlyWhenOnTheGroundAndNotSwingingHurtOrDown()
+    {
+        using var arena = new MpArena(Vitals(regenPerMinute: 0.0));
+        TownHero hero = arena.Session.Hero;
+        Assert.True(hero.CanBeginSkill);
+        arena.Run(10, SkillKeys.A);                                      // 放技能:在挥击里
+        Assert.True(hero.IsAttacking);
+        Assert.False(hero.CanBeginSkill);
+        hero.Place(300, 100, false, HeroMotion.Rest, 0);
+        Assert.True(hero.CanBeginSkill);
+        Assert.True(hero.BeginHurt(300, 0, 0, false));                   // 被打中:受击硬直里也不能放
+        Assert.True(hero.IsHurt);
+        Assert.False(hero.CanBeginSkill);
+        hero.Place(300, 100, false, HeroMotion.Rest, 0);
+        Assert.True(hero.BeginDown());                                   // 倒地
+        Assert.True(hero.IsDown);
+        Assert.False(hero.CanBeginSkill);
+    }
 }
