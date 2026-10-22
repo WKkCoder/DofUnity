@@ -215,10 +215,13 @@ def check_flow():
         ("副本起", ["flow-check", "--from", "dungeon"], "flow_dungeon.txt", [], []),
         ("旧版单图城镇", ["flow-check", "--legacy-town", "--from", "char"], "flow_legacy.txt", [], []),
         # 主角不动站着挨打:一座首领房间里被打死,倒地、躺平不再动(E-105)
-        ("首领房间里主角被打死后倒地躺平", ["combat-check", "--map", "map/lorien/b1.map", "--seconds", "120"], "flow_hero_down.txt",
+        # M22 起怪物要先发现主角、按节拍走近、站着才出招,打死不动的主角比以前慢,时限放宽到 300 秒
+        ("首领房间里主角被打死后倒地躺平", ["combat-check", "--map", "map/lorien/b1.map", "--seconds", "300"], "flow_hero_down.txt",
          [r"主角死亡", r"主角倒地 [1-9]\d* 次", r"动作 Down"], []),
         # 站着挨打的主角被一击打倒(没死),躺着、起身回到站立(E-105;这座房间里的怪有倒地类攻击,是扫全库找到的几座之一)
-        ("真实房间里主角活着被打倒又起身", ["combat-check", "--map", "map/deadtower/021f.map", "--seconds", "30"], "flow_hero_getup.txt",
+        # M22 起这座房间里七只怪不再同时扑上来:从这个出生点开始,第一次被打倒在 5.9 秒、起身在 9.35 秒、下一次被打在 9.7 秒,
+        # 时限停在两次被打之间(怪物 AI 的时序一变,这里要跟着调)
+        ("真实房间里主角活着被打倒又起身", ["combat-check", "--map", "map/deadtower/021f.map", "--start", "300,330,left", "--seconds", "9.5"], "flow_hero_getup.txt",
          [r"主角倒地 [1-9]\d* 次\(起身 [1-9]\d* 次", r"动作 Rest", r"生命 [1-9]\d*/"], [r"主角死亡"]),
     ]
     bad = 0

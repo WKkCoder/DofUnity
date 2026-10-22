@@ -39,6 +39,14 @@ namespace Dnf.Play
         /// <summary>竖直速度与水平速度之比(90 / 222.5,证据 E-066)。</summary>
         public const double VerticalRatio = 90.0 / 222.5;
 
+        /// <summary>
+        /// 怪物每点 [move speed] 的水平步速(像素/秒)。量法:基线连拍里一只怪物匀速走向主角,
+        /// 左缘在 23 帧(间隔 200 毫秒)里的线性回归斜率除以它的 [move speed],误差约 0.3%(证据 E-114,非 REA 的测量)。
+        /// 旧换算把怪物的数按主角的实测步速折算,比基线量到的偏大不少:基线主角的实际速度属性不一定是脚本里的数(装备等会加),所以主角的步速不能当成换算的基准。
+        /// 只有一种怪物一个样本,线性关系是假设。
+        /// </summary>
+        public const double WalkPixelsPerStat = 0.1573;
+
         /// <summary>主角进入这个范围(世界像素)怪物才有反应;原版 .ai 里的视野数没有接入,这是近似。</summary>
         public const double SightX = 320;
 
@@ -131,6 +139,7 @@ namespace Dnf.Play
 
         // 默认 AI 的出招决策(证据 E-100、E-101):有 [attack kind] 记录时由 MonsterAttackChooser 决定出哪一招、什么时候出;没有时走旧的"够得着就出招 + 冷却"占位
         private MonsterAttackChooser _chooser;
+        private MonsterBrain _brain;
         private double _aiClockMs;
         private int _attackIndex;
         private HeroStrikeInfo _strike;
@@ -291,6 +300,18 @@ namespace Dnf.Play
 
         /// <summary>出招决策器;没有装 [attack kind] 记录时为 null(旧的占位逻辑)。</summary>
         public MonsterAttackChooser AttackChooser => _chooser;
+
+        /// <summary>
+        /// 装上默认 AI 的走位(<see cref="MonsterBrain"/>,证据 E-114):游荡、发现主角、按节拍朝主角走。装了之后 <see cref="Think"/> 不再用固定视野框与每帧直线追击的占位;
+        /// 传 null 回到占位。没有走位大脑的怪物(没有 [melee combat]、[range combat] 类别的脚本怪等)仍走占位。
+        /// </summary>
+        public void SetDefaultAi(MonsterBrain brain)
+        {
+            _brain = brain;
+        }
+
+        /// <summary>默认 AI 的走位大脑;没装时为 null(占位逻辑)。</summary>
+        public MonsterBrain Brain => _brain;
 
         /// <summary>
         /// 装上 .mob 的 [throw attack] 记录与投射物模板(证据 E-103):出招动画的当前帧超过某条记录的 [throw frame] 时,在身边放出它的投射物。
@@ -672,6 +693,11 @@ namespace Dnf.Play
         /// </summary>
         private void Think(double deltaMs, double heroX, double heroY, bool heroPresent, IWalkArea walk, IReadOnlyList<Aabb> heroBoxes)
         {
+            if (_brain != null)
+            {
+                ThinkWithBrain(deltaMs, heroX, heroY, heroPresent, walk, heroBoxes);
+                return;
+            }
             double dx = heroX - X;
             double dy = heroY - Y;
             if (!heroPresent || Math.Abs(dx) > MonsterTuning.SightX || Math.Abs(dy) > MonsterTuning.SightY)
@@ -743,13 +769,112 @@ namespace Dnf.Play
             TryMove(stepX, stepY, walk);
         }
 
+        /// <summary>
+        /// 装了走位大脑(<see cref="MonsterBrain"/>)时待机与行走的决策(证据 E-114):
+        /// 先让大脑推进(找目标、切模式、到点选方向);站着时按 [attack kind] 的节奏出招——出招决策逐个敌对角色判断射程,与怪物有没有目标、
+        /// 是不是敌对模式无关;没有 [attack kind] 的怪物走旧的"够得着 + 冷却"。不出招就按大脑选的方向走(横向朝哪边就面朝哪边),方向一直保持到大脑下一次选择;
+        /// 敌对而且站着(已走到主角所在的格子)时面朝主角(推断:出招前转身)。
+        /// </summary>
+        private void ThinkWithBrain(double deltaMs, double heroX, double heroY, bool heroPresent, IWalkArea walk, IReadOnlyList<Aabb> heroBoxes)
+        {
+            _brain.Update(AiClockMs, heroPresent, X, Y, heroX, heroY);
+            if (_chooser != null)
+            {
+                if (_brain.IsHostile)
+                {
+                    _chooser.EnterHostile();                   // 进入敌对模式时射程里的概率乘 1.3,离开时还原
+                }
+                else
+                {
+                    _chooser.LeaveHostile();
+                }
+            }
+            double dx = heroX - X;
+            double dy = heroY - Y;
+            if (heroPresent)
+            {
+                if (!_brain.Moving && _brain.IsHostile && _brain.HasTarget && Math.Abs(dx) > 1.0)
+                {
+                    FacingLeft = dx < 0;
+                }
+                if (Phase == MonsterPhase.Wait)
+                {
+                    if (_chooser != null)
+                    {
+                        if (_brain.IsStationary)
+                        {
+                            return;                           // [stay] 的怪物:客户端的出招决策函数(0x0088d7a0)一开头就按类别返回,不抽签
+                        }
+                        _reachDx = dx;
+                        _reachDy = dy;
+                        _reachBoxes = heroBoxes;
+                        var target = new AttackTarget(RoundToInt(heroX), RoundToInt(heroY), TargetWidth, TargetDepth);
+                        int pick = _chooser.Decide(AiClockMs, RoundToInt(X), RoundToInt(Y), FacingLeft, true, target, _reachTest);
+                        if (pick >= 0)
+                        {
+                            _attackIndex = pick;
+                            EnterPhase(MonsterPhase.Attack);
+                            return;
+                        }
+                    }
+                    else if (_cooldownMs <= 0 && _model.Attacks.Count > 0 && _model.Attacks[0] != null)
+                    {
+                        bool geometric = heroBoxes != null && heroBoxes.Count > 0 && StrikeBoxes().Count > 0;
+                        bool near = geometric
+                            ? CanReach(heroBoxes)
+                            : Math.Abs(dx) <= MonsterTuning.AttackRangeX && Math.Abs(dy) <= MonsterTuning.AttackRangeY;
+                        if (near)
+                        {
+                            _attackIndex = 0;
+                            EnterPhase(MonsterPhase.Attack);
+                            return;
+                        }
+                    }
+                }
+            }
+            if (!_brain.Moving)
+            {
+                if (Phase != MonsterPhase.Wait)
+                {
+                    EnterPhase(MonsterPhase.Wait);
+                }
+                return;
+            }
+            if (Phase != MonsterPhase.Walk)
+            {
+                EnterPhase(MonsterPhase.Walk);
+            }
+            if (_brain.StepX != 0)
+            {
+                FacingLeft = _brain.StepX < 0;
+            }
+            double seconds = deltaMs / 1000.0;
+            TryMove(_brain.StepX * SpeedX * seconds, _brain.StepY * SpeedY * seconds, walk);
+        }
+
+        /// <summary>
+        /// 房间里挡路的东西(关着的出口门体):和主角共用同一个障碍表,怪物也走不进去——否则游荡的怪物会走到主角够不着的门洞里,房间清不掉(E-114)。
+        /// 由房间会话每帧从主角身上取来;已经压在障碍里的怪物(出生点落在门体上)不受它挡,免得永远出不来(与主角的处理一致)。
+        /// </summary>
+        public IHeroBlocker Blocker { get; set; }
+
+        private bool CanStandAt(double x, double y, IWalkArea walk, bool ignoreBlocker)
+        {
+            if (walk != null && !walk.IsUnrestricted && !walk.Contains(x, y))
+            {
+                return false;
+            }
+            return ignoreBlocker || Blocker == null || Blocker.BlockedBy(x, y) == null;
+        }
+
         private void TryMove(double stepX, double stepY, IWalkArea walk)
         {
-            if (stepX != 0 && (walk == null || walk.IsUnrestricted || walk.Contains(X + stepX, Y)))
+            bool ignoreBlocker = Blocker != null && Blocker.BlockedBy(X, Y) != null;
+            if (stepX != 0 && CanStandAt(X + stepX, Y, walk, ignoreBlocker))
             {
                 X += stepX;
             }
-            if (stepY != 0 && (walk == null || walk.IsUnrestricted || walk.Contains(X, Y + stepY)))
+            if (stepY != 0 && CanStandAt(X, Y + stepY, walk, ignoreBlocker))
             {
                 Y += stepY;
             }
@@ -897,6 +1022,7 @@ namespace Dnf.Play
             {
                 return false;
             }
+            _brain?.NotifyDamaged();                           // 挨了打:马上找目标、不等发现迟滞(E-114)
             Hp = Math.Max(0, Hp - Math.Max(0, damage));
             _pushDir = pushToLeft ? -1 : 1;
             _pushTotal = Math.Max(0.0, pushPixels);

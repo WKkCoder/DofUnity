@@ -31,7 +31,7 @@ internal static class CombatCheck
         }
 
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
-        RoomCombatSession session = DemoCombat.CreateSession(assets, opts.MapPath, opts.HeroWeapon ?? DemoHero.StarterWeapon, 1, !opts.NoDamage,
+        RoomCombatSession session = DemoCombat.CreateSession(assets, opts.MapPath, opts.HeroWeapon ?? DemoHero.StarterWeapon, opts.Seed, !opts.NoDamage,
             ExpCheck.ProgressFor(assets, opts));
         if (opts.Start != null)
         {

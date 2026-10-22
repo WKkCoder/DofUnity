@@ -45,16 +45,21 @@ esac
 
 mkdir -p re out
 log="$PWD/re/unity-build-town-$platform.log"
-set +e
-"$UNITY" -batchmode -nographics -quit -projectPath "$PWD/unity/DnfUnity" \
-  -buildTarget "$target" -executeMethod "$method" -logFile "$log"
-code=$?
-set -e
-echo "Unity 退出码: $code(日志 $log)"
-grep -n 'DNF_BUILD' "$log" | tail -5 || true
-if [ "$code" -ne 0 ]; then
-  grep -n -E 'error CS|Error building Player|BuildFailedException|Exception:' "$log" | head -15 >&2 || true
-  exit 1
+if [ "${DNF_SKIP_BUILD:-}" = "1" ] && [ "$platform" = "macos" ] && [ -d "$PWD/unity/DnfUnity/Builds/macos/DnfTownDemo.app" ]; then
+  # 调试用:只改了本脚本里的校验、没动 packages/ 时,沿用上次构建出来的播放器重跑校验(动过 packages/ 之后不要用)
+  echo "跳过 Unity 构建(DNF_SKIP_BUILD=1),沿用已有的播放器"
+else
+  set +e
+  "$UNITY" -batchmode -nographics -quit -projectPath "$PWD/unity/DnfUnity" \
+    -buildTarget "$target" -executeMethod "$method" -logFile "$log"
+  code=$?
+  set -e
+  echo "Unity 退出码: $code(日志 $log)"
+  grep -n 'DNF_BUILD' "$log" | tail -5 || true
+  if [ "$code" -ne 0 ]; then
+    grep -n -E 'error CS|Error building Player|BuildFailedException|Exception:' "$log" | head -15 >&2 || true
+    exit 1
+  fi
 fi
 
 if [ "$platform" = "macos" ]; then
@@ -155,11 +160,13 @@ if [ "$platform" = "macos" ]; then
       || { echo "房间里自动行走后主角不在命令行算出的位置 (${cli_hero}) 朝左、站立、镜头 0:$room_walk_log" >&2; exit 1; }
     case "$cli_hero" in *,348.0) ;; *) echo "主角应走到通行带的下沿(y = 348.0),命令行给出 ${cli_hero}" >&2; exit 1 ;; esac
 
-    # 副本房间里的战斗(证据 E-069):时间表是 "0.2 秒起向左走、2.5 秒停下、2.6/3.3/4.0 秒各按一下攻击键"。
+    # 副本房间里的战斗(证据 E-069):时间表是 "0.2 秒起向左上走、1.0 秒起只向左走、2.3 秒停下、3.6/4.3/5.0/5.7 秒各按一下攻击键"。
+    # 主角走进怪物堆里再出手:怪物要先发现主角、过一会儿才起步、每隔约一秒才校正一次方向(走位大脑,E-114),所以出手时刻比旧占位 AI 晚;
+    # 改了怪物的走位之后时刻要重选(命令行 combat-check --play 同一份时间表,看命中的时刻)。
     # 播放器带 -dnfplayat 时按固定 1/60 秒步长确定地模拟到指定时刻,再离屏渲染一帧;命令行 combat-check 用同一份时间表与同一个模拟类,
-    # 在同一时刻写出 PNG。3.6 秒:第一只怪物刚受击(受击帧、血条、伤害数字、连击提示);4.3 秒:一只在死亡、一只受击。
-    fight_play="0.2:left,2.5:none,2.6:attack,3.3:attack,4.0:attack"
-    for at in 3.6 4.3; do
+    # 在同一时刻写出 PNG。3.9 秒:第一只怪物刚受击(受击帧、血条、伤害数字、连击提示);4.6 秒:一只在死亡、其余受击。
+    fight_play="0.2:left+up,1.0:left,2.3:none,3.6:attack,4.3:attack,5.0:attack,5.7:attack"
+    for at in 3.9 4.6; do
       tag="room-fight-$at"
       ms="$(python3 -c "print(int(float('$at')*1000.0))")"
       rm -f "out/town-demo-$tag.png" "out/town-cpu-room-fight-$at.png"
@@ -175,11 +182,11 @@ if [ "$platform" = "macos" ]; then
         --shots-at "$at" --png "$PWD/out/town-cpu-room-fight" >/dev/null
       python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-room-fight-$(printf '%.2f' "$at").png" --max-diff 0
     done
-    # 实时运行同一份时间表 6 秒:帧率不固定,所以不比像素,只检查按键确实进了战斗(至少命中一次)、没有异常
+    # 实时运行同一份时间表 7 秒:帧率不固定,所以不比像素,只检查按键确实进了战斗(至少命中一次)、没有异常
     fight_log="$PWD/re/unity-run-town-room-fight-macos.log"
     rm -f "$fight_log"
     set +e
-    "$app" -batchmode -logFile "$fight_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 6 -dnfnodamage -dnfautowalk "$fight_play"
+    "$app" -batchmode -logFile "$fight_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 7 -dnfnodamage -dnfautowalk "$fight_play"
     rc=$?
     set -e
     echo "播放器退出码(房间里实时战斗): $rc"
@@ -213,11 +220,12 @@ if [ "$platform" = "macos" ]; then
       python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-room-action-$(printf '%.2f' "$at").png" --max-diff 0
     done
 
-    # 技能 A S D(证据 E-076):时间表是 "0.2 秒向左走、2.5 秒停下、3.0 秒向右点一下转身、3.3 秒按 A(鬼斩)、5.0 秒按 S(上挑)、6.0 秒按 D(后跳)"。
-    # 3.5 秒:鬼斩在 3.47 秒命中,主角与两只怪物正处在命中停顿里(E-077);3.55 秒:紧接着的一帧,斩击光影两层叠在前面;
+    # 技能 A S D(证据 E-076):时间表是 "0.2 秒起向左上走、1.0 秒起只向左走、2.3 秒停下、3.3 秒按 A(鬼斩)、5.0 秒按 S(上挑)、6.0 秒按 D(后跳)"
+    # (主角站进怪物堆里放技能;怪物走位按 E-114 之后重选了路线)。
+    # 3.5 秒:鬼斩在 3.47 秒命中,主角与被打中的怪物正处在命中停顿里(E-077);3.55 秒:紧接着的一帧,斩击光影两层叠在前面;
     # 3.7 秒:光影收尾;5.2 秒:上挑(连招第三段的挥击);6.2 秒:后跳腾空。
     # 播放器与命令行 combat-check 同一份时间表、同一个模拟类,逐字节对照;再实时跑一遍,检查三个技能都放出来了。
-    skill_play="0.2:left,2.5:none,3.0:right,3.1:none,3.3:a,5.0:s,6.0:d,7.0:none"
+    skill_play="0.2:left+up,1.0:left,2.3:none,3.3:a,5.0:s,6.0:d,7.0:none"
     for at in 3.5 3.55 3.7 5.2 6.2; do
       tag="room-skill-$at"
       ms="$(python3 -c "print(int(float('$at')*1000.0))")"
@@ -269,7 +277,7 @@ if [ "$platform" = "macos" ]; then
     grep -q 'DNF_TOUCH on ' "$touch_walk_log" || { echo "触屏操作层没有打开:$touch_walk_log" >&2; exit 1; }
     grep -q 'DNF_TOWN_DEMO ran .* facing=left motion=Rest cameraX=0 leftEdge=True' "$touch_walk_log" \
       || { echo "触屏摇杆向左奔跑后主角不在预期的状态(应停在可走区域左边界上、朝左、站立、镜头 0):$touch_walk_log" >&2; exit 1; }
-    touch_skill_play="0.2:stick=left,2.5:stick=none,3.0:stick=right,3.1:stick=none,3.3:tap=a,5.0:tap=s,6.0:tap=d,7.0:stick=none"
+    touch_skill_play="0.2:stick=left+up,1.0:stick=left,2.3:stick=none,3.3:tap=a,5.0:tap=s,6.0:tap=d,7.0:stick=none"
     touch_skill_log="$PWD/re/unity-run-town-touch-skill-macos.log"
     rm -f "$touch_skill_log"
     set +e
@@ -286,11 +294,12 @@ if [ "$platform" = "macos" ]; then
     grep -q -E 'DNF_TOWN_DEMO ran .* room=true monsters=[0-9]+/4 hits=[1-9][0-9]* .* casts=3 ' "$touch_skill_log" \
       || { echo "触屏放技能里 A、S、D 没有各放出一次、或没有命中过怪物(应有 casts=3 与 hits>=1):$touch_skill_log" >&2; exit 1; }
 
-    # 死亡(证据 E-084):时间表是 "0.2 秒向左走、2.5 秒停下、2.6/3.3/4.0/4.7 秒各按一下攻击"。白闪与淡出从血量归零算起,腾空的尸体也是白的。
-    # 4.3 秒:第一只被打死的怪物纯白、还在飞;4.45 秒:它淡出到一半;5.0 秒:第二只被打死的怪物纯白、在主角左前方;5.2 秒:它淡出到一半、躺在地上。
+    # 死亡(证据 E-084):时间表是 "0.2 秒起向左上走、1.0 秒起只向左走、2.3 秒停下、3.6/4.3/5.0/5.7 秒各按一下攻击"(与上面的战斗同一条路线,走位见 E-114)。
+    # 白闪与淡出从血量归零算起,腾空的尸体也是白的。
+    # 4.6 秒:第一只被打死的怪物纯白、还在飞;4.75 秒:它淡出到一半;5.3 秒:后面被打死的两只纯白;5.5 秒:它们躺在地上淡出。
     # 剪影是缓存下来的白色副本帧(SpriteFrame.Silhouette),淡出走 Normal 混合的整体不透明度;播放器与命令行 combat-check 同一份时间表,逐字节对照。
-    death_play="0.2:left,2.5:none,2.6:attack,3.3:attack,4.0:attack,4.7:attack"
-    for at in 4.3 4.45 5.0 5.2; do
+    death_play="0.2:left+up,1.0:left,2.3:none,3.6:attack,4.3:attack,5.0:attack,5.7:attack"
+    for at in 4.6 4.75 5.3 5.5; do
       tag="room-death-$at"
       ms="$(python3 -c "print(int(float('$at')*1000.0))")"
       rm -f "out/town-demo-$tag.png" "out/town-cpu-room-death-$at.png"
@@ -308,11 +317,12 @@ if [ "$platform" = "macos" ]; then
     done
 
     # 怪物还手(证据 E-086):时间表是 "0.2 秒起向左走、3.5 秒停下",主角不出手,站在房间左端等怪物走过来打他。
-    # 4.8 秒:第一下刚打中(受击姿势、左下角生命条掉了一截、头顶红色伤害数字);5.3 秒:第二下刚打中(第一个数字已经飘上去一段)。
+    # 怪物按走位大脑(E-114)发现主角、起步、走到身边才出招,第一下比旧占位 AI 晚得多:
+    # 9.15 秒:第一下刚打中(受击姿势、左下角生命条掉了一截、头顶红色伤害数字);9.65 秒:受击姿势已过去、数字已经飘上去一段。
     # 播放器与命令行 combat-check 同一份时间表、同一个模拟类,逐字节对照(怪物和主角的受击框、出招、伤害、硬直与击退全在里面);
-    # 再实时跑 8 秒,检查日志里主角确实被打中过(heroHits >= 1)且没有异常。时刻跟着怪物走过来的节奏,改了怪物行为要重选。
+    # 再实时跑 12 秒,检查日志里主角确实被打中过(heroHits >= 1)且没有异常。时刻跟着怪物走过来的节奏,改了怪物行为要重选。
     hurt_play="0.2:left,3.5:none"
-    for at in 4.8 5.3; do
+    for at in 9.15 9.65; do
       tag="room-hurt-$at"
       ms="$(python3 -c "print(int(float('$at')*1000.0))")"
       rm -f "out/town-demo-$tag.png" "out/town-cpu-room-hurt-$at.png"
@@ -331,7 +341,7 @@ if [ "$platform" = "macos" ]; then
     hurt_log="$PWD/re/unity-run-town-room-hurt-macos.log"
     rm -f "$hurt_log"
     set +e
-    "$app" -batchmode -logFile "$hurt_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 8 -dnfautowalk "$hurt_play"
+    "$app" -batchmode -logFile "$hurt_log" -dnfdir "$DNF_DIR" -dnfmap map/lorien/s2.map -dnfquitafter 12 -dnfautowalk "$hurt_play"
     rc=$?
     set -e
     echo "播放器退出码(房间里实时挨打): $rc"

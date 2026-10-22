@@ -836,7 +836,7 @@ public class RoomCombatTests
     }
 
     [Fact]
-    public void MonsterWalkSpeedScalesTheHeroSpeedByTheRatioOfTheMoveSpeedStats()
+    public void MonsterWalkSpeedIsTheMoveSpeedStatTimesTheMeasuredSlopePerPoint()
     {
         using var fx = new AvatarFixture();
         using DnfAssets assets = DnfAssets.Open(fx.Root);
@@ -845,15 +845,15 @@ public class RoomCombatTests
         TownHero hero = TownHero.Create(assets, AvatarFixture.ChrPath, outfit, new List<WorldRect>(), 0, 0, false, TownHero.DungeonRestTag);
         Assert.Equal(AvatarFixture.MoveSpeedStat, hero.MoveSpeedStat);
 
-        double heroSpeed = hero.WalkSpeedX;
-        Assert.Equal(heroSpeed, RoomCombatSession.WalkSpeed(hero, AvatarFixture.MoveSpeedStat), 9);          // 同样的数 → 同速
-        Assert.Equal(heroSpeed / 2, RoomCombatSession.WalkSpeed(hero, AvatarFixture.MoveSpeedStat / 2), 9);   // 一半 → 一半速度
-        Assert.Equal(heroSpeed * 3, RoomCombatSession.WalkSpeed(hero, AvatarFixture.MoveSpeedStat * 3), 9);
-        Assert.Equal(heroSpeed, RoomCombatSession.WalkSpeed(hero, 0), 9);                                     // 怪物没有数 → 与主角同速
+        // 步速 = [move speed] × 每点的斜率(E-114),与主角的步速无关
+        double slope = MonsterTuning.WalkPixelsPerStat;
+        Assert.Equal(slope * 300, RoomCombatSession.WalkSpeed(hero, 300), 9);
+        Assert.Equal(slope * 600, RoomCombatSession.WalkSpeed(hero, 600), 9);                                 // 成正比
+        Assert.Equal(hero.WalkSpeedX, RoomCombatSession.WalkSpeed(hero, 0), 9);                               // 怪物没有数 → 与主角同速
 
         TownHero noStat = TownHero.Create(assets, AvatarFixture.NoAttackChrPath, outfit, new List<WorldRect>(), 0, 0, false, TownHero.DungeonRestTag);
         Assert.Equal(0, noStat.MoveSpeedStat);
-        Assert.Equal(noStat.WalkSpeedX, RoomCombatSession.WalkSpeed(noStat, 123), 9);                         // 主角没有数 → 与主角同速
+        Assert.Equal(slope * 123, RoomCombatSession.WalkSpeed(noStat, 123), 9);                               // 主角没有数也不影响
     }
 
     [Fact]

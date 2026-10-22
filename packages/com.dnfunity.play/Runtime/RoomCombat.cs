@@ -937,6 +937,8 @@ namespace Dnf.Play
                 actor.Strike = attackStrikes.Length > 0 ? attackStrikes[0] : new HeroStrikeInfo(0, 0, false);
                 actor.SetStrikes(attackStrikes);
                 actor.SetAttackKinds(AttackKindRecord.Parse(def.Tags), unchecked((uint)seed * 2654435761u + (uint)actor.Index * 40503u + 12345u));
+                // 默认 AI 的走位:游荡、发现主角、按节拍朝主角走(证据 E-114);没有 [melee combat]/[range combat]/[stay] 类别的怪物仍走占位
+                actor.SetDefaultAi(MonsterBrain.For(def, room.Map.Width, unchecked((uint)seed * 2246822519u + (uint)actor.Index * 3266489917u + 374761393u)));
                 actor.SetThrows(MonsterThrows.Load(assets, data, def.Path, ThrowAttackRecord.Parse(def.Tags)));   // [throw attack]:出招动画到发射帧时扔东西(证据 E-103)
                 if (heroWidth != null && heroWidth.Length >= 2)
                 {
@@ -1018,16 +1020,16 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 怪物的水平行走速度(像素/秒):主角实测的 <see cref="TownHero.WalkSpeedX"/> 乘以怪物与主角的 [move speed] 之比(证据 E-066、E-069)。
-        /// 把怪物的数当成与主角同一个单位是假设;没有数据时取与主角同速。
+        /// 怪物的水平行走速度(像素/秒):[move speed] 乘以基线量到的每点步速 <see cref="MonsterTuning.WalkPixelsPerStat"/>(证据 E-114,非 REA 的测量);
+        /// 没有数据时取与主角同速。之前(E-066、E-069)按主角的实测步速与 [move speed] 的比例折算,基线对不上,改成直接用量到的斜率。
         /// </summary>
         public static double WalkSpeed(TownHero hero, int monsterMoveSpeed)
         {
-            if (hero.MoveSpeedStat <= 0 || monsterMoveSpeed <= 0)
+            if (monsterMoveSpeed <= 0)
             {
                 return hero.WalkSpeedX;
             }
-            return hero.WalkSpeedX * monsterMoveSpeed / hero.MoveSpeedStat;
+            return monsterMoveSpeed * MonsterTuning.WalkPixelsPerStat;
         }
 
         public void Update(double deltaMs, int dirX, int dirY)
@@ -1144,6 +1146,7 @@ namespace Dnf.Play
             }
             foreach (MonsterActor m in _monsters)
             {
+                m.Blocker = hero.Blocker;                      // 关着的出口门体怪物也走不进去(E-114)
                 m.Update(deltaMs, hero.X, hero.Y, heroAlive, hero.Walk, heroBoxes);
             }
             CollectThrown();

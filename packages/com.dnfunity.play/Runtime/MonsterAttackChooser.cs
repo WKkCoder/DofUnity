@@ -40,6 +40,7 @@ namespace Dnf.Play
     public sealed class MonsterAttackChooser
     {
         private readonly AttackKindRecord[] _records;
+        private readonly float[] _baseChance;
         private readonly bool[] _ready;
         private readonly bool[] _enabled;
         private readonly Func<int> _random;
@@ -59,11 +60,13 @@ namespace Dnf.Play
             _random = random ?? throw new ArgumentNullException(nameof(random));
             _delayMs = attackDelayMs;
             _records = new AttackKindRecord[records.Count];
+            _baseChance = new float[records.Count];
             _ready = new bool[records.Count];
             _enabled = new bool[records.Count];
             for (int i = 0; i < records.Count; i++)
             {
                 _records[i] = records[i];
+                _baseChance[i] = records[i].ChanceInRange;
                 _ready[i] = records[i].InitiallyReady;
                 _enabled[i] = true;
             }
@@ -106,8 +109,8 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 进入敌对状态(客户端进入"主动出击"的状态时,把每条记录的射程里概率乘 <see cref="MonsterAttackRules.HostileChanceScale"/>)。
-        /// 只放大一次;原版重复进入时是否叠加、离开时是否还原没有读,这里不叠加、不还原(推断)。
+        /// 进入敌对状态(客户端进入"主动出击"的模式 9、10 时,把每条记录的射程里概率乘 <see cref="MonsterAttackRules.HostileChanceScale"/>,0x0088a6e0)。
+        /// 只放大一次(已经在敌对状态里再调用不叠加);离开时用 <see cref="LeaveHostile"/> 还原(客户端的模式退出函数 0x00894fb0 乘约 1/1.3,M22 读到)。
         /// </summary>
         public void EnterHostile()
         {
@@ -119,6 +122,22 @@ namespace Dnf.Play
             for (int i = 0; i < _records.Length; i++)
             {
                 _records[i] = _records[i].WithChanceInRange(_records[i].ChanceInRange * MonsterAttackRules.HostileChanceScale);
+            }
+        }
+
+        /// <summary>
+        /// 离开敌对状态:把每条记录的射程里概率还原成进入之前的值(客户端乘 0.7692,与 1.3 的积是 0.99996,这里直接还原)。没在敌对状态里什么也不做。
+        /// </summary>
+        public void LeaveHostile()
+        {
+            if (!Hostile)
+            {
+                return;
+            }
+            Hostile = false;
+            for (int i = 0; i < _records.Length; i++)
+            {
+                _records[i] = _records[i].WithChanceInRange(_baseChance[i]);
             }
         }
 
