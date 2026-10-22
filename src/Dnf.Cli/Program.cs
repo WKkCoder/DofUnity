@@ -41,6 +41,10 @@ namespace Dnf.Cli
         // render-town(合成城镇里的 NPC,可与截图对照)
         public string MapPath { get; set; } = "map/elvengard/(r)gate.map";
         public int CameraX { get; set; } = 24;
+
+        /// <summary>render-town --scene --room --cam-y:纵向镜头(只有带 [extended tile] 的房间有意义,范围 0 到扩展部分的高度)。</summary>
+        public int CameraY { get; set; }
+
         public int GroundY { get; set; } = 200;
         public long TimeMs { get; set; }
         public string? PngFile { get; set; }
@@ -114,6 +118,9 @@ namespace Dnf.Cli
 
         /// <summary>--level N:主角的起始等级(1 到 85,默认 1);exp-check 用它看某一级的属性与升级所需经验。</summary>
         public int HeroLevel { get; set; } = 1;
+
+        /// <summary>dungeon-check --damage-scale N:测试旋钮,主角打出的每一击伤害乘上 N(默认 1;用于全库副本扫描排除"一级主角打不动高等级怪物"的干扰,不是原版规则)。</summary>
+        public int DamageScale { get; set; } = 1;
 
         public int Seed { get; set; } = 1;
         public bool RandomLayout { get; set; }
@@ -237,7 +244,7 @@ namespace Dnf.Cli
             "      对地图 [animation] 里每个动画的每一帧,在截图里搜索不透明像素在容差内一致最多的位置,并与位置模型的预测比较(证据 E-030)。\n" +
             "  dnf combat-check --map <房间地图> [--start x,y,left|right] [--play 秒:动作,…] [--seconds N] [--shots-at 秒,…] [--png 前缀] [--no-damage]\n" +
             "      (副本房间里的战斗模拟:按时间表按键,打印命中与怪物状态,可在指定时刻输出 800×600 画面;证据 E-069。怪物会还手(E-086),--no-damage 让主角没有生命值、打不到,回到还手功能加入之前的行为)\n" +
-            "  dnf dungeon-check [--dungeon <副本定义>] [--seed N] [--random-layout] [--bot [--explore] | --play 秒:动作,…] [--seconds N(默认 900)] [--frame-ms 毫秒] [--jitter 比例] [--shots-at 秒,…] [--png 前缀] [--layout-only] [--no-damage] [--after-clear 秒]\n" +
+            "  dnf dungeon-check [--dungeon <副本定义>] [--seed N] [--random-layout] [--bot [--explore] | --play 秒:动作,…] [--seconds N(默认 900)] [--frame-ms 毫秒] [--jitter 比例] [--shots-at 秒,…] [--png 前缀] [--layout-only] [--no-damage] [--damage-scale N] [--after-clear 秒]\n" +
             "      (整座副本:读迷宫、选每格的房间、打印布局;--bot 让自动机从起点打到首领清空,逐个房间打印进出与清房时刻;--after-clear 清空之后再空转几秒(看结算画面);--shots-at 在指定时刻输出画面;--frame-ms、--jitter 改每帧的毫秒数与抖动,模拟帧率不固定的实时运行(自动机按固定心跳补步,不受影响;时间表按帧长取样);证据 E-070、E-072)\n" +
             "  dnf flow-check [--dungeon <副本定义>] [--from char|town|select|dungeon] [--town N] [--legacy-town] [--worldmap <世界地图定义>|none] [--choices retry,select,town] [--explore] [--seed N] [--no-damage] [--seconds N(默认 1800)] [--frame-ms 毫秒] [--shots-at 秒,… --png 前缀]\n" +
             "      (整条流程的无人值守检查:城镇(默认从城镇图册的登录区域出发,自动机沿出口走到地下城入口,换区域与进图有加载画面;--legacy-town 退回只有赛丽亚房间一张图、阶段瞬间切换的老行为;--town 指定起始城镇) → 副本选择 → 副本 → 结算 → 按 --choices 清单依次选再次挑战(retry)、选择其它地下城(select)、返回城镇(town),打印每次阶段切换与每局的战绩;清单用完或到时间为止;默认清单 retry,select,town;--shots-at 在指定时刻输出当时阶段的画面;证据 E-093)\n" +
@@ -365,6 +372,9 @@ namespace Dnf.Cli
                     case "--cam-x":
                         opts.CameraX = int.TryParse(NextValue(args, ref i), out int cx) ? cx : throw new UserError("--cam-x 需要整数");
                         break;
+                    case "--cam-y":
+                        opts.CameraY = int.TryParse(NextValue(args, ref i), out int cy) && cy >= 0 ? cy : throw new UserError("--cam-y 需要非负整数");
+                        break;
                     case "--ground-y":
                         opts.GroundY = int.TryParse(NextValue(args, ref i), out int gy) ? gy : throw new UserError("--ground-y 需要整数");
                         break;
@@ -481,6 +491,11 @@ namespace Dnf.Cli
                         break;
                     case "--no-exp":
                         opts.NoExp = true;
+                        break;
+                    case "--damage-scale":
+                        opts.DamageScale = int.TryParse(NextValue(args, ref i), out int scaleValue) && scaleValue >= 1 && scaleValue <= 100000
+                            ? scaleValue
+                            : throw new UserError("--damage-scale 需要 1 到 100000 的整数");
                         break;
                     case "--level":
                         opts.HeroLevel = int.TryParse(NextValue(args, ref i), out int levelValue) && levelValue >= 1 && levelValue <= 85

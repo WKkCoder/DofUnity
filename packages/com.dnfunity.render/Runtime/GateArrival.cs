@@ -80,6 +80,16 @@ namespace Dnf.Render
         {
             return x >= r.X && x < r.X + r.Width && y >= r.Y && y < r.Y + r.Height;
         }
+
+        /// <summary>
+        /// 占位盒(脚下原点 (x, y)、宽 <paramref name="bodyWidth"/>、深 <paramref name="bodyDepth"/>,左右上下各取一半,边界像素算在内)与矩形有没有重叠。
+        /// 上下出口的触发用它:矩形常常比可走带的边缘高出几像素到几十像素(全库一成左右的下出口如此),主角的脚点够不着,盒子压到就算在里面。
+        /// </summary>
+        public static bool OverlapsBox(WorldRect r, int x, int y, int bodyWidth, int bodyDepth)
+        {
+            return x + (bodyWidth >> 1) >= r.X && x - (bodyWidth >> 1) < r.X + r.Width
+                && y + (bodyDepth >> 1) >= r.Y && y - (bodyDepth >> 1) < r.Y + r.Height;
+        }
     }
 
     /// <summary>

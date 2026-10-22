@@ -589,6 +589,12 @@ namespace Dnf.Play
         /// <summary>主角累计挨的伤害。</summary>
         public long HeroDamageTaken { get; private set; }
 
+        /// <summary>
+        /// 测试旋钮:主角打出的每一击伤害乘上这个数(默认 1,正常游戏恒为 1)。全库副本扫描(dungeon_sweep)用它排除"一级主角打不动高等级怪物"的干扰,
+        /// 单独量布局、进图、清房与出口通不通;它不是原版规则。
+        /// </summary>
+        public int HeroDamageScale { get; set; } = 1;
+
         /// <summary>主角已经被打死(血量归零)。死后不再接受输入,怪物待机。</summary>
         public bool HeroDead => Vitals != null && !Vitals.IsAlive;
 
@@ -1309,6 +1315,10 @@ namespace Dnf.Play
                 damage = info.IsSkillDamage
                     ? PlaceholderDamage.RollSkill(info.SkillRatePercent, info.SkillFixed, _random)
                     : PlaceholderDamage.Roll(info.DamageBonus, _random);
+            }
+            if (HeroDamageScale > 1)
+            {
+                damage = (int)Math.Min(int.MaxValue, (long)damage * HeroDamageScale);
             }
             // 受击硬直与击退按客户端的公式算(证据 E-080);没有硬直表时 StunInput 无效,怪物走占位值。
             // 倒地(以及空中、倒地中又挨打)按客户端的开始处理算:体重缩放的击飞、z 抛物线、落地后颠一下再躺下(证据 E-082、E-083)

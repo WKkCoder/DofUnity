@@ -316,6 +316,51 @@ public class TownCameraTests
         cam.Place(300);
         Assert.Equal(96, cam.X);
     }
+
+    [Fact]
+    public void WithoutExtendedTilesTheCameraNeverScrollsVertically()
+    {
+        var cam = new TownCamera(0, 96, 300);
+        cam.Follow(300, 900);
+        Assert.Equal((0, 0.0), (cam.MaxY, cam.Y));
+        cam.Restart(300, -400);
+        Assert.Equal((0, 0.0), (cam.MaxY, cam.Y));
+    }
+
+    [Fact]
+    public void ExtendedTilesGiveTheCameraAVerticalRangeThatStartsAtTheBottomAndFollowsInA160To240DeadZone()
+    {
+        var cam = new TownCamera(0, 96, 300, maxY: 120);
+        Assert.Equal(120.0, cam.Y);                  // 载入地图时取最大值
+        cam.Follow(300, 330);                        // 主角的世界 y 减镜头 y = 210,在 [160, 240) 里:不动
+        Assert.Equal(120.0, cam.Y);
+        cam.Follow(300, 270);                        // 150 < 160 → 镜头 y = 270 − 160
+        Assert.Equal(110.0, cam.Y);
+        cam.Follow(300, 349);                        // 239:还在死区里
+        Assert.Equal(110.0, cam.Y);
+        cam.Follow(300, 355);                        // 245 ≥ 240 → 镜头 y = 355 − 240
+        Assert.Equal(115.0, cam.Y);
+        cam.Follow(300, 100);                        // −60 夹到 0
+        Assert.Equal(0.0, cam.Y);
+        cam.Follow(300, 500);                        // 260 夹到最大值 120
+        Assert.Equal((120, 120), (cam.IntY, cam.MaxY));
+        cam.Follow(300, 270.5);                      // 实数镜头:取整是向下
+        Assert.Equal(110.5, cam.Y);
+        Assert.Equal(110, cam.IntY);
+    }
+
+    [Fact]
+    public void RestartPutsXAtTheMinimumAndYAtTheMaximumThenFollowsTheHero()
+    {
+        var cam = new TownCamera(0, 96, 300, maxY: 120);
+        cam.Follow(615, 100);
+        Assert.Equal((96.0, 0.0), (cam.X, cam.Y));
+        cam.Restart(450, 340);                       // x:0 → 450 > 450? 不:屏幕 450 在死区边缘,不动;y:120 → 340 − 120 = 220,不动
+        Assert.Equal((0.0, 120.0), (cam.X, cam.Y));
+        cam.Restart(300, 100);                       // y:100 − 120 = −20 < 160 → 100 − 160 夹到 0
+        Assert.Equal(0.0, cam.Y);
+        Assert.Equal(0.0, cam.X);
+    }
 }
 
 public class TownHeroTests
@@ -480,6 +525,36 @@ public class TownHeroTests
         Assert.Equal(30 + TownHero.EngineWalkDiagonalY * hero.SpeedFactorY * 0.1, hero.Y, 6);
         hero.Update(1000, 0, 1);
         Assert.Equal(70, hero.Y, 6);           // 下边界 20 + 50
+    }
+
+    [Fact]
+    public void TheHeroRecordsWhichDirectionsItTriedAndWhichWereBlockedInTheLastUpdate()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        var area = new[] { new WorldRect(10, 20, 100, 50) };
+        TownHero hero = Hero(assets, area, 60, 40);
+        (bool L, bool R, bool U, bool D) Pushed() => (hero.PushedLeft, hero.PushedRight, hero.PushedUp, hero.PushedDown);
+
+        hero.Update(100, 1, 0);                              // 区域里向右走:没被挡
+        Assert.Equal((false, false, false, false), Pushed());
+        Assert.Equal((false, false), (hero.TriedUp, hero.TriedDown));
+        hero.Update(2000, 1, 0);                             // 走到右边界:被挡在右边
+        Assert.Equal((false, true, false, false), Pushed());
+        hero.Update(100, 0, -1);                             // 每次更新重新记:这次向上、没被挡,但"试过向上"
+        Assert.Equal((false, false, false, false), Pushed());
+        Assert.Equal((true, false), (hero.TriedUp, hero.TriedDown));
+        hero.Update(2000, 0, -1);                            // 到上边界:被挡在上边,"试过向上"照记
+        Assert.Equal((false, false, true, false), Pushed());
+        Assert.True(hero.TriedUp);
+        hero.Update(2000, 0, 1);                             // 到下边界
+        Assert.Equal((false, false, false, true), Pushed());
+        Assert.Equal((false, true), (hero.TriedUp, hero.TriedDown));
+        hero.Update(5000, -1, 0);                            // 一路向左到左边界:只记左边
+        Assert.Equal((true, false, false, false), Pushed());
+        hero.Update(100, 0, 0);                              // 站着不动:什么也没有
+        Assert.Equal((false, false, false, false), Pushed());
+        Assert.Equal((false, false), (hero.TriedUp, hero.TriedDown));
     }
 
     [Fact]

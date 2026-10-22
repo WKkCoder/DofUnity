@@ -35,9 +35,10 @@ internal static class DungeonCheck
         }
 
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
-        DungeonMaze maze = DungeonMaze.Read(assets, opts.Dungeon) ?? throw new UserError("副本定义里没有可用的迷宫: " + opts.Dungeon);
-        DungeonRoomPool pool = DungeonRoomPool.Read(assets, DungeonRoomPool.FolderFor(opts.Dungeon));
-        DungeonLayout layout = DungeonLayout.Create(maze, pool, opts.RandomLayout ? new Random(opts.Seed) : null);
+        Random? random = opts.RandomLayout ? new Random(opts.Seed) : null;
+        DungeonMaze maze = DungeonMaze.Read(assets, opts.Dungeon, random) ?? throw new UserError("副本定义里没有可用的迷宫: " + opts.Dungeon);
+        DungeonRoomPool pool = DungeonRoomPool.ReadFor(assets, opts.Dungeon);
+        DungeonLayout layout = DungeonLayout.Create(maze, pool, random);
         PrintLayout(opts.Dungeon, layout, pool);
         if (opts.LayoutOnly)
         {
@@ -45,7 +46,7 @@ internal static class DungeonCheck
         }
 
         DungeonSession session = DungeonSession.Create(assets, opts.Dungeon, opts.Seed, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage,
-            progress: ExpCheck.ProgressFor(assets, opts));
+            progress: ExpCheck.ProgressFor(assets, opts), heroDamageScale: opts.DamageScale);
         var bot = new DungeonBot(opts.Explore);
         CombatScript script = ParsePlay(opts.Play);
         if (!opts.Bot && script.IsEmpty)
@@ -130,8 +131,17 @@ internal static class DungeonCheck
             }
             if (opts.Trace && (long)(t / 1000.0) != (long)((t - frameMs) / 1000.0))
             {
+                MonsterActor? nearest = null;
+                foreach (MonsterActor m in session.Current.Monsters)
+                {
+                    if (m.IsAlive && (nearest == null || Math.Abs(m.X - session.Hero.X) + 4 * Math.Abs(m.Y - session.Hero.Y) < Math.Abs(nearest.X - session.Hero.X) + 4 * Math.Abs(nearest.Y - session.Hero.Y)))
+                    {
+                        nearest = m;
+                    }
+                }
                 Console.WriteLine("  [跟踪 " + Sec(t) + "s] 格 (" + session.CellX + "," + session.CellY + ") 主角 (" + F(session.Hero.X) + "," + F(session.Hero.Y)
-                    + ") 怪物剩 " + session.Current.AliveCount + "/" + session.Current.Monsters.Count + " 命中 " + session.Hits);
+                    + ") 怪物剩 " + session.Current.AliveCount + "/" + session.Current.Monsters.Count + " 命中 " + session.Hits
+                    + (nearest == null ? string.Empty : "  最近 #" + nearest.Index + " (" + F(nearest.X) + "," + F(nearest.Y) + ") " + nearest.Phase));
             }
             while (shotIndex < shotTimes.Count && shotTimes[shotIndex] * 1000.0 <= t)
             {
@@ -163,7 +173,84 @@ internal static class DungeonCheck
             WriteShot(session, shotTimes[shotIndex], opts.PngFile!);
             shotIndex++;
         }
+        if (opts.Bot && bot.PathEngaged > 0)
+        {
+            Console.WriteLine("自动机寻路接管 " + bot.PathEngaged + " 次,其中找不到路的步数 " + bot.PathBlockedSteps);
+        }
+        if (opts.Bot && !session.Finished)
+        {
+            PrintStuckRoom(session, bot);
+        }
         return opts.Bot && !session.Finished ? 2 : 0;
+    }
+
+    /// <summary>在竖线 x 上每 1 像素问一次可走区域,把连续可走的 y 压成区间文字(诊断用)。</summary>
+    private static string WalkRuns(IWalkArea? walk, double x)
+    {
+        if (walk == null || walk.IsUnrestricted)
+        {
+            return "不限制";
+        }
+        var sb = new StringBuilder();
+        int start = -1;
+        for (int y = 0; y <= 700; y++)
+        {
+            bool ok = y < 700 && walk.Contains(x, y);
+            if (ok && start < 0)
+            {
+                start = y;
+            }
+            else if (!ok && start >= 0)
+            {
+                sb.Append(sb.Length > 0 ? " " : string.Empty).Append('[').Append(start).Append("..").Append(y - 1).Append(']');
+                start = -1;
+            }
+        }
+        return sb.Length > 0 ? sb.ToString() : "没有";
+    }
+
+    /// <summary>主角往 (dx, dy) 方向挪一像素后:可走区域说能不能站、障碍说挡不挡(诊断用)。</summary>
+    private static string Probe(TownHero hero, int dx, int dy, string name)
+    {
+        double x = hero.X + dx, y = hero.Y + dy;
+        bool walk = hero.Walk == null || hero.Walk.Contains(x, y);
+        object? by = hero.Blocker?.BlockedBy(x, y);
+        return name + (walk ? "可走" : "不可走") + (by == null ? string.Empty : "+被" + by.GetType().Name + "挡");
+    }
+
+    /// <summary>没打完时的现场:所在房间、主角位置、剩下的活怪物(位置、生命、阶段、当前动画),帮着看是够不着、打不动还是别的原因。</summary>
+    private static void PrintStuckRoom(DungeonSession session, DungeonBot? bot = null)
+    {
+        TownHero hero = session.Hero;
+        var room = session.Current;
+        Console.WriteLine("未走完的现场:格 (" + session.CellX + "," + session.CellY + ") " + session.MapPath + ",主角 (" + F(hero.X) + "," + F(hero.Y) + "),活怪物 " + room.AliveCount + "/" + room.Monsters.Count);
+        Console.WriteLine("  主角所在竖线 x=" + F(hero.X) + " 上可走的 y 区间:" + WalkRuns(hero.Walk, hero.X));
+        if (bot != null)
+        {
+            Console.WriteLine("  自动机:" + bot.Intent + (bot.PathReport.Length > 0 ? ";寻路 " + bot.PathReport : string.Empty));
+        }
+        Console.WriteLine("  主角动作 " + hero.Motion + ",朝" + (hero.FacingLeft ? "左" : "右") + (session.InTransition ? ";正在转场" : string.Empty));
+        Console.WriteLine("  主角身边一像素:" + Probe(hero, -1, 0, "左") + " " + Probe(hero, 1, 0, "右") + " " + Probe(hero, 0, -1, "上") + " " + Probe(hero, 0, 1, "下"));
+        foreach (RoomGate gate in room.Room.Content.Gates)
+        {
+            Console.WriteLine("  出口 " + gate.Side + " 位置 (" + gate.X + "," + gate.Y + ") 状态 " + gate.State + (gate.Body == null ? " 无门体" : " 有门体")
+                + " 识别矩形 x " + gate.Area.X + ".." + (gate.Area.X + gate.Area.Width) + " y " + gate.Area.Y + ".." + (gate.Area.Y + gate.Area.Height));
+        }
+        int shown = 0;
+        foreach (MonsterActor m in room.Monsters)
+        {
+            if (!m.IsAlive)
+            {
+                continue;
+            }
+            if (shown++ >= 12)
+            {
+                Console.WriteLine("  …");
+                break;
+            }
+            Console.WriteLine("  怪物 #" + m.Index + " 编号 " + m.Code + (m.IsBoss ? "(首领)" : string.Empty) + " 位置 (" + F(m.X) + "," + F(m.Y) + "," + F(m.Z) + ") 生命 " + m.Hp + "/" + m.HpMax
+                + " 阶段 " + m.Phase + " 动画 " + m.CurrentAnimationPath);
+        }
     }
 
     private static void PrintLayout(string dungeon, DungeonLayout layout, DungeonRoomPool pool)
@@ -177,8 +264,13 @@ internal static class DungeonCheck
         {
             for (int x = 0; x < maze.Cols; x++)
             {
-                RoomCandidate room = layout.RoomAt(x, y);
-                string role = x == layout.StartX && y == layout.StartY ? "起点" : layout.IsBossCell(x, y) ? "首领" : "普通";
+                RoomCandidate? room = layout.RoomAt(x, y);
+                if (room == null)
+                {
+                    Console.WriteLine("  格 (" + x + "," + y + ") 码 " + (char)('A' + maze.ExitsAt(x, y)) + " 空格");
+                    continue;
+                }
+                string role = x == layout.StartX && y == layout.StartY ? (layout.IsBossCell(x, y) ? "起点兼首领" : "起点") : layout.IsBossCell(x, y) ? "首领" : "普通";
                 Console.WriteLine("  格 (" + x + "," + y + ") 码 " + (char)('A' + maze.ExitsAt(x, y)) + " " + role + "  " + room.MapPath + "  左 " + Kind(layout.GateKindAt(x, y, GateSide.Left))
                     + " 右 " + Kind(layout.GateKindAt(x, y, GateSide.Right)) + " 上 " + Kind(layout.GateKindAt(x, y, GateSide.Up)) + " 下 " + Kind(layout.GateKindAt(x, y, GateSide.Down)));
             }

@@ -4,8 +4,8 @@ using System.Collections.Generic;
 namespace Dnf.Render
 {
     /// <summary>
-    /// 客户端舞台的瓦片格(证据 E-074,对应 DNF.exe 的 0x007D77D0 与 0x007DAAA0):一格 16 × 12 像素,列数 = 瓦片数 × 14,行数取第一块瓦片通行表的行数,
-    /// 每格一个通行值,出界按 2(挡路)。各瓦片的通行表按瓦片顺序横向拼起来;出口的门体盖在上面(<see cref="Stamp"/>:逐格取较大的值)。
+    /// 客户端舞台的瓦片格(证据 E-074、E-113,对应 DNF.exe 的 0x007D77D0 与 0x007DAAA0):一格 16 × 12 像素,列数 = 瓦片数 × 14,
+    /// 行数 = 第一块瓦片通行表的行数 + 扩展瓦片排出来的行(<see cref="RoomMap.TotalRows"/>),每格一个通行值,出界按 2(挡路)。各瓦片的通行表按瓦片顺序横向拼起来;出口的门体盖在上面(<see cref="Stamp"/>:逐格取较大的值)。
     /// <see cref="IsFree"/> 是主角能不能站在 (x, y) 的判断:中心点先要在地图里,再把占位盒([width] 的宽与深,左右各取一半,上下各取一半,边界像素算在内)
     /// 覆盖到的所有格子都过一遍,有一格不是 0 就站不下。客户端对 1、3、4、5、6、7 号通行值还要看对象自己的属性(层、飞行等),
     /// 对鬼剑士这些值在洛兰的房间里极少出现(门体与瓦片里只有 0 和 2),这里一律当作挡路(与 <see cref="TileFile"/> 一致)。
@@ -35,19 +35,14 @@ namespace Dnf.Render
             {
                 throw new ArgumentNullException(nameof(map));
             }
-            IReadOnlyList<TileFile> tiles = map.Tiles;
-            Columns = tiles.Count * TileFile.Columns;
-            Rows = tiles.Count == 0 ? 0 : tiles[0].Rows;
+            Columns = map.Tiles.Count * TileFile.Columns;
+            Rows = map.TotalRows;   // 基础瓦片的行数,再加扩展瓦片排出来的行(证据 E-113)
             _cells = new byte[Columns * Rows];
-            for (int t = 0; t < tiles.Count; t++)
+            for (int r = 0; r < Rows; r++)
             {
-                TileFile tile = tiles[t];
-                for (int r = 0; r < Rows; r++)
+                for (int c = 0; c < Columns; c++)
                 {
-                    for (int c = 0; c < TileFile.Columns; c++)
-                    {
-                        _cells[r * Columns + t * TileFile.Columns + c] = r < tile.Rows ? tile.Pass[r * TileFile.Columns + c] : Blocked;
-                    }
+                    _cells[r * Columns + c] = map.PassAt(c, r);
                 }
             }
         }

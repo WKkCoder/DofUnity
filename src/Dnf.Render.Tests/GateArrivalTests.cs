@@ -322,6 +322,55 @@ public class GateArrivalTests
     }
 
     [Fact]
+    public void AFootBoxTouchingTheRectangleCountsAsOverlappingItEvenWhenTheFootPointIsOutside()
+    {
+        var r = new WorldRect(100, 200, 50, 30);       // x ∈ [100, 150),y ∈ [200, 230)
+        // 占位盒 40 × 10:左右各 20、上下各 5,边界像素算在内
+        Assert.True(GateAreas.OverlapsBox(r, 125, 215, 40, 10));       // 整个在里面
+        Assert.False(GateAreas.Contains(r, 125, 195));                  // 脚点在矩形上面 5 像素:点不在里面…
+        Assert.True(GateAreas.OverlapsBox(r, 125, 195, 40, 10));        // …但盒子的下沿 200 压到了矩形的上沿
+        Assert.False(GateAreas.OverlapsBox(r, 125, 194, 40, 10));       // 再高一像素:下沿 199,够不着
+        Assert.True(GateAreas.OverlapsBox(r, 125, 234, 40, 10));        // 盒子的上沿 229 还在矩形里(下沿 230 不含)
+        Assert.False(GateAreas.OverlapsBox(r, 125, 235, 40, 10));       // 上沿 230:不含
+        Assert.True(GateAreas.OverlapsBox(r, 80, 215, 40, 10));         // 盒子右沿 100 碰到矩形左沿
+        Assert.False(GateAreas.OverlapsBox(r, 79, 215, 40, 10));
+        Assert.True(GateAreas.OverlapsBox(r, 169, 215, 40, 10));        // 盒子左沿 149 还在矩形里
+        Assert.False(GateAreas.OverlapsBox(r, 170, 215, 40, 10));       // 左沿 150:不含
+    }
+
+    [Fact]
+    public void ADoorBodyReachesTheGateOnlyWhenItsBlockingCellsAreWithinTwentyPixelsOfTheGatePosition()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        var obj = new GateObject(800, "x.obj", "[normal]", new List<GatePart>(), null);
+        var pass = new byte[14 * 3];                                    // 14 列 × 3 行,只有最后一列(列 13)挡路
+        for (int r = 0; r < 3; r++)
+        {
+            pass[r * 14 + 13] = 2;
+        }
+        var wall = new TileFile("wall", new List<KeyValuePair<string, int>>(), 80, pass);
+
+        // 右出口在 (1104, 120),所在的格是 (69, 10);锚点 (13, a):通行格左上角 (56, 10 − a),挡格在列 69、行 10 − a 起的三行
+        // 占位盒 40 × 10 沿出口位置上下各挪 20 像素以内能压到的行是 7 到 12,所以挡格的起始行在 [5, 12] 里才算"够得着"
+        var gate = new RoomGate(assets, obj, GateSide.Right, 1104, 120);
+        Assert.False(gate.BodyReachesGate(40, 10));                     // 没有门体
+        gate.SetBody(wall, 13, 1);                                      // 行 9 到 11:盖着出口所在的 y
+        Assert.True(gate.BodyReachesGate(40, 10));
+        gate.SetBody(wall, 13, -2);                                     // 行 12 起:出口下方 20 像素处(y 140 ± 5 → 行 11 到 12)压得到
+        Assert.True(gate.BodyReachesGate(40, 10));
+        gate.SetBody(wall, 13, -3);                                     // 行 13 起:够不着
+        Assert.False(gate.BodyReachesGate(40, 10));
+        gate.SetBody(wall, 13, 5);                                      // 行 5 到 7:出口上方 20 像素处(y 100 ± 5 → 行 7 到 8)压得到
+        Assert.True(gate.BodyReachesGate(40, 10));
+        gate.SetBody(wall, 13, 6);                                      // 行 4 到 6:够不着
+        Assert.False(gate.BodyReachesGate(40, 10));
+        // 门体表里一个挡格也没有(装饰性的门):碰不到任何东西
+        gate.SetBody(new TileFile("empty", new List<KeyValuePair<string, int>>(), 80, new byte[14 * 3]), 13, 1);
+        Assert.False(gate.BodyReachesGate(40, 10));
+    }
+
+    [Fact]
     public void TheMapScriptsRecognizeRangeIsReadPerGateAndTheRectanglesFollowIt()
     {
         using var fx = new RoomFixture();

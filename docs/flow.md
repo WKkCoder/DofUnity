@@ -67,3 +67,20 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll flow-check --from select --choice
 tools/unity-build-town.sh macos                                                 # 构建 + 对拍 + 实时走完整条流程
 tools/play-dungeon.sh flow [bot|explore] [nodamage] [nosound]                   # 自己玩:走出口换区域、走进地下城入口选副本;bot 让自动机按 retry,select,town 走一遍
 ```
+
+## 7 副本泛化与全库扫描(M21,证据 E-113)
+
+流程骨架以前只在洛兰这一座副本上验证过。M21 把"一座副本怎么排布、每个房间怎么读"换成服务端读码得来的规则,并用自动机把全部 346 个副本定义各跑一局:
+
+- **迷宫与房间池**(`DungeonMaze`、`DungeonLayout`):一份副本定义可以有多个 `[maze info]` 段落(各带可选的 `[quest connection]`),`[start map]`、`[boss map]` 是坐标对列表,`[map specification]` 指定某格能用的房间,出口码 A 的格是空格,房间地图靠自己的 `[dungeon]` 归池,`[type]` 的 normal、boss、dummy 是三个候选表,进阶祭坛类把地图编号钉在定义里,起点格兼首领格的单格副本没有首领。
+- **扩展瓦片**(`RoomMap`、`RoomGrid`、`RoomScene`、`TownCamera`):约三成的地图带 `[extended tile]`,接在基础瓦片下面,房间因此比 480 像素高。可走区域、图像摆放和纵向镜头(死区 [160, 240)、载入时镜头在最下面)都按客户端的规则做;各图层纵向的滚动百分数沿用横向的(推断)。不带它的地图镜头 y 恒为 0,投影与以前相同。
+- **出口触发**(`DungeonSession.HeroTriggers`):门体盖着出口那一行的左右出口看"顶进门体",其余的左右出口看主角 y 与离出口的距离(或顶着可走区域的边缘),上下出口看"向上(下)走"加占位盒压到识别矩形。**这些都是推断**,客户端里"碰到门就换房间"的代码没读到。
+- **单格无首领副本**:没有首领格、也没有能通行的出口的单格副本,房间清空就算通关(推断)。
+- **自动机**(`DungeonBot`、`WalkPathfinder`):目标走不近时改走格子寻路(绕障碍与悬崖),背对怪物且离得不足一步时先退再转。这是测试工具,不代表原版的移动规则。
+- **扫描结果**(`tools/py/dungeon_sweep.py`,非门槛项):346 个定义里通关 293 个;其余:进阶祭坛类 13(祭坛交互没做)、卡住 19(出口落在地图外、起点区域与出口不连通、门体楔形盖住怪物、障碍物夹缝)、没有迷宫的塔与样例 4、没有登记房间的 12、战争屋 5(PvP 地图,不在范围内)。
+
+```
+. ./local.env && python3 tools/py/dungeon_sweep.py --seconds 600 --real-timeout 180 --jobs 8     # 全库扫描(约半分钟),明细在 out/dungeon-sweep.tsv
+dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll dungeon-check --dungeon <副本定义> --bot --explore --seconds 600 --no-damage   # 单座副本
+dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --room --map <地图> --cam-x 0 --cam-y <镜头 y> --png <输出.png>   # 合成带扩展瓦片的房间
+```

@@ -32,9 +32,10 @@ internal static class ArrivalCheck
     public static int Run(DnfLocation loc, Options opts)
     {
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
-        DungeonMaze maze = DungeonMaze.Read(assets, opts.Dungeon) ?? throw new UserError("副本定义里没有可用的迷宫: " + opts.Dungeon);
-        DungeonRoomPool pool = DungeonRoomPool.Read(assets, DungeonRoomPool.FolderFor(opts.Dungeon));
-        DungeonLayout layout = DungeonLayout.Create(maze, pool, opts.RandomLayout ? new Random(opts.Seed) : null);
+        Random? random = opts.RandomLayout ? new Random(opts.Seed) : null;
+        DungeonMaze maze = DungeonMaze.Read(assets, opts.Dungeon, random) ?? throw new UserError("副本定义里没有可用的迷宫: " + opts.Dungeon);
+        DungeonRoomPool pool = DungeonRoomPool.ReadFor(assets, opts.Dungeon);
+        DungeonLayout layout = DungeonLayout.Create(maze, pool, random);
         AvatarOutfit outfit = DemoRoom.DefaultOutfit(assets, opts.HeroWeapon);
         DungeonRoomFactory factory = DungeonSession.CreateAssetFactory(assets, layout, outfit, opts.Seed, opts.HeroId);
 

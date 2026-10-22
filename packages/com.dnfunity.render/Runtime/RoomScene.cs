@@ -139,7 +139,7 @@ namespace Dnf.Render
         /// 返回的精灵按从左到右排;图层大类用 <see cref="TownScene.LayerRank"/>(远景 0、中景 1、近景 [close] 5)。
         /// </summary>
         public static List<SceneSprite> BackgroundSprites(DnfAssets assets, RoomMap map, IReadOnlyList<ResolvedBackground> backgrounds,
-            int cameraX, long timeMs, int backgroundPos = RoomMap.DefaultBackgroundPos)
+            int cameraX, long timeMs, int backgroundPos = RoomMap.DefaultBackgroundPos, int cameraY = 0)
         {
             var result = new List<SceneSprite>();
             foreach (ResolvedBackground r in backgrounds)
@@ -164,9 +164,11 @@ namespace Dnf.Render
                 {
                     continue;
                 }
-                int offset = ParallaxOffset(cameraX, ScrollPercent(map, r.Background.Layer));
+                int percent = ScrollPercent(map, r.Background.Layer);
+                int offset = ParallaxOffset(cameraX, percent);
                 int x0 = -offset + f.X + sprite.OffsetX;
-                int y = backgroundPos + f.Y + sprite.OffsetY;
+                // 纵向的镜头(只有带扩展瓦片的地图才有):客户端按层取镜头 y 乘各自的系数(0x007D69F0),系数的来源没读到,这里沿用横向的那一份(推断)
+                int y = backgroundPos + f.Y + sprite.OffsetY - ParallaxOffset(cameraY, percent);
                 // 找到第一块与屏幕相交的重复
                 int k = (int)Math.Floor((0 - x0 - sprite.Width) / (double)period);
                 int rank = TownScene.LayerRank(r.Background.Layer);
@@ -189,10 +191,24 @@ namespace Dnf.Render
             return result;
         }
 
-        /// <summary>地面瓦片的精灵(只给与屏幕相交的块)。</summary>
-        public static List<SceneSprite> TileSprites(DnfAssets assets, RoomMap map, int cameraX, int rank = TileRank)
+        /// <summary>
+        /// 扩展瓦片的第一排紧接在基础瓦片图像下面空出的这一段高度(像素,客户端 0x0055DEE0 里的 0x78);之后每一排扩展瓦片再向下 <see cref="ExtendedRowPitch"/> 像素。
+        /// </summary>
+        public const int ExtendedGap = 120;
+
+        /// <summary>相邻两排扩展瓦片图像的纵向间距(像素,客户端的 0x78;每块扩展瓦片的图像高 120)。</summary>
+        public const int ExtendedRowPitch = 120;
+
+        /// <summary>
+        /// 地面瓦片的精灵(只给与屏幕相交的块)。基础瓦片画在 [img pos] 处;带 [extended tile] 的地图在每一列基础瓦片下面接着画扩展瓦片:
+        /// 第 r 排的图像顶 = 这一列基础瓦片的图像顶 + <see cref="ExtendedGap"/> + 基础行数 × 12 + r × <see cref="ExtendedRowPitch"/>(客户端 0x0055DEE0,
+        /// 用的是基础瓦片自己的 [img pos],证据 E-113)。<paramref name="cameraY"/> 是纵向镜头(没有扩展瓦片时恒为 0)。
+        /// </summary>
+        public static List<SceneSprite> TileSprites(DnfAssets assets, RoomMap map, int cameraX, int rank = TileRank, int cameraY = 0)
         {
             var result = new List<SceneSprite>();
+            int baseHeight = map.BaseRows * TileFile.CellHeight;
+            int extendedRows = map.ExtendedRowCount;
             for (int i = 0; i < map.Tiles.Count; i++)
             {
                 int left = i * TileFile.TileWidth - cameraX;
@@ -201,34 +217,50 @@ namespace Dnf.Render
                     continue;
                 }
                 TileFile tile = map.Tiles[i];
-                foreach (KeyValuePair<string, int> image in tile.Images)
+                int top = tile.ImagePosY - cameraY;
+                AddTileImages(assets, result, tile, left, top, rank);
+                for (int r = 0; r < extendedRows; r++)
                 {
-                    if (!assets.TryGetFrame(image.Key, image.Value, out SpriteFrame sprite))
+                    int index = i + map.Tiles.Count * r;
+                    if (index >= map.ExtendedTiles.Count)
                     {
-                        continue;
+                        break;
                     }
-                    result.Add(new SceneSprite(sprite, left + sprite.OffsetX, tile.ImagePosY + sprite.OffsetY, 0, -1, tile.Path, image.Value, false,
-                        SpriteBlend.Normal, 255, rank));
+                    AddTileImages(assets, result, map.ExtendedTiles[index], left, top + ExtendedGap + baseHeight + r * ExtendedRowPitch, rank);
                 }
             }
             return result;
         }
 
+        private static void AddTileImages(DnfAssets assets, List<SceneSprite> into, TileFile tile, int left, int top, int rank)
+        {
+            foreach (KeyValuePair<string, int> image in tile.Images)
+            {
+                if (!assets.TryGetFrame(image.Key, image.Value, out SpriteFrame sprite))
+                {
+                    continue;
+                }
+                into.Add(new SceneSprite(sprite, left + sprite.OffsetX, top + sprite.OffsetY, 0, -1, tile.Path, image.Value, false,
+                    SpriteBlend.Normal, 255, rank));
+            }
+        }
+
         /// <summary>
         /// 整个房间在 <paramref name="timeMs"/> 时刻的绘制列表:背景、瓦片、[animation] 图层、被动物件、出口,加上 <paramref name="extra"/>(主角、怪物等);
         /// 先按图层大类、normal 大类内按世界 y 稳定排序(同城镇)。门物件的图层大类取自它自己的 [layer],在同一大类里画在图层与物件之后。
+        /// <paramref name="cameraY"/> 是纵向镜头(只有带扩展瓦片的地图才非 0):世界坐标摆的东西用"地面常数 − 镜头 y",瓦片与背景在自己的位置上减镜头 y。
         /// </summary>
         public static List<SceneSprite> Build(DnfAssets assets, RoomContent content, int cameraX, int groundY, long timeMs,
-            IReadOnlyList<SceneSprite> extra)
+            IReadOnlyList<SceneSprite> extra, int cameraY = 0)
         {
             if (content == null)
             {
                 throw new ArgumentNullException(nameof(content));
             }
             var sprites = new List<SceneSprite>();
-            sprites.AddRange(BackgroundSprites(assets, content.Map, content.Backgrounds, cameraX, timeMs));
-            sprites.AddRange(TileSprites(assets, content.Map, cameraX));
-            var projection = new TownProjection(cameraX, groundY);
+            sprites.AddRange(BackgroundSprites(assets, content.Map, content.Backgrounds, cameraX, timeMs, RoomMap.DefaultBackgroundPos, cameraY));
+            sprites.AddRange(TileSprites(assets, content.Map, cameraX, TileRank, cameraY));
+            var projection = new TownProjection(cameraX, groundY - cameraY);
             foreach (TownScene.ResolvedLayer layer in content.Layers)
             {
                 SceneSprite s = TownScene.LayerSpriteAt(assets, layer, timeMs, projection);

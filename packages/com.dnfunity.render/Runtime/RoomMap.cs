@@ -78,6 +78,11 @@ namespace Dnf.Render
                     }
                 }
             }
+            // 客户端(0x013224C0)每行固定读 14 个值,第一个读得到才算一行;读完后不足的值取 0:数值个数不是 14 的倍数时,最后一行用 0(可走)补满
+            while (pass.Count % Columns != 0)
+            {
+                pass.Add(0);
+            }
             return new TileFile(tilPath, images, imagePos, pass);
         }
 
@@ -89,6 +94,16 @@ namespace Dnf.Render
                 return false;
             }
             return Pass[row * Columns + column] == 0;
+        }
+
+        /// <summary>通行表里某个格子的原始值;表外为 2(挡路,与客户端 0x007D77D0 在取不到瓦片时的返回值一致)。</summary>
+        public byte PassValue(int column, int row)
+        {
+            if (column < 0 || column >= Columns || row < 0 || row >= Rows)
+            {
+                return 2;
+            }
+            return Pass[row * Columns + column];
         }
 
         /// <summary>
@@ -181,6 +196,32 @@ namespace Dnf.Render
 
         public IReadOnlyList<TileFile> Tiles { get; }
 
+        /// <summary>
+        /// [extended tile]:接在基础瓦片(<see cref="Tiles"/>)下面的扩展瓦片,行优先,每行的列数 = 基础瓦片数,每块的通行表只看前 <see cref="ExtendedTileRows"/> 行
+        /// (证据 E-113,客户端 0x007D77D0、0x007D7110、0x0055DEE0;没有这个标签的地图为空列表)。
+        /// 用途:基础瓦片的通行表是整张图最上面的 <see cref="BaseRows"/> 行,扩展瓦片接着往下排,所以带它的地图比基础瓦片高、可走的地方也在它上面。
+        /// 缺少的瓦片文件在这里换成空瓦片占位(不让后面的瓦片错位),占位的格子挡路、没有图。
+        /// </summary>
+        public IReadOnlyList<TileFile> ExtendedTiles { get; }
+
+        /// <summary>每块扩展瓦片占的通行表行数(客户端写死 10 行,即 120 像素)。</summary>
+        public const int ExtendedTileRows = 10;
+
+        /// <summary>基础瓦片的通行表行数(取第一块瓦片的行数;没有瓦片时为 0)。</summary>
+        public int BaseRows => Tiles.Count == 0 ? 0 : Tiles[0].Rows;
+
+        /// <summary>扩展瓦片排了几行:扩展瓦片数 ÷ 基础瓦片数(整数除法,与客户端一致;没有基础瓦片时为 0)。</summary>
+        public int ExtendedRowCount => Tiles.Count == 0 ? 0 : ExtendedTiles.Count / Tiles.Count;
+
+        /// <summary>舞台格的总行数:基础行数 + 扩展行数 × <see cref="ExtendedTileRows"/>。</summary>
+        public int TotalRows => BaseRows + ExtendedRowCount * ExtendedTileRows;
+
+        /// <summary>整张图的高(像素,通行表那一部分,不含图像上方留的空)。</summary>
+        public int HeightPixels => TotalRows * TileFile.CellHeight;
+
+        /// <summary>扩展瓦片部分的高(像素);镜头在纵向上能挪的范围就是 [0, 它](客户端 0x007D7510、0x007D7650)。</summary>
+        public int ExtendedHeightPixels => ExtendedRowCount * ExtendedTileRows * TileFile.CellHeight;
+
         /// <summary>远景、中景、近景的视差系数(百分数;镜头每动 100 像素,该层动多少像素)。</summary>
         public int FarScroll { get; }
 
@@ -227,13 +268,14 @@ namespace Dnf.Render
         public RoomMap(string mapPath, string type, IReadOnlyList<TileFile> tiles, int farScroll, int middleScroll, int nearScroll,
             IReadOnlyList<RoomBackground> backgrounds, IReadOnlyList<MapAnimation> animations, IReadOnlyList<int[]> gates, WorldRect? startArea,
             IReadOnlyList<PassivePlacement> passiveObjects = null, IReadOnlyList<RoomMonsterSpawn> monsters = null,
-            IReadOnlyList<int[]> gateRanges = null, IReadOnlyList<string> sounds = null)
+            IReadOnlyList<int[]> gateRanges = null, IReadOnlyList<string> sounds = null, IReadOnlyList<TileFile> extendedTiles = null)
         {
             Sounds = sounds ?? new List<string>();
             GateRanges = gateRanges ?? new List<int[]> { null, null, null, null };
             MapPath = mapPath;
             Type = type ?? string.Empty;
             Tiles = tiles ?? throw new ArgumentNullException(nameof(tiles));
+            ExtendedTiles = extendedTiles ?? new List<TileFile>();
             FarScroll = farScroll;
             MiddleScroll = middleScroll;
             NearScroll = nearScroll;
@@ -287,6 +329,7 @@ namespace Dnf.Render
             }
             string type = string.Empty;
             var tiles = new List<TileFile>();
+            var extended = new List<TileFile>();
             int far = 0, middle = 0, near = 0;
             var backgrounds = new List<RoomBackground>();
             var gates = new List<int[]> { null, null, null, null };
@@ -317,6 +360,19 @@ namespace Dnf.Render
                         {
                             tiles.Add(tile);
                         }
+                    }
+                }
+                else if (line.TagIs("[extended tile]"))
+                {
+                    foreach (ScriptValue v in line.Values)
+                    {
+                        if (v.Kind != ScriptValueKind.String || v.Text == null)
+                        {
+                            continue;
+                        }
+                        string tilePath = PvfPath.ResolveRelativeTo(mapPath, v.Text);
+                        // 缺的瓦片换成空瓦片占位:扩展瓦片按下标排成网格,丢掉一块会让后面的全部错位
+                        extended.Add(TileFile.Read(assets, tilePath) ?? new TileFile(tilePath, new List<KeyValuePair<string, int>>(), TileFile.DefaultImagePosY, new List<byte>()));
                     }
                 }
                 else if (line.TagIs("[far sight scroll]"))
@@ -398,7 +454,7 @@ namespace Dnf.Render
                     AddSounds(line, sounds);
                 }
             }
-            return new RoomMap(mapPath, type, tiles, far, middle, near, backgrounds, MapScript.ReadAnimations(assets, mapPath), gates, start, passive, monsters, ranges, sounds);
+            return new RoomMap(mapPath, type, tiles, far, middle, near, backgrounds, MapScript.ReadAnimations(assets, mapPath), gates, start, passive, monsters, ranges, sounds, extended);
         }
 
         /// <summary>
@@ -492,13 +548,39 @@ namespace Dnf.Render
             {
                 return false;
             }
-            int ix = (int)Math.Floor(x);
-            int tile = ix / TileFile.TileWidth;
-            if (tile >= Tiles.Count)
+            return PassAt((int)Math.Floor(x) / TileFile.CellWidth, (int)Math.Floor(y) / TileFile.CellHeight) == 0;
+        }
+
+        /// <summary>
+        /// 舞台格 (<paramref name="column"/>, <paramref name="row"/>)(一格 16 × 12 像素,列数 = 基础瓦片数 × 14)的通行值,取不到瓦片时为 2(挡路)。
+        /// 客户端 0x007D77D0 的规则(证据 E-113):行号小于 <see cref="BaseRows"/> 的取基础瓦片(列 ÷ 14 号)的那一行;
+        /// 否则行号减去 <see cref="BaseRows"/> 后,每 <see cref="ExtendedTileRows"/> 行是一排扩展瓦片,排号 = 商,排内行号 = 余数,
+        /// 扩展瓦片的下标 = 瓦片列号 + 基础瓦片数 × 排号,下标越界就挡路。
+        /// </summary>
+        public byte PassAt(int column, int row)
+        {
+            if (column < 0 || row < 0 || Tiles.Count == 0)
             {
-                return false;
+                return 2;
             }
-            return Tiles[tile].CanWalk((ix % TileFile.TileWidth) / TileFile.CellWidth, (int)Math.Floor(y) / TileFile.CellHeight);
+            int tileColumn = column / TileFile.Columns;
+            int inTile = column % TileFile.Columns;
+            if (tileColumn >= Tiles.Count)
+            {
+                return 2;
+            }
+            int baseRows = Tiles[0].Rows;
+            if (row < baseRows)
+            {
+                return Tiles[tileColumn].PassValue(inTile, row);
+            }
+            int extendedRow = (row - baseRows) / ExtendedTileRows;
+            int index = tileColumn + Tiles.Count * extendedRow;
+            if (extendedRow >= ExtendedRowCount || index >= ExtendedTiles.Count)
+            {
+                return 2;
+            }
+            return ExtendedTiles[index].PassValue(inTile, (row - baseRows) % ExtendedTileRows);
         }
     }
 }

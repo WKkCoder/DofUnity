@@ -88,6 +88,31 @@
 
 - 实现在 `packages/com.dnfunity.render/Runtime/{GateArrival,RoomGrid,RoomArrival}.cs`,诊断工具是 `dnf arrival-check`;公式与未知项见 `docs/evidence/ledger.md` 的 E-074。
 
+## 迷宫、扩展瓦片、镜头与出口门体相关的函数(证据 E-113)
+
+客户端地址是 `DNF.exe` 里的函数入口,名字是我们读代码后自拟的(**不是**原名),函数文本只在本机 `re/notes/m21*/`,不入库;服务端函数用的是服务端二进制自带符号表里的名字:
+
+| 地址 | 名称 | 作用 |
+|---|---|---|
+| 服务端 `0x088e5faa`、`0x0834acc4` | `ImportDungeonScript`、`CDungeon::set_dungeon` | 读副本定义并装入;多个 `[maze info]` 段落,各带可选的 `[quest connection]`(没写 = 缺省迷宫) |
+| 服务端 `0x0834beb8`、`0x0834c75a`、`0x0834be5a` | `GetRandMaze`、`GetStartMap`、`insertStart` | 按任务连接取迷宫、取起点格、放起点房间;`[start map]`、`[boss map]` 是坐标对列表 |
+| 服务端 `0x0834b988`、`0x0834bf56` | `InsertMap`、`ChooseRandomMap` | 房间地图进候选池、按出口码在候选里挑;`[map specification]` 与 `[boss map specification]` 指定某格能用的房间 |
+| 服务端 `0x08308214`、`0x08307eca`、`0x082ffb30` | `get_candidator_map`、`choose_random_bossmap_from_dummymaps`、`SetGridPath` | `[type]` 的 normal、boss、dummy 三个候选表;首领格先挑 boss、没有再挑 dummy;把迷宫铺到格子上 |
+| 服务端 `0x0834ecaa`、`0x0834c9f0`、`0x0834cb7c` | `CMap::CheckEntrance`、`VerifyMaze` | `[greed]` 的 (出口码, 入口) 字母对;迷宫校验 |
+| 服务端 `0x089dcf54` | `ImportMapScript` | 读地图脚本,`[tile]` 存在结构 +0x70、`[extended tile]` 存在 +0x7c,`[dungeon]` 归池 |
+| `0x007d77d0` | 取舞台格通行值 | 列数 = 基础瓦片数 × 14;行号小于基础行数取基础瓦片,否则按扩展排取(每排 10 行),取不到返回 2 |
+| `0x007d7110`、`0x0062d080`、`0x007d7510` | 总行数、总像素高、扩展像素高 | 基础行数 + 扩展排数 × 10;基础行数 × 12 + 扩展排数 × 120;扩展排数 × 120(镜头 y 的最大值) |
+| `0x007d7650` ← `0x007d7e70` | 镜头跟随 | x 死区 [350, 450)、y 死区 [160, 240)(舞台字段,默认值在 `0x007db9f0` 的重置里);镜头 y 夹在 [0, 最大值] |
+| `0x007dc770` | 载入地图 | 镜头 x 置 0、镜头 y 置最大值;还装配出口的位置与识别矩形(调 `0x0125a4f0`) |
+| `0x007d6990`、`0x007d69f0` | 图层位移(x、y) | 各层按百分数字段乘镜头;y 方向百分数的来源没读到 |
+| `0x0055dee0`(`0x0055d760`、`0x0055d810`、`0x0055d890`) | 画地面瓦片 | 基础瓦片顶 = 舞台字段 − 镜头 y − `[img pos]`;扩展第 r 排的顶 = 基础顶 + 120 + 基础行数 × 12 + r × 120;配套的排数、越界检查、基础行数 |
+| `0x01323f50` | 装入地图数据 | 远、中、近景的滚动系数放在 +0xe8、+0xec、+0xf0 |
+| `0x013224c0` | 通用 `.til` 装入 | 每行固定读 14 个值,读不到补 0;出口物件里的 `.til` 也走它 |
+| `0x00a43770`、`0x00a43b80`、`0x00a43e10`、`0x00a43610` | 盖出口门体、`CNPathGate` 的 procAppend、`CNPathGateExpansion`、开关门动画 | 门体表盖到舞台格上(取较大值);门物件只管开关门的动画 |
+
+- 实现在 `packages/com.dnfunity.render/Runtime/{DungeonMaze,DungeonLayout,RoomMap,RoomGrid,RoomScene,RoomSession,TownHero}.cs` 与 `packages/com.dnfunity.play/Runtime/{DungeonSession,DungeonBot,WalkPathfinder}.cs`;全库扫描 `tools/py/dungeon_sweep.py`;公式、触发规则的推断与未知项见 `docs/evidence/ledger.md` 的 E-113。
+- **没读到的**:主角碰到门触发换房间的客户端代码(实现里的触发规则全是推断)、y 方向各图层的百分数来源、主角移动碰撞是点判定还是盒判定。
+
 ## 鬼剑士一族的技能入口(证据 E-075)
 
 鬼剑士一族(我们起的名字,E-073)的技能不在 Squirrel 脚本里,而在客户端内置的状态处理里。地址是 `DNF.exe` 里的函数入口,名字是自拟的(**不是**原名),函数文本只在本机 `re/notes/`,不入库:

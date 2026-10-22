@@ -231,6 +231,30 @@ namespace Dnf.Render
         /// <summary>出口的碰撞体(门框与墙);出口脚本没有 .til(上下出口)或读不到时为 null。</summary>
         public GateBody Body { get; private set; }
 
+        /// <summary><see cref="BodyReachesGate"/> 找门体时,从出口位置那一行往上下各看多少像素。</summary>
+        public const int PushRowReach = 20;
+
+        /// <summary>
+        /// 门体是不是真盖着出口位置所在的那几行(上下 <see cref="PushRowReach"/> 像素内、占位盒压得到):压得到,主角顶着走就会被它挡住,"顶进门体"可以当触发;
+        /// 压不到,门体与出口无关,左右出口按没有门体的规则触发。通行表按客户端的每行 14 列排好后,锚点落在表外、表根本不在出口那一行附近的出口物件
+        /// 全库有 21 个(共 416 个带门体的物件,汇总见 E-113);客户端对它们的触发代码没有读到,这条是兜底推断。
+        /// </summary>
+        public bool BodyReachesGate(int bodyWidth, int bodyDepth)
+        {
+            if (Body == null)
+            {
+                return false;
+            }
+            for (int d = 0; d <= PushRowReach; d++)
+            {
+                if (Body.Overlaps(X, Y + d, bodyWidth, bodyDepth) || Body.Overlaps(X, Y - d, bodyWidth, bodyDepth))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         /// <summary>
         /// 出口的识别矩形(证据 E-074,见 <see cref="GateAreas"/>):服务端用它校验过门时主角的位置,进房间的落点落在对侧出口的这个矩形里,
         /// 上下出口的触发也要求主角在里面。造出口时没给就按缺省大小从出口位置算。

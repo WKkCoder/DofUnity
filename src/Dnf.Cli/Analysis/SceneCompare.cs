@@ -19,12 +19,12 @@ internal static class SceneCompare
         var sw = Stopwatch.StartNew();
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
         Raster? shotOrNull = opts.Screenshot == null ? null : PngReader.Load(opts.Screenshot);
-        var projection = new TownProjection(opts.CameraX, opts.GroundY);
+        var projection = new TownProjection(opts.CameraX, opts.GroundY - (opts.Room ? opts.CameraY : 0));
         List<SceneSprite> sprites;
         if (opts.Room)
         {
             RoomMap room = RoomMap.Read(assets, opts.MapPath);
-            Console.WriteLine("房间 " + opts.MapPath + ":类型 " + room.Type + ",瓦片 " + room.Tiles.Count + " 块(宽 " + room.Width + "),视差 远/中/近 "
+            Console.WriteLine("房间 " + opts.MapPath + ":类型 " + room.Type + ",瓦片 " + room.Tiles.Count + " 块(宽 " + room.Width + "),扩展 " + room.ExtendedRowCount + " 排(镜头 y 范围 0.." + room.ExtendedHeightPixels + "),视差 远/中/近 "
                 + room.FarScroll + "/" + room.MiddleScroll + "/" + room.NearScroll + ",背景动画 " + room.Backgrounds.Count + " 个,图层动画 " + room.Animations.Count + " 个");
             List<SceneSprite>? heroSprites = null;
             if (opts.Hero != null)
@@ -58,7 +58,7 @@ internal static class SceneCompare
             }
             RoomContent content = RoomContent.Load(assets, room, BuildGates(assets, room, opts));
             Console.WriteLine("被动物件 " + room.PassiveObjects.Count + " 个,其中画出的障碍物 " + content.Objects.Count + " 个");
-            sprites = RoomScene.Build(assets, content, opts.CameraX, opts.GroundY, opts.TimeMs, heroSprites);
+            sprites = RoomScene.Build(assets, content, opts.CameraX, opts.GroundY, opts.TimeMs, heroSprites, opts.CameraY);
         }
         else if (opts.Hero == null)
         {

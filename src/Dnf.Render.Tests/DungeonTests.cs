@@ -3,8 +3,9 @@ using Dnf.Data;
 namespace Dnf.Render.Tests;
 
 /// <summary>
-/// 副本迷宫与房间布局(证据 E-070):.dgn 的 [greed] 出口码(右 1、上 2、左 4、下 8,字母 = 'A' + 组合)、起点格与首领格的矩形、
-/// 地图 [greed] 第一对字母 = 房间的出口组合的选图规则、出口种类的取法;以及战斗姿态与"直接开着"的出口。数据全是合成的,不含任何原版内容。
+/// 副本迷宫与房间布局(证据 E-070、E-113):.dgn 的 [greed] 出口码(右 1、上 2、左 4、下 8,字母 = 'A' + 组合;A = 空格)、起点格与首领格的坐标对列表、
+/// 多个 [maze info] 段落与 [quest connection]、[map specification] 指定房间、房间地图 [greed] 的各对字母(出口码,入口位)与 [type]、[dungeon] 副本编号的选图规则、
+/// 出口种类的取法;以及战斗姿态与"直接开着"的出口。数据全是合成的,不含任何原版内容。
 /// </summary>
 public class DungeonTests
 {
@@ -23,7 +24,7 @@ public class DungeonTests
     ///   (0,0) J = 右 + 下   (1,0) E = 左
     ///   (0,1) L = 右 + 上 + 下   (1,1) M = 左 + 下
     ///   (0,2) D = 右 + 上   (1,2) G = 上 + 左
-    /// 起点格矩形 (0,0)-(1,0),首领格矩形 (0,2)-(1,2)。
+    /// 起点格 (0,0)、(1,0),首领格 (0,2)、(1,2)(坐标对列表)。
     /// </summary>
     private static ScriptLine[] MazeDoc(string greed = "JJEE LLMM DDGG", params ScriptLine[] extra)
     {
@@ -120,7 +121,7 @@ public class DungeonTests
     }
 
     [Fact]
-    public void StartAndBossRectanglesAreInclusiveAndTakeFourNumbersEach()
+    public void StartAndBossMapsAreListsOfCellCoordinatePairsNotRectangles()
     {
         DungeonMaze maze = DungeonMaze.Parse("d", MazeDoc())!;
         Assert.True(maze.IsStartCell(0, 0));
@@ -129,12 +130,18 @@ public class DungeonTests
         Assert.True(maze.IsBossCell(0, 2));
         Assert.True(maze.IsBossCell(1, 2));
         Assert.False(maze.IsBossCell(1, 1));
-        // 两端颠倒的矩形也认;一个 [boss map] 可以写多个矩形
-        var multi = DungeonMaze.Parse("d", MazeDoc("JJEE LLMM DDGG", Line("[boss map]", 1, 1, 0, 1, 0, 0, 0, 0)))!;
+        // 四个数是两个格 (1,0) 与 (0,1),不是以它们为对角的矩形(那样 (0,0)、(1,1) 也会算进去,E-113);一个 [boss map] 可以接着写多对
+        var multi = DungeonMaze.Parse("d", MazeDoc("JJEE LLMM DDGG", Line("[boss map]", 1, 0, 0, 1)))!;
+        Assert.True(multi.IsBossCell(1, 0));
         Assert.True(multi.IsBossCell(0, 1));
-        Assert.True(multi.IsBossCell(1, 1));
-        Assert.True(multi.IsBossCell(0, 0));
-        Assert.False(multi.IsBossCell(1, 0));
+        Assert.False(multi.IsBossCell(0, 0));
+        Assert.False(multi.IsBossCell(1, 1));
+        Assert.Equal(4, multi.BossCells.Count);                                          // 原来的两格 + 新的两格,每格一个单格范围
+        // 多出来的一个数丢掉;每一对一个单格范围
+        var odd = DungeonMaze.Parse("d", MazeDoc("JJEE LLMM DDGG", Line("[start map]", 1, 1, 0)))!;
+        Assert.True(odd.IsStartCell(1, 1));
+        Assert.False(odd.IsStartCell(0, 1));
+        Assert.Equal((1, 1, 1, 1), (odd.StartCells[2].X0, odd.StartCells[2].Y0, odd.StartCells[2].X1, odd.StartCells[2].Y1));
         var rect = new CellRect(3, 4, 1, 2);
         Assert.True(rect.Contains(2, 3));
         Assert.False(rect.Contains(0, 3));
@@ -199,15 +206,41 @@ public class DungeonTests
     }
 
     [Fact]
-    public void ARoomHeaderGivesExitsSecondPairBossAndStartArea()
+    public void ARoomHeaderGivesEveryGreedPairTypeStartAreaAndDungeonIds()
     {
-        RoomCandidate a = DungeonRoomPool.ReadHeader(new[] { Line("[type]", "[normal]"), Line("[greed]", "JJ BB"), Line("[dungeon start area]", 1, 2, 3, 4) }, "map/t/a.map", 3)!;
-        Assert.Equal(("map/t/a.map", 3, 9, 1, false, true), (a.MapPath, a.MapId, a.Exits, a.Second, a.IsBoss, a.HasStartArea));
+        RoomCandidate a = DungeonRoomPool.ReadHeader(new[] { Line("[type]", "[normal]"), Line("[greed]", "JJ BB"), Line("[dungeon start area]", 1, 2, 3, 4), Line("[dungeon]", 5, 7) }, "map/t/a.map", 3)!;
+        Assert.Equal(("map/t/a.map", 3, 9, 9, false, true), (a.MapPath, a.MapId, a.Exits, a.Second, a.IsBoss, a.HasStartArea));
+        Assert.Equal(new[] { (9, 9), (1, 1) }, a.Pairs.Select(p => (p.Exits, p.Entrance)).ToArray());          // 每一对字母 = 一个 (出口码, 入口位)
+        Assert.Equal(new[] { 5, 7 }, a.DungeonIds.ToArray());
         RoomCandidate b = DungeonRoomPool.ReadHeader(new[] { Line("[type]", "[boss]"), Line("[greed]", "DD") }, "map/t/b.map", 9)!;
-        Assert.Equal((3, 3, true, false), (b.Exits, b.Second, b.IsBoss, b.HasStartArea));       // 只有一对:第二对取第一对
-        Assert.Null(DungeonRoomPool.ReadHeader(new[] { Line("[type]", "[normal]") }, "map/t/c.map", 1));
-        Assert.Null(DungeonRoomPool.ReadHeader(new[] { Line("[greed]", "J") }, "map/t/d.map", 1));  // 不足一对
+        Assert.Equal((3, 3, true, false, RoomType.Boss), (b.Exits, b.Second, b.IsBoss, b.HasStartArea, b.Type));
+        Assert.Empty(b.DungeonIds);
+        RoomCandidate d = DungeonRoomPool.ReadHeader(new[] { Line("[type]", "[dummy]"), Line("[greed]", "BB") }, "map/t/d.map", 4)!;
+        Assert.Equal((RoomType.Dummy, true, false), (d.Type, d.IsDummy, d.IsBoss));
+        // 没写 [greed] 的图、或只有半对的图,按 (15, 15) 登记(服务端 load_map_files 的做法,E-113);没写 [type] 是普通
+        RoomCandidate c = DungeonRoomPool.ReadHeader(new[] { Line("[dungeon]", 5) }, "map/t/c.map", 1)!;
+        Assert.Equal((15, 15, RoomType.Normal), (c.Pairs[0].Exits, c.Pairs[0].Entrance, c.Type));
+        Assert.Single(c.Pairs);
+        RoomCandidate half = DungeonRoomPool.ReadHeader(new[] { Line("[greed]", "J") }, "map/t/h.map", 1)!;
+        Assert.Equal((15, 15), (half.Exits, half.Second));
         Assert.Null(DungeonRoomPool.ReadHeader(null!, "map/t/e.map", 1));
+    }
+
+    [Fact]
+    public void ADirectionAndEntranceAreCheckedAgainstEveryPair()
+    {
+        // 两对:出口码 J(右 + 下)入口位 B(右);出口码 D(右 + 上)入口位 E(左)
+        var room = new RoomCandidate("m", 1, RoomType.Normal, new[] { new GreedPair(9, 1), new GreedPair(3, 4) }, false, null);
+        Assert.True(room.HasDirection(9));
+        Assert.True(room.HasDirection(3));
+        Assert.False(room.HasDirection(1));
+        Assert.Equal(1, room.EntranceFor(9));
+        Assert.Equal(4, room.EntranceFor(3));
+        Assert.Equal(0, room.EntranceFor(12));
+        Assert.Equal(5, room.AnyEntrance);
+        Assert.True(room.CheckEntrance(4));                                              // 任何一对的入口位相交就行
+        Assert.True(room.CheckEntrance(1 | 8));
+        Assert.False(room.CheckEntrance(2 | 8));
     }
 
     [Fact]
@@ -220,6 +253,26 @@ public class DungeonTests
         Assert.Equal(new[] { 7 }, pool.Find(6, RoomRole.Normal).Select(r => r.MapId).ToArray());               // 首领图不是普通候选
         Assert.Equal(new[] { 8 }, pool.Find(6, RoomRole.Boss).Select(r => r.MapId).ToArray());
         Assert.Empty(pool.Find(15, RoomRole.Normal));
+    }
+
+    [Fact]
+    public void ARoomWithSeveralPairsIsFoundUnderEachExitCodeAndDummiesAreKeptApart()
+    {
+        var pool = new DungeonRoomPool(new[]
+        {
+            new RoomCandidate("m/two", 1, RoomType.Normal, new[] { new GreedPair(9, 9), new GreedPair(3, 3) }, false, null),
+            new RoomCandidate("m/start", 2, RoomType.Normal, new[] { new GreedPair(9, 9) }, true, null),
+            new RoomCandidate("m/dummy", 3, RoomType.Dummy, new[] { new GreedPair(3, 3) }, false, null),
+            new RoomCandidate("m/boss", 4, RoomType.Boss, new[] { new GreedPair(9, 9) }, true, null),
+        });
+        Assert.Equal(new[] { 1, 2 }, pool.Find(9, RoomRole.Normal).Select(r => r.MapId).ToArray());   // 起点图本身也可以是普通格的房间;首领图不行
+        Assert.Equal(new[] { 1 }, pool.Find(3, RoomRole.Normal).Select(r => r.MapId).ToArray());      // 假首领图不进普通候选
+        Assert.Equal(new[] { 3 }, pool.FindDummy(3).Select(r => r.MapId).ToArray());
+        Assert.Empty(pool.FindDummy(9));
+        Assert.Equal(new[] { 2, 4 }, pool.Find(9, RoomRole.Start).Select(r => r.MapId).ToArray());    // 起点只看有没有出生区(服务端 insertStart 不看类型)
+        Assert.Equal(new[] { 4 }, pool.Find(9, RoomRole.Boss).Select(r => r.MapId).ToArray());
+        Assert.Same(pool.Rooms[2], pool.ById(3));
+        Assert.Null(pool.ById(99));
     }
 
     [Fact]
@@ -351,10 +404,23 @@ public class DungeonTests
         Assert.Empty(maze.BossCells);
         Assert.Equal(804, maze.GateSet!.IdFor(GateSide.Right, GateKind.Normal));
 
-        DungeonRoomPool pool = DungeonRoomPool.Read(assets, DungeonRoomPool.FolderFor(RoomFixture.DungeonPath));
-        // 目录 "test/" 下:a.map 有 [greed] 是候选;town.map 没有 [greed] 被跳过;Other/x.map 在别的目录
+        // 按副本编号找房间:dungeon.lst 里这个副本是 5 号,a.map 的 [dungeon] 里有 5;town.map 没写 [dungeon];Other/x.map 没有脚本
+        DungeonRoomPool pool = DungeonRoomPool.ReadFor(assets, RoomFixture.DungeonPath);
         RoomCandidate room = Assert.Single(pool.Rooms);
-        Assert.Equal((RoomFixture.MapPath, 1, 9, 1, false, true), (room.MapPath, room.MapId, room.Exits, room.Second, room.IsBoss, room.HasStartArea));
+        Assert.Equal((RoomFixture.MapPath, 1, 9, 9, false, true), (room.MapPath, room.MapId, room.Exits, room.Second, room.IsBoss, room.HasStartArea));
+        Assert.Equal(new[] { 5 }, room.DungeonIds.ToArray());
+        Assert.Equal(5, DungeonRoomPool.DungeonIdOf(assets, RoomFixture.DungeonPath));
+        Assert.Equal(5, DungeonRoomPool.DungeonIdOf(assets, "Dungeon\\Test\\Test.dgn"));     // 路径的大小写与斜杠方向不要紧
+        Assert.Equal(-1, DungeonRoomPool.DungeonIdOf(assets, "dungeon/test/none.dgn"));
+        Assert.Equal(-1, DungeonRoomPool.DungeonIdOf(assets, null!));
+
+        // 老约定:目录与副本同名。"test/" 下 a.map 与 town.map 都是候选(没有 [greed] 的图按 (15,15) 登记)
+        DungeonRoomPool byFolder = DungeonRoomPool.Read(assets, DungeonRoomPool.FolderFor(RoomFixture.DungeonPath));
+        Assert.Equal(new[] { 1, 2 }, byFolder.Rooms.Select(r => r.MapId).ToArray());
+        Assert.Equal((15, 15), (byFolder.Rooms[1].Exits, byFolder.Rooms[1].Second));
+        // 副本不在 dungeon.lst 里,或 [dungeon] 里没有一张图指向它:退回老约定,一张也没有就是空池(不抛错)
+        Assert.Equal(2, DungeonRoomPool.ReadFor(assets, "dungeon/other/test.dgn").Rooms.Count);
+        Assert.Empty(DungeonRoomPool.ReadFor(assets, RoomFixture.MultiDungeonPath).Rooms);
 
         DungeonLayout layout = DungeonLayout.Create(maze, pool);
         Assert.Equal((0, 0, false), (layout.StartX, layout.StartY, layout.HasBoss));
@@ -365,6 +431,196 @@ public class DungeonTests
         using var avatar = new AvatarFixture();
         using DnfAssets other = DnfAssets.Open(avatar.Root);
         Assert.Throws<DnfFormatException>(() => DungeonRoomPool.Read(other, "test/"));
+    }
+
+    [Fact]
+    public void AnAltarDungeonTakesItsRoomsFromTheMapIdsWrittenInTheDefinition()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        // [advance altar map] "easy" 2 1:地图编号是紧跟在名字后面的 2,后面的 1 是别的数(与 a.map 的编号相同,不能当地图编号)
+        DungeonRoomPool altar = DungeonRoomPool.ReadFor(assets, RoomFixture.AltarDungeonPath);
+        Assert.Equal(new[] { 2 }, altar.Rooms.Select(r => r.MapId).ToArray());
+        // [advance altar survival map] 2 2 1 2:全是地图编号,可重复,按先后去重
+        DungeonRoomPool survival = DungeonRoomPool.ReadFor(assets, RoomFixture.SurvivalDungeonPath);
+        Assert.Equal(new[] { 2, 1 }, survival.Rooms.Select(r => r.MapId).ToArray());
+        // 副本定义不存在、也不在 dungeon.lst 里、目录名也没有对应的图:空池,不抛错
+        Assert.Empty(DungeonRoomPool.ReadFor(assets, "dungeon/test/none.dgn").Rooms);
+    }
+
+    [Fact]
+    public void ADungeonWithSeveralMazeSectionsUsesOnlyTheDefaultOnes()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        List<DungeonMaze> all = DungeonMaze.ParseAll(RoomFixture.MultiDungeonPath, assets.ReadScript(RoomFixture.MultiDungeonPath));
+        Assert.Equal(new[] { -1, 0, -1, 1 }, all.Select(m => m.QuestConnection).ToArray());           // 没写 [quest connection] = −1 = 默认迷宫(E-113)
+        Assert.Equal(new[] { (1, 1), (1, 1), (2, 1), (1, 1) }, all.Select(m => (m.Cols, m.Rows)).ToArray());
+        Assert.NotNull(all[3].GateSet);                                                                 // 出口物件是副本级的,各段落共用
+
+        DungeonMaze first = DungeonMaze.Read(assets, RoomFixture.MultiDungeonPath)!;                   // 不给随机数:第一张默认迷宫
+        Assert.Equal((1, 1, -1), (first.Cols, first.Rows, first.QuestConnection));
+        Assert.Equal(-1, DungeonMaze.Parse("d", assets.ReadScript(RoomFixture.MultiDungeonPath))!.QuestConnection);   // Parse 也取第一张默认迷宫
+
+        var seen = new HashSet<int>();
+        for (int seed = 0; seed < 40; seed++)
+        {
+            DungeonMaze m = DungeonMaze.Read(assets, RoomFixture.MultiDungeonPath, new Random(seed))!;  // 开局在默认迷宫里随机挑一张,任务迷宫不会被挑到
+            Assert.Equal(-1, m.QuestConnection);
+            seen.Add(m.Cols);
+        }
+        Assert.Equal(new[] { 1, 2 }, seen.OrderBy(c => c).ToArray());
+
+        // 只有任务迷宫的副本没有默认迷宫
+        Assert.Null(DungeonMaze.Parse("d", new[] { Line("[maze info]"), Line("[quest connection]", 0), Line("[size]", 1, 1), Line("[greed]", "BB") }));
+        // 老格式:不写 [maze info],[size] 等直接放在副本定义里,算一个默认段落
+        Assert.NotNull(DungeonMaze.Parse("d", new[] { Line("[size]", 1, 1), Line("[greed]", "BB") }));
+        // 坏段落(字母数不对)丢掉,不影响别的段落
+        List<DungeonMaze> mixed = DungeonMaze.ParseAll("d", new[]
+        {
+            Line("[maze info]"), Line("[size]", 2, 1), Line("[greed]", "BB"),
+            Line("[maze info]"), Line("[size]", 1, 1), Line("[greed]", "BB"),
+        });
+        Assert.Single(mixed);
+        Assert.Empty(DungeonMaze.ParseAll("d", null!));
+    }
+
+    [Fact]
+    public void MapSpecificationsAreKeptPerCellAndTheLastOneWins()
+    {
+        DungeonMaze maze = DungeonMaze.Parse("d", MazeDoc("JJEE LLMM DDGG",
+            Line("[map specification]", 1, 0, 7, 8),
+            Line("[map specification]", 1, 0, 9),                       // 同一格再写一次:换掉前一次(服务端先清空再读)
+            Line("[map specification]", 0, 1, 4, 5, 6),
+            Line("[map specification]", 9, 9, 1),                       // 迷宫外的格丢掉
+            Line("[map specification]", 1),                             // 缺数:丢掉
+            Line("[boss map specification]", 1, 2, 3)))!;
+        Assert.Equal(new[] { 9 }, maze.MapSpecAt(1, 0)!.ToArray());
+        Assert.Equal(new[] { 4, 5, 6 }, maze.MapSpecAt(0, 1)!.ToArray());
+        Assert.Null(maze.MapSpecAt(0, 0));
+        Assert.Null(maze.MapSpecAt(9, 9));
+        Assert.Equal(new[] { 3 }, maze.BossMapSpecAt(1, 2)!.ToArray());
+        Assert.Null(maze.BossMapSpecAt(0, 2));
+        // 一个编号也没写:等于没写
+        DungeonMaze none = DungeonMaze.Parse("d", MazeDoc("JJEE LLMM DDGG", Line("[map specification]", 0, 0)))!;
+        Assert.Null(none.MapSpecAt(0, 0));
+    }
+
+    [Fact]
+    public void AnEmptyCellHasNoRoomAndNeedsNone()
+    {
+        // 3 列 × 1 行:B(右) E(左) A(空)。第三格是空的:不要房间、RoomAt 是 null、也不是起点候选
+        DungeonMaze maze = DungeonMaze.Parse("d", new[] { Line("[size]", 3, 1), Line("[greed]", "BBEEAA"), Line("[start map]", 0, 0, 2, 0) })!;
+        Assert.True(maze.IsEmptyCell(2, 0));
+        Assert.False(maze.IsEmptyCell(0, 0));
+        Assert.False(maze.IsEmptyCell(7, 7));                                           // 迷宫外不是"空格"
+        var pool = new DungeonRoomPool(new[] { Room("s", 1, 'B', start: true), Room("e", 2, 'E') });
+        DungeonLayout layout = DungeonLayout.Create(maze, pool);
+        Assert.Equal("map/t/s.map", layout.RoomAt(0, 0)!.MapPath);
+        Assert.Equal("map/t/e.map", layout.RoomAt(1, 0)!.MapPath);
+        Assert.Null(layout.RoomAt(2, 0));
+        // 没有列表时(每一格都是候选)空格不会被选作起点
+        var noList = DungeonMaze.Parse("d", new[] { Line("[size]", 2, 1), Line("[greed]", "AAAA") })!;
+        Assert.Throws<DnfFormatException>(() => DungeonLayout.Create(noList, new DungeonRoomPool(new[] { Room("a", 1, 'A', start: true) })));
+        // 起点列表里写出来的格,出口码是 A 也照样能选:池里没有登记在 A 下的起点图就没有候选
+        var listedEmpty = DungeonMaze.Parse("d", new[] { Line("[size]", 2, 1), Line("[greed]", "BBAA"), Line("[start map]", 1, 0) })!;
+        Assert.Throws<DnfFormatException>(() => DungeonLayout.Create(listedEmpty, pool));
+    }
+
+    [Fact]
+    public void ASingleCellDungeonWhoseCellCodeIsAIsStillARealRoom()
+    {
+        // 单格副本的格出口码就是 A(没有出口),房间图登记在 (A, A) 下;起点格写在 [start map] 里,所以不算空格
+        DungeonMaze maze = DungeonMaze.Parse("d", new[] { Line("[size]", 1, 1), Line("[greed]", "AA"), Line("[start map]", 0, 0), Line("[boss map]", 0, 0) })!;
+        Assert.True(maze.IsEmptyCell(0, 0));
+        var pool = new DungeonRoomPool(new[] { Room("only", 1, 'A', start: true) });
+        DungeonLayout layout = DungeonLayout.Create(maze, pool);
+        Assert.Equal("map/t/only.map", layout.RoomAt(0, 0)!.MapPath);
+        Assert.Equal((0, 0, true), (layout.StartX, layout.StartY, layout.IsBossCell(0, 0)));
+        Assert.Equal(GateKind.Wall, layout.GateKindAt(0, 0, GateSide.Left));              // 没有出口:左右是墙
+        Assert.Equal(GateKind.None, layout.GateKindAt(0, 0, GateSide.Down));
+    }
+
+    [Fact]
+    public void ASpecifiedCellPicksOnlyAmongTheSpecifiedMapsEvenIfTheirExitsDiffer()
+    {
+        // 2 列 × 1 行:B E。(1,0) 指定 20 号图(登记的是出口码 C,与格不同),池里本来有出口码 E 的普通图
+        DungeonMaze maze = DungeonMaze.Parse("d", new[] { Line("[size]", 2, 1), Line("[greed]", "BBEE"), Line("[start map]", 0, 0), Line("[map specification]", 1, 0, 99, 20) })!;
+        var pool = new DungeonRoomPool(new[] { Room("s", 1, 'B', start: true), Room("e", 10, 'E'), Room("pinned", 20, 'C') });
+        DungeonLayout layout = DungeonLayout.Create(maze, pool);
+        Assert.Equal("map/t/pinned.map", layout.RoomAt(1, 0)!.MapPath);                 // 99 不在池里,跳过;剩下的 20 就是唯一候选
+        // 指定的编号一个也不在池里:这一格没有候选
+        DungeonMaze lost = DungeonMaze.Parse("d", new[] { Line("[size]", 2, 1), Line("[greed]", "BBEE"), Line("[start map]", 0, 0), Line("[map specification]", 1, 0, 99) })!;
+        Assert.Throws<DnfFormatException>(() => DungeonLayout.Create(lost, pool));
+        // 首领格看 [boss map specification]:指定的图不要求类型是首领图
+        DungeonMaze boss = DungeonMaze.Parse("d", new[] { Line("[size]", 2, 1), Line("[greed]", "BBEE"), Line("[start map]", 0, 0), Line("[boss map]", 1, 0), Line("[boss map specification]", 1, 0, 20) })!;
+        DungeonLayout bossLayout = DungeonLayout.Create(boss, pool);
+        Assert.Equal(("map/t/pinned.map", 1, 0), (bossLayout.RoomAt(1, 0)!.MapPath, bossLayout.BossX, bossLayout.BossY));
+    }
+
+    [Fact]
+    public void WithoutARealBossRoomTheBossCellTakesADummyRoom()
+    {
+        DungeonMaze maze = DungeonMaze.Parse("d", new[] { Line("[size]", 2, 1), Line("[greed]", "BBEE"), Line("[start map]", 0, 0), Line("[boss map]", 1, 0) })!;
+        var dummy = new RoomCandidate("map/t/dummy.map", 30, RoomType.Dummy, new[] { new GreedPair(4, 4) }, false, null);
+        var pool = new DungeonRoomPool(new[] { Room("s", 1, 'B', start: true), Room("e", 10, 'E'), dummy });
+        DungeonLayout layout = DungeonLayout.Create(maze, pool);
+        Assert.Equal((1, 0), (layout.BossX, layout.BossY));
+        Assert.Same(dummy, layout.RoomAt(1, 0));                                        // 没有真首领图:用假首领图;假首领图不会出现在普通格
+        // 有真首领图就用真的
+        var withBoss = new DungeonRoomPool(new[] { Room("s", 1, 'B', start: true), Room("e", 10, 'E'), dummy, Room("boss", 31, 'E', boss: true) });
+        Assert.Equal("map/t/boss.map", DungeonLayout.Create(maze, withBoss).RoomAt(1, 0)!.MapPath);
+        // 起点格不会选假首领图当普通图:普通格里没有别的 E 图时报错
+        var onlyDummy = new DungeonRoomPool(new[] { Room("s", 1, 'B', start: true), dummy });
+        DungeonMaze twoNormal = DungeonMaze.Parse("d", new[] { Line("[size]", 3, 1), Line("[greed]", "BBEEEE"), Line("[start map]", 0, 0), Line("[boss map]", 2, 0) })!;
+        Assert.Throws<DnfFormatException>(() => DungeonLayout.Create(twoNormal, onlyDummy));
+    }
+
+    [Fact]
+    public void ASingleCellDungeonWhoseStartIsTheBossCellUsesTheStartRoomAsTheBossRoom()
+    {
+        // 塔式副本:一格,起点格就是首领格,房间是带出生区的普通图(不是首领图)
+        DungeonMaze maze = DungeonMaze.Parse("d", new[] { Line("[size]", 1, 1), Line("[greed]", "BB"), Line("[start map]", 0, 0), Line("[boss map]", 0, 0) })!;
+        var pool = new DungeonRoomPool(new[] { Room("tower", 1, 'B', start: true) });
+        DungeonLayout layout = DungeonLayout.Create(maze, pool);
+        Assert.Equal((0, 0, 0, 0, true), (layout.StartX, layout.StartY, layout.BossX, layout.BossY, layout.HasBoss));
+        Assert.Equal("map/t/tower.map", layout.RoomAt(0, 0)!.MapPath);
+        Assert.True(layout.IsBossCell(0, 0));
+        // 有首领图可用、另有别的首领格时,起点格不兼首领格
+        DungeonMaze two = DungeonMaze.Parse("d", new[] { Line("[size]", 2, 1), Line("[greed]", "BBEE"), Line("[start map]", 0, 0, 1, 0), Line("[boss map]", 0, 0, 1, 0) })!;
+        var pool2 = new DungeonRoomPool(new[] { Room("s_b", 1, 'B', start: true), Room("s_e", 2, 'E', start: true), Room("boss_b", 3, 'B', boss: true), Room("boss_e", 4, 'E', boss: true) });
+        DungeonLayout l2 = DungeonLayout.Create(two, pool2);
+        Assert.NotEqual((l2.StartX, l2.StartY), (l2.BossX, l2.BossY));
+    }
+
+    [Fact]
+    public void CandidatesWhoseEntranceCoversEveryExitComeFirst()
+    {
+        // (1,0) 出口码 E(左):候选 first 的入口位是 A(0),覆盖不了;second 的入口位是 E(左),能覆盖
+        DungeonMaze maze = DungeonMaze.Parse("d", new[] { Line("[size]", 2, 1), Line("[greed]", "BBEE"), Line("[start map]", 0, 0) })!;
+        var first = new RoomCandidate("map/t/first.map", 10, RoomType.Normal, new[] { new GreedPair(4, 0) }, false, null);
+        var second = new RoomCandidate("map/t/second.map", 11, RoomType.Normal, new[] { new GreedPair(4, 4) }, false, null);
+        var pool = new DungeonRoomPool(new[] { Room("s", 1, 'B', start: true), first, second });
+        Assert.Equal(11, DungeonLayout.Create(maze, pool).RoomAt(1, 0)!.MapId);
+        for (int seed = 0; seed < 20; seed++)
+        {
+            Assert.Equal(11, DungeonLayout.Create(maze, pool, new Random(seed)).RoomAt(1, 0)!.MapId);   // 随机时也只在覆盖得了的那一档里挑
+        }
+        // 都覆盖不了:退回全部候选里最前面的
+        var poolNone = new DungeonRoomPool(new[] { Room("s", 1, 'B', start: true), first });
+        Assert.Equal(10, DungeonLayout.Create(maze, poolNone).RoomAt(1, 0)!.MapId);
+    }
+
+    [Fact]
+    public void ARoomWithoutGreedFitsOnlyTheFourExitCell()
+    {
+        // 没写 [greed] 的图登记在出口码 15(四个出口都有)下,别的格用不上它
+        DungeonMaze maze = DungeonMaze.Parse("d", new[] { Line("[size]", 1, 1), Line("[greed]", "PP"), Line("[start map]", 0, 0) })!;
+        RoomCandidate plain = DungeonRoomPool.ReadHeader(new[] { Line("[dungeon start area]", 1, 2, 3, 4) }, "map/t/plain.map", 7)!;
+        DungeonLayout layout = DungeonLayout.Create(maze, new DungeonRoomPool(new[] { plain }));
+        Assert.Same(plain, layout.RoomAt(0, 0));
+        DungeonMaze other = DungeonMaze.Parse("d", new[] { Line("[size]", 1, 1), Line("[greed]", "BB"), Line("[start map]", 0, 0) })!;
+        Assert.Throws<DnfFormatException>(() => DungeonLayout.Create(other, new DungeonRoomPool(new[] { plain })));
     }
 
     [Fact]

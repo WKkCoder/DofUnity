@@ -11,7 +11,22 @@ namespace Dnf.Render.Tests;
 internal sealed class RoomFixture : IDisposable
 {
     public const string MapPath = "map/test/room/a.map";
+
+    /// <summary>带 [extended tile] 的地图:两块基础瓦片(各 6 行),五个扩展瓦片(最后一个文件不存在,要被占位),排成两排,多出来的一块不用。</summary>
+    public const string TallMapPath = "map/test/room/tall.map";
+
+    /// <summary>
+    /// 带 [extended tile] 且扩展瓦片有图像的地图:基础瓦片 t0、t1(图像位置 80、90),四个扩展瓦片排成两排两列(x0、x1 是第 0 排,x2、x3 是第 1 排),
+    /// 它们的图像帧依次是 0、1、1、0(帧 0 的帧头偏移 (1,2),帧 1 是 (0,0)),用来核对扩展瓦片画在基础瓦片下面哪个位置。
+    /// </summary>
+    public const string TallImageMapPath = "map/test/room/tallimg.map";
+
+    /// <summary>[pass type] 只有 20 个值的瓦片(不是 14 的倍数)。</summary>
+    public const string ShortTilePath = "map/test/room/tile/short.til";
     public const string DungeonPath = "dungeon/test/test.dgn";
+    public const string MultiDungeonPath = "dungeon/test/multi.dgn";
+    public const string AltarDungeonPath = "dungeon/test/altar.dgn";
+    public const string SurvivalDungeonPath = "dungeon/test/survival.dgn";
     public const string TileImage = "sprite/map/test/tile.img";
     public const string BgImage = "sprite/map/test/bg.img";
     public const string TreeImage = "sprite/map/test/tree.img";
@@ -115,6 +130,20 @@ internal sealed class RoomFixture : IDisposable
         return table;
     }
 
+    /// <summary>14 列 × 10 行的扩展瓦片通行表:<paramref name="walkable"/> 给出每个 (列, 行) 能不能走。</summary>
+    public static int[] ExtendedTable(Func<int, int, bool> walkable)
+    {
+        var table = new int[14 * 10];
+        for (int row = 0; row < 10; row++)
+        {
+            for (int col = 0; col < 14; col++)
+            {
+                table[row * 14 + col] = walkable(col, row) ? 0 : 2;
+            }
+        }
+        return table;
+    }
+
     /// <summary>14 列 × 6 行的通行表:第 10 到 13 列在每一行都挡路(2),其余能走(0)。出口物件自带的 .til 的样子。</summary>
     public static int[] WallTable()
     {
@@ -139,6 +168,7 @@ internal sealed class RoomFixture : IDisposable
             (MapPath, NewScript()
                 .Tag("[type]").Str("[normal]")
                 .Tag("[greed]").Str("JJ BB")
+                .Tag("[dungeon]").Int(5)
                 .Tag("[tile]").Str("tile/t0.til", "tile/t1.til")
                 .Tag("[far sight scroll]").Int(50)
                 .Tag("[middle sight scroll]").Int(80)
@@ -158,6 +188,28 @@ internal sealed class RoomFixture : IDisposable
                 .Tag("[monster]").Int(77).Int(1, 0, 1, 300, 200, 0, 1, 0).Str("[fixed]", "[normal]")
                 .Int(2, 1, 0, 420, 210, 5, 2, 1).Str("[fixed]", "[boss]").Int(3, 0, 0)
                 .Build()),
+            // 高地图:两块基础瓦片 + 五个扩展瓦片(e4 的文件不存在)
+            (TallMapPath, NewScript()
+                .Tag("[type]").Str("[normal]")
+                .Tag("[tile]").Str("tile/t0.til", "tile/t0.til")
+                .Tag("[extended tile]").Str("tile/e0.til", "tile/e1.til", "tile/e2.til", "tile/e3.til", "tile/e4.til")
+                .Tag("[pathgate pos]").Int(16, 120, 440, 130, 220, 60, 220, 190)
+                .Build()),
+            ("map/test/room/tile/e0.til", NewScript().Tag("[pass type]").Int(ExtendedTable((c, r) => !(c == 0 && r == 0))).Build()),
+            ("map/test/room/tile/e1.til", NewScript().Tag("[pass type]").Int(ExtendedTable((c, r) => c != 5)).Build()),
+            ("map/test/room/tile/e2.til", NewScript().Tag("[pass type]").Int(ExtendedTable((c, r) => r >= 5)).Build()),
+            ("map/test/room/tile/e3.til", NewScript().Tag("[pass type]").Int(ExtendedTable((c, r) => false)).Build()),
+            (TallImageMapPath, NewScript()
+                .Tag("[type]").Str("[normal]")
+                .Tag("[tile]").Str("tile/t0.til", "tile/t1.til")
+                .Tag("[extended tile]").Str("tile/x0.til", "tile/x1.til", "tile/x2.til", "tile/x3.til")
+                .Build()),
+            ("map/test/room/tile/x0.til", NewScript().Tag("[IMAGE]").Str("Map/Test/Tile.img").Int(0).Tag("[pass type]").Int(ExtendedTable((c, r) => true)).Build()),
+            ("map/test/room/tile/x1.til", NewScript().Tag("[IMAGE]").Str("Map/Test/Tile.img").Int(1).Tag("[pass type]").Int(ExtendedTable((c, r) => true)).Build()),
+            ("map/test/room/tile/x2.til", NewScript().Tag("[IMAGE]").Str("Map/Test/Tile.img").Int(1).Tag("[pass type]").Int(ExtendedTable((c, r) => true)).Build()),
+            ("map/test/room/tile/x3.til", NewScript().Tag("[IMAGE]").Str("Map/Test/Tile.img").Int(0).Tag("[pass type]").Int(ExtendedTable((c, r) => true)).Build()),
+            // 通行值只有 20 个(不是 14 的倍数):读的时候按客户端每行固定读 14 个的规则,不足的取 0 补满第二行
+            (ShortTilePath, NewScript().Tag("[pass type]").Int(Enumerable.Repeat(2, 20).ToArray()).Build()),
             // 城镇风格的地图:有 [tile] 与 [virtual movable area],没有 [pathgate pos]
             ("map/test/room/town.map", NewScript()
                 .Tag("[tile]").Str("tile/t0.til")
@@ -206,7 +258,28 @@ internal sealed class RoomFixture : IDisposable
                 .Tag("[maze info]").Tag("[size]").Int(1, 1).Tag("[greed]").Str("JJ")
                 .Tag("[start map]").Int(0, 0, 0, 0).Tag("[/start map]").Tag("[boss map]").Tag("[/boss map]").Tag("[/maze info]")
                 .Build()),
-            // 房间地图目录:带 [greed] 的 a.map 是候选;没有 [greed] 的城镇图被跳过;另一个目录的图不读
+            // 有好几个迷宫段落的副本定义:两张默认迷宫(没写 [quest connection])与两张任务迷宫
+            (MultiDungeonPath, NewScript()
+                .Tag("[pathgate object]").Int(801, 802, 803, 804, 805, 806, 807, 808, 809, 810)
+                .Tag("[maze info]").Tag("[size]").Int(1, 1).Tag("[greed]").Str("BB").Tag("[start map]").Int(0, 0).Tag("[/maze info]")
+                .Tag("[maze info]").Tag("[quest connection]").Int(0).Tag("[size]").Int(1, 1).Tag("[greed]").Str("CC").Tag("[start map]").Int(0, 0).Tag("[/maze info]")
+                .Tag("[maze info]").Tag("[size]").Int(2, 1).Tag("[greed]").Str("BBEE").Tag("[start map]").Int(0, 0).Tag("[boss map]").Int(1, 0).Tag("[/maze info]")
+                .Tag("[maze info]").Tag("[quest connection]").Int(1).Tag("[size]").Int(1, 1).Tag("[greed]").Str("DD").Tag("[start map]").Int(0, 0).Tag("[/maze info]")
+                .Build()),
+            // 进阶祭坛类副本:房间地图编号直接写在副本定义里。[advance altar map] 是 (难度名, 地图编号, 数) 三元组——"数"故意取 1(也是 a.map 的编号),用来区分有没有把它当地图编号
+            (AltarDungeonPath, NewScript()
+                .Tag("[dungeon type]").Str("advance altar")
+                .Tag("[advance altar map]").Str("easy").Int(2, 1).Tag("[/advance altar map]")
+                .Tag("[maze info]").Tag("[size]").Int(1, 1).Tag("[greed]").Str("BB").Tag("[start map]").Int(0, 0).Tag("[/start map]").Tag("[/maze info]")
+                .Build()),
+            (SurvivalDungeonPath, NewScript()
+                .Tag("[dungeon type]").Str("advance altar")
+                .Tag("[advance altar survival map]").Int(2, 2, 1, 2).Tag("[/advance altar survival map]")
+                .Tag("[maze info]").Tag("[size]").Int(1, 1).Tag("[greed]").Str("BB").Tag("[start map]").Int(0, 0).Tag("[/start map]").Tag("[/maze info]")
+                .Build()),
+            // 副本目录:五号是迷你副本(房间地图用 [dungeon] 5 指向它),六号是多段落的那个(没有房间地图指向它)
+            ("dungeon/dungeon.lst", NewScript().Int(5).Str("Test/Test.dgn").Int(6).Str("Test/Multi.dgn").Build()),
+            // 房间地图目录:a.map 带 [greed] 与 [dungeon] 5;城镇图没有 [greed] 也没有 [dungeon](按 (15,15) 登记,只有按目录名找才会读到);另一个目录的图没有脚本
             ("map/map.lst", NewScript().Int(1).Str("Test/Room/a.map").Int(2).Str("Test/Room/town.map").Int(3).Str("Other/x.map").Build()),
         };
 

@@ -14,12 +14,13 @@ namespace Dnf.Play
     ///   · 出口开关:进房间时有怪物,出口关着;最后一只怪物消失(死亡动画播完)的那一刻出口开始淡出打开(基线上量到打开时刻 ≈ 目标死亡标记后 0.5 秒);
     ///     进房间时本来就没有怪物(或回到清空的房间)出口直接开着。
     ///   · 出口的碰撞体(E-072、E-074):左右出口 .obj 自带的 .til 是主角的碰撞体(盖在舞台格上),开着关着都在;关着的门与墙挡路,清房之后主角顶着门洞的楔形斜边走进去就换房间(推挤触发);
-    ///     上下出口没有碰撞体,向上(下)走顶到可走带的边缘、且人在这个出口的识别矩形里(<see cref="GateAreas"/>;服务端也用这个矩形校验过门位置)就触发。没有碰撞体的左右出口(没有 .til 的合成数据)退回到"离出口 12 像素以内"的近似。
+    ///     上下出口没有碰撞体,向上(下)走顶到可走带的边缘、且人在这个出口的识别矩形里(<see cref="GateAreas"/>;服务端也用这个矩形校验过门位置)就触发。没有碰撞体的左右出口(没有 .til 的合成数据、门体表里一个挡格都没有)退回到"离出口 12 像素以内、或在识别矩形里顶着可走区域的边界"的近似。
     ///   · 换房间:先淡出到全黑(250 毫秒,期间主角照常被操作)、黑屏停 130 毫秒时换房间、再淡入(250 毫秒),时长取自原版连拍;淡入淡出盖住整个画面(含小地图)。
     ///     新房间里主角落在"进来的那个出口"的识别矩形里:用客户端的随机数在矩形里取一个点、站不下就由近到远找最近的可站点(<see cref="RoomArrival"/>,证据 E-074);
     ///     左出口进来朝右、右出口进来朝左,上下出口朝向保持。镜头先放在 0 再按死区跟随主角。
     ///     房间会话按格缓存,回去时怪物不会复活(基线上走回第一个房间时就是清空的)。
-    ///   · 首领格清空 → <see cref="BossCleared"/>;迷宫外的出口(只有单格副本的右边有)走进去 → <see cref="ExitReached"/>。
+    ///   · 首领格清空 → <see cref="BossCleared"/>;迷宫外的出口(只有单格副本的右边有)走进去 → <see cref="ExitReached"/>;
+    ///     没有首领格的副本里,清空一间一个出得去的出口都没有的房间也算通关(推断:村庄袭击类的单格副本左右都是墙,不这样就永远走不完)。
     ///   · 屏幕右上角的副本小地图(<see cref="DungeonMinimapArt"/>,证据 E-109;缺图时退回像素格占位)。
     ///   · 首领清空 <see cref="SettlementDelayMs"/> 之后进入结算(证据 E-091):场景压暗(两层黑幕)、主角脚下生营火(<see cref="ClearCamp"/>)、
     ///     右上角出原版的"是否继续?"菜单(<see cref="SettlementArt"/>;再次挑战、选择其它地下城、返回城镇,快速组队没做);选择由 <see cref="Choose"/>、<see cref="Click"/> 记下,
@@ -308,14 +309,16 @@ namespace Dnf.Play
         /// 否则取候选里最前面的(基线上就是这样,证据 E-070)。<paramref name="seed"/> 同时是各房间战斗的随机种子。
         /// </summary>
         public static DungeonSession Create(DnfAssets assets, string dungeonPath, int seed = 1, bool randomLayout = false,
-            string weaponEqu = DemoHero.StarterWeapon, int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true, HeroProgress progress = null)
+            string weaponEqu = DemoHero.StarterWeapon, int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true, HeroProgress progress = null,
+            int heroDamageScale = 1)
         {
-            DungeonMaze maze = DungeonMaze.Read(assets, dungeonPath)
+            Random random = randomLayout ? new Random(seed) : null;
+            DungeonMaze maze = DungeonMaze.Read(assets, dungeonPath, random)
                 ?? throw new DnfFormatException("副本定义里没有可用的迷宫: " + dungeonPath);
-            DungeonRoomPool pool = DungeonRoomPool.Read(assets, DungeonRoomPool.FolderFor(dungeonPath));
-            DungeonLayout layout = DungeonLayout.Create(maze, pool, randomLayout ? new Random(seed) : null);
+            DungeonRoomPool pool = DungeonRoomPool.ReadFor(assets, dungeonPath);
+            DungeonLayout layout = DungeonLayout.Create(maze, pool, random);
             AvatarOutfit outfit = DemoRoom.DefaultOutfit(assets, weaponEqu);
-            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals, progress, maze.ExpWeight), heroObjectId, assets);
+            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals, progress, maze.ExpWeight, heroDamageScale), heroObjectId, assets);
         }
 
         /// <summary>
@@ -329,7 +332,8 @@ namespace Dnf.Play
         /// 换房间时再按出口重新摆),怪物按地图 [monster] 摆。
         /// </summary>
         public static DungeonRoomFactory CreateAssetFactory(DnfAssets assets, DungeonLayout layout, AvatarOutfit outfit, int seed,
-            int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true, HeroProgress progress = null, float expWeight = 1f)
+            int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true, HeroProgress progress = null, float expWeight = 1f,
+            int heroDamageScale = 1)
         {
             return (cx, cy) =>
             {
@@ -354,7 +358,9 @@ namespace Dnf.Play
                 {
                     RoomArrival.PlaceAtStart(room, cand.MapId, heroObjectId);
                 }
-                return RoomCombatSession.Create(assets, room, seed + cy * layout.Maze.Cols + cx, heroVitals, progress, expWeight);
+                RoomCombatSession combat = RoomCombatSession.Create(assets, room, seed + cy * layout.Maze.Cols + cx, heroVitals, progress, expWeight);
+                combat.HeroDamageScale = heroDamageScale;
+                return combat;
             };
         }
 
@@ -477,6 +483,24 @@ namespace Dnf.Play
                 BossCleared = true;
                 _bossClearedAtMs = _clockMs;
             }
+            else if (!_layout.HasBoss && !BossCleared && !HasOpenableExit(cell))
+            {
+                // 没有首领格、这间房又没有一个出得去的出口(例如整个副本只有一间、左右都是墙):清空它就是通关。通关条件的读码没有找到,这条是推断
+                BossCleared = true;
+                _bossClearedAtMs = _clockMs;
+            }
+        }
+
+        private bool HasOpenableExit(CellState cell)
+        {
+            foreach (GateSide side in new[] { GateSide.Left, GateSide.Right, GateSide.Up, GateSide.Down })
+            {
+                if (IsOpenable(cell, side))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private bool IsOpenable(CellState cell, GateSide side)
@@ -499,23 +523,42 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 主角这一步是否触发了出口。有碰撞体的左右出口:水平移动顶在这个出口的碰撞体上(<see cref="TownHero.PushedInto"/>);
-        /// 没有碰撞体的左右出口:离出口横向 <see cref="TriggerReachSide"/> 像素以内;上下出口:向上(下)走被可走带的边缘挡住、
-        /// 且人在这个出口的识别矩形里(<see cref="RoomGate.Area"/>,服务端校验过门位置用的也是它;"顶着边缘走"才触发是推断,客户端的触发代码没有读到)。
+        /// 主角这一步是否触发了出口。门体盖着出口那一行的左右出口(<see cref="RoomGate.BodyReachesGate"/>):水平移动顶在这个出口的碰撞体上(<see cref="TownHero.PushedInto"/>);
+        /// 其余的左右出口(没有门体、门体不在出口那一行、或门体表里没有一个挡格):人的 y 在识别矩形的纵向范围里,且离出口横向 <see cref="TriggerReachSide"/> 像素以内,
+        /// 或者正朝出口走、被可走区域的边界挡住、人又在识别矩形里(出口位置落在可走区域外的地图);
+        /// 上下出口:正向上(下)走、且占位盒压到这个出口的识别矩形(<see cref="RoomGate.Area"/>,服务端校验过门位置用的也是它);
+        /// 不要求被边缘挡住:全库约一成的下出口,矩形下沿比可走带下沿还高(顶到边缘时人已在矩形外),要求"顶着边缘"它们就永远进不去(E-113 的统计);
+        /// 触发条件是推断,客户端的触发代码没有读到。
         /// </summary>
         public static bool HeroTriggers(RoomGate gate, TownHero hero)
         {
             switch (gate.Side)
             {
                 case GateSide.Left:
-                    return gate.Body != null ? ReferenceEquals(hero.PushedInto, gate) : hero.X <= gate.X + TriggerReachSide;
+                    return gate.BodyReachesGate(hero.BodyWidth, hero.BodyDepth)
+                        ? ReferenceEquals(hero.PushedInto, gate)
+                        : InAreaRows(gate, hero) && (hero.X <= gate.X + TriggerReachSide || hero.PushedLeft && InAreaColumns(gate, hero));
                 case GateSide.Right:
-                    return gate.Body != null ? ReferenceEquals(hero.PushedInto, gate) : hero.X >= gate.X - TriggerReachSide;
+                    return gate.BodyReachesGate(hero.BodyWidth, hero.BodyDepth)
+                        ? ReferenceEquals(hero.PushedInto, gate)
+                        : InAreaRows(gate, hero) && (hero.X >= gate.X - TriggerReachSide || hero.PushedRight && InAreaColumns(gate, hero));
                 case GateSide.Up:
-                    return hero.PushedUp && GateAreas.Contains(gate.Area, (int)Math.Floor(hero.X), (int)Math.Floor(hero.Y));
+                    return hero.TriedUp && GateAreas.OverlapsBox(gate.Area, (int)Math.Floor(hero.X), (int)Math.Floor(hero.Y), hero.BodyWidth, hero.BodyDepth);
                 default:
-                    return hero.PushedDown && GateAreas.Contains(gate.Area, (int)Math.Floor(hero.X), (int)Math.Floor(hero.Y));
+                    return hero.TriedDown && GateAreas.OverlapsBox(gate.Area, (int)Math.Floor(hero.X), (int)Math.Floor(hero.Y), hero.BodyWidth, hero.BodyDepth);
             }
+        }
+
+        private static bool InAreaRows(RoomGate gate, TownHero hero)
+        {
+            int y = (int)Math.Floor(hero.Y);
+            return y >= gate.Area.Y && y < gate.Area.Y + gate.Area.Height;
+        }
+
+        private static bool InAreaColumns(RoomGate gate, TownHero hero)
+        {
+            int x = (int)Math.Floor(hero.X);
+            return x >= gate.Area.X && x < gate.Area.X + gate.Area.Width;
         }
 
         /// <summary>迷宫里这一侧有邻格:开始转场(先淡出);没有(单格副本的外出口):副本直接走完。</summary>
@@ -580,13 +623,13 @@ namespace Dnf.Play
         /// <summary>
         /// 把主角摆到 <paramref name="entry"/> 侧出口的落点(证据 E-074,<see cref="RoomArrival.PlaceAtGate"/>):在这个出口的识别矩形里按客户端的随机数取点、
         /// 站不下就找最近的可站点;左出口进来朝右、右出口进来朝左,上下出口保持 <paramref name="carryFacingLeft"/>。
-        /// 镜头先放在 0 再按死区跟随主角(原版进房间的第一张截图上镜头由此而来)。房间地图没有这一侧的出口位置时保持房间里主角原来的位置。
+        /// 镜头 x 先放在 0(带扩展瓦片的地图镜头 y 先放在最大值,客户端载入地图时的初值)再按死区跟随主角(原版进房间的第一张截图上镜头由此而来)。
+        /// 房间地图没有这一侧的出口位置时保持房间里主角原来的位置。
         /// </summary>
         private void PlaceHero(RoomCombatSession session, GateSide entry, int mapId, bool carryFacingLeft)
         {
             RoomArrival.PlaceAtGate(session.Room, entry, mapId, HeroObjectId, carryFacingLeft);
-            session.Camera.Place(0);
-            session.Camera.Follow(session.Hero.X);
+            session.Camera.Restart(session.Hero.X, session.Hero.Y);
         }
 
         /// <summary>

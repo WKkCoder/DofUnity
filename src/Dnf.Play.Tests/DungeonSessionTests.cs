@@ -59,6 +59,20 @@ public class DungeonSessionTests
         return DungeonLayout.Create(maze, pool);
     }
 
+    /// <summary>一格的副本,出口码 A(四面没有出口),起点格是它自己(要列在 [start map] 里,不然码 A 就是空格),没有首领格。</summary>
+    private static DungeonLayout WalledSingleLayout()
+    {
+        var doc = new[]
+        {
+            Line("[size]", 1, 1),
+            new ScriptLine("[greed]", new[] { new ScriptValue(ScriptValueKind.String, 0, "AA") }),
+            Line("[start map]", 0, 0),
+        };
+        DungeonMaze maze = DungeonMaze.Parse("dungeon/test/walled.dgn", doc)!;
+        var pool = new DungeonRoomPool(new[] { new RoomCandidate("map/t/only.map", 1, 0, 0, false, true) });
+        return DungeonLayout.Create(maze, pool);
+    }
+
     private static DungeonLayout SingleLayout(string greed)
     {
         var doc = new[]
@@ -104,6 +118,7 @@ public class DungeonSessionTests
         private readonly Func<HeroVitals> _vitalsOf;
         private readonly Func<int, int, string[]> _soundsOf;
         private readonly HeroProgress _progress;
+        private readonly Func<int, int, int, byte[]> _passOf;
 
         public DnfAssets Assets { get; }
         public DungeonLayout Layout { get; }
@@ -114,10 +129,10 @@ public class DungeonSessionTests
 
         /// <summary>
         /// <paramref name="bodies"/> 为真时给左右出口装上合成的碰撞体:左边是 4 列宽的墙(x 从 16 到 80),右边是 3 列宽的墙(x 从 1072 到 1120),行数覆盖整个房间;
-        /// 为假时左右出口没有碰撞体(退回近似的触发)。
+        /// 为假时左右出口没有碰撞体(退回近似的触发)。<paramref name="passOf"/> 给 (格 x, 格 y, 瓦片号 0 到 4) 的通行表(14 列 × 30 行,行优先,2 = 挡路),返回 null 用全能走。
         /// </summary>
         public Dungeon(DungeonLayout layout, Func<int, int, (int X, int Y)[]> monstersOf, int hp = 10, bool bodies = false, int heroObjectId = TestHeroId,
-            Func<HeroVitals> vitalsOf = null, Func<int, int, string[]> soundsOf = null, HeroProgress progress = null)
+            Func<HeroVitals> vitalsOf = null, Func<int, int, string[]> soundsOf = null, HeroProgress progress = null, Func<int, int, int, byte[]> passOf = null)
         {
             Assets = DnfAssets.Open(_fx.Root);
             Layout = layout;
@@ -127,6 +142,7 @@ public class DungeonSessionTests
             _vitalsOf = vitalsOf;
             _soundsOf = soundsOf;
             _progress = progress;
+            _passOf = passOf;
             Session = new DungeonSession(layout, Build, heroObjectId, Assets);
         }
 
@@ -150,7 +166,7 @@ public class DungeonSessionTests
             var tiles = new List<TileFile>();
             for (int i = 0; i < 5; i++)
             {
-                tiles.Add(new TileFile("t" + i, new List<KeyValuePair<string, int>>(), 80, new byte[14 * 30]));
+                tiles.Add(new TileFile("t" + i, new List<KeyValuePair<string, int>>(), 80, _passOf?.Invoke(cx, cy, i) ?? new byte[14 * 30]));
             }
             var gatePos = new List<int[]> { new[] { 16, 120 }, new[] { 1104, 120 }, new[] { 560, 12 }, new[] { 560, 348 } };
             var map = new RoomMap("map/test/cell" + cx + cy + ".map", "[normal]", tiles, 50, 80, 120, new List<RoomBackground>(), new List<MapAnimation>(),
@@ -687,6 +703,8 @@ public class DungeonSessionTests
         RunUntil(s, () => s.CellY == 1, 0, 1);
         Assert.Equal((0, 1), (s.CellX, s.CellY));
         Assert.Equal(GateKind.Boss, d.Layout.GateKindAt(0, 1, GateSide.Right));
+        // 没有门体的左右出口要求人的 y 落在识别矩形的纵向范围里:从上出口下来的落点不在这一行,先走到右出口那一行
+        s.Hero.Place(s.Hero.X, 120, false, HeroMotion.Rest, 0);
         RunUntil(s, () => s.CellX == 1, 1, 0);
         Assert.Equal((1, 1), (s.CellX, s.CellY));
         Assert.Equal((70.0, 113.0), (s.Hero.X, s.Hero.Y));
@@ -905,6 +923,91 @@ public class DungeonSessionTests
         // 负数与 0 的"清空之后"都当没有
         using var d = new Dungeon(RingLayout(), Monsters, hp: 40);
         Assert.Equal(stopped, new DungeonBot(true).RunUntil(d.Session, 600_000, -5), 3);
+    }
+
+    [Fact]
+    public void TheBotStepsAwayFirstWhenItsBackIsToABeastCloserThanOneStepAndOnlyThenTurnsAroundToIt()
+    {
+        // 主角站在 (300, 100) 朝右,怪物在它左边:背对着怪物时得朝它挪一步才转得过来。
+        // 离得比一步(TurnGap = 6)还近,这一步会越过怪物、又背对着它,来回晃一辈子:先朝外退(向右),拉开距离再转回来
+        foreach ((int monsterX, int expectedDirX) in new[] { (297, 1), (295, 1), (294, -1), (280, -1), (100, -1) })
+        {
+            using var d = new Dungeon(RingLayout(), (cx, cy) => cx == 0 && cy == 0 ? new[] { (monsterX, 100) } : None());
+            Assert.False(d.Session.Hero.FacingLeft);
+            bool attack = new DungeonBot(false).Next(d.Session, out int dirX, out int dirY);
+            Assert.Equal((expectedDirX, 0, false), (dirX, dirY, attack));
+        }
+        // 面向怪物:够得着就原地出手(第 AttackEvery 步),不挪
+        using var facing = new Dungeon(RingLayout(), (cx, cy) => cx == 0 && cy == 0 ? new[] { (330, 100) } : None());
+        var bot = new DungeonBot(false);
+        bool attacked = false;
+        for (int i = 0; i < DungeonBot.AttackEvery && !attacked; i++)
+        {
+            attacked = bot.Next(facing.Session, out int fx, out int fy);
+            Assert.Equal((0, 0), (fx, fy));
+        }
+        Assert.True(attacked);
+    }
+
+    [Fact]
+    public void TheBotWalksAroundAWallToAMonsterBehindItByPathfindingAfterTheStraightWalkStalls()
+    {
+        // 起点格:主角在 (300, 100)、怪物在 (600, 100);瓦片 2(x ∈ [448, 672))最左六列(x ∈ [448, 544),96 像素厚,怪物走到墙边也够不着隔墙的主角)
+        // 从上到下挡到第 24 行(y < 300),只在下面 y ≥ 300 留一个缺口。一直向右走会顶在墙上,卡住之后自动机改走寻路,从缺口绕过去
+        byte[] Wall(int cx, int cy, int tile)
+        {
+            if (tile != 2)
+            {
+                return null;
+            }
+            var pass = new byte[14 * 30];
+            for (int r = 0; r < 25; r++)
+            {
+                for (int c = 0; c < 6; c++)
+                {
+                    pass[r * 14 + c] = 2;
+                }
+            }
+            return pass;
+        }
+
+        using var d = new Dungeon(RingLayout(), (cx, cy) => cx == 0 && cy == 0 ? new[] { (600, 100) } : None(), passOf: Wall);
+        DungeonSession s = d.Session;
+        var bot = new DungeonBot(false);
+        double maxY = 0;
+        for (int step = 0; step < 60 * 90 && !s.IsCleared(0, 0); step++)
+        {
+            bool attack = bot.Next(s, out int dx, out int dy);
+            s.Update(CombatScript.StepMs, dx, dy, attack);
+            if (s.Hero.X >= 448 && s.Hero.X < 544)
+            {
+                maxY = Math.Max(maxY, s.Hero.Y);
+            }
+        }
+        Assert.True(s.IsCleared(0, 0), "绕不过墙");
+        Assert.True(bot.PathEngaged >= 1, "PathEngaged=" + bot.PathEngaged + " steps=" + bot.Steps + " hero=" + s.Hero.X + "," + s.Hero.Y + " kills=" + s.Kills + " maxY=" + maxY);
+        Assert.Equal(0, bot.PathBlockedSteps);
+        Assert.True(maxY >= 300, "没有从缺口走过去:" + maxY);
+    }
+
+    [Fact]
+    public void ASingleRoomDungeonWithNoBossAndNoWayOutIsDoneAsSoonAsItsMonstersAreGone()
+    {
+        // 起点就是首领格的单格副本没有首领:四面都是墙(出口码 A),房间清空就算通关(推断,证据 E-113)
+        using var d = new Dungeon(WalledSingleLayout(), (cx, cy) => new[] { (340, 100) });
+        DungeonSession s = d.Session;
+        Assert.False(d.Layout.HasBoss);
+        Assert.Equal((false, false), (s.BossCleared, s.Finished));
+        Run(s, 1000, 0, 0, true);
+        Assert.True(s.IsCleared(0, 0));
+        Assert.Equal((true, true), (s.BossCleared, s.Finished));
+        Assert.False(s.ExitReached);
+
+        // 还有出口(这里右边通向迷宫外)的单格副本不算:要等主角走出去
+        using var open = new Dungeon(SingleLayout("BB"), (cx, cy) => new[] { (340, 100) });
+        Run(open.Session, 1000, 0, 0, true);
+        Assert.True(open.Session.IsCleared(0, 0));
+        Assert.Equal((false, false), (open.Session.BossCleared, open.Session.Finished));
     }
 
     [Fact]

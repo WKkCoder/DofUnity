@@ -121,6 +121,100 @@ public class RoomTests
     }
 
     [Fact]
+    public void ExtendedTilesAreReadAsAGridBelowTheBaseTilesKeepingPlaceholdersForMissingFiles()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        RoomMap map = RoomMap.Read(assets, RoomFixture.TallMapPath);
+
+        Assert.Equal(2, map.Tiles.Count);
+        Assert.Equal(5, map.ExtendedTiles.Count);                   // 缺的 e4 换成空瓦片占位,不是丢掉
+        Assert.Empty(map.ExtendedTiles[4].Pass);
+        Assert.Equal(6, map.BaseRows);
+        Assert.Equal(2, map.ExtendedRowCount);                      // 5 ÷ 2 取整:多出来的一块不用
+        Assert.Equal(6 + 2 * 10, map.TotalRows);
+        Assert.Equal(26 * 12, map.HeightPixels);
+        Assert.Equal(2 * 10 * 12, map.ExtendedHeightPixels);
+        Assert.Equal(448, map.Width);                               // 宽只看基础瓦片
+
+        // 没有 [extended tile] 的地图:行数与基础一致,没有扩展高度
+        RoomMap plain = ReadMap(assets);
+        Assert.Empty(plain.ExtendedTiles);
+        Assert.Equal((6, 0, 6, 0), (plain.BaseRows, plain.ExtendedRowCount, plain.TotalRows, plain.ExtendedHeightPixels));
+    }
+
+    [Fact]
+    public void PassAtFollowsTheClientRuleForBaseRowsThenExtendedRowsByColumnAndRow()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        RoomMap map = RoomMap.Read(assets, RoomFixture.TallMapPath);
+
+        // 基础行(0 到 5):通行表的第 2 到 4 行能走
+        Assert.Equal(0, map.PassAt(0, 3));
+        Assert.Equal(2, map.PassAt(0, 0));
+        // 第一排扩展瓦片(行 6 到 15):下标 = 瓦片列号 + 2 × 排号,所以这一排是 e0、e1
+        Assert.Equal(2, map.PassAt(0, 6));                          // e0 的 (0, 0) 挡路
+        Assert.Equal(0, map.PassAt(1, 6));
+        Assert.Equal(0, map.PassAt(14 + 4, 6));                     // e1 的第 4 列能走
+        Assert.Equal(2, map.PassAt(14 + 5, 6));                     // e1 的第 5 列挡路
+        Assert.Equal(0, map.PassAt(0, 15));                         // 排内最后一行
+        // 第二排(行 16 到 25):e2、e3
+        Assert.Equal(2, map.PassAt(0, 16));                         // e2 的前五行挡路
+        Assert.Equal(2, map.PassAt(0, 20));
+        Assert.Equal(0, map.PassAt(0, 21));                         // 排内第 5 行起能走
+        Assert.Equal(2, map.PassAt(14, 21));                        // e3 全挡路
+        // 取不到瓦片:出界、占位的(第 5 个,下标 4 不在两排之内)与负数都是 2
+        Assert.Equal(2, map.PassAt(0, 26));
+        Assert.Equal(2, map.PassAt(28, 6));                         // 第三块瓦片列:地图只有两块
+        Assert.Equal(2, map.PassAt(-1, 6));
+        Assert.Equal(2, map.PassAt(0, -1));
+    }
+
+    [Fact]
+    public void WalkingAndTheStageGridSeeTheExtendedRows()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        RoomMap map = RoomMap.Read(assets, RoomFixture.TallMapPath);
+
+        // 世界坐标:列 = x ÷ 16,行 = y ÷ 12;第 6 行从 y = 72 开始
+        Assert.False(map.CanWalk(8, 73));                           // e0 的 (0, 0)
+        Assert.True(map.CanWalk(24, 73));                           // e0 的 (1, 0)
+        Assert.False(map.CanWalk(224 + 5 * 16 + 4, 100));           // e1 的第 5 列
+        Assert.True(map.CanWalk(224 + 4 * 16 + 4, 100));
+        Assert.True(map.CanWalk(8, 16 * 12 + 5 * 12 + 1));          // e2 的第 5 行
+        Assert.False(map.CanWalk(8, 16 * 12 + 4 * 12 + 1));         // e2 的第 4 行
+        Assert.False(map.CanWalk(8, 26 * 12));                      // 总高之外
+        map.NearestWalkable(8, 73, out double x, out double y);     // 被挡住的格子:挪到最近的能走的点
+        Assert.True(map.CanWalk(x, y));
+        Assert.True(Math.Abs(x - 8) + Math.Abs(y - 73) <= 16);
+
+        var grid = new RoomGrid(map);
+        Assert.Equal(26, grid.Rows);
+        Assert.Equal(28, grid.Columns);
+        Assert.Equal(26 * 12, grid.HeightPixels);
+        Assert.Equal(2, grid.TypeAt(0, 6));
+        Assert.Equal(0, grid.TypeAt(19 - 1, 6));
+        Assert.Equal(2, grid.TypeAt(19, 6));
+        Assert.Equal(0, grid.TypeAt(0, 21));
+        Assert.True(grid.IsFree(24, 100, 0, 0));
+        Assert.False(grid.IsFree(24, 26 * 12, 0, 0));
+    }
+
+    [Fact]
+    public void ExtendedTilesWithoutBaseTilesDoNotDivideByZero()
+    {
+        var ext = new List<TileFile> { new TileFile("e", new List<KeyValuePair<string, int>>(), 80, RoomFixture.ExtendedTable((c, r) => true).Select(v => (byte)v).ToArray()) };
+        var map = new RoomMap("map/test/none.map", "[normal]", new List<TileFile>(), 50, 80, 120, new List<RoomBackground>(), new List<MapAnimation>(),
+            new List<int[]> { null, null, null, null }, null, extendedTiles: ext);
+
+        Assert.Equal((0, 0, 0), (map.BaseRows, map.ExtendedRowCount, map.TotalRows));
+        Assert.Equal(2, map.PassAt(0, 0));
+        Assert.False(map.CanWalk(0, 0));
+    }
+
+    [Fact]
     public void NearestWalkableIsTheStraightLineNearestIntegerPoint()
     {
         using var fx = new RoomFixture();
@@ -180,6 +274,77 @@ public class RoomTests
         // 镜头在第二块的右边:第一块整个在屏幕外,不给
         Assert.Single(RoomScene.TileSprites(assets, map, 300));
         Assert.Equal("map/test/room/tile/t1.til", RoomScene.TileSprites(assets, map, 300)[0].AnimationPath);
+    }
+
+    [Fact]
+    public void ExtendedTilesAreDrawnBelowTheirBaseTileColumnAtTheBaseImagePositionPlus120PlusBaseHeight()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        RoomMap map = RoomMap.Read(assets, RoomFixture.TallImageMapPath);
+        Assert.Equal((6, 2, 240), (map.BaseRows, map.ExtendedRowCount, map.ExtendedHeightPixels));
+
+        // 基础瓦片 6 行 × 12 = 72 像素:扩展第 r 排的图像顶 = 基础图像位置 + 120 + 72 + 120 × r;帧头偏移照常加(帧 0 是 (1,2),帧 1 是 (0,0))
+        List<SceneSprite> tiles = RoomScene.TileSprites(assets, map, 0);
+        Assert.Equal(6, tiles.Count);
+        Assert.Equal(new[]
+        {
+            (1, 82, 0),          // 第 0 列基础瓦片(图像位置 80)
+            (1, 274, 0),         // 第 0 列扩展第 0 排:80 + 120 + 72 + 2
+            (0, 392, 1),         // 第 0 列扩展第 1 排:80 + 120 + 72 + 120
+            (224, 90, 1),        // 第 1 列基础瓦片(图像位置 90)
+            (224, 282, 1),       // 第 1 列扩展第 0 排:90 + 120 + 72
+            (225, 404, 0),       // 第 1 列扩展第 1 排:90 + 120 + 72 + 120 + 2
+        }, tiles.Select(t => (t.ScreenX, t.ScreenY, t.AniFrame)).ToArray());
+        Assert.Equal(new[] { "t0", "x0", "x2", "t1", "x1", "x3" }, tiles.Select(t => Path.GetFileNameWithoutExtension(t.AnimationPath)).ToArray());
+        Assert.All(tiles, t => Assert.Equal(RoomScene.TileRank, t.LayerRank));
+
+        // 镜头 y 把整张瓦片图往上推同样多的像素;镜头 x 与以前一样只决定哪几列在屏幕里
+        List<SceneSprite> scrolled = RoomScene.TileSprites(assets, map, 100, RoomScene.TileRank, 100);
+        Assert.Equal(new[] { (-100 + 1, 82 - 100), (-100 + 1, 274 - 100), (0 - 100, 392 - 100), (224 - 100, 90 - 100), (224 - 100, 282 - 100), (225 - 100, 404 - 100) },
+            scrolled.Select(t => (t.ScreenX, t.ScreenY)).ToArray());
+    }
+
+    [Fact]
+    public void ATileWithAPassValueCountThatIsNotAMultipleOf14IsPaddedWithWalkableCells()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TileFile tile = TileFile.Read(assets, RoomFixture.ShortTilePath)!;
+        // 客户端每行固定读 14 个值,读不到的取 0:20 个值 = 一整行 + 第二行的前 6 个,其余 8 格补 0(可走)
+        Assert.Equal((28, 2), (tile.Pass.Count, tile.Rows));
+        Assert.Equal(Enumerable.Repeat((byte)2, 20).Concat(Enumerable.Repeat((byte)0, 8)).ToArray(), tile.Pass.ToArray());
+        Assert.Equal((2, 2, 0, 0), (tile.PassValue(13, 0), tile.PassValue(5, 1), tile.PassValue(6, 1), tile.PassValue(13, 1)));
+        Assert.Equal(2, tile.PassValue(0, 2));                   // 表外仍然是 2
+    }
+
+    [Fact]
+    public void TheCameraYShiftsTheWorldAndTheBackgroundsByTheirOwnPercent()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        RoomMap map = ReadMap(assets);
+        RoomContent content = RoomContent.Load(assets, map);
+        List<SceneSprite> flat = RoomScene.Build(assets, content, 100, 200, 0, null);
+        List<SceneSprite> scrolled = RoomScene.Build(assets, content, 100, 200, 0, null, 100);
+        Assert.Equal(flat.Count, scrolled.Count);
+
+        // 远景系数 50、中景 80:镜头 y 100 → 分别上移 50、80;横向位置不变
+        foreach ((string ani, int shift) in new[] { ("far", 50), ("mid", 80) })
+        {
+            List<SceneSprite> a = flat.Where(s => s.AnimationPath == "map/test/room/animation/" + ani + ".ani").ToList();
+            List<SceneSprite> b = scrolled.Where(s => s.AnimationPath == "map/test/room/animation/" + ani + ".ani").ToList();
+            Assert.Equal(a.Select(s => s.ScreenX).ToArray(), b.Select(s => s.ScreenX).ToArray());
+            Assert.Equal(a.Select(s => s.ScreenY - shift).ToArray(), b.Select(s => s.ScreenY).ToArray());
+        }
+
+        // 瓦片与图层动画(世界坐标)整体上移 100
+        SceneSprite glowFlat = flat.Single(s => s.AnimationPath == "map/test/room/animation/glow.ani");
+        SceneSprite glowScrolled = scrolled.Single(s => s.AnimationPath == "map/test/room/animation/glow.ani");
+        Assert.Equal((glowFlat.ScreenX, glowFlat.ScreenY - 100), (glowScrolled.ScreenX, glowScrolled.ScreenY));
+        Assert.Equal(flat.Where(s => s.AnimationPath.EndsWith(".til", StringComparison.Ordinal)).Select(s => s.ScreenY - 100).ToArray(),
+            scrolled.Where(s => s.AnimationPath.EndsWith(".til", StringComparison.Ordinal)).Select(s => s.ScreenY).ToArray());
+        Assert.Equal(2, scrolled.Count(s => s.AnimationPath.EndsWith(".til", StringComparison.Ordinal)));
     }
 
     [Fact]

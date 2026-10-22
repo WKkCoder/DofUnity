@@ -10,7 +10,7 @@
 
 用法(由 tools/verify-all.sh 调用;需要先 . tools/env.sh 并已构建 dnf):
   python3 tools/py/verify_all.py [--only 名字,名字] [--skip 名字,名字] [--out out/verify-all.json]
-名字:unit p1 atk act mob damage sq sweep flow sound exp oracle(oracle 需要 re/venv 里的 Unicorn 与本机的服务端二进制)
+名字:unit p1 atk act mob damage sq sweep flow dungeons sound exp oracle(oracle 需要 re/venv 里的 Unicorn 与本机的服务端二进制;dungeons 是全库副本扫描,非门槛项)
 """
 import argparse
 import json
@@ -234,6 +234,19 @@ def check_flow():
                  "七项:" + "、".join(names) + ";退出码 0 = 切换次数、首领清空、音乐序列、读文件失败数全部符合预期;后两项另查输出里的倒地与起身")]
 
 
+def check_dungeons():
+    """全库副本扫描(M21,E-113):346 个副本定义各跑一局无人值守的探索自动机。只作记录(gate=False):
+    进阶祭坛类、战争屋、没有登记房间的定义目前还通不了,通关数是进度指标而不是对错。"""
+    code, text, sec = sh(PY + [os.path.join(ROOT, "tools", "py", "dungeon_sweep.py"), "--seconds", "600", "--real-timeout", "180", "--jobs", "8"], "dungeons.txt")
+    m = re.search(r"合计 (\d+):cleared (\d+)\s+stuck (\d+)\s+nolayout (\d+)\s+nomaps (\d+)\s+crash (\d+)\s+timeout (\d+)\s+other (\d+)", text)
+    if m is None:
+        return [item("dungeons", "全库副本扫描", "整条流程", "E-113", 0, 1, sec, "没解析出汇总行,见 out/verify-all/dungeons.txt", gate=False)]
+    total, cleared, stuck, nolayout, nomaps, crash, timeout, other = (int(g) for g in m.groups())
+    note = "通关 %d/%d;卡住 %d、没有迷宫 %d、没有登记房间 %d、崩溃 %d、超时 %d、其他 %d(进阶祭坛类、战争屋等还没做,见 docs/flow.md §7);明细在 out/dungeon-sweep.tsv,不入库" % (
+        cleared, total, stuck, nolayout, nomaps, crash, timeout, other)
+    return [item("dungeons", "全库副本扫描:每个副本定义跑一局探索自动机(600 模拟秒上限、关伤害)", "整条流程", "E-113", total, total - cleared, sec, note, gate=False)]
+
+
 def check_sound():
     code, text, sec = sh(DNF + ["sound-check", "--bot"], "sound.txt")
     return [item("sound", "声音数据与触发(audio.xml、文件可读、脚本引用的标签都能展开、自动机打一座副本)", "整条流程", "E-089、E-090", 1,
@@ -268,7 +281,7 @@ def check_oracle():
 
 CHECKS = [
     ("unit", check_unit), ("p1", check_p1), ("atk", check_atk), ("act", check_act), ("mob", check_mob),
-    ("damage", check_damage), ("sq", check_sq), ("sweep", check_sweep), ("flow", check_flow), ("sound", check_sound),
+    ("damage", check_damage), ("sq", check_sq), ("sweep", check_sweep), ("flow", check_flow), ("dungeons", check_dungeons), ("sound", check_sound),
     ("exp", check_exp), ("oracle", check_oracle),
 ]
 

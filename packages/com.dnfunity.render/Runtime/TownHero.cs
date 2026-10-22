@@ -163,23 +163,40 @@ namespace Dnf.Render
         public const int DefaultCenterX = 400;
         public const int DefaultHalfWidth = 50;
 
+        /// <summary>
+        /// 纵向死区(客户端舞台对象初始化时的默认值,证据 E-113):主角的世界 y 减镜头 y 落在 [160, 240) 时镜头不动,越出就跟着走,镜头 y 夹在 [0, 最大值] 之间。
+        /// 只有带 [extended tile] 的地图(最大值 &gt; 0)才会纵向滚动。
+        /// </summary>
+        public const int DefaultCenterY = 200;
+        public const int DefaultHalfHeight = 40;
+
         public int CenterX { get; }
         public int HalfWidth { get; }
         public int MinX { get; }
         public int MaxX { get; }
 
+        /// <summary>镜头 y 的最大值(最小值恒为 0);没有扩展瓦片的地图为 0,镜头不纵向滚动。</summary>
+        public int MaxY { get; }
+
         /// <summary>镜头在世界里的 x(屏幕左边缘对应的世界 x)。</summary>
         public double X { get; private set; }
 
+        /// <summary>镜头在世界里的 y(屏幕上边缘对应的世界 y,不含地面常数)。</summary>
+        public double Y { get; private set; }
+
         public int IntX => (int)Math.Floor(X);
 
-        public TownCamera(int minX, int maxX, double heroX, int centerX = DefaultCenterX, int halfWidth = DefaultHalfWidth)
+        public int IntY => (int)Math.Floor(Y);
+
+        public TownCamera(int minX, int maxX, double heroX, int centerX = DefaultCenterX, int halfWidth = DefaultHalfWidth, int maxY = 0)
         {
             MinX = minX;
             MaxX = maxX;
             CenterX = centerX;
             HalfWidth = halfWidth;
+            MaxY = Math.Max(0, maxY);
             X = Clamp(heroX - centerX);
+            Y = MaxY;   // 客户端载入地图时镜头 y 取最大值(0x007DC770),主角站稳后再按死区追上来
         }
 
         /// <summary>
@@ -193,7 +210,7 @@ namespace Dnf.Render
             return camera;
         }
 
-        /// <summary>主角移动之后调用:按死区规则更新镜头。</summary>
+        /// <summary>主角移动之后调用:按死区规则更新镜头 x。</summary>
         public void Follow(double heroX)
         {
             double screen = heroX - X;
@@ -206,6 +223,36 @@ namespace Dnf.Render
                 X = heroX - (CenterX + HalfWidth);
             }
             X = Clamp(X);
+        }
+
+        /// <summary>主角移动之后调用:按死区规则更新镜头 x 与 y(y 只在 <see cref="MaxY"/> 大于 0 时才会动)。</summary>
+        public void Follow(double heroX, double heroY)
+        {
+            Follow(heroX);
+            if (MaxY <= 0)
+            {
+                return;
+            }
+            double screen = heroY - Y;
+            if (screen < DefaultCenterY - DefaultHalfHeight)
+            {
+                Y = heroY - (DefaultCenterY - DefaultHalfHeight);
+            }
+            else if (screen >= DefaultCenterY + DefaultHalfHeight)
+            {
+                Y = heroY - (DefaultCenterY + DefaultHalfHeight);
+            }
+            Y = Y < 0 ? 0 : (Y > MaxY ? MaxY : Y);
+        }
+
+        /// <summary>
+        /// 进房间:镜头 x 放在最小值、y 放在最大值(客户端载入地图时的初值),再按死区规则追一次主角。
+        /// </summary>
+        public void Restart(double heroX, double heroY)
+        {
+            X = MinX;
+            Y = MaxY;
+            Follow(heroX, heroY);
         }
 
         /// <summary>直接放到某个镜头 x(用来对照原版截图)。</summary>
@@ -548,6 +595,18 @@ namespace Dnf.Render
         /// <summary>最近一次更新里,向下走被可走区域(或障碍)挡住了。</summary>
         public bool PushedDown { get; private set; }
 
+        /// <summary>最近一次更新里,向左走被可走区域(或障碍)挡住了。</summary>
+        public bool PushedLeft { get; private set; }
+
+        /// <summary>最近一次更新里,向右走被可走区域(或障碍)挡住了。</summary>
+        public bool PushedRight { get; private set; }
+
+        /// <summary>最近一次更新里,有过向上走的动作(不管有没有被挡住)。</summary>
+        public bool TriedUp { get; private set; }
+
+        /// <summary>最近一次更新里,有过向下走的动作(不管有没有被挡住)。</summary>
+        public bool TriedDown { get; private set; }
+
         /// <summary>角色脚本 [attack motion] 里的连招段数(没载入攻击动作时为 0)。</summary>
         public int AttackCount => _attacks.Length;
 
@@ -780,6 +839,10 @@ namespace Dnf.Render
             PushedInto = null;
             PushedUp = false;
             PushedDown = false;
+            PushedLeft = false;
+            PushedRight = false;
+            TriedUp = false;
+            TriedDown = false;
         }
 
         private void ResetAir()
@@ -1450,6 +1513,8 @@ namespace Dnf.Render
                     PushedInto = null;
                     PushedUp = false;
                     PushedDown = false;
+                    PushedLeft = false;
+                    PushedRight = false;
                 }
             }
             if (_hurtClockMs >= _hurtSpanMs)
@@ -1669,6 +1734,10 @@ namespace Dnf.Render
             PushedInto = null;
             PushedUp = false;
             PushedDown = false;
+            PushedLeft = false;
+            PushedRight = false;
+            TriedUp = false;
+            TriedDown = false;
             TrackTap(deltaMs, dirX);
             switch (Motion)
             {
@@ -2030,7 +2099,8 @@ namespace Dnf.Render
 
         /// <summary>
         /// 沿一个轴走 <paramref name="delta"/>,每次最多一像素地检查可走区域与障碍,走到边界就停在边界上。
-        /// 被挡住的那一步会记下:水平方向被障碍挡住记在 <see cref="PushedInto"/>,竖直方向被挡住记在 <see cref="PushedUp"/> 或 <see cref="PushedDown"/>。
+        /// 被挡住的那一步会记下:水平方向被挡住记在 <see cref="PushedLeft"/> 或 <see cref="PushedRight"/>(被障碍挡住时还记下是哪个,<see cref="PushedInto"/>),
+        /// 竖直方向被挡住记在 <see cref="PushedUp"/> 或 <see cref="PushedDown"/>。
         /// 主角出生时就压在障碍里(例如摆放不当)的话,这一步忽略障碍,让他能走出来。
         /// </summary>
         private double MoveAxis(double from, double delta, bool horizontal)
@@ -2038,6 +2108,17 @@ namespace Dnf.Render
             if (delta == 0 || _walk.IsUnrestricted)
             {
                 return from + delta;
+            }
+            if (!horizontal)
+            {
+                if (delta < 0)
+                {
+                    TriedUp = true;
+                }
+                else
+                {
+                    TriedDown = true;
+                }
             }
             _ignoreBlocker = Blocker != null && Blocker.BlockedBy(X, Y) != null;
             double pos = from;
@@ -2102,6 +2183,14 @@ namespace Dnf.Render
         {
             if (horizontal)
             {
+                if (sign < 0)
+                {
+                    PushedLeft = true;
+                }
+                else
+                {
+                    PushedRight = true;
+                }
                 if (Blocker != null && !_ignoreBlocker)
                 {
                     object by = Blocker.BlockedBy(candidateX, candidateY);

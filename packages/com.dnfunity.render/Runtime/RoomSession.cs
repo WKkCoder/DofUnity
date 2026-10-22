@@ -56,8 +56,8 @@ namespace Dnf.Render
         public int LayerCount => Content.Layers.Count + Content.Backgrounds.Count;
         public int NpcCount => 0;
 
-        /// <summary>此刻的投影:镜头 x 由主角位置按 <see cref="Camera"/> 算出。</summary>
-        public TownProjection Projection => new TownProjection(Camera.IntX, GroundY);
+        /// <summary>此刻的投影:镜头 x、y 由主角位置按 <see cref="Camera"/> 算出(纵向的镜头只有带扩展瓦片的地图才会动:地面常数减去镜头 y)。</summary>
+        public TownProjection Projection => new TownProjection(Camera.IntX, GroundY - Camera.IntY);
 
         public RoomSession(DnfAssets assets, RoomContent content, TownHero hero, TownCamera camera, int groundY = DefaultGroundY)
         {
@@ -83,7 +83,7 @@ namespace Dnf.Render
         public void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed)
         {
             Hero.Update(deltaMs, dirX, dirY, attackPressed, jumpPressed);
-            Camera.Follow(Hero.X);
+            Camera.Follow(Hero.X, Hero.Y);
         }
 
         public List<SceneSprite> Build(long timeMs)
@@ -103,7 +103,7 @@ namespace Dnf.Render
             {
                 sprites.AddRange(extra);
             }
-            return RoomScene.Build(_assets, Content, Camera.IntX, GroundY, timeMs, sprites.Count == 0 ? null : sprites);
+            return RoomScene.Build(_assets, Content, Camera.IntX, GroundY, timeMs, sprites.Count == 0 ? null : sprites, Camera.IntY);
         }
     }
 
@@ -288,7 +288,11 @@ namespace Dnf.Render
             hero.LoadBattleRest(assets, DemoHero.SwordmanChrPath);
             hero.BattleStance = true;
             hero.Blocker = new GateBodies(gates, hero.BodyWidth, hero.BodyDepth);   // 出口的门框与墙挡路(证据 E-072、E-074)
-            var camera = new TownCamera(0, map.MaxCameraX, hero.X);
+            var camera = new TownCamera(0, map.MaxCameraX, hero.X, maxY: map.ExtendedHeightPixels);
+            if (map.ExtendedHeightPixels > 0)
+            {
+                camera.Follow(hero.X, hero.Y);   // 纵向镜头从最大值起步,按死区追到主角
+            }
             return new RoomSession(assets, content, hero, camera);
         }
 
