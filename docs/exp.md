@@ -1,0 +1,117 @@
+# 经验与升级(M19,E-111)
+
+主角打死怪物会得经验,经验攒够就升级:生命、魔法上限与面板数值按 `.chr` 的成长块重算,播升级音与升级光效,底栏的经验条随之变化。
+本文记录服务端怎样算(升级经验表、升级循环、击杀经验链、等级差倍率、副本经验权重、属性成长)、客户端怎样画(经验条、升级提示)、我们怎样实现,以及**没弄清、没做**的部分。
+
+证据等级:升级经验表与升级循环、击杀经验链、等级差倍率、副本权重字段、成长块规则来自服务端静态读码,运算顺序与舍入按 x87 指令序列复现(高);客户端经验条的位置与宽度公式来自客户端静态读码,位置另与基线 HUD 像素逐点一致(高);条的取值语义、成长类型编号、升级光效的挂靠是推断(中)。
+静态读码用 Ghidra 只读脚本与本机反汇编脚本,基线像素比对用本机一次性脚本,均为**非 REA**。**原版数据里的数值(经验表、技能点表、倍率表、副本权重、`.chr` 成长数)一律不入库**,本文只写标签名与结构;引擎常量(等级上限、等级差倍率阶梯、条宽 625 等)是机器码里的立即数,记在这里。
+
+## 1. 升级经验表与升级循环(服务端)
+
+- **经验表**:`CDataManager::get_level_exp(L)` 返回全局表(由 `character/exptable.tbl` 装入)的第 `L - 2` 项,`L` 取 2 到 200,其余返回 0。本级到下一级的经验区间 = 下一级门槛减本级门槛(`CUserCharacInfo::get_level_up_exp`)。1 级的门槛是 0。
+- **升级循环**(`CUser::gain_exp_sp` → `CUser::_check_level_up`):
+  - 只在等级低于 **85** 时才做升级检查(经验驱动的封顶等级);
+  - 每轮取本级门槛 `bottom` 与下一级门槛 `top`:经验落在 `[bottom, top]` 之外先校正成 `bottom`;`top` 不大于 `bottom`(表走到头)就停;
+  - 经验加待加量不到 `top`:全部加进去,结束;
+  - 够了就升一级:技能点加 `CDataManager::GetSpAtLevelUp(新等级)`(`etc/sptable.etc`);**新等级不小于 50** 时觉醒点加 1;待加量减去"补到 `top` 所需的经验",经验设成 `top`,进入下一轮(一次大量经验可以连升几级);
+  - 封顶那一级多余的经验丢掉。
+- **升级之后**:`CUser::_onLevelUp`(等级奖励、疲劳电池一类)与 `CUser::_update_charac_stat`(调 `CCharacter::get_growtype_stat` 重算属性)里**没有找到恢复生命与魔法的代码**。我们的实现升级时不恢复(原游戏的做法没有验证,记为未决)。
+
+## 2. 击杀经验链
+
+一只怪物被打死时,服务端这样算每个队员得到的经验(`CBattle_Field::kill_monster`、`CParty::getMonsterTotalExp`、`CParty::kill_monster`):
+
+1. **基础经验 `mobExp`**:怪物自己的等级在 `monster_reward_ref` 表里的值(`CDataManager::get_mob_reward`,等级 1 到 199,其余为 0)。**这张表来自服务端数据库,不在客户端数据里**,见 §6。
+2. **怪物总经验**(`getMonsterTotalExp`,x87 80 位中间结果):
+
+   ```
+   总经验 = 截断64( ((((mobExp / 2.0) × 队伍倍率) × 难度倍率 × 副本经验权重) × 种类倍率 )
+   种类倍率 = 角色 ≤ 3 ? [drop bonusrate of monster kind][角色] : 1.0;有名怪物再 × 3.0
+   ```
+
+   `2.0` 与 `3.0` 是服务端全局常量;结果只返回低 32 位。角色:0 普通、1 小精英、2 大精英、3 首领(`MonsterKind`)。有名怪物 = 怪物编号 50000 到 51000 或 56000 到 60000(E-062 已读)。
+3. **每个队员**:`截断64( (1 × 等级差倍率(队员等级, 怪物等级)) × 总经验 / 队员数 )`,`1` 是 `MemberPenaltyRate`(恒返回 1)。单机队员数 = 1。
+4. 服务端之后还会叠加各种活动与加成(`sumGainedEachExp`)、帮助惩罚,与单机无关,没做。另有一个分支(副本编号 100,以及某两个标志位被置上时)改用队员自己等级的基础经验、不算等级差,是特殊副本与 GM 设定,没做。
+
+三张倍率表都在 `etc/serverparameter.etc`:`[party user number exp bonusrate]`(队伍 1 到 4 人)、`[dungeon difficulty exp bonusrate]`(难度 0 到 4)、`[drop bonusrate of monster kind]`(怪物种类 0 到 3,经验公式直接拿这张"掉落倍率表"当种类倍率)。文件或标签缺失时取全 1(中性)。
+
+## 3. 等级差倍率(`CDataManager::BaseExpPenalty`)
+
+差 = 怪物等级 − 主角等级,单精度常量:
+
+| 差 | 倍率 |
+|---|---|
+| ≤ −7 | 0.05 |
+| −6 | 0.2 |
+| −5 | 0.5 |
+| −4 | 0.75 |
+| −3 到 0 | 1 |
+| +1 到 +3 | 1.12 |
+| +4、+5 | 1 |
+| +6 | 0.75 |
+| +7 | 0.7 |
+| +8 | 0.6 |
+| +9 | 0.5 |
+| ≥ +10 | 0.05 |
+
+## 4. 副本经验权重
+
+`STDungeonScript::Clear` 把权重字段(`+0xb0`)清成 `1.0f`;`.dgn` 的 `[experience increasing point]` 读成浮点写进同一字段(整数写法也按浮点读);`CDungeon::get_exp_weight` 取用,作为击杀经验的一个乘数。没有这个标签的副本权重是 1。
+`DungeonMaze.ExpWeight` 解析它,`RoomCombatSession` 把它乘进击杀经验。`.dgn` 里另外的 `[basis level]`、`[monster exp bonusrate]`、`[clear exp bonusrate]` 的用法没读通(通关奖励经验也依赖 `monster_reward_ref`),没做。
+
+## 5. 主角属性随等级(`.chr` 成长块)
+
+- `ImportCharacterScript` 读 `.chr` 的 `[initial value]`、`[growtype 1]` 到 `[growtype 6]`、各成长类型下的 `[awakening 1]`、`[awakening 2]` 块里的九个属性标签(`[HP MAX]`、`[MP MAX]`、`[physical attack]`、`[physical defense]`、`[magical attack]`、`[magical defense]`、`[inventory limit]`、`[MP regen speed]`、`[hit recovery]`);
+  每个值乘 `10.0f` 再用 `GetRoundInt`(远离零取整)存成**十分之一单位的整数**。我们也用十分之一单位的整数逐级累加,没有浮点误差(`StatBlock`)。
+- `CCalcCharacStat::CalcStat`:等级 `L` 的属性 = 初始值 + 对 `l = 1 … L − 1` 的增量块求和;`l < 15` 取第一个成长类型块,`15 ≤ l < 50` 取所选成长类型的块,`l ≥ 50` 取觉醒块(觉醒不小于 1 时),否则仍取成长类型的块。
+- 单机取第一个成长类型块、没有觉醒(真实角色选哪个成长类型没有数据,`growtype` 参数留着);`HeroVitals.FromStats` 与 `HeroPanel.FromStats` 在升级时换上新的上限与面板;一级时与 `FromChr` 的结果逐项相等(`exp-check` 与合成测试都核对)。
+
+## 6. 基础经验表 `monster_reward_ref`(外部输入)
+
+怪物的基础经验只存在于服务端的数据库表里,**不在用户自备的客户端数据(`Script.pvf`)里,所以不能从客户端复原**。读取顺序(`MobRewards.Load`):
+
+1. 环境变量 `DNF_MOB_REWARD_CSV` 指向的文件;
+2. 数据目录里的 `monster_reward_ref.csv`;
+3. 都没有:**占位表**(`MobRewardTable.Placeholder`,`IsPlaceholder` 为真)。
+
+文件格式:每行 `等级,经验`(逗号、分号、制表符或空格分隔;空行与 `#` 开头的行忽略;第一行是标题也行),只收等级 1 到 199 的非负整数,同一等级后面的覆盖前面的;读不了或没有有效行就当没有。
+占位表的值是**我定的标注值,不是原版数据**:每级取 `max(2, 本级经验区间 / 25)`,让同级怪物大约 50 只升一级,只为让经验条动起来;用了它的地方(命令行输出、`exp-check`)都会标注"占位表"。
+需要原版数值的人请从**自己的服务端**导出 `monster_reward_ref` 的 `level`、`exp` 两列放进数据目录;本仓库不含、也不会提交这份数据。
+
+## 7. 客户端怎样画
+
+- **经验条**(绘制函数 `0x004c0d60`):宽度由辅助函数 `0x011b98c0(0, 625, v, r)` 算:`v ≥ r` 取 625(`r ≤ 0` 时也是),`v ≤ 0` 取 0,否则单精度 `625 × v / r` 截断。`v` 与 `r` 取本级已得经验与本级经验区间(语义是推断)。
+  条用 `hud.img` 的 **#4**(625×4,偏移 0,0),画在 **(88, 591)**(与基线 HUD 像素逐点一致);等级为 85 时再盖 **#60**(位置同,读码,基线没有满级角色,没有像素核对)。
+  绘制层次:底栏 → 血球液体 → 魔法球液体 → **经验条(满级再盖 #60)** → 等级牌 → …(见 `docs/hud.md`)。
+- **升级提示**:客户端处理升级包的函数 `0x007118d0` 把新等级写进主角记录,发系统消息 `0xac3c`(带新等级),播界面音 `LEVEL_UP`;升级光效 `Common/CommonEffect/Animation/LevelUp.ani`(5 帧)在 `0x00b2a3e0` 与 `0x00814ed0` 里各引用一次。
+  我们:播界面音 `LEVEL_UP`(`SoundCueKind.Ui`),让升级光效跟着主角直到播完;系统消息没有聊天窗口可显示,没做;5 帧里每帧的缩放没做。同两处还有第二个光效(字符串 `0x015c9f68`,与一个 80 级条件相关),没读通。
+
+## 8. 我们的实现
+
+| 层 | 内容 |
+|---|---|
+| `Dnf.Game` | `ExpTable`(门槛、区间)、`SpTable`、`Leveling.Gain`(升级循环,返回等级、经验、升了几级、技能点、觉醒点)、`ExpRates`(三张倍率表)、`MobRewardTable`(基础经验表 + 占位)、`KillExp.ForKill`(击杀经验,`X87` 复现 80 位寄存器与 64 位截断)、`CharacterGrowth`/`StatBlock`(成长块) |
+| `Dnf.Play` | `HeroProgress`(等级、经验、成长属性、技能点、觉醒点、`Version`;`CreateForLocalHero` 从用户数据造)、`MobRewards`(找基础经验表)、`RoomCombatSession`(杀怪给经验、升级时换生命魔法上限与面板、播升级音、升级光效跟随主角)、`DungeonSession`(各房间共用一个进度)、`HudArt`(经验条与满级覆盖层) |
+| 命令行 | `exp-check`(8 项检查,进 `verify-all`)、`--level N`(主角从 N 级开始,1 到 85)、`--no-exp`(杀怪不给经验);`combat-check` 打印每次击杀的经验、升级与最后的汇总 |
+| Unity | `-dnflevel N`、`-dnfnoexp`;`DNF_TOWN_DEMO` 日志在 `heroMp` 之后追加 `heroLevel= heroExp= levelUps=` |
+
+取舍:
+
+- 经验与升级**只在主角有生命值时才建**(`--no-damage`、`-dnfnodamage` 没有底栏,也就没有经验条),所以原有的无伤害对拍帧逐字节不变;带底栏的画面(受击测试、真实游玩)在命令行与 Unity 里经验条一致。
+- 升级时不恢复生命与魔法,当前生命魔法值带到新上限下(`HeroVitals.ApplyStats` 只改上限并夹住当前值)。
+- 一次升级后同一次战斗里的其余命中立即用新面板算伤害(`SyncProgress`);副本换房间时新会话先同步进度再复制生命魔法状态。
+
+## 9. 没弄清 / 没做
+
+- `monster_reward_ref` 的数值(外部输入,见 §6)与通关奖励经验;
+- 升级是否回满生命与魔法(服务端没有恢复代码,客户端是否做没验证);
+- 第二个升级光效、升级光效的逐帧缩放、系统消息的聊天窗口显示;
+- 结算页的经验显示、经验条的悬停提示、疲劳条;
+- 活动与加成叠加、帮助惩罚、技能点的花费与觉醒点的用法、成长类型的选择与觉醒转职。
+
+## 10. 测试与复现
+
+- `ProgressTests`(Game 42 条):经验表取法与区间、技能点表、升级循环(连升、封顶、觉醒点、边界)、倍率表缺失与越界、基础经验表(CSV 格式、占位)、击杀经验的 x87 取整与全部倍率分支、成长块解析与逐级累加。
+- `ExpTests`(Play 23 条)、`HudArtTests` 新增 5 条、`DungeonSessionTests` 新增 1 条、`DungeonTests` 新增 1 条:进度对象、会话里的击杀经验(等级差、权重、首领)、升级换属性与面板、不恢复生命、升级音与光效跟随、副本各房间共用进度、经验条宽度的各种边界与层次。
+- 数据全是合成的(100·(L−1)·L/2 的经验表、每级 L 点的技能点表、整数成长块),不含任何原版数值。
+- 本机命令:`dnf exp-check [--level N]`(真实数据的 8 项检查,输出只在本机看);`dnf combat-check --map <房间> --level N --shots-at <秒> --png <前缀>`;`tools/verify-all.sh --only exp`。

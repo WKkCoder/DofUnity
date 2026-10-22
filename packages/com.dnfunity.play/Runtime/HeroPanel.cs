@@ -72,9 +72,9 @@ namespace Dnf.Play
     /// 主角打怪物时的攻击面板(证据 E-110),交给 <see cref="HitDamage"/> 当攻击者:
     /// 面板攻击力取自角色脚本 .chr 的 [initial value](第 1 级的初始值,向零取整成整数,与客户端属性记录"整数 × 倍率"取整的存法一致),
     /// 附加基础值(武器的攻击力)与暴击属性是穿着的装备脚本里相应项的加总,元素攻击为 0。
-    /// <b>没做</b>:等级成长([growtype]/[awakening] 各段的逐级增量。服务端的 <c>CalcStat</c> 是"初始值 + 每升一级加一段增量,1 到 14 级用第一个成长类型,
-    /// 15 到 49 级用所选类型,50 级起用觉醒段"——规则已读到,等有升级再接)、属性点与装备的其余加成(客户端把这些聚合成属性记录的函数没有找到,
-    /// 服务端不计算也不核对)。所以这里只对一级的新角色成立。
+    /// 等级成长(证据 E-111):<see cref="FromChr"/> 只读初始值,只对一级的新角色成立;有等级进度(<see cref="HeroProgress"/>)时用 <see cref="FromStats"/>——
+    /// 服务端 <c>CalcStat</c> 的算法是"初始值 + 每升一级加一段增量,1 到 14 级用第一个成长类型,15 到 49 级用所选类型,50 级起用觉醒段",升级时换新的面板。
+    /// <b>没做</b>:属性点与装备的其余加成(客户端把这些聚合成属性记录的函数没有找到,服务端不计算也不核对)。
     /// </summary>
     public sealed class HeroPanel
     {
@@ -109,6 +109,20 @@ namespace Dnf.Play
             }
             TagTable tags = chr.Tags;
             return new HeroPanel(level, Truncate(NumberOr(tags, "[physical attack]")), Truncate(NumberOr(tags, "[magical attack]")), equipment);
+        }
+
+        /// <summary>
+        /// 用某个等级的属性块(<see cref="CharacterGrowth.StatsAt"/>,十分之一单位的整数,证据 E-111)造面板:物理与魔法攻击力是"十分之一"数除以 10 向零取整
+        /// (与 <see cref="FromChr"/> 对浮点数向零取整一致;初始值的小数只有一位时两者在等级 1 时相同),再配上装备。
+        /// </summary>
+        public static HeroPanel FromStats(int level, StatBlock stats, EquipmentStats equipment)
+        {
+            return new HeroPanel(level, ClampToInt(stats.PhysicalAttack / 10), ClampToInt(stats.MagicalAttack / 10), equipment);
+        }
+
+        private static int ClampToInt(long value)
+        {
+            return value >= int.MaxValue ? int.MaxValue : value <= int.MinValue ? int.MinValue : (int)value;
         }
 
         /// <summary>主角穿着的全部装备(<see cref="AvatarOutfit"/> 里每一件的 .equ)的攻击与暴击加总;没有穿装备时是 0。</summary>

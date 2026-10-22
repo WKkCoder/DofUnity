@@ -26,11 +26,31 @@ namespace Dnf.Play
     }
 
     /// <summary>
+    /// 经验条此刻的数(证据 E-111):<see cref="Value"/> 是在本级里已经攒的经验,<see cref="Span"/> 是本级一共要攒的经验
+    /// (客户端取这两个数的来源是推断的:读到的是一对成对存放的受保护整数,按数据流判断为"本级已攒、本级总量"),
+    /// <see cref="Capped"/> 为真(等级 85,经验能涨到的上限)时在条上再盖一层满级图。
+    /// </summary>
+    public readonly struct HudExp
+    {
+        public int Value { get; }
+        public int Span { get; }
+        public bool Capped { get; }
+
+        public HudExp(int value, int span, bool capped)
+        {
+            Value = value;
+            Span = span;
+            Capped = capped;
+        }
+    }
+
+    /// <summary>
     /// 画面底部的原版界面底栏(证据 E-088):用户自备的图包里的 hud.img 画出来,和别的精灵走同一条绘制管线。
     /// 位置都是拿基线截图用 <c>dnf locate</c> 逐像素找出来的(不透明像素 100% 一致):
     /// 先画整条底栏(800×91,左右各有一个球的底座),再在左边画血球液体、右边画魔法球液体(液体按比例从下往上露出),
     /// 左下角的等级牌(Lv. 加数字),中间的菜单图标、菜单与商城按钮,右边的技能快捷槽(图标取 .skl 的 [icon],能放时亮、不能放时灰)与热键字母。
-    /// 没做:经验条与疲劳条的数据、状态图标、物品快捷栏(1 到 6)、技能等级小字与冷却遮罩、鼠标悬停与点击、球上的高光。
+    /// 经验条(证据 E-111):<see cref="HudExp"/> 给了才画——hud.img 的 #4(625×4)放在 (88, 591),只露出前 <see cref="ExpBarWidth"/> 列;等级 85 再盖 #60。
+    /// 没做:疲劳条的数据、状态图标、物品快捷栏(1 到 6)、技能等级小字与冷却遮罩、鼠标悬停与点击、球上的高光。
     /// 取不到 hud.img 时 <see cref="TryCreate"/> 返回 null,调用方退回占位的色块血条。
     /// </summary>
     public sealed class HudArt
@@ -46,6 +66,15 @@ namespace Dnf.Play
         public const int InfoButtonFrame = 52;
         public const int MenuButtonFrame = 68;
         public const int ShopButtonFrame = 72;
+
+        /// <summary>经验条(625×4)的帧号与满级覆盖层的帧号(客户端 0x004c0d60 里传给取图函数的下标 4 与 0x3c,证据 E-111)。</summary>
+        public const int ExpBarFrame = 4;
+        public const int ExpCapFrame = 60;
+
+        /// <summary>经验条的像素宽度(满条)与位置(0x004c0d60 里画条的坐标 (0x58, 0x24f);这一帧自带偏移为 0,与基线截图逐像素对过,位置在 (88, 591))。</summary>
+        public const int ExpBarMaxWidth = 625;
+        public const int ExpBarX = 88;
+        public const int ExpBarY = 591;
 
         /// <summary>中间五个菜单图标(24×26)的帧号:四个常态,最后一个是灰的(基线里就是这样)。</summary>
         public static readonly int[] MenuIconFrames = { 5, 8, 11, 14, 97 };
@@ -90,6 +119,7 @@ namespace Dnf.Play
         private readonly Dictionary<int, SpriteFrame> _hpFills = new Dictionary<int, SpriteFrame>();
         private readonly Dictionary<int, SpriteFrame> _mpFills = new Dictionary<int, SpriteFrame>();
         private readonly Dictionary<int, SpriteFrame> _digits = new Dictionary<int, SpriteFrame>();
+        private readonly Dictionary<int, SpriteFrame> _expFills = new Dictionary<int, SpriteFrame>();
         private readonly Dictionary<string, SpriteFrame> _frames = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
 
         private HudArt(ISpriteSource sprites, SpriteFrame bar, SpriteFrame hpFull, SpriteFrame mpFull, SpriteFrame strip)
@@ -166,15 +196,43 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 把底栏的全部精灵按从下到上的顺序加进 <paramref name="into"/>(<paramref name="order"/> 一路递增)。
-        /// 顺序:底栏 → 血球液体 → 魔法球液体 → 等级牌 → 菜单图标 → 菜单、商城按钮 → "I" 按钮 → 技能图标 → 热键字母。
+        /// 经验条露出的像素宽度(客户端 0x011b98c0 的算术,单精度,证据 E-111):<paramref name="value"/> 不小于 <paramref name="span"/> 时是满条
+        /// (<see cref="ExpBarMaxWidth"/>,包括 <paramref name="span"/> 不大于 0 的情况);<paramref name="value"/> 不大于 0 时是 0;
+        /// 其余是 <c>(int)((625 - 0) × value / span + 0)</c>,每一步都落成单精度,取整向零。
         /// </summary>
-        public void Build(List<SceneSprite> into, ref int order, int level, int hp, int hpMax, int mp, int mpMax, IReadOnlyList<HudSkillState> skills)
+        public static int ExpBarWidth(int value, int span)
+        {
+            if (value >= span)
+            {
+                return ExpBarMaxWidth;
+            }
+            if (value <= 0)
+            {
+                return 0;
+            }
+            float width = (float)ExpBarMaxWidth - 0f;
+            width = width * (float)value;
+            width = width / (float)span;
+            width = width + 0f;
+            return (int)width;
+        }
+
+        /// <summary>
+        /// 把底栏的全部精灵按从下到上的顺序加进 <paramref name="into"/>(<paramref name="order"/> 一路递增)。
+        /// 顺序:底栏 → 血球液体 → 魔法球液体 → 经验条(给了才画)→ 等级牌 → 菜单图标 → 菜单、商城按钮 → "I" 按钮 → 技能图标 → 热键字母。
+        /// </summary>
+        public void Build(List<SceneSprite> into, ref int order, int level, int hp, int hpMax, int mp, int mpMax, IReadOnlyList<HudSkillState> skills,
+            HudExp? exp = null)
         {
             PlaceBlock(into, ref order, _bar, BarX, BarY, "hud-bar");
 
             AddOrb(into, ref order, _hpFull, _hpFills, OrbRows(hp, hpMax), HpOrbX, "hud-hp");
             AddOrb(into, ref order, _mpFull, _mpFills, OrbRows(mp, mpMax), MpOrbX, "hud-mp");
+
+            if (exp.HasValue)
+            {
+                AddExp(into, ref order, exp.Value);
+            }
 
             AddLevel(into, ref order, level);
 
@@ -239,6 +297,33 @@ namespace Dnf.Play
                 }
             }
             PlaceFrom(into, ref order, fill, full, blockX, OrbY, tag);
+        }
+
+        /// <summary>
+        /// 经验条(证据 E-111):#4 放在 (88, 591),只露出前 <see cref="ExpBarWidth"/> 列(客户端是把裁剪框设成 x &lt; 88 + 宽度再整张画);
+        /// 等级 85(<see cref="HudExp.Capped"/>)再在同一位置盖 #60。缺图就不画。
+        /// </summary>
+        private void AddExp(List<SceneSprite> into, ref int order, HudExp exp)
+        {
+            SpriteFrame full = Frame(HudImage, ExpBarFrame);
+            if (full != null)
+            {
+                int width = Math.Min(ExpBarWidth(exp.Value, exp.Span), full.Width);
+                if (width > 0)
+                {
+                    SpriteFrame fill = full;
+                    if (width < full.Width && !_expFills.TryGetValue(width, out fill))
+                    {
+                        fill = Crop(full, 0, 0, width, full.Height);
+                        _expFills[width] = fill;
+                    }
+                    PlaceFrom(into, ref order, fill, full, ExpBarX, ExpBarY, "hud-exp");
+                }
+            }
+            if (exp.Capped && Frame(HudImage, ExpCapFrame) is SpriteFrame cap)
+            {
+                PlaceBlock(into, ref order, cap, ExpBarX, ExpBarY, "hud-exp-cap");
+            }
         }
 
         private void AddLevel(List<SceneSprite> into, ref int order, int level)

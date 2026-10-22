@@ -39,7 +39,8 @@ public class RoomCombatTests
         public Arena(IReadOnlyList<(int X, int Y)> monsters, HeroStrikeInfo[] strikes = null, bool facingLeft = false, int hp = 100,
             bool frozen = false, int seed = 1, string chr = null, HeroStrikeInfo dash = default, HeroStrikeInfo jump = default, double monsterSpeed = 222.5,
             bool withSkills = false, int weaponStun = 0, HitStunTable stunTable = null, int monsterRecovery = 0, float weaponDelay = -1f,
-            HeroPanel heroPanel = null, DamageConstants damageConstants = null, DefenderPanel defense = null)
+            HeroPanel heroPanel = null, DamageConstants damageConstants = null, DefenderPanel defense = null, HeroVitals vitals = null,
+            HeroProgress progress = null, float expWeight = 1f, int monsterLevel = 1, bool monsterBoss = false)
         {
             Assets = DnfAssets.Open(_fx.Root);
             var tiles = new List<TileFile>();
@@ -60,8 +61,8 @@ public class RoomCombatTests
             var actors = new List<MonsterActor>();
             for (int i = 0; i < monsters.Count; i++)
             {
-                var spawn = new RoomMonsterSpawn(1, 0, 0, monsters[i].X, monsters[i].Y, 0, 1, 0, "[fixed]", "[normal]");
-                actors.Add(new MonsterActor(i, spawn, model, 1, hp, monsterSpeed, 1500, 0, monsterRecovery) { Defense = defense });
+                var spawn = new RoomMonsterSpawn(1, 0, 0, monsters[i].X, monsters[i].Y, 0, 1, 0, "[fixed]", monsterBoss ? "[boss]" : "[normal]");
+                actors.Add(new MonsterActor(i, spawn, model, monsterLevel, hp, monsterSpeed, 1500, 0, monsterRecovery) { Defense = defense });
             }
             HeroSkills skills = null;
             if (withSkills)
@@ -70,7 +71,7 @@ public class RoomCombatTests
                 skills = HeroSkills.Create(data, data.GetCharacter(0), 0);
             }
             Session = new RoomCombatSession(Assets, room, actors, strikes ?? Plain(), seed, dash, jump, skills, weaponStun, weaponDelay, stunTable,
-                damageConstants: damageConstants, heroPanel: heroPanel);
+                vitals: vitals, damageConstants: damageConstants, heroPanel: heroPanel, progress: progress, expWeight: expWeight);
         }
 
         /// <summary>每 10 毫秒一步推进:前 <paramref name="steps"/> 步按 (dirX, dirY) 走,攻击键与跳跃键在 <paramref name="attackAt"/>、<paramref name="jumpAt"/> 那一步按下(从 0 数)。</summary>

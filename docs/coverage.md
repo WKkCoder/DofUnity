@@ -36,10 +36,10 @@
 | `.obj` | 6,867 | 90 | 52,939 | 1.6% | 89 / 100.0% | 89 / 100.0% | 9 / 54.0% |  | PassiveObjectDef / ObjectDef |  |
 | `.ptl` | 4,438 | 45 | 52,004 | 1.6% | 32 / 100.0% | 4 / 12.4% | 13 / 65.1% |  | ParticleDef(只读运动与寿命) |  |
 | `.skl` | 2,008 | 90 | 47,173 | 1.5% | 84 / 99.8% | 76 / 99.7% | 13 / 37.5% |  | SkillDef |  |
-| `.etc` | 546 | 1034 | 33,623 | 1.0% | 813 / 97.9% | 789 / 88.0% | 6 / 0.7% |  | DamageConstants / HitStun |  |
+| `.etc` | 546 | 1034 | 33,623 | 1.0% | 813 / 97.9% | 789 / 88.0% | 10 / 0.8% |  | DamageConstants / HitStun / SpTable / ExpRates |  |
 | `.key` | 5,864 | 35 | 23,819 | 0.7% | 35 / 100.0% | 1 / 67.6% | — |  |  |  |
 | `.aic` | 544 | 63 | 14,467 | 0.4% | 61 / 99.9% | 61 / 99.9% | — |  |  |  |
-| `.dgn` | 346 | 153 | 11,282 | 0.3% | 153 / 100.0% | 153 / 100.0% | 11 / 34.4% |  | DungeonMaze / DungeonLayout |  |
+| `.dgn` | 346 | 153 | 11,282 | 0.3% | 153 / 100.0% | 153 / 100.0% | 12 / 36.4% |  | DungeonMaze / DungeonLayout |  |
 | `.til` | 3,561 | 4 | 9,571 | 0.3% | 4 / 100.0% | 4 / 100.0% | 3 / 83.5% |  | RoomMap |  |
 | `.als` | 1,179 | 7 | 9,370 | 0.3% | 7 / 100.0% | 0 / 0.0% | — |  |  |  |
 | `.co` | 34 | 39 | 7,859 | 0.2% | 39 / 100.0% | 19 / 61.3% | — |  |  |  |
@@ -48,7 +48,7 @@
 | `.rep` | 484 | 12 | 5,808 | 0.2% | 12 / 100.0% | 5 / 41.7% | — |  |  |  |
 | `.cre` | 136 | 101 | 5,338 | 0.2% | 101 / 100.0% | 101 / 100.0% | 17 / 0.3% |  | DamageConstants |  |
 | `.wrd` | 117 | 38 | 3,913 | 0.1% | 9 / 23.2% | 7 / 17.2% | — |  |  |  |
-| `.chr` | 11 | 71 | 2,771 | 0.1% | 71 / 100.0% | 71 / 100.0% | 33 / 64.1% |  | CharacterDef / TownHero / Avatar / HeroPanel |  |
+| `.chr` | 11 | 71 | 2,771 | 0.1% | 71 / 100.0% | 71 / 100.0% | 37 / 73.3% |  | CharacterDef / TownHero / Avatar / HeroPanel / CharacterGrowth(成长块) |  |
 | `.wdm` | 26 | 9 | 256 | 0.0% | 9 / 100.0% | 9 / 100.0% | 3 / 30.5% |  | WorldMapDef |  |
 | `.twn` | 17 | 8 | 168 | 0.0% | 8 / 100.0% | 8 / 100.0% | 4 / 76.2% |  | TownDef |  |
 | 其余 34 类 | 908 | — | 10,956 | 0.3% | 95.3% | 71.3% | — |  | (没有加载器) |  |
@@ -64,14 +64,14 @@
 | `.atk` | 21 | `[no element]` 4,147; `[hit horizontal]` 148 (都不认识); `[no elemental]` 71 (都不认识); `[noblood]` 32 (都不认识); `[none element]` 31 (都不认识); `[hit]` 15; `[knock]` 13 (都不认识) |
 | `.mob` | 140 | `[die effect]` 1,637; `[hero]` 1,440; `[cooltime]` 1,391; `[easy]` 1,383; `[medium]` 1,374; `[hard]` 1,374; `[ultimate]` 1,374 |
 | `.skl` | 77 | `[name]` 1,952; `[basic explain]` 1,952; `[growtype maximum level]` 1,951; `[explain]` 1,950; `[skill class]` 1,949; `[skill fitness growtype]` 1,940; `[name2]` 1,738 |
-| `.chr` | 38 | `[inventory limit]` 181; `[module damage rate]` 174; `[awakening skill]` 106; `[skill]` 64; `[awakening name]` 53; `[awakening 1]` 53; `[awakening 2]` 53 |
+| `.chr` | 34 | `[module damage rate]` 174; `[awakening skill]` 106; `[skill]` 64; `[awakening name]` 53; `[awakening 1]` 53; `[growtype name]` 11; `[cast speed]` 11 |
 | `.map` | 80 | `[player number]` 2,948; `[pvp start area]` 2,948; `[map name]` 2,948; `[dungeon]` 2,724; `[background animation]` 2,557; `[monster specific AI]` 2,337; `[event monster position]` 2,040 |
 | `.obj` | 81 | `[floating height]` 5,194; `[piercing power]` 4,654; `[basic action]` 3,802; `[team]` 1,426; `[int data]` 1,356; `[string data]` 1,144; `[etc action]` 957 |
 | `.act` | 602 | `[TRIGGER]` 40,315 (仅客户端); `[DO BEHAVIOR]` 36,501 (仅客户端); `[ME]` 33,784 (仅客户端); `[BEHAVIOR]` 32,017 (仅客户端); `[FRAME]` 26,895 (仅客户端); `[POS]` 14,754 (仅客户端); `[INDEX]` 14,644 (仅客户端) |
 | `.ai` | 49 | `[return]` 25,693 (仅客户端); `[think]` 23,690 (仅客户端); `[true]` 21,731; `[false]` 21,473; `[void]` 15,231 (仅客户端); `[ai pattern]` 7,104; `[last result]` 2,550 (仅客户端) |
-| `.dgn` | 142 | `[map specification]` 1,585; `[maze info]` 461; `[name]` 347; `[explain]` 347; `[champion]` 342; `[entering title]` 335; `[background pos]` 326 |
+| `.dgn` | 141 | `[map specification]` 1,585; `[maze info]` 461; `[name]` 347; `[explain]` 347; `[champion]` 342; `[entering title]` 335; `[background pos]` 326 |
 | `.twn` | 4 | `[dungeon what must be cleared]` 17; `[limit level]` 16; `[only server parsing dungeon what must be cleared]` 4; `[need quest]` 3 |
-| `.etc` | 1,028 | `[list]` 6,031; `[level]` 4,601; `[if]` 1,138 (仅客户端); `[then]` 1,138; `[target]` 1,138; `[attack success]` 1,095; `[probability]` 736 |
+| `.etc` | 1,024 | `[list]` 6,031; `[level]` 4,601; `[if]` 1,138 (仅客户端); `[then]` 1,138; `[target]` 1,138; `[attack success]` 1,095; `[probability]` 736 |
 | `.cre` | 84 | `[skill recovery time]` 148; `[skill motion]` 148; `[additional animation]` 137; `[attack info]` 136; `[name]` 135; `[width]` 135; `[floating height]` 135 |
 | `.npc` | 46 | `[favor_dialog]` 1,584; `[favor]` 1,584; `[mood]` 572; `[dialog]` 416; `[field animation]` 198; `[name]` 197; `[field name]` 195 |
 
@@ -90,28 +90,28 @@
 
 ### 表 4　证据可追溯性
 
-台账 110 条(E-001 到 E-110),其中 107 条的"复现"栏里有可运行的命令或文件。代码、测试、文档与脚本里一共引用了 108 个不同的证据编号;**台账里找不到的引用:无**;台账里没人引用的编号:E-026、E-040。
+台账 111 条(E-001 到 E-111),其中 108 条的"复现"栏里有可运行的命令或文件。代码、测试、文档与脚本里一共引用了 109 个不同的证据编号;**台账里找不到的引用:无**;台账里没人引用的编号:E-026、E-040。
 
 | 包 | 生产代码文件 | 引用了证据的文件 | 占比 | 行数 | 引用证据的文件所含行数占比 |
 |---|---:|---:|---:|---:|---:|
-| `com.dnfunity.client` | 7 | 7 | 100% | 2,705 | 100% |
+| `com.dnfunity.client` | 7 | 7 | 100% | 2,734 | 100% |
 | `com.dnfunity.data` | 13 | 13 | 100% | 2,793 | 100% |
-| `com.dnfunity.game` | 67 | 67 | 100% | 14,046 | 100% |
-| `com.dnfunity.play` | 37 | 37 | 100% | 12,622 | 100% |
-| `com.dnfunity.render` | 30 | 30 | 100% | 9,097 | 100% |
+| `com.dnfunity.game` | 74 | 74 | 100% | 15,057 | 100% |
+| `com.dnfunity.play` | 39 | 39 | 100% | 13,122 | 100% |
+| `com.dnfunity.render` | 30 | 30 | 100% | 9,119 | 100% |
 | `com.dnfunity.script` | 5 | 5 | 100% | 657 | 100% |
 | `com.dnfunity.squirrel` | 4 | 4 | 100% | 1,450 | 100% |
-| **合计** | 163 | 163 | 100% | 43,370 | 100% |
+| **合计** | 172 | 172 | 100% | 44,932 | 100% |
 
 另有 11 个文件不实现原版规则(测试工具、Unity 自检与封装、小工具),不要求引用证据,不计入上表:`client/RenderSelfTest.cs`、`client/TouchOverlay.cs`、`client/UnityObjects.cs`、`data/Adler32.cs`、`data/DnfFormatException.cs`、`data/Latin1.cs`、`game/Defs/TagTable.cs`、`play/CombatScript.cs`、`play/DungeonBot.cs`、`play/TouchScript.cs`、`squirrel/MonoPInvokeCallbackAttribute.cs`。
 
 每个文件都引用了证据编号。
 
-### 表 5　对拍与全库读通(`tools/verify-all.sh`,2026-10-22T01:36:06Z)
+### 表 5　对拍与全库读通(`tools/verify-all.sh`,2026-10-22T03:12:32Z)
 
 | 检查 | 类型 | 证据 | 用例 | 不一致/失败 | 通过率 | 说明 |
 |---|---|---|---:|---:|---:|---|
-| 单元测试(合成数据) | 合成数据测试 | — | 1,422 | 0 | 100% | 6 个测试项目(合成数据,不含原版数值);跳过 0 |
+| 单元测试(合成数据) | 合成数据测试 | — | 1,494 | 0 | 100% | 6 个测试项目(合成数据,不含原版数值);跳过 0 |
 | PVF:全部文件逐个核对 CRC 与清单 | 全库读通 | E-008 | 334,998 | 0 | 100% | 目录树校验通过;明文 150 MB |
 | 标记流脚本:全库读通,标签目录与 Python 逐项一致 | 全库读通 | E-008 | 147,273 | 0 | 100% | 3408 种开标签、3232710 次出现;另有 187725 个文件不是标记流(.ani 等,单独检查) |
 | .ani 动画:全部读通,统计与 Python 逐项一致 | 全库读通 | E-008 | 187,365 | 0 | 100% | 1149532 帧、181149 个框 |
@@ -126,6 +126,7 @@
 | 逐技能扫描:原版 Squirrel 状态脚本直接跑(假人、技能等级 10、最多 12 秒) | 原版脚本直跑 | E-046 | 58 | 6 | 89.6552% | 原版状态脚本不改动地跑完 52/58 个技能状态,脚本错误 0 条;sq 接口登记 510/704 个名字,覆盖调用点 13329/13647;没跑完的是没进入状态或超时,不等于行为错误 |
 | 整条流程无人值守检查(真实数据,自动机从起点打到结算、再回城镇;外加主角被打死倒地、活着被打倒又起身) | 整条流程 | E-093、E-096、E-097、E-105 | 7 | 0 | 100% | 七项:选角→城镇→副本→结算→回城、城镇起(含加载画面与出口)、副本选择起、副本起、旧版单图城镇、首领房间里主角被打死后倒地躺平、真实房间里主角活着被打倒又起身;退出码 0 = 切换次数、首领清空、音乐序列、读文件失败数全部符合预期;后两项另查输出里的倒地与起身 |
 | 声音数据与触发(audio.xml、文件可读、脚本引用的标签都能展开、自动机打一座副本) | 整条流程 | E-089、E-090 | 1 | 0 | 100% | 没有录音可对照:检查的是数据对得上、触发有发出 |
+| 经验与升级(升级经验表、技能点表、三张倍率表读通;成长块与各级属性不减;一级的 FromStats 等于 FromChr;1 到 85 级升级循环与满级封顶;击杀经验;全库 .dgn 的经验权重) | 全库读通 | E-111 | 8 | 0 | 100% | 只含个数;原版数值只在本机 out/verify-all/exp.txt 里,不入库;基础经验表缺 monster_reward_ref 导出时用占位表(输出里有标注) |
 | 怪物数值 vs 原版机器码(服务端 ELF 在 Unicorn 里跑原函数,逐槽比较) | 对拍:原版二进制 | E-063 | 28,050 | 0 | 100% | 全库用例加 2 万个随机压力用例;原版函数只在模拟器里跑,不启动服务、不联网 |
 
 <!-- coverage:end -->

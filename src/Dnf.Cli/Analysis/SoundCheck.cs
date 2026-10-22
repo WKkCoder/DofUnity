@@ -520,7 +520,8 @@ internal static class SoundCheck
         Console.WriteLine();
         Console.WriteLine("== 自动机打 " + opts.Dungeon + ",收集声音提示 ==");
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
-        DungeonSession session = DungeonSession.Create(assets, opts.Dungeon, opts.Seed, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage);
+        DungeonSession session = DungeonSession.Create(assets, opts.Dungeon, opts.Seed, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage,
+            progress: ExpCheck.ProgressFor(assets, opts));
         var bot = new DungeonBot(opts.Explore);
         double seconds = opts.SecondsGiven ? opts.Seconds : 900;
         double frameMs = CombatScript.StepMs;

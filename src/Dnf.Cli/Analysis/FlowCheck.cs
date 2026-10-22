@@ -62,9 +62,11 @@ internal static class FlowCheck
             ? new LegacyTownWorld(() => DemoHero.CreateSession(assets, TownMap, DemoHero.SeriaRoom))
             : new AtlasTownWorld(assets, TownAtlas.Open(assets), opts.TownId >= 0 ? opts.TownId : DefaultTown);
         CharacterSelectScene characterScene = CharacterSelectScene.From(assets);
+        // 主角的等级进度跟着整个流程(几局副本之间等级与经验留着;E-111)
+        HeroProgress? progress = ExpCheck.ProgressFor(assets, opts);
         var flow = new GameFlow(
             townWorld,
-            (path, run) => DungeonSession.Create(assets, path, opts.Seed + run, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage),
+            (path, run) => DungeonSession.Create(assets, path, opts.Seed + run, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage, progress: progress),
             entries,
             realSelect ? world!.Scene : null,
             opts.LegacyTown ? null : path => SplashCatalog.ForDungeon(assets, path),

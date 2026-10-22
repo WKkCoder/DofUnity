@@ -308,15 +308,20 @@ namespace Dnf.Play
         /// 否则取候选里最前面的(基线上就是这样,证据 E-070)。<paramref name="seed"/> 同时是各房间战斗的随机种子。
         /// </summary>
         public static DungeonSession Create(DnfAssets assets, string dungeonPath, int seed = 1, bool randomLayout = false,
-            string weaponEqu = DemoHero.StarterWeapon, int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true)
+            string weaponEqu = DemoHero.StarterWeapon, int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true, HeroProgress progress = null)
         {
             DungeonMaze maze = DungeonMaze.Read(assets, dungeonPath)
                 ?? throw new DnfFormatException("副本定义里没有可用的迷宫: " + dungeonPath);
             DungeonRoomPool pool = DungeonRoomPool.Read(assets, DungeonRoomPool.FolderFor(dungeonPath));
             DungeonLayout layout = DungeonLayout.Create(maze, pool, randomLayout ? new Random(seed) : null);
             AvatarOutfit outfit = DemoRoom.DefaultOutfit(assets, weaponEqu);
-            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals), heroObjectId, assets);
+            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals, progress, maze.ExpWeight), heroObjectId, assets);
         }
+
+        /// <summary>
+        /// 主角的等级与经验(证据 E-111);所有房间共用同一个对象,创建时没给就是 null(杀怪不给经验)。
+        /// </summary>
+        public HeroProgress Progress => Current.Progress;
 
         /// <summary>
         /// 用真实素材造房间:读这一格选中的房间地图,按迷宫给的出口种类摆出口,主角放在出生点
@@ -324,7 +329,7 @@ namespace Dnf.Play
         /// 换房间时再按出口重新摆),怪物按地图 [monster] 摆。
         /// </summary>
         public static DungeonRoomFactory CreateAssetFactory(DnfAssets assets, DungeonLayout layout, AvatarOutfit outfit, int seed,
-            int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true)
+            int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true, HeroProgress progress = null, float expWeight = 1f)
         {
             return (cx, cy) =>
             {
@@ -349,7 +354,7 @@ namespace Dnf.Play
                 {
                     RoomArrival.PlaceAtStart(room, cand.MapId, heroObjectId);
                 }
-                return RoomCombatSession.Create(assets, room, seed + cy * layout.Maze.Cols + cx, heroVitals);
+                return RoomCombatSession.Create(assets, room, seed + cy * layout.Maze.Cols + cx, heroVitals, progress, expWeight);
             };
         }
 
@@ -534,6 +539,7 @@ namespace Dnf.Play
             Maze.TryNeighbor(CellX, CellY, side, out int nx, out int ny);
             Enter(nx, ny, true, ExitBits.Opposite(side), hero.FacingLeft);
             Current.Skills.CopyCooldownsFrom(carried);   // 技能冷却不因换房间清零
+            Current.SyncProgress();                      // 别的房间里升了级:先换上新等级的上限,再抄生命魔法(证据 E-111)
             if (carriedVitals != null && Current.Vitals != null && !ReferenceEquals(carriedVitals, Current.Vitals))
             {
                 Current.Vitals.CopyStateFrom(carriedVitals);   // 生命与魔法也跟着人走

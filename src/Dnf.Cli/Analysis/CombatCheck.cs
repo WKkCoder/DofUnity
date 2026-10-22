@@ -31,7 +31,8 @@ internal static class CombatCheck
         }
 
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
-        RoomCombatSession session = DemoCombat.CreateSession(assets, opts.MapPath, opts.HeroWeapon ?? DemoHero.StarterWeapon, 1, !opts.NoDamage);
+        RoomCombatSession session = DemoCombat.CreateSession(assets, opts.MapPath, opts.HeroWeapon ?? DemoHero.StarterWeapon, 1, !opts.NoDamage,
+            ExpCheck.ProgressFor(assets, opts));
         if (opts.Start != null)
         {
             string[] p = opts.Start.Split(',');
@@ -50,7 +51,8 @@ internal static class CombatCheck
             + ",受击硬直 " + (session.StunTable != null ? "按客户端公式" : "占位值") + "(E-080),倒地 按客户端的开始处理与三阶段(E-083)"
             + (session.HeroDown.Available ? ",主角倒地与起身 按同一套三阶段 + 受击决策 + 提前起身(E-105)" : ",主角没有倒地动作(只有受击硬直)")
             + (session.MonsterWindow != null ? ",目标血条 原版样式窗口(E-106)" : ",目标血条 占位条(缺窗口图帧)")
-            + (session.UsesFormulaDamage ? ",主角打怪物 按原版公式(E-110,只对一级新角色成立)" : ",主角打怪物 占位伤害")
+            + (session.UsesFormulaDamage ? ",主角打怪物 按原版公式(E-110)" : ",主角打怪物 占位伤害")
+            + (session.Progress != null ? ",主角 " + session.Progress.Level + " 级、杀怪给经验升级(E-111)" : ",杀怪不给经验")
             + (session.Vitals != null
                 ? ",怪物还手(E-086):主角生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax + ",伤害 " + (session.HasDamageConstants ? "按原版公式(输入是推断)" : "占位")
                 : ",怪物不还手(--no-damage)"));
@@ -66,6 +68,8 @@ internal static class CombatCheck
         int lastHeroHits = 0;
         int lastThrown = 0;
         int lastCombo = 0;
+        int lastKills = 0;
+        int lastLevelUps = 0;
         double t = 0;
         string lastState = string.Empty;
         while (script.TimeMs < totalMs)
@@ -105,6 +109,18 @@ internal static class CombatCheck
                 Console.WriteLine("  t=" + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s  连击清零(上一次累计 " + lastCombo + ",窗口 " + session.ComboState.WindowMs + " 毫秒)");
             }
             lastCombo = session.Combo;
+            if (session.Kills != lastKills)
+            {
+                // 击杀经验(E-111):这一杀给了多少、等级与本级进度、升没升级;数值来自本机的数据,只打印、不入库
+                HeroProgress? progress = session.Progress;
+                Console.WriteLine("  t=" + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s  击杀 累计 " + session.Kills
+                    + (progress != null
+                        ? ",得经验 " + session.LastKillExp + ",等级 " + progress.Level + " 本级进度 " + progress.ExpInLevel + "/" + progress.LevelSpan
+                            + (session.LevelUps > lastLevelUps ? "  升级!生命上限 " + session.Vitals?.HpMax : string.Empty)
+                        : string.Empty));
+                lastKills = session.Kills;
+                lastLevelUps = session.LevelUps;
+            }
             if (session.ProjectilesThrown != lastThrown)
             {
                 // 投射物(E-103):谁扔的、扔出了几个、飞行中的位置与朝向(这些数来自原版数据与我们的推断,只打印、不入库)
@@ -168,6 +184,10 @@ internal static class CombatCheck
             Console.WriteLine("  目标血条:" + (window.Visible
                 ? "显示中,目标 怪物 " + window.Target!.Index + ",条长 " + window.Gauge + " 像素,填充 " + window.Value + ",掉血残影 " + window.HistoryCount + " 段" + (window.Dead ? ",已死(叉号闪烁)" : string.Empty)
                 : "已隐藏"));
+        }
+        if (session.Progress != null)
+        {
+            Console.WriteLine(ExpCheck.Summary(session.Progress, opts.HeroLevel));
         }
         foreach (MonsterActor m in session.Monsters)
         {

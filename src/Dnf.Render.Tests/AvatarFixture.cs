@@ -66,6 +66,9 @@ internal sealed class AvatarFixture : IDisposable
     /// 第二层每帧带图形特效 2(加法混合)。图用皮肤 IMG 的第 0、1 帧,帧偏移 (-5, -8)。
     /// </summary>
     public const string HardAttackEffect1 = "character/test/effect/animation/hardattack1.ani";
+
+    /// <summary>升级光效的动画路径(与产品代码里 RoomCombatSession.LevelUpEffectPath 同一个字符串,证据 E-111);内容是一段合成的不循环动画。</summary>
+    public const string LevelUpEffect = "Common/CommonEffect/Animation/LevelUp.ani";
     public const string HardAttackEffect2 = "character/test/effect/animation/hardattack2.ani";
     public const int EffectDurationMs = 350;
 
@@ -415,6 +418,7 @@ internal sealed class AvatarFixture : IDisposable
             ("character/test/animation/guard.ani", BuildBoxAni((0, 100, null))),
             (HardAttackEffect1, BuildEffectAni(false)),
             (HardAttackEffect2, BuildEffectAni(true)),
+            (LevelUpEffect, BuildEffectAni(false)),
             // 通关营地:营火动作脚本(相对路径故意混着大小写)与两层动画、NPC 目录与三个 NPC、带 [NPC] 的地图
             (CampfireAct, NewScript()
                 .Tag("[MOTION]")

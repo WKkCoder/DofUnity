@@ -141,5 +141,42 @@ namespace DnfUnity.Tests
             attacker.MagicalBonusBase = 10;
             Assert.AreEqual(56, HitDamage.Roll(magic.WithSkillDamage(160, 40), attacker, defender, false, k, 1u, out critical));
         }
+
+        /// <summary>
+        /// 击杀经验与升级(证据 E-111)在 Mono 里的核对:与 src/Dnf.Game.Tests/ProgressTests.cs 同一组合成数字,期望值是手算的整数。
+        /// x87 的 80 位中间结果与 64 位截断在两个运行时里必须一致(落成单精度会得到不同的整数)。
+        /// </summary>
+        [Test]
+        public void KillExpAndLeveling_GiveTheHandComputedValues()
+        {
+            ExpRates neutral = ExpRates.Neutral;
+            Assert.AreEqual(50u, KillExp.MonsterTotalExp(100, 0, 0, 1f, 1f, false, neutral));
+            Assert.AreEqual(1u, KillExp.MonsterTotalExp(3, 0, 0, 1f, 1f, false, neutral));              // 1.5 → 1
+            Assert.AreEqual(6u, KillExp.MonsterTotalExp(20, 0, 0, 1f, 0.7f, false, neutral));           // 10 × 0.7f 留在 80 位里是 6.99999988 → 6(落成单精度会得 7)
+            Assert.AreEqual(60u, KillExp.MonsterTotalExp(100, 0, 0, 1.2f, 1f, false, neutral));         // 50 × 1.2f = 60.0000024 → 60
+            Assert.AreEqual(112u, KillExp.MemberExp(100, 1.12f, 1));                                   // 112.0000005 → 112
+            Assert.AreEqual(5u, KillExp.MemberExp(100, 0.05f, 1));                                     // 5.00000007 → 5
+            Assert.AreEqual(25u, KillExp.MemberExp(101, 0.5f, 2));                                     // 25.25 → 25
+            // 等级差倍率与客户端的单精度立即数逐位一致
+            Assert.AreEqual(0x3f8f5c29, BitConverter.SingleToInt32Bits(KillExp.LevelGapRate(10, 12)));
+            Assert.AreEqual(0x3d4ccccd, BitConverter.SingleToInt32Bits(KillExp.LevelGapRate(20, 10)));
+
+            // 合成经验表:升到 L 级的累计经验 = 100 × (L - 1) × L / 2;合成技能点表:升到 L 级给 L 点
+            var thresholds = new List<int>();
+            for (int level = 2; level <= 91; level++)
+            {
+                thresholds.Add(100 * (level - 1) * level / 2);
+            }
+            var skillPoints = new List<int>();
+            for (int level = 0; level <= 95; level++)
+            {
+                skillPoints.Add(level);
+            }
+            ExpGainResult r = Leveling.Gain(new ExpTable(thresholds), new SpTable(skillPoints), 1, 0, 1000);   // 正好到 5 级的门槛
+            Assert.AreEqual(5, r.Level);
+            Assert.AreEqual(1000, r.Exp);
+            Assert.AreEqual(4, r.LevelsGained);
+            Assert.AreEqual(2 + 3 + 4 + 5, r.SkillPoints);
+        }
     }
 }

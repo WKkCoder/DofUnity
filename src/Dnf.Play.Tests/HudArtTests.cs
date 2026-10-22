@@ -35,9 +35,15 @@ public class HudArtTests
         return new SpriteFrame(width, height, offsetX, offsetY, width, height, rgba);
     }
 
-    private static FakeSprites Hud(bool bar = true, bool hp = true, bool mp = true, bool strip = true, bool extras = true)
+    private static FakeSprites Hud(bool bar = true, bool hp = true, bool mp = true, bool strip = true, bool extras = true, bool exp = true)
     {
         var f = new FakeSprites();
+        if (exp)
+        {
+            // 经验条(625×4,自带偏移 0)与满级覆盖层(同尺寸),标记色 5 与 6
+            f.Frames[(HudArt.HudImage, HudArt.ExpBarFrame)] = Coded(625, 4, 5);
+            f.Frames[(HudArt.HudImage, HudArt.ExpCapFrame)] = Coded(625, 4, 6);
+        }
         if (bar)
         {
             f.Frames[(HudArt.HudImage, HudArt.BarFrame)] = Coded(800, 91, 1, 0, 1);
@@ -78,11 +84,12 @@ public class HudArtTests
         return sprites.Where(s => s.AnimationPath == tag).ElementAt(nth);
     }
 
-    private static List<SceneSprite> Build(HudArt hud, int level = 1, int hp = 100, int hpMax = 100, int mp = 50, int mpMax = 50, IReadOnlyList<HudSkillState> skills = null)
+    private static List<SceneSprite> Build(HudArt hud, int level = 1, int hp = 100, int hpMax = 100, int mp = 50, int mpMax = 50, IReadOnlyList<HudSkillState> skills = null,
+        HudExp? exp = null)
     {
         var list = new List<SceneSprite>();
         int order = 0;
-        hud.Build(list, ref order, level, hp, hpMax, mp, mpMax, skills);
+        hud.Build(list, ref order, level, hp, hpMax, mp, mpMax, skills, exp);
         return list;
     }
 
@@ -188,6 +195,82 @@ public class HudArtTests
         Assert.Equal((13, 524 + 55), (one.ScreenX, one.ScreenY));
         Assert.Equal(1, one.Frame.Height);
         Assert.Equal(55, one.Frame.Rgba[0]);                             // 取的是最下面一行
+    }
+
+    // ------------------------------------------------------------------ 经验条(证据 E-111)
+
+    [Fact]
+    public void TheExpBarShowsTheFirstColumnsOfFrameFourAtTheMeasuredPositionAndIsAbsentWhenNotGiven()
+    {
+        HudArt hud = HudArt.TryCreate(Hud())!;
+        Assert.DoesNotContain(Build(hud), s => s.AnimationPath == "hud-exp" || s.AnimationPath == "hud-exp-cap");   // 没给经验:不画
+
+        // 一半:625 × 0.5 = 312.5 截断成 312 列;摆在 (88, 591),原图的第 0 到 311 列
+        SceneSprite half = Only(Build(hud, exp: new HudExp(500, 1000, false)), "hud-exp");
+        Assert.Equal((88, 591), (half.ScreenX, half.ScreenY));
+        Assert.Equal((312, 4), (half.Frame.Width, half.Frame.Height));
+        Assert.Equal(5, half.Frame.Rgba[2]);                             // 标记色:经验条这一帧
+        Assert.Equal(0, half.Frame.Rgba[1]);                             // 第一列是原图第 0 列
+        Assert.Equal(311 % 256, half.Frame.Rgba[(311) * 4 + 1]);         // 最后一列是原图第 311 列
+        Assert.Equal(3, half.Frame.Rgba[(3 * 312) * 4]);                 // 最后一行是原图第 3 行
+    }
+
+    [Fact]
+    public void AFullExpBarUsesTheWholeFrameAndAnEmptyOneDrawsNothing()
+    {
+        HudArt hud = HudArt.TryCreate(Hud())!;
+        SceneSprite full = Only(Build(hud, exp: new HudExp(1000, 1000, false)), "hud-exp");
+        Assert.Equal((88, 591), (full.ScreenX, full.ScreenY));
+        Assert.Equal(625, full.Frame.Width);
+        Assert.Equal(625, Only(Build(hud, exp: new HudExp(5000, 1000, false)), "hud-exp").Frame.Width);   // 超过分母也是满条
+        Assert.DoesNotContain(Build(hud, exp: new HudExp(0, 1000, false)), s => s.AnimationPath == "hud-exp");
+        Assert.DoesNotContain(Build(hud, exp: new HudExp(1, 1000, false)), s => s.AnimationPath == "hud-exp");   // 0.625 列截断成 0:什么也不露
+    }
+
+    [Fact]
+    public void TheExpBarDrawsAfterTheOrbsAndBeforeTheLevelPlateInTheUiLayerWithRisingSortKeys()
+    {
+        HudArt hud = HudArt.TryCreate(Hud())!;
+        List<SceneSprite> sprites = Build(hud, level: 12, exp: new HudExp(500, 1000, false));
+        SceneSprite exp = Only(sprites, "hud-exp");
+        Assert.True(sprites.IndexOf(Only(sprites, "hud-mp")) < sprites.IndexOf(exp));
+        Assert.True(sprites.IndexOf(exp) < sprites.IndexOf(Only(sprites, "hud-level", 0)));
+        Assert.All(sprites, s => Assert.Equal(OverlayArt.UiRank, s.LayerRank));
+        for (int i = 1; i < sprites.Count; i++)
+        {
+            Assert.True(sprites[i].SortKey > sprites[i - 1].SortKey);
+        }
+    }
+
+    [Fact]
+    public void TheMaxLevelOverlayIsDrawnOnTopOfTheBarEvenWhenTheBarIsEmpty()
+    {
+        HudArt hud = HudArt.TryCreate(Hud())!;
+        List<SceneSprite> capped = Build(hud, exp: new HudExp(500, 1000, true));
+        SceneSprite bar = Only(capped, "hud-exp");
+        SceneSprite cap = Only(capped, "hud-exp-cap");
+        Assert.Equal((88, 591), (cap.ScreenX, cap.ScreenY));
+        Assert.Equal((625, 4, 6), (cap.Frame.Width, cap.Frame.Height, (int)cap.Frame.Rgba[2]));   // 整张覆盖层,标记色 6
+        Assert.True(cap.SortKey > bar.SortKey);                          // 盖在条上面
+        List<SceneSprite> empty = Build(hud, exp: new HudExp(0, 1000, true));
+        Assert.DoesNotContain(empty, s => s.AnimationPath == "hud-exp");
+        Assert.Contains(empty, s => s.AnimationPath == "hud-exp-cap");   // 覆盖层与条的宽度无关
+    }
+
+    [Fact]
+    public void TheSameExpWidthSharesOneCroppedFrameAndMissingExpFramesAreSkipped()
+    {
+        HudArt hud = HudArt.TryCreate(Hud())!;
+        SpriteFrame first = Only(Build(hud, exp: new HudExp(500, 1000, false)), "hud-exp").Frame;
+        SpriteFrame again = Only(Build(hud, exp: new HudExp(501, 1000, false)), "hud-exp").Frame;   // 625 × 0.501 = 313.1 → 313,不同宽度
+        SpriteFrame same = Only(Build(hud, exp: new HudExp(500, 1000, false)), "hud-exp").Frame;
+        Assert.Same(first, same);                                        // 同样的宽度拿到同一个帧对象(GPU 端按帧对象缓存贴图)
+        Assert.NotSame(first, again);
+
+        HudArt bare = HudArt.TryCreate(Hud(exp: false))!;
+        List<SceneSprite> sprites = Build(bare, exp: new HudExp(500, 1000, true));
+        Assert.DoesNotContain(sprites, s => s.AnimationPath == "hud-exp" || s.AnimationPath == "hud-exp-cap");
+        Assert.Contains(sprites, s => s.AnimationPath == "hud-bar");     // 缺经验条的图不影响其余部分
     }
 
     // ------------------------------------------------------------------ 等级牌

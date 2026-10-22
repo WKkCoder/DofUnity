@@ -106,6 +106,9 @@ namespace Dnf.Client
         private string _heroSpec;
         private bool? _monsters;
         private bool _noDamage;
+        private bool _noExp;
+        private int _heroLevel = 1;
+        private HeroProgress _progress;
         private double _playAtSeconds = -1.0;
         private double _afterClearSeconds;
         private SettlementChoice _loggedChoice;
@@ -218,6 +221,13 @@ namespace Dnf.Client
                         break;
                     case "-dnfnodamage":
                         _noDamage = true;
+                        break;
+                    case "-dnfnoexp":
+                        _noExp = true;
+                        break;
+                    case "-dnflevel":
+                        if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                                System.Globalization.CultureInfo.InvariantCulture, out int heroLevel) && heroLevel >= 1 && heroLevel <= 85) { _heroLevel = heroLevel; i++; }
                         break;
                     case "-dnfplayat":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
@@ -458,7 +468,7 @@ namespace Dnf.Client
                 bool simulate = shot && _playAtSeconds >= 0.0;
                 // 实时运行默认带怪物;离屏渲染一帧默认不带(与 CPU 合成的参照一致),要么带 -dnfmonsters,要么用 -dnfplayat 模拟一段战斗
                 bool combat = _monsters ?? (!shot || simulate);
-                RoomCombatSession fight = combat ? DemoCombat.CreateSession(_assets, mapPath, DemoHero.StarterWeapon, 1, !_noDamage) : null;
+                RoomCombatSession fight = combat ? DemoCombat.CreateSession(_assets, mapPath, DemoHero.StarterWeapon, 1, !_noDamage, HeroProgressForRun()) : null;
                 RoomSession room = fight != null ? fight.Room : DemoRoom.CreateSession(_assets, mapPath);
                 room.HeroVisible = !_noHero && (_heroSpec != null || simulate || !shot);
                 if (_heroSpec != null)
@@ -506,7 +516,7 @@ namespace Dnf.Client
         private DungeonSession CreateDungeon(string path, int seed)
         {
             bool shot = !string.IsNullOrEmpty(_shotPath);
-            DungeonSession dungeon = DungeonSession.Create(_assets, path, seed, _randomLayout, heroVitals: !_noDamage);
+            DungeonSession dungeon = DungeonSession.Create(_assets, path, seed, _randomLayout, heroVitals: !_noDamage, progress: HeroProgressForRun());
             _heroInput = true;
             if (_useBot && !_flowMode)
             {
@@ -525,6 +535,23 @@ namespace Dnf.Client
                 }
             }
             return dungeon;
+        }
+
+        /// <summary>
+        /// 主角的等级进度(证据 E-111):整次运行只造一个(流程里几局副本之间等级与经验留着);带 -dnfnoexp 或 -dnfnodamage(主角没有生命值与底栏)时没有,
+        /// 与命令行 ExpCheck.ProgressFor 同一套条件,所以离屏渲染的画面与命令行逐字节对得上。-dnflevel 指定起始等级。
+        /// </summary>
+        private HeroProgress HeroProgressForRun()
+        {
+            if (_noExp || _noDamage)
+            {
+                return null;
+            }
+            if (_progress == null)
+            {
+                _progress = HeroProgress.CreateForLocalHero(_assets, _heroLevel);
+            }
+            return _progress;
         }
 
         /// <summary>x,y,left|right,rest|move,毫秒[,镜头x]:不带镜头 x 时镜头取"主角居中再夹住"。</summary>
@@ -591,6 +618,7 @@ namespace Dnf.Client
                     ? " monsters=" + fight.AliveCount + "/" + fight.Monsters.Count + " hits=" + fight.Hits + " kills=" + fight.Kills + " combo=" + fight.Combo
                         + " casts=" + fight.SkillCasts + " stage=" + (h.IsAttacking ? h.AttackStage + 1 : 0)
                         + (fight.Vitals != null ? " heroHits=" + fight.HeroHits + " heroHp=" + fight.Vitals.Hp + "/" + fight.Vitals.HpMax + " heroMp=" + fight.Vitals.Mp + "/" + fight.Vitals.MpMax : string.Empty)
+                        + (fight.Progress != null ? " heroLevel=" + fight.Progress.Level + " heroExp=" + fight.Progress.Exp + " levelUps=" + fight.Progress.LevelUps : string.Empty)
                     : string.Empty)
                 + (_session is DungeonSession d
                     ? " dungeon=" + _dungeonPath + " cell=(" + d.CellX + "," + d.CellY + ") map=" + d.MapPath + " entered=" + d.RoomsEntered + " cleared=" + d.RoomsCleared
@@ -598,6 +626,7 @@ namespace Dnf.Client
                         + " settlement=" + d.SettlementActive + " camp=" + (d.Camp != null ? d.Camp.FireLayers + "/" + d.Camp.NpcCount : "none") + " choice=" + d.Choice
                         + " monsters=" + d.Current.AliveCount + "/" + d.Current.Monsters.Count + " hits=" + d.Hits + " kills=" + d.Kills + " damage=" + d.TotalDamage
                         + (d.Vitals != null ? " heroHits=" + d.HeroHits + " heroHp=" + d.Vitals.Hp + "/" + d.Vitals.HpMax + " heroMp=" + d.Vitals.Mp + "/" + d.Vitals.MpMax : string.Empty)
+                        + (d.Progress != null ? " heroLevel=" + d.Progress.Level + " heroExp=" + d.Progress.Exp + " levelUps=" + d.Progress.LevelUps : string.Empty)
                     : string.Empty);
         }
 

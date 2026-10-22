@@ -7,11 +7,14 @@
 #       tools/play-dungeon.sh bot        自动机直奔首领
 #       tools/play-dungeon.sh nodamage   (可以和上面的模式连着写,例如 explore nodamage)怪物打不到你、没有血条:想只看打怪的时候用
 #       tools/play-dungeon.sh nosound    (同样可以连着写)不要声音。默认是有声音的(E-089、E-090):挥剑与命中、角色语音、地图音乐与环境声,数据取自你自备的 audio.xml、SoundPacks、Music
+#       tools/play-dungeon.sh level=30   (同样可以连着写)主角从 30 级开始(1 到 85,默认 1 级);打怪得经验、攒够升级(E-111),底栏有经验条;
+#                                       怪物的基础经验表不在客户端数据里:没有 monster_reward_ref.csv(数据目录里,每行 等级,经验)时用占位表,不是原版数值
+#       tools/play-dungeon.sh noexp      (同样可以连着写)打怪不给经验(没有经验条)
 #       tools/play-dungeon.sh flow       整条流程(E-093、E-096):从选角界面出发(方向键选、回车或空格开始游戏、Esc 或点"结束游戏"退出,也可以点格子与按钮),登录加载后进城镇,
 #                                       走进地下城入口区域的世界地图出口打开副本选择(上下选、回车或空格确认、Esc 返回城镇),进副本,首领清空后在结算菜单里
 #                                       选再次挑战(1)/选择其它地下城(2)/返回城镇(3),也可以点菜单行,循环往复(可以连着写 bot、explore、nodamage、nosound;bot 会按 retry,select,town 自动走一遍)
 #       tools/play-dungeon.sh flowtown   同 flow,但跳过选角界面,直接从城镇出发(M9d 之前的起点)
-# 伤害是占位值,命中停顿按客户端代码做了(E-077);怪物会还手(E-086,左下角有生命条与魔法条,主角死了只有 DEAD 字样,没有复活),
+# 伤害按客户端的公式算(E-110;没有面板数据时用占位值),命中停顿按客户端代码做了(E-077);怪物会还手(E-086,左下角有生命条与魔法条,主角死了只有 DEAD 字样,没有复活),
 # 放技能耗蓝(E-087)、有原版底栏(E-088)、首领清空后有结算场景与菜单(E-091;非 flow 模式下选了菜单只记日志)。数据目录取 DNF_DIR(local.env 或环境变量)。
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -31,9 +34,11 @@ for arg in "$@"; do
     explore) extra+=(-dnfexplore) ;;
     nodamage) extra+=(-dnfnodamage) ;;
     nosound) extra+=(-dnfnosound) ;;
+    noexp) extra+=(-dnfnoexp) ;;
+    level=*) extra+=(-dnflevel "${arg#level=}") ;;
     flow) extra+=(-dnfflow -dnfflowfrom char) ;;
     flowtown) extra+=(-dnfflow -dnfflowfrom town) ;;
-    *) echo "用法: $0 [flow|flowtown] [bot|explore] [nodamage] [nosound]" >&2; exit 2 ;;
+    *) echo "用法: $0 [flow|flowtown] [bot|explore] [nodamage] [nosound] [noexp] [level=N]" >&2; exit 2 ;;
   esac
 done
 

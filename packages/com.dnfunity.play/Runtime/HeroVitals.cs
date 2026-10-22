@@ -5,22 +5,22 @@ using Dnf.Game;
 namespace Dnf.Play
 {
     /// <summary>
-    /// 主角的生命、魔法与受击相关的属性。**占位**:数取自角色脚本 .chr 里 [initial value] 一节(第 1 级的初始值),
-    /// 成长类型([growtype])、等级与装备怎么叠加成最终面板(客户端的算法还没读,服务端没有这部分)都没有做,
-    /// 所以升级、换装备不会改变这里的数。证据 E-086。
+    /// 主角的生命、魔法与受击相关的属性。**占位**:<see cref="FromChr"/> 取角色脚本 .chr 里 [initial value] 一节(第 1 级的初始值);
+    /// 有等级进度时用 <see cref="FromStats"/>(初始值加上每升一级的增量,服务端 CalcStat 的算法,证据 E-111),升级时 <see cref="ApplyStats"/> 换上新等级的上限与属性
+    /// (当前生命与魔法不变——没有证据表明升级会回复)。装备与属性点对生命魔法的加成都没有做。证据 E-086。
     /// 魔法值(证据 E-087):放技能时扣 .skl 的 [consume MP](<see cref="TrySpendMp"/>),按 .chr 的 [MP regen speed] 回复(<see cref="RegenMp"/>);
     /// 回复速度的单位(每分钟)是从基线魔法球液面的粗测推断的,客户端的扣蓝与回蓝代码没有读到。
     /// </summary>
     public sealed class HeroVitals
     {
-        public int Level { get; }
-        public int HpMax { get; }
+        public int Level { get; private set; }
+        public int HpMax { get; private set; }
         public int Hp { get; private set; }
-        public int MpMax { get; }
+        public int MpMax { get; private set; }
         public int Mp { get; private set; }
 
         /// <summary>魔法值恢复速度:每分钟恢复多少点([MP regen speed],单位是推断的,见类注释);0 表示不恢复。</summary>
-        public double MpRegenPerMinute { get; }
+        public double MpRegenPerMinute { get; private set; }
 
         /// <summary>
         /// 魔法值恢复攒下的量,单位"点 × 60000":每步加 速度(点/分钟)× 毫秒,攒够 60000 就是 1 点。
@@ -31,13 +31,13 @@ namespace Dnf.Play
         private const double BankPerPoint = 60000.0;
 
         /// <summary>物理防御力([physical defense])。</summary>
-        public double PhysicalDefense { get; }
+        public double PhysicalDefense { get; private set; }
 
         /// <summary>魔法防御力([magical defense])。</summary>
-        public double MagicalDefense { get; }
+        public double MagicalDefense { get; private set; }
 
         /// <summary>受击恢复属性([hit recovery]),受击硬直公式里的 R(越大硬直越短,证据 E-080)。</summary>
-        public int HitRecovery { get; }
+        public int HitRecovery { get; private set; }
 
         public bool IsAlive => Hp > 0;
 
@@ -69,6 +69,43 @@ namespace Dnf.Play
             TagTable tags = chr.Tags;
             return new HeroVitals(level, Round(NumberOr(tags, "[HP MAX]", 1.0)), Round(NumberOr(tags, "[MP MAX]", 0.0)), NumberOr(tags, "[physical defense]", 0.0),
                 NumberOr(tags, "[magical defense]", 0.0), Round(NumberOr(tags, "[hit recovery]", 0.0)), NumberOr(tags, "[MP regen speed]", 0.0));
+        }
+
+        /// <summary>
+        /// 用某个等级的属性块(<see cref="CharacterGrowth.StatsAt"/>,十分之一单位的整数)造一份满血满蓝的状态(证据 E-111):
+        /// 生命与魔法上限、受击恢复四舍五入成整数,防御力与魔法恢复速度取"十分之一"换回来的数。
+        /// 等级 1 时与 <see cref="FromChr"/> 一致(初始值那一节的数)。
+        /// </summary>
+        public static HeroVitals FromStats(int level, StatBlock stats)
+        {
+            return new HeroVitals(level, FromTenths(stats.HpMax), FromTenths(stats.MpMax), stats.PhysicalDefense / 10.0, stats.MagicalDefense / 10.0,
+                FromTenths(stats.HitRecovery), stats.MpRegenSpeed / 10.0);
+        }
+
+        private static int FromTenths(long tenths)
+        {
+            return Round(tenths / 10.0);
+        }
+
+        /// <summary>
+        /// 升级后换上新等级的上限与属性(<paramref name="next"/> 是 <see cref="FromStats"/> 造出的新等级状态):当前生命与魔法保持不变(夹在新上限内)。
+        /// 升级时有没有回复生命魔法没有证据,这里按"不回复"做;魔法恢复攒下的零头也留着。
+        /// </summary>
+        public void ApplyStats(HeroVitals next)
+        {
+            if (next == null)
+            {
+                throw new ArgumentNullException(nameof(next));
+            }
+            Level = next.Level;
+            HpMax = next.HpMax;
+            MpMax = next.MpMax;
+            PhysicalDefense = next.PhysicalDefense;
+            MagicalDefense = next.MagicalDefense;
+            HitRecovery = next.HitRecovery;
+            MpRegenPerMinute = next.MpRegenPerMinute;
+            Hp = Math.Min(Hp, HpMax);
+            Mp = Math.Min(Mp, MpMax);
         }
 
         private static double NumberOr(TagTable tags, string tag, double fallback)

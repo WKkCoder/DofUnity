@@ -25,6 +25,12 @@ namespace Dnf.Render
         public PvfStringTable Strings { get; }
         public NpkLibrary Images { get; }
 
+        /// <summary>
+        /// 用户自备数据所在的目录(<see cref="Open"/> 打开的那个;用构造函数直接组装时为 null)。
+        /// 用来找放在数据旁边的、用户自己提供的可选文件(例如经验表之外的 monster_reward_ref.csv,证据 E-111)。
+        /// </summary>
+        public string DataDirectory { get; private set; }
+
         public DnfAssets(PvfArchive pvf, NpkLibrary images)
         {
             Pvf = pvf ?? throw new ArgumentNullException(nameof(pvf));
@@ -44,7 +50,7 @@ namespace Dnf.Render
             PvfArchive pvf = PvfArchive.Open(pvfPath);
             try
             {
-                return new DnfAssets(pvf, new NpkLibrary(packs));
+                return new DnfAssets(pvf, new NpkLibrary(packs)) { DataDirectory = dnfDirectory };
             }
             catch
             {

@@ -373,8 +373,10 @@ namespace Dnf.Play
     /// 攻击信息(<see cref="HeroStrikeInfo.Input"/>)、主角面板(<see cref="Panel"/>)、怪物的防御面板(<see cref="MonsterActor.Defense"/>)填进伤害结构,
     /// 交给 <see cref="HitDamage"/>:物理/魔法、防御减免、元素抗性、暴击(数字用暴击那套)、低等级怪物挨的第一击算额外命中;
     /// 没有面板或常量时仍用 <see cref="PlaceholderDamage"/>(<see cref="UsesFormulaDamage"/> 为假)。
-    /// 没做:主角的等级成长与属性点(面板只对一级的新角色成立)、装备的其余加成、技能的逐级成长、上挑自己的攻击信息与伤害数、
-    /// 复活与结算、技能音效与语音、掉落。出口开关与换房间在 <see cref="DungeonSession"/>。证据 E-069。
+    /// 经验与升级(证据 E-111):给了等级进度(<see cref="HeroProgress"/>)时,击杀按服务端的公式给经验(<see cref="KillExp"/>),升级换上新等级的生命魔法上限与攻击面板、
+    /// 放升级声音与光效,底栏多一条经验条;没给就是不涨级的老行为。
+    /// 没做:属性点与技能点的花费、装备的其余加成、技能的逐级成长、上挑自己的攻击信息与伤害数、
+    /// 复活与结算里的经验显示、技能音效与语音、掉落。出口开关与换房间在 <see cref="DungeonSession"/>。证据 E-069。
     /// </summary>
     public sealed class RoomCombatSession : ISkillSession, ISoundSource
     {
@@ -434,9 +436,15 @@ namespace Dnf.Play
         private readonly Random _monsterRandom;
         private readonly DamageConstants _damageConstants;
 
-        /// <summary>主角打怪物时的攻击面板(证据 E-110);为 null 时主角打怪物仍用占位伤害(<see cref="PlaceholderDamage"/>)。</summary>
-        private readonly HeroPanel _heroPanel;
-        private readonly AttackerPanel _attacker;
+        /// <summary>主角打怪物时的攻击面板(证据 E-110);为 null 时主角打怪物仍用占位伤害(<see cref="PlaceholderDamage"/>)。升级时换成新等级的(证据 E-111)。</summary>
+        private HeroPanel _heroPanel;
+        private AttackerPanel _attacker;
+
+        /// <summary>最近一次同步过的等级进度版本(<see cref="HeroProgress.Version"/>):别的房间里升了级,这个房间回来时据此换上新等级的属性。</summary>
+        private int _progressVersion;
+
+        /// <summary>跟着主角走的特效(升级光效,证据 E-111):每一步把它们挪到主角脚下。</summary>
+        private readonly List<AnimatedEffect> _followEffects = new List<AnimatedEffect>();
 
         /// <summary>倒地的随机抖动(水平量 ±20%、高度 ±10%;E-083)用的随机数,与伤害的随机数分开,免得改变伤害序列。</summary>
         private readonly Random _physicsRandom;
@@ -608,6 +616,24 @@ namespace Dnf.Play
         /// <summary>主角打怪物的伤害按原版公式算(有攻击面板,又读到了公式常量);否则用占位伤害。</summary>
         public bool UsesFormulaDamage => _attacker != null && _damageConstants != null;
 
+        /// <summary>主角的等级与经验(证据 E-111);为 null 时杀怪不给经验(旧行为)。副本里各房间的会话共用同一个对象。</summary>
+        public HeroProgress Progress { get; }
+
+        /// <summary>这座副本的经验权重(.dgn 的 [experience increasing point],证据 E-111);没有副本背景时是 1。</summary>
+        public float ExpWeight { get; }
+
+        /// <summary>副本难度编号(经验倍率表按它取,0 到 4);目前只有普通难度,恒为 0。</summary>
+        public int ExpDifficulty { get; }
+
+        /// <summary>这个房间里主角一共得到的击杀经验。</summary>
+        public long ExpEarned { get; private set; }
+
+        /// <summary>这个房间里主角涨了几级。</summary>
+        public int LevelUps { get; private set; }
+
+        /// <summary>最近一次击杀给的经验(没杀过是 0)。</summary>
+        public int LastKillExp { get; private set; }
+
         /// <summary>主角在怪物上留下的"攻击者"记号(怪物 <see cref="MonsterActor.LastAttackerId"/> 记的就是它;额外命中判断用,证据 E-110)。</summary>
         public const int HeroAttackerId = 1;
 
@@ -628,11 +654,15 @@ namespace Dnf.Play
         public RoomCombatSession(DnfAssets assets, RoomSession room, IReadOnlyList<MonsterActor> monsters, IReadOnlyList<HeroStrikeInfo> strikes, int seed = 1,
             HeroStrikeInfo dashStrike = default, HeroStrikeInfo jumpStrike = default, HeroSkills skills = null, int weaponStunMs = 0,
             float weaponDelayRate = -1f, HitStunTable stunTable = null, HeroVitals vitals = null, DamageConstants damageConstants = null,
-            WeaponSound weaponSound = default, HeroPanel heroPanel = null)
+            WeaponSound weaponSound = default, HeroPanel heroPanel = null, HeroProgress progress = null, float expWeight = 1f, int expDifficulty = 0)
         {
             _weaponSound = weaponSound;
             _heroPanel = heroPanel;
             _attacker = heroPanel?.ToAttacker();
+            Progress = progress;
+            ExpWeight = expWeight;
+            ExpDifficulty = expDifficulty;
+            _progressVersion = progress == null ? 0 : progress.Version;
             Skills = skills ?? new HeroSkills(new HeroSkillSlot[0]);
             _cueCooling = new bool[Skills.Slots.Count];
             WeaponStunMs = weaponStunMs;
@@ -851,7 +881,8 @@ namespace Dnf.Play
         /// 普攻数据读 swordman 的 .chr [attack info]。缺图或缺脚本的怪物跳过。
         /// <paramref name="heroVitals"/> 为假时主角没有生命值(<see cref="Vitals"/> 为 null):怪物照样走近、出招,但打不到主角,没有血条(自动化检查用)。
         /// </summary>
-        public static RoomCombatSession Create(DnfAssets assets, RoomSession room, int seed = 1, bool heroVitals = true)
+        public static RoomCombatSession Create(DnfAssets assets, RoomSession room, int seed = 1, bool heroVitals = true, HeroProgress progress = null,
+            float expWeight = 1f)
         {
             var data = new GameData(new PvfScriptSource(assets.Pvf));
             var strikes = new List<HeroStrikeInfo>();
@@ -919,11 +950,20 @@ namespace Dnf.Play
             bool hasWeapon = TryWeaponHit(chr, room.Hero, out WeaponHitInfo weapon);
             TryWeaponSound(chr, room.Hero, out WeaponSound weaponSound);
             // 主角的生命值:没有就是旧行为(怪物只按固定距离出招、打不到主角、没有血条)——自动化检查里需要"不会被打"的主角时用
-            HeroVitals vitals = heroVitals && chr != null ? HeroVitals.FromChr(chr) : null;
+            // 给了等级进度(证据 E-111)时,生命魔法与攻击面板是这个等级的(初始值加逐级增量);没给就是只读初始值的老行为
+            HeroVitals vitals = heroVitals && chr != null
+                ? (progress != null ? HeroVitals.FromStats(progress.Level, progress.Stats) : HeroVitals.FromChr(chr))
+                : null;
             // 主角的攻击面板(证据 E-110):与公式常量、生命值一起给;没有生命值(--no-damage)时仍用占位伤害,按时刻对拍的回归检查靠它保持原来的时刻
-            HeroPanel heroPanel = vitals != null ? HeroPanel.FromChr(chr, vitals.Level, HeroPanel.WornEquipment(assets, room.Hero)) : null;
+            HeroPanel heroPanel = null;
+            if (vitals != null)
+            {
+                EquipmentStats worn = HeroPanel.WornEquipment(assets, room.Hero);
+                heroPanel = progress != null ? HeroPanel.FromStats(progress.Level, progress.Stats, worn) : HeroPanel.FromChr(chr, vitals.Level, worn);
+            }
             return new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, HeroSkills.Create(data, chr, 0), hasWeapon ? weapon.StunMs : 0,
-                hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null, weaponSound, heroPanel);
+                hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null, weaponSound, heroPanel,
+                progress, expWeight);
         }
 
         /// <summary>主角穿的武器在 .chr 的 [weapon wav] 里那一块(挥动与命中声音标签);取不到返回 false。</summary>
@@ -1028,6 +1068,7 @@ namespace Dnf.Play
 
         private void Step(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed, SkillKeys skillsPressed)
         {
+            SyncProgress();   // 别的房间里升了级的话,换上新等级的生命上限与攻击面板(证据 E-111)
             Skills.Advance(deltaMs);
             Vitals?.RegenMp(deltaMs);   // 魔法值按墙钟恢复(证据 E-087);死了不恢复在 RegenMp 里判断
 
@@ -1120,8 +1161,13 @@ namespace Dnf.Play
                 _effects[i].Advance(heroDelta);
                 if (_effects[i].Finished)
                 {
+                    _followEffects.Remove(_effects[i]);
                     _effects.RemoveAt(i);
                 }
+            }
+            foreach (AnimatedEffect follow in _followEffects)
+            {
+                follow.MoveTo(hero.X, hero.Y, hero.Z);   // 升级光效跟着主角走(跟随是推断:客户端把它挂在主角身上)
             }
             _targetMs += deltaMs;
             _hudClockMs += deltaMs;
@@ -1287,8 +1333,101 @@ namespace Dnf.Play
             if (killed)
             {
                 Kills++;
+                AwardKillExp(monster);
             }
             AddNumber(damage, DamageNumberFlags.AttackerIsHero | (critical ? DamageNumberFlags.Critical : 0), hit, monster.Y);
+        }
+
+        // ------------------------------------------------------------------ 经验与升级(证据 E-111)
+
+        /// <summary>升级时放的声音标签(audio.xml 的界面音;客户端在升级处理里放它,证据 E-111)。</summary>
+        public const string LevelUpSound = "LEVEL_UP";
+
+        /// <summary>升级时在主角身上放的光效动画(证据 E-111:客户端的升级处理里加载它;挂在主角身上是推断,逐帧缩放没有画)。</summary>
+        public const string LevelUpEffectPath = "Common/CommonEffect/Animation/LevelUp.ani";
+
+        /// <summary>
+        /// 主角杀死一只怪物得到的经验(证据 E-111):基础经验取怪物等级、总经验按种类(首领 3,其余 0)、有名怪物、副本难度与副本经验权重算,
+        /// 再乘等级差倍率(<see cref="KillExp.ForKill"/>);单人,不分队。没有等级进度时什么也不做。
+        /// </summary>
+        private void AwardKillExp(MonsterActor monster)
+        {
+            HeroProgress progress = Progress;
+            if (progress == null)
+            {
+                return;
+            }
+            int role = monster.IsBoss ? (int)MonsterKind.Boss : (int)MonsterKind.Normal;
+            bool named = MonsterAbility.IsNamedMonster(monster.Code);
+            int exp = KillExp.ForKill(progress.Rewards, progress.Rates, progress.Level, monster.Level, role, named, ExpDifficulty, ExpWeight);
+            LastKillExp = exp;
+            GainExp(exp);
+        }
+
+        /// <summary>
+        /// 给主角加经验并升级(<see cref="HeroProgress.Gain"/>);升了级就换上新等级的属性、放升级声音与光效。
+        /// 没有等级进度时返回全 0 的结果。
+        /// </summary>
+        public ExpGainResult GainExp(int exp)
+        {
+            HeroProgress progress = Progress;
+            if (progress == null)
+            {
+                return default;
+            }
+            ExpGainResult result = progress.Gain(exp);
+            if (exp > 0)
+            {
+                ExpEarned += exp;
+            }
+            if (result.LeveledUp)
+            {
+                LevelUps += result.LevelsGained;
+                SyncProgress();
+                _sounds.Add(LevelUpSound, SoundCueKind.Ui);
+                SpawnLevelUpEffect();
+            }
+            else
+            {
+                _progressVersion = progress.Version;   // 只涨了经验:属性没变,不用换
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// 把等级进度里的当前等级同步到这个房间的主角:生命魔法上限、防御、受击恢复(<see cref="HeroVitals.ApplyStats"/>)与攻击面板换成这个等级的,
+        /// 当前生命与魔法不变。进度没变(或没有进度)时什么也不做。副本换房间时由 <see cref="DungeonSession"/> 先调它再抄生命魔法。
+        /// </summary>
+        public void SyncProgress()
+        {
+            HeroProgress progress = Progress;
+            if (progress == null || _progressVersion == progress.Version)
+            {
+                return;
+            }
+            _progressVersion = progress.Version;
+            if (Vitals == null)
+            {
+                return;
+            }
+            StatBlock stats = progress.Stats;
+            Vitals.ApplyStats(HeroVitals.FromStats(progress.Level, stats));
+            if (_heroPanel != null)
+            {
+                _heroPanel = HeroPanel.FromStats(progress.Level, stats, _heroPanel.Equipment);
+                _attacker = _heroPanel.ToAttacker();
+            }
+        }
+
+        private void SpawnLevelUpEffect()
+        {
+            TownHero hero = _room.Hero;
+            AnimatedEffect effect = AnimatedEffect.Create(_assets, LevelUpEffectPath, hero.X, hero.Y, hero.Z, hero.FacingLeft);
+            if (effect != null)
+            {
+                _effects.Add(effect);
+                _followEffects.Add(effect);
+            }
         }
 
         /// <summary>
@@ -1661,7 +1800,9 @@ namespace Dnf.Play
                 bool usable = s.Ready && v.IsAlive && v.Mp >= s.ConsumeMp;
                 states.Add(new HudSkillState(i, s.Def, usable));
             }
-            _hud.Build(into, ref order, v.Level, v.Hp, v.HpMax, v.Mp, v.MpMax, states);
+            // 经验条(证据 E-111):有等级进度才画;分子是本级已攒的经验,分母是本级一共要攒的,等级 85 盖满级图
+            HudExp? exp = Progress == null ? (HudExp?)null : new HudExp(Progress.ExpInLevel, Progress.LevelSpan, Progress.Level == Leveling.MaxLevel);
+            _hud.Build(into, ref order, v.Level, v.Hp, v.HpMax, v.Mp, v.MpMax, states, exp);
         }
 
         private static int FilledWidth(int value, int max)
@@ -1675,10 +1816,10 @@ namespace Dnf.Play
     public static class DemoCombat
     {
         public static RoomCombatSession CreateSession(DnfAssets assets, string mapPath, string weaponEqu = DemoHero.StarterWeapon, int seed = 1,
-            bool heroVitals = true)
+            bool heroVitals = true, HeroProgress progress = null)
         {
             RoomSession room = DemoRoom.CreateSession(assets, mapPath, weaponEqu);
-            return RoomCombatSession.Create(assets, room, seed, heroVitals);
+            return RoomCombatSession.Create(assets, room, seed, heroVitals, progress);
         }
     }
 }

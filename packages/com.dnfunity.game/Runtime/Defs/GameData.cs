@@ -403,5 +403,66 @@ namespace Dnf.Game
             _ownTables[def] = own;
             return own;
         }
+
+        // ------------------------------------------------------------------ 经验与升级(证据 E-111)
+
+        private ExpTable _expTable;
+        private SpTable _spTable;
+        private ExpRates _expRates;
+        private readonly Dictionary<CharacterDef, CharacterGrowth> _growths = new Dictionary<CharacterDef, CharacterGrowth>();
+
+        /// <summary>升级经验表(character/exptable.tbl);缺文件是空表(没有下一级,升不了级)。</summary>
+        public ExpTable ExpTable
+        {
+            get
+            {
+                if (_expTable == null)
+                {
+                    _expTable = ExpTable.Parse(ReadScript(ExpTable.Path));
+                }
+                return _expTable;
+            }
+        }
+
+        /// <summary>每级技能点表(etc/sptable.etc 的 [sp table]);缺文件是空表(每级 0 点)。</summary>
+        public SpTable SpTable
+        {
+            get
+            {
+                if (_spTable == null)
+                {
+                    _spTable = SpTable.Parse(ReadScript(SpTable.Path));
+                }
+                return _spTable;
+            }
+        }
+
+        /// <summary>击杀经验的三张倍率表(etc/serverparameter.etc);缺文件或缺标签是全 1 的中性值。</summary>
+        public ExpRates ExpRates
+        {
+            get
+            {
+                if (_expRates == null)
+                {
+                    _expRates = ExpRates.Parse(ReadScript(ExpRates.Path));
+                }
+                return _expRates;
+            }
+        }
+
+        /// <summary>角色的等级成长(.chr 的 [initial value] 与 [growtype N] 块);<paramref name="chr"/> 为 null 返回没有数据的成长。</summary>
+        public CharacterGrowth GetGrowth(CharacterDef chr)
+        {
+            if (chr == null)
+            {
+                return CharacterGrowth.Parse(null);
+            }
+            if (!_growths.TryGetValue(chr, out CharacterGrowth growth))
+            {
+                growth = CharacterGrowth.Parse(chr.Tags.Lines);
+                _growths[chr] = growth;
+            }
+            return growth;
+        }
     }
 }

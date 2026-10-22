@@ -10,7 +10,8 @@ namespace Dnf.Cli.Analysis;
 /// 先读副本定义的迷宫、选出每一格的房间并打印布局(每格的出口码、用途、房间地图、四个出口的种类);
 /// 不带 --layout-only 时再按固定的 1/60 秒步长模拟:--bot 让 <see cref="DungeonBot"/> 自动从起点打到首领清空,
 /// 否则按 --play 的时间表替主角按键。过程中打印进出房间(位置、朝向、镜头)、清房时刻与最后的统计,--shots-at 在指定时刻输出 800×600 画面。
-/// 战斗里主角打怪物的伤害:带生命值(不加 --no-damage)时按原版公式算(证据 E-110,主角面板只对一级的新角色成立),--no-damage 时是占位伤害(<see cref="PlaceholderDamage"/>)。
+/// 战斗里主角打怪物的伤害:带生命值(不加 --no-damage)时按原版公式算(证据 E-110),--no-damage 时是占位伤害(<see cref="PlaceholderDamage"/>)。
+/// 带生命值时主角有等级进度(证据 E-111):--level 指定起始等级(默认 1),杀怪给经验、升级,--no-exp 关掉;结束时多打印一行经验小结。
 /// </summary>
 internal static class DungeonCheck
 {
@@ -43,7 +44,8 @@ internal static class DungeonCheck
             return 0;
         }
 
-        DungeonSession session = DungeonSession.Create(assets, opts.Dungeon, opts.Seed, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage);
+        DungeonSession session = DungeonSession.Create(assets, opts.Dungeon, opts.Seed, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage,
+            progress: ExpCheck.ProgressFor(assets, opts));
         var bot = new DungeonBot(opts.Explore);
         CombatScript script = ParsePlay(opts.Play);
         if (!opts.Bot && script.IsEmpty)
@@ -143,6 +145,10 @@ internal static class DungeonCheck
             + "  进过 " + session.RoomsEntered + " 个房间,清空 " + session.RoomsCleared + " 个,换房间 " + session.Transitions + " 次;命中 " + session.Hits
             + " 次,击杀 " + session.Kills + " 个,总伤害 " + session.TotalDamage
             + (session.Vitals != null ? ";主角被打中 " + session.HeroHits + " 次,生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax + ",魔法 " + session.Vitals.Mp + "/" + session.Vitals.MpMax : ";怪物不还手(--no-damage)"));
+        if (session.Progress != null)
+        {
+            Console.WriteLine(ExpCheck.Summary(session.Progress, opts.HeroLevel));
+        }
         for (int y = 0; y < maze.Rows; y++)
         {
             var sb = new StringBuilder("  ");

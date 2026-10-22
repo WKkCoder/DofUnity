@@ -90,9 +90,16 @@ namespace Dnf.Render
         /// <summary>小地图房间格图包路径(由 .dgn 的 [minimap image] 转成小写 "sprite/…",证据 E-109);没写时为 null。</summary>
         public string MinimapImage { get; }
 
+        /// <summary>
+        /// 副本的经验权重(.dgn 的 [experience increasing point],一个浮点数,写成整数也按浮点读;证据 E-111):击杀经验的一个乘数。
+        /// 没写这个标签时是 1(服务端读副本脚本前先把这个字段清成 1.0)。数值是原版数据,不入库。
+        /// </summary>
+        public float ExpWeight { get; }
+
         public DungeonMaze(string path, int cols, int rows, int[] exits, int[] second, IReadOnlyList<CellRect> startCells,
-            IReadOnlyList<CellRect> bossCells, PathGateSet gateSet, string minimapImage = null)
+            IReadOnlyList<CellRect> bossCells, PathGateSet gateSet, string minimapImage = null, float expWeight = 1f)
         {
+            ExpWeight = expWeight;
             if (cols < 1 || rows < 1)
             {
                 throw new ArgumentOutOfRangeException(nameof(cols), "迷宫至少一格");
@@ -214,9 +221,18 @@ namespace Dnf.Render
             var boss = new List<CellRect>();
             PathGateSet gates = null;
             string minimapImage = null;
+            float expWeight = 1f;
             foreach (ScriptLine line in doc)
             {
-                if (line.TagIs("[size]"))
+                if (line.TagIs("[experience increasing point]"))
+                {
+                    double? weight = line.FirstNumber();
+                    if (weight.HasValue)
+                    {
+                        expWeight = (float)weight.Value;
+                    }
+                }
+                else if (line.TagIs("[size]"))
                 {
                     List<int> n = line.Ints();
                     if (n.Count >= 2)
@@ -279,7 +295,7 @@ namespace Dnf.Render
                 first[i] = letters[i * 2] - 'A';
                 second[i] = letters[i * 2 + 1] - 'A';
             }
-            return new DungeonMaze(path, cols, rows, first, second, start, boss, gates, minimapImage);
+            return new DungeonMaze(path, cols, rows, first, second, start, boss, gates, minimapImage, expWeight);
         }
 
         public static DungeonMaze Read(DnfAssets assets, string path)

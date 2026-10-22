@@ -109,6 +109,12 @@ namespace Dnf.Cli
         /// <summary>combat-check、dungeon-check --no-damage:主角没有生命值,怪物打不到他(与怪物出招功能加入之前的行为一致,E-086);用来让按时刻比对的回归检查不受还手影响。</summary>
         public bool NoDamage { get; set; }
 
+        /// <summary>combat-check、dungeon-check、flow-check、sound-check --no-exp:不给主角等级进度(杀怪不涨经验、没有经验条,E-111 之前的行为);--no-damage 时本来就没有(主角没有生命值与底栏)。</summary>
+        public bool NoExp { get; set; }
+
+        /// <summary>--level N:主角的起始等级(1 到 85,默认 1);exp-check 用它看某一级的属性与升级所需经验。</summary>
+        public int HeroLevel { get; set; } = 1;
+
         public int Seed { get; set; } = 1;
         public bool RandomLayout { get; set; }
 
@@ -270,6 +276,10 @@ namespace Dnf.Cli
             "  dnf hero-damage [--map <房间地图>] [--weapon <.equ 路径>] [--samples N] [--seed N]\n" +
             "      主角打这间房间每种怪物的伤害分布(证据 E-110):每种招式各掷 N 次,按\"第一击(算额外命中)\"与\"之后\"两组打印最小、平均、最大与暴击占比。\n" +
             "      数值来自本机的数据,只打印在终端,不要抄进入库的文件。\n" +
+            "  dnf exp-check [--level N]\n" +
+            "      经验与升级(证据 E-111):读升级经验表、技能点表、三张经验倍率表、主角 .chr 的成长块与全部副本的经验权重,检查结构(递增、读得到、一级属性与老路径一致),\n" +
+            "      再把升级循环从 1 级走到封顶;--level N 另外打印这一级的属性、升级所需经验与同级怪物的击杀经验(数值来自本机的数据,只打印在终端,不要抄进入库的文件)。\n" +
+            "      combat-check、dungeon-check、flow-check、sound-check 默认带主角的等级进度(杀怪给经验、升级、底栏有经验条):--level N 指定起始等级,--no-exp 关掉(--no-damage 时本来就没有)。\n" +
             "  dnf damage-check [--cases <文件>]\n" +
             "      伤害公式(证据 E-049)。不带 --cases:读 PVF 里的 Etc/EtcParameter.etc 与 Creature/Common/creatureCommon.cre,只报告个数与完整性(不输出原版数值);\n" +
             "      带 --cases:读 tools/py/damage_ref.py --gen 生成的随机用例,用 C# 公式复算并与 Python 参考实现逐项比较。\n" +
@@ -469,6 +479,14 @@ namespace Dnf.Cli
                     case "--no-damage":
                         opts.NoDamage = true;
                         break;
+                    case "--no-exp":
+                        opts.NoExp = true;
+                        break;
+                    case "--level":
+                        opts.HeroLevel = int.TryParse(NextValue(args, ref i), out int levelValue) && levelValue >= 1 && levelValue <= 85
+                            ? levelValue
+                            : throw new UserError("--level 需要 1 到 85 的整数");
+                        break;
                     case "--seed":
                         opts.Seed = int.TryParse(NextValue(args, ref i), out int seedValue) ? seedValue : throw new UserError("--seed 需要整数");
                         break;
@@ -620,6 +638,8 @@ namespace Dnf.Cli
                     return SoundCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "hero-damage":
                     return HeroDamageCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "exp-check":
+                    return ExpCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "damage-check":
                     return opts.CasesFile != null
                         ? DamageCheck.RunCases(opts)

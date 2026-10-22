@@ -177,6 +177,27 @@ namespace Dnf.Game
             return (int)signed;
         }
 
+        /// <summary>
+        /// FISTP qword(舍入控制临时设成截断):向零取整成 64 位有符号整数;超出范围得 long.MinValue(整数不确定值)。
+        /// (击杀经验的两次取整都是 qword 版,证据 E-111。)
+        /// </summary>
+        public static long TruncateToInt64(X87Value value)
+        {
+            if (value.IsZero)
+            {
+                return 0;
+            }
+            bool negative = value.Mantissa.Sign < 0;
+            BigInteger a = BigInteger.Abs(value.Mantissa);
+            BigInteger magnitude = value.Exponent >= 0 ? a << value.Exponent : a >> -value.Exponent;
+            BigInteger signed = negative ? -magnitude : magnitude;
+            if (signed > long.MaxValue || signed < long.MinValue)
+            {
+                return long.MinValue;
+            }
+            return (long)signed;
+        }
+
         /// <summary>把"尾数 × 2^指数(再加上不为零的粘滞位)"按 bits 位有效位就近舍入(平局取偶)。</summary>
         private static X87Value Round(BigInteger mantissa, int exponent, bool sticky, int bits)
         {

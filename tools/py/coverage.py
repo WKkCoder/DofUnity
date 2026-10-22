@@ -42,7 +42,7 @@ CONSUMERS = {
     "chr": [("S", "game/Runtime/Defs/CharacterDef.cs"), ("S", "game/Runtime/Defs/WeaponSound.cs"),
             ("S", "game/Runtime/Defs/WeaponHitInfo.cs"), ("S", "render/Runtime/TownHero.cs"),
             ("S", "render/Runtime/Avatar.cs"), ("S", "play/Runtime/HeroVitals.cs"), ("S", "play/Runtime/HeroPanel.cs"),
-            ("S", "play/Runtime/RoomCombat.cs")],
+            ("S", "play/Runtime/RoomCombat.cs"), ("S", "game/Runtime/Progress/CharacterGrowth.cs")],
     "equ": [("S", "render/Runtime/Avatar.cs"), ("S", "play/Runtime/HeroPanel.cs")],
     "map": [("S", "render/Runtime/RoomMap.cs"), ("S", "render/Runtime/MapScript.cs"), ("S", "render/Runtime/TownScene.cs"),
             ("S", "render/Runtime/TownExits.cs"), ("S", "render/Runtime/RoomSession.cs"), ("S", "render/Runtime/RoomGate.cs"),
@@ -57,16 +57,17 @@ CONSUMERS = {
     "twn": [("S", "render/Runtime/TownDef.cs"), ("S", "play/Runtime/SplashScreen.cs")],
     "wdm": [("S", "render/Runtime/WorldMapDef.cs")],
     "ui": [("S", "render/Runtime/WorldMapDef.cs")],
-    "etc": [("S", "game/Runtime/Damage/DamageConstants.cs"), ("S", "game/Runtime/Damage/HitStun.cs")],
+    "etc": [("S", "game/Runtime/Damage/DamageConstants.cs"), ("S", "game/Runtime/Damage/HitStun.cs"),
+            ("S", "game/Runtime/Progress/SpTable.cs"), ("S", "game/Runtime/Progress/ExpRates.cs")],
     "cre": [("S", "game/Runtime/Damage/DamageConstants.cs")],
     "npc": [("S", "play/Runtime/ClearCamp.cs")],
 }
 
 LOADER_NAMES = {
-    "atk": "AttackInfoLoader", "mob": "MonsterDef / MonsterAbility / AttackKindRecord / ThrowAttackRecord", "ptl": "ParticleDef(只读运动与寿命)", "skl": "SkillDef", "chr": "CharacterDef / TownHero / Avatar / HeroPanel",
+    "atk": "AttackInfoLoader", "mob": "MonsterDef / MonsterAbility / AttackKindRecord / ThrowAttackRecord", "ptl": "ParticleDef(只读运动与寿命)", "skl": "SkillDef", "chr": "CharacterDef / TownHero / Avatar / HeroPanel / CharacterGrowth(成长块)",
     "equ": "Avatar(换装图层)/ HeroPanel(装备攻击与暴击)", "map": "RoomMap / MapScript / TownScene", "til": "RoomMap", "obj": "PassiveObjectDef / ObjectDef",
     "act": "ActParser(语法树)", "ai": "AiVocabulary / AiParser(词表与解析)", "dgn": "DungeonMaze / DungeonLayout",
-    "twn": "TownDef", "wdm": "WorldMapDef", "ui": "WorldMapDef(只读副本选择界面用到的几项)", "etc": "DamageConstants / HitStun",
+    "twn": "TownDef", "wdm": "WorldMapDef", "ui": "WorldMapDef(只读副本选择界面用到的几项)", "etc": "DamageConstants / HitStun / SpTable / ExpRates",
     "cre": "DamageConstants", "npc": "ClearCamp",
 }
 

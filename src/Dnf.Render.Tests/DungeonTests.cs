@@ -69,6 +69,21 @@ public class DungeonTests
     }
 
     [Fact]
+    public void TheExpWeightIsTheFirstNumberOfTheExperienceTagWhetherIntOrFloatAndDefaultsToOne()
+    {
+        static ScriptLine Weight(ScriptValue value) => new ScriptLine("[experience increasing point]", new[] { value });
+        static ScriptValue F(float v) => new ScriptValue(ScriptValueKind.Float, BitConverter.SingleToInt32Bits(v), null);
+        static ScriptValue I(int v) => new ScriptValue(ScriptValueKind.Int, v, null);
+
+        Assert.Equal(1f, DungeonMaze.Parse("d", MazeDoc())!.ExpWeight);                                   // 没写:缺省 1(证据 E-111)
+        Assert.Equal(1.5f, DungeonMaze.Parse("d", MazeDoc("JJEE LLMM DDGG", Weight(F(1.5f))))!.ExpWeight);  // 浮点
+        Assert.Equal(3f, DungeonMaze.Parse("d", MazeDoc("JJEE LLMM DDGG", Weight(I(3))))!.ExpWeight);      // 整数也按浮点读
+        Assert.Equal(0f, DungeonMaze.Parse("d", MazeDoc("JJEE LLMM DDGG", Weight(I(0))))!.ExpWeight);      // 0:这座副本不给经验
+        Assert.Equal(1f, DungeonMaze.Parse("d", MazeDoc("JJEE LLMM DDGG", new ScriptLine("[experience increasing point]", new ScriptValue[0])))!.ExpWeight);   // 没有数:还是 1
+        Assert.Equal(1f, new DungeonMaze("d", 1, 1, new[] { 0 }, null, new[] { new CellRect(0, 0, 0, 0) }, new[] { new CellRect(0, 0, 0, 0) }, null).ExpWeight);   // 直接构造的缺省
+    }
+
+    [Fact]
     public void ExitBitsAreRightUpLeftDownAndOppositesAndStepsAgree()
     {
         Assert.Equal((1, 2, 4, 8), (ExitBits.Of(GateSide.Right), ExitBits.Of(GateSide.Up), ExitBits.Of(GateSide.Left), ExitBits.Of(GateSide.Down)));

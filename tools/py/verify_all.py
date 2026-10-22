@@ -10,7 +10,7 @@
 
 用法(由 tools/verify-all.sh 调用;需要先 . tools/env.sh 并已构建 dnf):
   python3 tools/py/verify_all.py [--only 名字,名字] [--skip 名字,名字] [--out out/verify-all.json]
-名字:unit p1 atk act mob damage sq sweep flow sound oracle(oracle 需要 re/venv 里的 Unicorn 与本机的服务端二进制)
+名字:unit p1 atk act mob damage sq sweep flow sound exp oracle(oracle 需要 re/venv 里的 Unicorn 与本机的服务端二进制)
 """
 import argparse
 import json
@@ -240,6 +240,17 @@ def check_sound():
                  0 if code == 0 else 1, sec, "没有录音可对照:检查的是数据对得上、触发有发出")]
 
 
+def check_exp():
+    code, text, sec = sh(DNF + ["exp-check"], "exp.txt")
+    ok = len(re.findall(r"^\s*\[通过\]", text, re.M))
+    bad = len(re.findall(r"^\s*\[失败\]", text, re.M))
+    if ok + bad == 0:
+        return [item("exp", "经验与升级", "全库读通", "E-111", 0, 1, sec, "没解析出检查项,见 out/verify-all/exp.txt")]
+    return [item("exp", "经验与升级(升级经验表、技能点表、三张倍率表读通;成长块与各级属性不减;一级的 FromStats 等于 FromChr;1 到 85 级升级循环与满级封顶;击杀经验;全库 .dgn 的经验权重)",
+                 "全库读通", "E-111", ok + bad, bad + (0 if code == 0 else 1), sec,
+                 "只含个数;原版数值只在本机 out/verify-all/exp.txt 里,不入库;基础经验表缺 monster_reward_ref 导出时用占位表(输出里有标注)")]
+
+
 def check_oracle():
     if not os.path.exists(VENV_PY):
         return [item("oracle", "怪物数值 vs 原版机器码(模拟器)", "对拍:原版二进制", "E-063", 0, 1, 0, "缺 re/venv(Unicorn)")]
@@ -258,7 +269,7 @@ def check_oracle():
 CHECKS = [
     ("unit", check_unit), ("p1", check_p1), ("atk", check_atk), ("act", check_act), ("mob", check_mob),
     ("damage", check_damage), ("sq", check_sq), ("sweep", check_sweep), ("flow", check_flow), ("sound", check_sound),
-    ("oracle", check_oracle),
+    ("exp", check_exp), ("oracle", check_oracle),
 ]
 
 

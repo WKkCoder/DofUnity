@@ -103,6 +103,7 @@ public class DungeonSessionTests
         private readonly bool _bodies;
         private readonly Func<HeroVitals> _vitalsOf;
         private readonly Func<int, int, string[]> _soundsOf;
+        private readonly HeroProgress _progress;
 
         public DnfAssets Assets { get; }
         public DungeonLayout Layout { get; }
@@ -116,7 +117,7 @@ public class DungeonSessionTests
         /// 为假时左右出口没有碰撞体(退回近似的触发)。
         /// </summary>
         public Dungeon(DungeonLayout layout, Func<int, int, (int X, int Y)[]> monstersOf, int hp = 10, bool bodies = false, int heroObjectId = TestHeroId,
-            Func<HeroVitals> vitalsOf = null, Func<int, int, string[]> soundsOf = null)
+            Func<HeroVitals> vitalsOf = null, Func<int, int, string[]> soundsOf = null, HeroProgress progress = null)
         {
             Assets = DnfAssets.Open(_fx.Root);
             Layout = layout;
@@ -125,6 +126,7 @@ public class DungeonSessionTests
             _bodies = bodies;
             _vitalsOf = vitalsOf;
             _soundsOf = soundsOf;
+            _progress = progress;
             Session = new DungeonSession(layout, Build, heroObjectId, Assets);
         }
 
@@ -187,7 +189,7 @@ public class DungeonSessionTests
                 actors.Add(new MonsterActor(i, spawn, model, 1, _hp, 222.5, 1500, 0));
             }
             var strikes = new[] { new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false) };
-            var session = new RoomCombatSession(Assets, room, actors, strikes, 1 + cy * 2 + cx, vitals: _vitalsOf?.Invoke());
+            var session = new RoomCombatSession(Assets, room, actors, strikes, 1 + cy * 2 + cx, vitals: _vitalsOf?.Invoke(), progress: _progress);
             Rooms[(cx, cy)] = session;
             return session;
         }
@@ -422,6 +424,25 @@ public class DungeonSessionTests
         RunUntil(s, () => s.CellX == 0, -1, 0);                          // 走回去:起点格那一份也同步到最新
         Assert.Same(first, s.Vitals);
         Assert.Equal((45, false), (first.Hp, s.HeroDead));
+    }
+
+    [Fact]
+    public void TheHeroProgressIsSharedByEveryRoomAndALevelUpRaisesTheNextRoomsLimitsWithoutRestoringLife()
+    {
+        // 起点格的弱怪物值 200 点经验(基础 400 / 2),够从 1 级升到 2 级(门槛 100);再走进右边的房间
+        HeroProgress progress = ExpTests.Progress();
+        using var d = new Dungeon(RingLayout(), OneWeakAtStart, vitalsOf: () => HeroVitals.FromStats(progress.Level, progress.Stats), progress: progress);
+        DungeonSession s = d.Session;
+        Assert.Same(progress, s.Progress);
+        HeroVitals first = s.Vitals!;
+        first.Damage(300);
+        Run(s, 1000, 0, 0, true);                                        // 杀掉怪物:200 点经验,升到 2 级
+        Assert.Equal((2, 200), (progress.Level, progress.Exp));
+        Assert.Equal((2, 1100, 700), (first.Level, first.HpMax, first.Hp));   // 当前房间立刻换上新上限,生命不回复
+        RunUntil(s, () => s.CellX == 1, 1, 0);
+        Assert.NotSame(first, s.Vitals);
+        Assert.Same(progress, s.Progress);
+        Assert.Equal((2, 1100, 700), (s.Vitals!.Level, s.Vitals.HpMax, s.Vitals.Hp));   // 新房间的会话也是 2 级,当前生命跟着人走
     }
 
     [Fact]
