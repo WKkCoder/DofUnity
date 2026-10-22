@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Dnf.Game;
 using Dnf.Play;
 using Dnf.Render;
 using NUnit.Framework;
@@ -99,6 +100,46 @@ namespace DnfUnity.Tests
                 script.Step(rec);
             }
             CollectionAssert.AreEqual(new[] { "0,0,-", "0,0,-", "0,0,-", "0,0,-J", "0,0,-" }, rec.Calls);
+        }
+
+        /// <summary>
+        /// 主角打怪物的原版公式(证据 E-110)在 Mono 里的核对:与 src/Dnf.Game.Tests/HitDamageTests.cs 同一组合成面板,期望值是手算的整数
+        /// (浮点步骤逐步落地成单精度,两个运行时必须算出同样的数)。随机幅度的底与系数为 0,结果与种子无关。
+        /// </summary>
+        [Test]
+        public void HeroFormulaDamage_GivesTheHandComputedValues()
+        {
+            var k = new DamageConstants
+            {
+                PhysicalDamageRate = 100f,
+                MagicalDamageRate = 100f,
+                PhysicalReduceRate = 20f,
+                MagicalReduceRate = 20f,
+                CommonElementBase = 100f,
+            };
+            var attacker = new AttackerPanel { Level = 10, PhysicalAttack = 50, MagicalAttack = 100, PhysicalBonusBase = 30, MagicalBonusBase = 20 };
+            var defender = new DefenderPanel { Level = 5 };
+            var plain = new HitInput(0f, true, AttackKind.Physic, 0f, 0, -1000f);
+            bool critical;
+
+            // (0 + 装备物攻 30) × (物攻 50 / 100 + 1) = 45
+            Assert.AreEqual(45, HitDamage.Roll(plain, attacker, defender, false, k, 1u, out critical));
+            Assert.IsFalse(critical);
+            // 额外命中:45 × 1.1 = 49.5 → 49
+            Assert.AreEqual(49, HitDamage.Roll(plain, attacker, defender, true, k, 1u, out critical));
+            // 防御 200、等级 10、系数 20:200 / (10 × 20 + 200) = 0.5 → 22.5 → 22
+            Assert.AreEqual(22, HitDamage.Roll(plain, attacker, new DefenderPanel { Level = 5, PhysicalDefense = 200 }, false, k, 1u, out critical));
+            // 必暴击:45 × 1.5 = 67.5 → 67
+            var crit = new HitInput(0f, true, AttackKind.Physic, 0f, 0, 10000f);
+            Assert.AreEqual(67, HitDamage.Roll(crit, attacker, defender, false, k, 1u, out critical));
+            Assert.IsTrue(critical);
+            // 魔法:装备魔攻 20 × 2(加成 100)× (魔攻 100 / 100 + 1) = 80
+            var magic = new HitInput(0f, true, AttackKind.Magic, 100f, 0, -1000f);
+            Assert.AreEqual(80, HitDamage.Roll(magic, attacker, defender, false, k, 1u, out critical));
+            // 技能:倍率 160、固定值 40 → (25 + 装备魔攻 10)× 1.6 = 56
+            attacker.MagicalAttack = 0;
+            attacker.MagicalBonusBase = 10;
+            Assert.AreEqual(56, HitDamage.Roll(magic.WithSkillDamage(160, 40), attacker, defender, false, k, 1u, out critical));
         }
     }
 }

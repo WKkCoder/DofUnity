@@ -78,11 +78,29 @@ namespace Dnf.Play
         /// </summary>
         public bool ReactionNone { get; }
 
+        // 攻击信息读出来的伤害输入(没有 .atk 的手填写法为 null)
+        private readonly HitInput _source;
+
+        /// <summary>
+        /// 真实伤害公式要的输入(证据 E-110):取自 .atk 的 [damage]、[attack type]、[weapon damage apply]、[damage bonus] 等;
+        /// 手填(没有 .atk)的只有 <see cref="DamageBonus"/> 与 <see cref="Magical"/>,按"带武器攻击力"的普攻写法补;
+        /// 技能伤害(<see cref="IsSkillDamage"/>)按 <see cref="HitInput.WithSkillDamage"/> 换算。
+        /// </summary>
+        public HitInput Input
+        {
+            get
+            {
+                HitInput input = _source ?? HitInput.FromBonus(DamageBonus, Magical);
+                return IsSkillDamage ? input.WithSkillDamage(SkillRatePercent, SkillFixed) : input;
+            }
+        }
+
         public HeroStrikeInfo(int damageBonus, int pushAside, bool knockDown, int skillRatePercent = 0, int skillFixed = 0,
             int hitValue = -1, bool useWeaponHitDelayRate = false, float hitScale = -1f, int knockBackType = 0, bool noKnockBack = false,
             int forceHitStunMs = 0, bool magical = false, int liftUp = 0, bool bounce = false, bool ignoreWeight = false, bool reactionDamage = false,
-            string hitWav = null, bool reactionNone = false)
+            string hitWav = null, bool reactionNone = false, HitInput source = null)
         {
+            _source = source;
             ReactionNone = reactionNone;
             HitWav = string.IsNullOrEmpty(hitWav) ? null : hitWav;
             DamageBonus = damageBonus;
@@ -114,19 +132,20 @@ namespace Dnf.Play
                     info.HitScale, info.KnockBackType, info.HitType == HitKind.Burn, info.ForceHitStunTime, info.AttackType == AttackKind.Magic,
                     info.LiftUp, info.Bounce != 0, info.IgnoreWeight != 0,
                     info.Reaction == DamageReaction.Damage || info.Reaction == DamageReaction.DamageExceptHuman, info.HitWav,
-                    info.Reaction == DamageReaction.None);
+                    info.Reaction == DamageReaction.None, HitInput.From(info));
         }
 
         /// <summary>同一份攻击信息,换上技能伤害的两个数。</summary>
         public HeroStrikeInfo WithSkillDamage(int ratePercent, int fixedDamage)
         {
             return new HeroStrikeInfo(DamageBonus, PushAside, KnockDown, ratePercent, fixedDamage, HitValue, UseWeaponHitDelayRate,
-                HitScale, KnockBackType, NoKnockBack, ForceHitStunMs, Magical, LiftUp, Bounce, IgnoreWeight, ReactionDamage, HitWav, ReactionNone);
+                HitScale, KnockBackType, NoKnockBack, ForceHitStunMs, Magical, LiftUp, Bounce, IgnoreWeight, ReactionDamage, HitWav, ReactionNone, _source);
         }
     }
 
     /// <summary>
-    /// 占位的伤害数:真正的伤害公式(<see cref="DamageFormula"/>)需要完整的角色面板,还没有接进来(P5.M3)。
+    /// 占位的伤害数:主角没有攻击面板、或没读到公式常量时(命令行 --no-damage、没有数据的合成试验场)主角打怪物还用它;
+    /// 有面板与常量时走原版公式(<see cref="HitDamage"/>,证据 E-110),不再经过这里。
     /// 基础值 25.3 是照基线录像标的:一级哥布林挨第一击(加成 −15%)时屏幕上出现 21 与 22,即 25.3 × 0.85 = 21.5 上下取整;
     /// 之后每一击按 [damage bonus] 缩放,小数部分按概率进位(同一份基础值给出 21 与 22 两种读数)。证据 E-069。
     /// </summary>
@@ -147,7 +166,7 @@ namespace Dnf.Play
 
         /// <summary>
         /// 技能一击的占位伤害:<see cref="SkillBaseHit"/> × 百分比 / 100 + 固定值(两个数取自技能 .skl 的 [level info]),小数部分按概率进位。
-        /// 真实公式要等完整角色面板接进来(P5.M3)。
+        /// 真实公式见 <see cref="HitDamage"/>(E-110),占位值只在没有面板时用。
         /// </summary>
         public static int RollSkill(int ratePercent, int fixedDamage, Random random)
         {
@@ -350,7 +369,11 @@ namespace Dnf.Play
     /// 受击硬直与击退、左下角的占位血条、红色伤害数字;生命归零后主角停在受击姿势、画面上显示 DEAD,不再接受输入。
     /// 构造时不给 <see cref="Vitals"/> 就是旧的行为:主角打不到、怪物按固定距离出招、没有血条(命令行 --no-damage、播放器 -dnfnodamage 用它,按时刻对拍的回归检查靠它保持原来的时刻)。
     /// 魔法值(证据 E-087):放技能时扣 .skl 的 [consume MP],不够就放不出来;按 .chr 的 [MP regen speed](每分钟,单位是推断的)连续恢复。
-    /// 没做:主角打怪的真实伤害公式(仍用 <see cref="PlaceholderDamage"/>)、主角的真实面板(等级、装备、成长)、主角倒地起身与空中受击、
+    /// 主角打怪物的伤害(证据 E-110):给了攻击面板(<see cref="HeroPanel"/>)与公式常量(随 <see cref="Vitals"/> 一起装配)时按原版公式算——
+    /// 攻击信息(<see cref="HeroStrikeInfo.Input"/>)、主角面板(<see cref="Panel"/>)、怪物的防御面板(<see cref="MonsterActor.Defense"/>)填进伤害结构,
+    /// 交给 <see cref="HitDamage"/>:物理/魔法、防御减免、元素抗性、暴击(数字用暴击那套)、低等级怪物挨的第一击算额外命中;
+    /// 没有面板或常量时仍用 <see cref="PlaceholderDamage"/>(<see cref="UsesFormulaDamage"/> 为假)。
+    /// 没做:主角的等级成长与属性点(面板只对一级的新角色成立)、装备的其余加成、技能的逐级成长、上挑自己的攻击信息与伤害数、
     /// 复活与结算、技能音效与语音、掉落。出口开关与换房间在 <see cref="DungeonSession"/>。证据 E-069。
     /// </summary>
     public sealed class RoomCombatSession : ISkillSession, ISoundSource
@@ -410,6 +433,10 @@ namespace Dnf.Play
         /// <summary>怪物打主角的伤害种子用的随机数,与主角打怪物的伤害序列分开,免得互相改变对方的序列。</summary>
         private readonly Random _monsterRandom;
         private readonly DamageConstants _damageConstants;
+
+        /// <summary>主角打怪物时的攻击面板(证据 E-110);为 null 时主角打怪物仍用占位伤害(<see cref="PlaceholderDamage"/>)。</summary>
+        private readonly HeroPanel _heroPanel;
+        private readonly AttackerPanel _attacker;
 
         /// <summary>倒地的随机抖动(水平量 ±20%、高度 ±10%;E-083)用的随机数,与伤害的随机数分开,免得改变伤害序列。</summary>
         private readonly Random _physicsRandom;
@@ -566,6 +593,24 @@ namespace Dnf.Play
         /// <summary>伤害按原版公式算(读到了 Etc/EtcParameter.etc 的公式常量);否则用占位的"攻击力 × 加成"。</summary>
         public bool HasDamageConstants => _damageConstants != null;
 
+        /// <summary>主角的攻击面板(证据 E-110);为 null 表示主角打怪物用占位伤害。</summary>
+        public HeroPanel Panel => _heroPanel;
+
+        /// <summary>主角每一段普攻的攻击信息(与 .chr 的 [attack info] 同下标)。</summary>
+        public IReadOnlyList<HeroStrikeInfo> Strikes => _strikes;
+
+        /// <summary>奔跑攻击的攻击信息。</summary>
+        public HeroStrikeInfo DashStrike => _dashStrike;
+
+        /// <summary>空中攻击的攻击信息。</summary>
+        public HeroStrikeInfo JumpStrike => _jumpStrike;
+
+        /// <summary>主角打怪物的伤害按原版公式算(有攻击面板,又读到了公式常量);否则用占位伤害。</summary>
+        public bool UsesFormulaDamage => _attacker != null && _damageConstants != null;
+
+        /// <summary>主角在怪物上留下的"攻击者"记号(怪物 <see cref="MonsterActor.LastAttackerId"/> 记的就是它;额外命中判断用,证据 E-110)。</summary>
+        public const int HeroAttackerId = 1;
+
         /// <summary>
         /// 声音提示队列(证据 E-089、E-090):进房间时的地图声音与怪物出场声、挥剑与语音、命中、怪物受击与死亡、主角受击与死亡、没魔法与冷却中的语音、跳跃与技能音效。
         /// 播放的一方每帧调 <see cref="DrainSounds"/> 取走;没人取时只留最近一批。
@@ -583,9 +628,11 @@ namespace Dnf.Play
         public RoomCombatSession(DnfAssets assets, RoomSession room, IReadOnlyList<MonsterActor> monsters, IReadOnlyList<HeroStrikeInfo> strikes, int seed = 1,
             HeroStrikeInfo dashStrike = default, HeroStrikeInfo jumpStrike = default, HeroSkills skills = null, int weaponStunMs = 0,
             float weaponDelayRate = -1f, HitStunTable stunTable = null, HeroVitals vitals = null, DamageConstants damageConstants = null,
-            WeaponSound weaponSound = default)
+            WeaponSound weaponSound = default, HeroPanel heroPanel = null)
         {
             _weaponSound = weaponSound;
+            _heroPanel = heroPanel;
+            _attacker = heroPanel?.ToAttacker();
             Skills = skills ?? new HeroSkills(new HeroSkillSlot[0]);
             _cueCooling = new bool[Skills.Slots.Count];
             WeaponStunMs = weaponStunMs;
@@ -861,6 +908,7 @@ namespace Dnf.Play
                 }
                 actor.PhysicalAttack = stats.PhysicalAttack;
                 actor.MagicalAttack = stats.MagicalAttack;
+                actor.Defense = DefenderPanel.FromMonster(stats, level);                    // 挨打时的防御面板(证据 E-110)
                 actor.Panel = MonsterPanelInfo.From(def, kind, level, stats.HpMax, data);   // 目标血条窗口的资料(证据 E-106)
                 actor.Sounds = new MonsterSounds(def.AppearSound, def.DamageSound, def.DieSound, def.AttackSound, def.AmbientSound);
                 actors.Add(actor);
@@ -872,8 +920,10 @@ namespace Dnf.Play
             TryWeaponSound(chr, room.Hero, out WeaponSound weaponSound);
             // 主角的生命值:没有就是旧行为(怪物只按固定距离出招、打不到主角、没有血条)——自动化检查里需要"不会被打"的主角时用
             HeroVitals vitals = heroVitals && chr != null ? HeroVitals.FromChr(chr) : null;
+            // 主角的攻击面板(证据 E-110):与公式常量、生命值一起给;没有生命值(--no-damage)时仍用占位伤害,按时刻对拍的回归检查靠它保持原来的时刻
+            HeroPanel heroPanel = vitals != null ? HeroPanel.FromChr(chr, vitals.Level, HeroPanel.WornEquipment(assets, room.Hero)) : null;
             return new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, HeroSkills.Create(data, chr, 0), hasWeapon ? weapon.StunMs : 0,
-                hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null, weaponSound);
+                hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null, weaponSound, heroPanel);
         }
 
         /// <summary>主角穿的武器在 .chr 的 [weapon wav] 里那一块(挥动与命中声音标签);取不到返回 false。</summary>
@@ -1200,9 +1250,20 @@ namespace Dnf.Play
                     info = hero.AttackStage < _strikes.Length ? _strikes[hero.AttackStage] : new HeroStrikeInfo(0, 0, false);
                     break;
             }
-            int damage = info.IsSkillDamage
-                ? PlaceholderDamage.RollSkill(info.SkillRatePercent, info.SkillFixed, _random)
-                : PlaceholderDamage.Roll(info.DamageBonus, _random);
+            // 伤害:有攻击面板与公式常量就走原版公式(证据 E-110),打完在怪物身上记下攻击者(下一击不再算额外命中);否则是占位伤害
+            int damage;
+            bool critical = false;
+            if (UsesFormulaDamage)
+            {
+                damage = RollFormulaDamage(info, monster, unchecked((uint)_random.Next()), out critical);
+                monster.LastAttackerId = HeroAttackerId;
+            }
+            else
+            {
+                damage = info.IsSkillDamage
+                    ? PlaceholderDamage.RollSkill(info.SkillRatePercent, info.SkillFixed, _random)
+                    : PlaceholderDamage.Roll(info.DamageBonus, _random);
+            }
             // 受击硬直与击退按客户端的公式算(证据 E-080);没有硬直表时 StunInput 无效,怪物走占位值。
             // 倒地(以及空中、倒地中又挨打)按客户端的开始处理算:体重缩放的击飞、z 抛物线、落地后颠一下再躺下(证据 E-082、E-083)
             _monsterHp?.SetTarget(monster, _hudClockMs);    // 先选中再结算:血条先取这一击之前的生命,这一击才会掉出一段闪光(证据 E-106)
@@ -1227,7 +1288,28 @@ namespace Dnf.Play
             {
                 Kills++;
             }
-            AddNumber(damage, DamageNumberFlags.AttackerIsHero, hit, monster.Y);
+            AddNumber(damage, DamageNumberFlags.AttackerIsHero | (critical ? DamageNumberFlags.Critical : 0), hit, monster.Y);
+        }
+
+        /// <summary>
+        /// 主角这一击打这只怪物的原版公式伤害(证据 E-110,至少 1):输入按 <see cref="HeroStrikeInfo.Input"/>、主角的攻击面板(<see cref="Panel"/>)、
+        /// 怪物的防御面板(<see cref="MonsterActor.Defense"/>,没给就按零防御零抗性)填进伤害结构;额外命中按怪物记下的上一个攻击者
+        /// (<see cref="MonsterActor.LastAttackerId"/>)判断。<paramref name="seed"/> 是这一击的随机种子,<paramref name="critical"/> 返回是否暴击。
+        /// 不改怪物的状态:记攻击者在命中结算(<see cref="Strike"/>)里做。没有攻击面板或公式常量时抛 <see cref="InvalidOperationException"/>。
+        /// </summary>
+        public int RollFormulaDamage(HeroStrikeInfo info, MonsterActor monster, uint seed, out bool critical)
+        {
+            if (!UsesFormulaDamage)
+            {
+                throw new InvalidOperationException("没有攻击面板或伤害公式常量");
+            }
+            if (monster == null)
+            {
+                throw new ArgumentNullException(nameof(monster));
+            }
+            DefenderPanel defender = monster.Defense ?? new DefenderPanel { Level = monster.Level };
+            bool bonusHit = HitDamage.BonusHitApplies(defender.Level, monster.LastAttackerId == HeroAttackerId);
+            return HitDamage.Roll(info.Input, _attacker, defender, bonusHit, _damageConstants, seed, out critical);
         }
 
         // ------------------------------------------------------------------ 怪物打主角(P5.M5,证据 E-086)

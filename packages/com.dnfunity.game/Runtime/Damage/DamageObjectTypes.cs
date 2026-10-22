@@ -15,6 +15,9 @@ namespace Dnf.Game
         /// <summary>角色。</summary>
         public const uint Character = 0x111;
 
+        /// <summary>怪物(同样带"活动对象"的位 0x11)。</summary>
+        public const uint Monster = 0x211;
+
         /// <summary>召唤物(宠物之类)。命中对象为召唤物时走召唤物的伤害公式。</summary>
         public const uint Creature = 0x81;
 

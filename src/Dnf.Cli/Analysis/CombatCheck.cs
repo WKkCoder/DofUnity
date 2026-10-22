@@ -9,7 +9,7 @@ namespace Dnf.Cli.Analysis;
 /// combat-check:在一个副本房间里按时间表替主角按键,逐步推进战斗模拟(60 帧每秒的固定步长),
 /// 打印每次命中(时刻、第几个怪物、伤害、剩余血量、击杀)与最后的状态,并可在指定时刻输出 800×600 的画面(证据 E-069)。
 /// 时间表 --play 的每一项是 "秒:动作":动作是 none、left、right、up、down(可用 + 组合),再加上 attack 表示在那一刻按一下攻击键;
-/// 方向保持到下一项改变为止。伤害是占位值(<see cref="PlaceholderDamage"/>),不是原版公式的结果。
+/// 方向保持到下一项改变为止。主角打怪物的伤害:带生命值(不加 --no-damage)时按原版公式算(证据 E-110,主角面板只对一级的新角色成立),--no-damage 时是占位值(<see cref="PlaceholderDamage"/>)。
 /// </summary>
 internal static class CombatCheck
 {
@@ -50,6 +50,7 @@ internal static class CombatCheck
             + ",受击硬直 " + (session.StunTable != null ? "按客户端公式" : "占位值") + "(E-080),倒地 按客户端的开始处理与三阶段(E-083)"
             + (session.HeroDown.Available ? ",主角倒地与起身 按同一套三阶段 + 受击决策 + 提前起身(E-105)" : ",主角没有倒地动作(只有受击硬直)")
             + (session.MonsterWindow != null ? ",目标血条 原版样式窗口(E-106)" : ",目标血条 占位条(缺窗口图帧)")
+            + (session.UsesFormulaDamage ? ",主角打怪物 按原版公式(E-110,只对一级新角色成立)" : ",主角打怪物 占位伤害")
             + (session.Vitals != null
                 ? ",怪物还手(E-086):主角生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax + ",伤害 " + (session.HasDamageConstants ? "按原版公式(输入是推断)" : "占位")
                 : ",怪物不还手(--no-damage)"));

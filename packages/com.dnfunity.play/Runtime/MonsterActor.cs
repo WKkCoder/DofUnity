@@ -549,6 +549,17 @@ namespace Dnf.Play
         /// <summary>怪物的魔法攻击力(<see cref="MonsterStats.MagicalAttack"/>):魔法攻击信息打主角时用;没给就是 0。</summary>
         public int MagicalAttack { get; set; }
 
+        /// <summary>
+        /// 怪物挨打时的防御面板(<see cref="DefenderPanel.FromMonster"/>:防御力与元素抗性,证据 E-110);没给就按零防御、零抗性、怪物自己的等级算。
+        /// </summary>
+        public DefenderPanel Defense { get; set; }
+
+        /// <summary>
+        /// 最近一次打中这只怪物的攻击者记号(0 表示还没人打过;主角是 <see cref="RoomCombatSession.HeroAttackerId"/>)。
+        /// 客户端在"受击后"槽里把攻击者记在受击方身上、对象初始化时清零;下一次命中算额外命中时拿它与新的攻击者比(证据 E-110)。
+        /// </summary>
+        public int LastAttackerId { get; set; }
+
         /// <summary>.mob 里的出场、受击、死亡、出招、环境五种声音标签(证据 E-089);没写的为 null。会话在对应的时刻发声音提示。</summary>
         public MonsterSounds Sounds { get; set; }
 

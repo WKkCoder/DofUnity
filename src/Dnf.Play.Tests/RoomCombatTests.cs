@@ -24,7 +24,7 @@ public class RoomCombatTests
     }
 
     /// <summary>一个迷你房间(五块 14 × 6 全可走的瓦片)、主角、若干怪物(不射击主角,只追击与出招)。</summary>
-    private sealed class Arena : IDisposable
+    internal sealed class Arena : IDisposable
     {
         private readonly AvatarFixture _fx = new AvatarFixture();
 
@@ -34,9 +34,12 @@ public class RoomCombatTests
 
         /// <param name="frozen">为真时主角的可走区域只是脚下一小块:怪物的每一步都会落在区域外,所以所有怪物都原地不动(也推不动)。</param>
         /// <param name="withSkills">为真时按合成的角色脚本([skill] 初始技能表)排出技能快捷槽(要用带跳跃的 <see cref="AvatarFixture.ActionChrPath"/>)。</param>
+        /// <param name="heroPanel">给了(并且给了 <paramref name="damageConstants"/>)就让主角打怪物走原版伤害公式(E-110);都不给是占位伤害。</param>
+        /// <param name="defense">每个怪物的防御面板;不给就没有(按零防御、怪物自己的等级算)。</param>
         public Arena(IReadOnlyList<(int X, int Y)> monsters, HeroStrikeInfo[] strikes = null, bool facingLeft = false, int hp = 100,
             bool frozen = false, int seed = 1, string chr = null, HeroStrikeInfo dash = default, HeroStrikeInfo jump = default, double monsterSpeed = 222.5,
-            bool withSkills = false, int weaponStun = 0, HitStunTable stunTable = null, int monsterRecovery = 0, float weaponDelay = -1f)
+            bool withSkills = false, int weaponStun = 0, HitStunTable stunTable = null, int monsterRecovery = 0, float weaponDelay = -1f,
+            HeroPanel heroPanel = null, DamageConstants damageConstants = null, DefenderPanel defense = null)
         {
             Assets = DnfAssets.Open(_fx.Root);
             var tiles = new List<TileFile>();
@@ -58,7 +61,7 @@ public class RoomCombatTests
             for (int i = 0; i < monsters.Count; i++)
             {
                 var spawn = new RoomMonsterSpawn(1, 0, 0, monsters[i].X, monsters[i].Y, 0, 1, 0, "[fixed]", "[normal]");
-                actors.Add(new MonsterActor(i, spawn, model, 1, hp, monsterSpeed, 1500, 0, monsterRecovery));
+                actors.Add(new MonsterActor(i, spawn, model, 1, hp, monsterSpeed, 1500, 0, monsterRecovery) { Defense = defense });
             }
             HeroSkills skills = null;
             if (withSkills)
@@ -66,7 +69,8 @@ public class RoomCombatTests
                 var data = new GameData(new PvfScriptSource(Assets.Pvf));
                 skills = HeroSkills.Create(data, data.GetCharacter(0), 0);
             }
-            Session = new RoomCombatSession(Assets, room, actors, strikes ?? Plain(), seed, dash, jump, skills, weaponStun, weaponDelay, stunTable);
+            Session = new RoomCombatSession(Assets, room, actors, strikes ?? Plain(), seed, dash, jump, skills, weaponStun, weaponDelay, stunTable,
+                damageConstants: damageConstants, heroPanel: heroPanel);
         }
 
         /// <summary>每 10 毫秒一步推进:前 <paramref name="steps"/> 步按 (dirX, dirY) 走,攻击键与跳跃键在 <paramref name="attackAt"/>、<paramref name="jumpAt"/> 那一步按下(从 0 数)。</summary>

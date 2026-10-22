@@ -267,6 +267,9 @@ namespace Dnf.Cli
             "  dnf sound-check [--bot [--dungeon <副本定义>] [--seconds N] [--seed N] [--no-damage]] [--json <文件>]\n" +
             "      声音数据与触发(证据 E-089、E-090):audio.xml 各类条目数、文件是否在 SoundPacks/Music 里且是 Ogg、RANDOM/GROUP 能否展开;全库脚本里 .map [sound]、.mob 的声音标签、.atk [hit wav]、.chr [weapon wav]、.ani 帧声音在 audio.xml 里的命中率;\n" +
             "      代码里写死的语音标签是否存在;--bot 让自动机打一座副本并统计战斗发出的声音提示(没有录音可对照:验证的是数据对得上、触发有发出)。\n" +
+            "  dnf hero-damage [--map <房间地图>] [--weapon <.equ 路径>] [--samples N] [--seed N]\n" +
+            "      主角打这间房间每种怪物的伤害分布(证据 E-110):每种招式各掷 N 次,按\"第一击(算额外命中)\"与\"之后\"两组打印最小、平均、最大与暴击占比。\n" +
+            "      数值来自本机的数据,只打印在终端,不要抄进入库的文件。\n" +
             "  dnf damage-check [--cases <文件>]\n" +
             "      伤害公式(证据 E-049)。不带 --cases:读 PVF 里的 Etc/EtcParameter.etc 与 Creature/Common/creatureCommon.cre,只报告个数与完整性(不输出原版数值);\n" +
             "      带 --cases:读 tools/py/damage_ref.py --gen 生成的随机用例,用 C# 公式复算并与 Python 参考实现逐项比较。\n" +
@@ -615,6 +618,8 @@ namespace Dnf.Cli
                     return ScriptStats.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "sound-check":
                     return SoundCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "hero-damage":
+                    return HeroDamageCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "damage-check":
                     return opts.CasesFile != null
                         ? DamageCheck.RunCases(opts)

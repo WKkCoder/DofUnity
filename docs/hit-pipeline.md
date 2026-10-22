@@ -689,3 +689,14 @@ DIE 开始(`0x00837612`)、其余状态(1、2、6 到 9)。
 - **命中点**:`TryHit` 成功之后、伤害结算的同一处调 `ComboCounter.Hit`,与累计命中数 `Hits` 同一个口径;怪物打主角不记连击。
 
 测试:`ComboCounterTests`(20 条)、`RoomCombatTests` 里 2 条新测试(位图连击与窗口走满、占位文字),原有窗口断言的注释改成 1200 毫秒;全套 1362 条通过(Data 92、Script 7、Squirrel 22、Game 420、Render 273、Play 548),0 警告。
+
+## 24. 主角打怪物的伤害输入(E-110;静态读码 + 服务端交叉 + 实现 + 合成数值测试)
+
+命中结算(`TryHit` 成功之后)里,伤害由"伤害计算"槽(虚表 `+0x388`,0x0087b870)按攻击信息、攻击者面板与防御者面板填满伤害结构后交给公式(E-049)。字段对应、读属性槽的清单、额外命中规则、技能伤害的换算、面板的来源与没读通的部分见 `docs/damage-input.md`;和本文有关的接口只有四点:
+
+- **接线**:`RoomCombatSession.Strike` 在命中时,**有主角攻击面板(`HeroPanel`)与公式常量**就调 `RollFormulaDamage`(`HeroStrikeInfo.Input` + 面板 + `MonsterActor.Defense`)算伤害,否则仍是占位伤害;结算顺序不变(先选目标血条,再 `ApplyHit`,再放声音与命中停顿,最后放数字)。
+- **额外命中**:低于 50 级的怪物,攻击者与它上一次挨打时记下的不是同一个(`MonsterActor.LastAttackerId`)就乘 1.1;主角打中后写 `RoomCombatSession.HeroAttackerId`,所以同一个主角连续打,只有第一击算额外命中。
+- **暴击**:公式返回是否暴击,伤害数字带暴击位(`DamageNumberFlags.Critical`,E-107)。
+- **回归开关**:`--no-damage` / `-dnfnodamage` 不装配生命与公式常量,也就没有面板,主角打怪物仍是占位伤害,按时刻对拍的回归检查靠它保持原来的时刻。
+
+测试:`HitDamageTests`(Game 33 条)、`HeroDamageTests`(Play 20 条);全套 1422 条通过(Data 92、Script 7、Squirrel 22、Game 453、Render 274、Play 574),0 警告。

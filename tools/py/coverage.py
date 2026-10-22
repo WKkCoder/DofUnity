@@ -41,8 +41,9 @@ CONSUMERS = {
     "skl": [("S", "game/Runtime/Defs/SkillDef.cs"), ("S", "play/Runtime/HeroSkills.cs")],
     "chr": [("S", "game/Runtime/Defs/CharacterDef.cs"), ("S", "game/Runtime/Defs/WeaponSound.cs"),
             ("S", "game/Runtime/Defs/WeaponHitInfo.cs"), ("S", "render/Runtime/TownHero.cs"),
-            ("S", "render/Runtime/Avatar.cs"), ("S", "play/Runtime/HeroVitals.cs"), ("S", "play/Runtime/RoomCombat.cs")],
-    "equ": [("S", "render/Runtime/Avatar.cs")],
+            ("S", "render/Runtime/Avatar.cs"), ("S", "play/Runtime/HeroVitals.cs"), ("S", "play/Runtime/HeroPanel.cs"),
+            ("S", "play/Runtime/RoomCombat.cs")],
+    "equ": [("S", "render/Runtime/Avatar.cs"), ("S", "play/Runtime/HeroPanel.cs")],
     "map": [("S", "render/Runtime/RoomMap.cs"), ("S", "render/Runtime/MapScript.cs"), ("S", "render/Runtime/TownScene.cs"),
             ("S", "render/Runtime/TownExits.cs"), ("S", "render/Runtime/RoomSession.cs"), ("S", "render/Runtime/RoomGate.cs"),
             ("S", "render/Runtime/RoomObjects.cs"), ("S", "render/Runtime/DungeonLayout.cs"), ("S", "render/Runtime/RoomScene.cs")],
@@ -62,8 +63,8 @@ CONSUMERS = {
 }
 
 LOADER_NAMES = {
-    "atk": "AttackInfoLoader", "mob": "MonsterDef / MonsterAbility / AttackKindRecord / ThrowAttackRecord", "ptl": "ParticleDef(只读运动与寿命)", "skl": "SkillDef", "chr": "CharacterDef / TownHero / Avatar",
-    "equ": "Avatar(只读换装图层)", "map": "RoomMap / MapScript / TownScene", "til": "RoomMap", "obj": "PassiveObjectDef / ObjectDef",
+    "atk": "AttackInfoLoader", "mob": "MonsterDef / MonsterAbility / AttackKindRecord / ThrowAttackRecord", "ptl": "ParticleDef(只读运动与寿命)", "skl": "SkillDef", "chr": "CharacterDef / TownHero / Avatar / HeroPanel",
+    "equ": "Avatar(换装图层)/ HeroPanel(装备攻击与暴击)", "map": "RoomMap / MapScript / TownScene", "til": "RoomMap", "obj": "PassiveObjectDef / ObjectDef",
     "act": "ActParser(语法树)", "ai": "AiVocabulary / AiParser(词表与解析)", "dgn": "DungeonMaze / DungeonLayout",
     "twn": "TownDef", "wdm": "WorldMapDef", "ui": "WorldMapDef(只读副本选择界面用到的几项)", "etc": "DamageConstants / HitStun",
     "cre": "DamageConstants", "npc": "ClearCamp",
