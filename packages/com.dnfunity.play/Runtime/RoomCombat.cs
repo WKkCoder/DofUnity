@@ -428,6 +428,17 @@ namespace Dnf.Play
         private readonly List<HitPopup> _popups = new List<HitPopup>();
         private readonly List<AnimatedEffect> _effects = new List<AnimatedEffect>();
         private readonly List<MonsterProjectile> _projectiles = new List<MonsterProjectile>();
+
+        // 金币掉落(证据 E-116):表为 null 时杀怪不掉东西(旧行为)
+        private readonly List<FieldDrop> _drops = new List<FieldDrop>();
+        private readonly List<GainPopup> _gains = new List<GainPopup>();
+        private MonsterDropTable _dropTable;
+        private GoldGenTable _goldTable;
+        private DropRandom _dropRandom = new DropRandom(1);
+        private int _dropSerial;
+
+        /// <summary>地上金币与拾取飘字取图用的图源;默认是素材库,测试里换成合成的(<see cref="UseDropArt"/>)。</summary>
+        private ISpriteSource _dropSprites;
         private readonly List<string> _throwSoundScratch = new List<string>();
         private readonly HashSet<MonsterActor> _hitThisSwing = new HashSet<MonsterActor>();
         private readonly Random _random;
@@ -494,6 +505,56 @@ namespace Dnf.Play
 
         /// <summary>其中打中主角的个数。</summary>
         public int ProjectileHits { get; private set; }
+
+        /// <summary>地上还没捡的金币堆(证据 E-116)。</summary>
+        public IReadOnlyList<FieldDrop> Drops => _drops;
+
+        /// <summary>正在升起的拾取飘字。</summary>
+        public IReadOnlyList<GainPopup> Gains => _gains;
+
+        /// <summary>金币掉落用的怪物掉落表;没有时为 null(杀怪不掉金币)。</summary>
+        public MonsterDropTable DropTable => _dropTable;
+
+        /// <summary>
+        /// 副本的标准等级(掉落概率行按它选,<c>CDungeon::get_standard_level</c>,证据 E-116):<see cref="DungeonSession"/> 从 .dgn 的 [basis level] 读来
+        /// (<see cref="GoldDrop.StandardLevel"/>);0 表示没有副本背景(单个房间的演示),按被杀怪物自己的等级选(推断)。
+        /// </summary>
+        public int DropDungeonLevel { get; set; }
+
+        /// <summary>掉落率百分比(服务端全局或活动加成,100 = 不变;证据 E-116)。</summary>
+        public int DropRate { get; set; } = 100;
+
+        /// <summary>这个房间里一共掉出过多少堆金币(含已经捡走的)。</summary>
+        public int GoldDropped { get; private set; }
+
+        /// <summary>掉出过的金币总额。</summary>
+        public long GoldDroppedAmount { get; private set; }
+
+        /// <summary>主角在这个房间里捡了多少堆。</summary>
+        public int GoldPicked { get; private set; }
+
+        /// <summary>主角在这个房间里捡到的金币总额。</summary>
+        public long GoldEarned { get; private set; }
+
+        /// <summary>最近一次捡到的金额(没捡过是 0)。</summary>
+        public int LastGoldPickup { get; private set; }
+
+        /// <summary>
+        /// 装上怪物金币掉落数据(证据 E-116):<paramref name="table"/> 与 <paramref name="gold"/> 任一为 null 都等于关掉掉落;
+        /// <paramref name="seed"/> 是掷骰与落点用的随机数种子(与其余随机数分开,免得改变伤害序列)。
+        /// </summary>
+        public void UseDrops(MonsterDropTable table, GoldGenTable gold, int seed = 1)
+        {
+            _dropTable = table;
+            _goldTable = gold;
+            _dropRandom = new DropRandom(seed);
+        }
+
+        /// <summary>换地上金币与拾取飘字的图源(没有原版图包的测试里喂合成的图);传 null 回到素材库。图源里缺帧时金币不画、飘字退回占位文字。</summary>
+        public void UseDropArt(ISpriteSource sprites)
+        {
+            _dropSprites = sprites ?? _assets;
+        }
 
         /// <summary>最近一次被打中的怪物(占位血条用,<see cref="TargetBarMs"/> 毫秒内没再被打中就清空);原版样式的窗口见 <see cref="MonsterWindow"/>。</summary>
         public MonsterActor Target { get; private set; }
@@ -734,6 +795,7 @@ namespace Dnf.Play
             _damageConstants = damageConstants;
             _monsterRandom = new Random(unchecked(seed * 131 + 29));
             _assets = assets ?? throw new ArgumentNullException(nameof(assets));
+            _dropSprites = _assets;
             _room = room ?? throw new ArgumentNullException(nameof(room));
             _monsters = new List<MonsterActor>(monsters ?? new List<MonsterActor>());
             _strikes = new HeroStrikeInfo[strikes == null ? 0 : strikes.Count];
@@ -1026,9 +1088,15 @@ namespace Dnf.Play
                 EquipmentStats worn = HeroPanel.WornEquipment(assets, room.Hero);
                 heroPanel = progress != null ? HeroPanel.FromStats(progress.Level, progress.Stats, worn) : HeroPanel.FromChr(chr, vitals.Level, worn);
             }
-            return new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, HeroSkills.Create(data, chr, 0), hasWeapon ? weapon.StunMs : 0,
+            var session = new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, HeroSkills.Create(data, chr, 0), hasWeapon ? weapon.StunMs : 0,
                 hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null, weaponSound, heroPanel,
                 progress, expWeight);
+            MonsterDrops drops = MonsterDrops.Load(assets);
+            if (drops.Available)
+            {
+                session.UseDrops(drops.Table, drops.Gold, unchecked(seed * 7919 + 17));
+            }
+            return session;
         }
 
         /// <summary>主角穿的武器在 .chr 的 [weapon wav] 里那一块(挥动与命中声音标签);取不到返回 false。</summary>
@@ -1242,6 +1310,7 @@ namespace Dnf.Play
             {
                 follow.MoveTo(hero.X, hero.Y, hero.Z);   // 升级光效跟着主角走(跟随是推断:客户端把它挂在主角身上)
             }
+            UpdateDrops(deltaMs, hero);
             _targetMs += deltaMs;
             _hudClockMs += deltaMs;
             _monsterHp?.Update(_hudClockMs);
@@ -1460,6 +1529,7 @@ namespace Dnf.Play
             {
                 Kills++;
                 AwardKillExp(monster);
+                SpawnGoldDrops(monster);
             }
             AddNumber(damage, DamageNumberFlags.AttackerIsHero | (critical ? DamageNumberFlags.Critical : 0), hit, monster.Y);
         }
@@ -1488,6 +1558,76 @@ namespace Dnf.Play
             int exp = KillExp.ForKill(progress.Rewards, progress.Rates, progress.Level, monster.Level, role, named, ExpDifficulty, ExpWeight);
             LastKillExp = exp;
             GainExp(exp);
+        }
+
+        // ------------------------------------------------------------------ 金币掉落与拾取(证据 E-116)
+
+        /// <summary>
+        /// 主角杀死一只怪物时掷金币(<see cref="GoldDrop.Roll"/>):种类首领为 3、其余 0(与经验同一条取法,推断),难度取 <see cref="ExpDifficulty"/>,单人,
+        /// 副本等级见 <see cref="DropDungeonLevel"/>,掷一次(服务端 <c>map_monster</c> 里的次数这里按 1,推断)。每一堆从怪物身上抛到周围的可站处。
+        /// 没装掉落数据时什么也不做。
+        /// </summary>
+        private void SpawnGoldDrops(MonsterActor monster)
+        {
+            if (_dropTable == null || _goldTable == null)
+            {
+                return;
+            }
+            int role = monster.IsBoss ? (int)MonsterKind.Boss : (int)MonsterKind.Normal;
+            int dungeonLevel = DropDungeonLevel > 0 ? DropDungeonLevel : monster.Level;
+            var context = new DropContext(monster.Level, role, dungeonLevel, ExpDifficulty, 1, 0, DropRate, 1);
+            foreach (int amount in GoldDrop.Roll(_dropTable, _goldTable, context, _dropRandom))
+            {
+                SpawnGold(amount, monster.X, monster.Y);
+            }
+        }
+
+        /// <summary>在 (<paramref name="x"/>, <paramref name="y"/>) 抛出一堆 <paramref name="amount"/> 金币(落点在周围的可站处,见 <see cref="FieldDrop.Launch"/>);怪物死亡的掉落走这里。</summary>
+        public FieldDrop SpawnGold(int amount, double x, double y)
+        {
+            FieldDrop drop = FieldDrop.Launch(++_dropSerial, amount, x, y, _dropRandom, CanStandAt);
+            _drops.Add(drop);
+            GoldDropped++;
+            GoldDroppedAmount += amount;
+            return drop;
+        }
+
+        private bool CanStandAt(double x, double y)
+        {
+            IWalkArea walk = _room.Hero.Walk;
+            return walk == null || walk.IsUnrestricted || walk.Contains(x, y);
+        }
+
+        /// <summary>
+        /// 推进地上的金币与飘字:金币受重力落地后,主角活着、走到它的范围里就捡起——加到身上(有进度时)与本房间的统计、放拾取声音、在头顶升起金额;
+        /// 飘字存满寿命就清掉。一个小步里同时够得着的几堆都会捡。
+        /// </summary>
+        private void UpdateDrops(double deltaMs, TownHero hero)
+        {
+            for (int i = _gains.Count - 1; i >= 0; i--)
+            {
+                _gains[i].AgeMs += deltaMs;
+                if (_gains[i].Finished)
+                {
+                    _gains.RemoveAt(i);
+                }
+            }
+            for (int i = 0; i < _drops.Count; i++)
+            {
+                FieldDrop drop = _drops[i];
+                drop.Advance(deltaMs);
+                if (HeroDead || !drop.IsInReach(hero.X, hero.Y, hero.Z))
+                {
+                    continue;
+                }
+                _drops.RemoveAt(i--);
+                GoldPicked++;
+                GoldEarned += drop.Amount;
+                LastGoldPickup = drop.Amount;
+                Progress?.AddGold(drop.Amount);
+                _sounds.Add(FieldDrop.SoundFor(drop.Amount), SoundCueKind.Effect);
+                _gains.Add(new GainPopup(drop.Amount, hero.X, hero.Y, (int)Math.Round(hero.Z)));
+            }
         }
 
         /// <summary>
@@ -1816,6 +1956,14 @@ namespace Dnf.Play
                     extra.Add(s);
                 }
             }
+            foreach (FieldDrop d in _drops)
+            {
+                SceneSprite s = d.Sprite(_dropSprites, projection);
+                if (s != null)
+                {
+                    extra.Add(s);
+                }
+            }
             AddOverlay(extra, projection);
             if (hud != null)
             {
@@ -1878,6 +2026,22 @@ namespace Dnf.Play
                 int sx = (int)Math.Floor(p.WorldX) - projection.CameraX - text.Width / 2;
                 int sy = (int)Math.Floor(p.WorldY) + projection.GroundY - p.Z + (int)Math.Round(pose.YOffset);
                 into.Add(OverlayArt.Place(text, sx, sy, order++, "damage", pose.Alpha));
+            }
+            foreach (GainPopup g in _gains)
+            {
+                // 拾取金币的飘字:原版的位图字(证据 E-116);图包缺帧时退回占位文字
+                if (g.Build(into, ref order, _dropSprites, projection))
+                {
+                    continue;
+                }
+                int alpha = g.AlphaAt(g.AgeMs);
+                if (alpha > 0)
+                {
+                    SpriteFrame gain = _art.Text(g.Text, 3, OverlayArt.Yellow);
+                    int gx = (int)Math.Floor(g.WorldX) - projection.CameraX - gain.Width / 2;
+                    int gy = (int)Math.Floor(g.WorldY) + projection.GroundY - g.Z - GainPopup.HeadHeight - g.RiseAt(g.AgeMs);
+                    into.Add(OverlayArt.Place(gain, gx, gy, order++, "gain", alpha));
+                }
             }
             int shown = _combo.Shown;
             if (shown >= ComboCounter.ShowFrom && (_comboArt == null || !_comboArt.Build(shown, _combo.AgeMs, into, ref order)))

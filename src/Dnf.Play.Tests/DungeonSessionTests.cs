@@ -39,7 +39,7 @@ public class DungeonSessionTests
         return new ScriptLine(tag, values);
     }
 
-    private static DungeonLayout RingLayout()
+    internal static DungeonLayout RingLayout()
     {
         var doc = new[]
         {
@@ -119,6 +119,7 @@ public class DungeonSessionTests
         private readonly Func<int, int, string[]> _soundsOf;
         private readonly HeroProgress _progress;
         private readonly Func<int, int, int, byte[]> _passOf;
+        private readonly Action<RoomCombatSession> _setup;
 
         public DnfAssets Assets { get; }
         public DungeonLayout Layout { get; }
@@ -132,7 +133,8 @@ public class DungeonSessionTests
         /// 为假时左右出口没有碰撞体(退回近似的触发)。<paramref name="passOf"/> 给 (格 x, 格 y, 瓦片号 0 到 4) 的通行表(14 列 × 30 行,行优先,2 = 挡路),返回 null 用全能走。
         /// </summary>
         public Dungeon(DungeonLayout layout, Func<int, int, (int X, int Y)[]> monstersOf, int hp = 10, bool bodies = false, int heroObjectId = TestHeroId,
-            Func<HeroVitals> vitalsOf = null, Func<int, int, string[]> soundsOf = null, HeroProgress progress = null, Func<int, int, int, byte[]> passOf = null)
+            Func<HeroVitals> vitalsOf = null, Func<int, int, string[]> soundsOf = null, HeroProgress progress = null, Func<int, int, int, byte[]> passOf = null,
+            Action<RoomCombatSession> setup = null)
         {
             Assets = DnfAssets.Open(_fx.Root);
             Layout = layout;
@@ -143,6 +145,7 @@ public class DungeonSessionTests
             _soundsOf = soundsOf;
             _progress = progress;
             _passOf = passOf;
+            _setup = setup;
             Session = new DungeonSession(layout, Build, heroObjectId, Assets);
         }
 
@@ -206,6 +209,7 @@ public class DungeonSessionTests
             }
             var strikes = new[] { new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false) };
             var session = new RoomCombatSession(Assets, room, actors, strikes, 1 + cy * 2 + cx, vitals: _vitalsOf?.Invoke(), progress: _progress);
+            _setup?.Invoke(session);
             Rooms[(cx, cy)] = session;
             return session;
         }

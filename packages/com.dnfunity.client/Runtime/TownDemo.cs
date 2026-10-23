@@ -125,6 +125,7 @@ namespace Dnf.Client
         private bool _menuPausedIt;
         private int _noteDeaths;
         private int _noteRevives;
+        private int _noteGoldPicked = -1;
         private double _playAtSeconds = -1.0;
         private double _afterClearSeconds;
         private SettlementChoice _loggedChoice;
@@ -930,6 +931,7 @@ namespace Dnf.Client
                 SwitchView();
             }
             NoteRevive();
+            NoteGold();
             if (_flow.CharacterSelect != null && _flow.CharacterSelect.Outcome == CharacterSelectOutcome.Quit)
             {
                 Debug.Log("DNF_FLOW quit from character select");
@@ -961,6 +963,7 @@ namespace Dnf.Client
             _loggedChoice = SettlementChoice.None;
             _noteDeaths = 0;
             _noteRevives = 0;
+            _noteGoldPicked = -1;
             if (!_flow.LastSwitchStaysInTown)
             {
                 _audio?.StopAll();                   // 城镇换区域时不停:相同的音乐标签接着放,只换环境声(E-097)
@@ -992,6 +995,29 @@ namespace Dnf.Client
                 _noteDeaths = revive.Deaths;
                 _noteRevives = revive.Revives;
                 Debug.Log("DNF_REVIVE deaths=" + revive.Deaths + " revives=" + revive.Revives + " coins=" + (revive.Coins == null ? 0 : revive.Coins.Count));
+            }
+        }
+
+        /// <summary>
+        /// 副本里捡到金币的堆数变了就写一行 DNF_GOLD(掉了几堆、捡了几堆、这一局捡到的总额与身上的金币),无人值守的检查靠它确认掉落与拾取真的发生
+        /// (一局都没掉也没关系,没有变化就不写)。
+        /// </summary>
+        private void NoteGold()
+        {
+            if (!(_flow.Run is DungeonSession dungeon))
+            {
+                return;
+            }
+            int picked = dungeon.GoldPicked;
+            if (_noteGoldPicked < 0)
+            {
+                _noteGoldPicked = 0;                 // 这一局的起点
+            }
+            if (picked != _noteGoldPicked)
+            {
+                _noteGoldPicked = picked;
+                Debug.Log("DNF_GOLD dropped=" + dungeon.GoldDropped + " picked=" + picked + " earned=" + dungeon.GoldEarned
+                    + " purse=" + (_progress == null ? 0L : _progress.Gold));
             }
         }
 

@@ -52,7 +52,7 @@
 - ~~可走的艾尔文防线、副本入口触发、进城加载画面~~:M9d 已做(`docs/town.md`);加载画面里的文字(提示带、队伍加载条)与淡入淡出、小地图仍没做;~~城镇音乐~~M10 已做(见 [audio.md](audio.md) §7)。
 - ~~选角界面与登录占位(基线 S02)~~:M9e 已做(`docs/char-select.md`);账号、频道、创建与删除角色、中文文字、职业头像与光环仍没做,登录要等 P7。
 - 加载画面之外的过渡(淡入淡出);选了菜单之后的音乐与音效衔接(M10 起每个界面有自己的音乐,但换阶段仍是瞬间全停再起,城镇换区域除外)。
-- 结算上的掉落物、评分、经验、德利拉的对话与修理(见 `docs/settlement.md`)。
+- ~~结算上的金币掉落与战果小结~~:M24 已做(本文 §9);物品掉落、评分、原版结算页的内容与版式、德利拉的对话与修理仍没做(见 `docs/settlement.md`)。
 
 ## 6 复现
 
@@ -107,3 +107,32 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --room --map 
 **推断与占位(非 REA)**:复活满血满蓝、无敌 3 秒外加躺着保持的一段、倒计时 10 到 0 的显示、窗口位置、起始库存 5 枚、菜单版式与文字都是我的取值;客户端收到复活之后的处理(回血比例、无敌时长)没读。
 
 **没做**:队伍里别人复活你、复活币从背包扣、放弃与失败的疲劳惩罚、原版系统菜单的样子与中文文字、结算页上失败后的任何提示。
+
+## 9 金币掉落、拾取与结算战果小结(M24,证据 E-116)
+
+**怪物死了掉不掉金币、掉多少**(规则来自服务端静态读码,函数地址与标签见账本 E-116;`Dnf.Game` 的 `MonsterDropTable`、`GoldGenTable`、`GoldDrop`):
+
+- 数据读用户自己的 PVF:`Etc/ItemDropInfo_Monseter.etc`(概率行、难度/种类/队伍三张加成表、首领分堆的三个标签)与 `Etc/ItemDropInfo_Common.etc`(按怪物等级的基础金额与浮动);`MonsterDrops.Load` 读一次并缓存。数据缺失或读不通时什么都不掉,流程照常走。
+- 击杀时掷一次:选行看**副本标准等级**(副本定义的 `[basis level]`,`GoldDrop.StandardLevel`,来源见 E-116 第 3 条),概率 = 难度加成 × 种类加成 × 队伍加成 × 行里的金币概率;随机数取 0 到 10000(含)、比概率小才掉;金额 = 基础金额 ± 浮动百分比;首领按 `[condition rate]`/`[gold quantity]`/`[gold volume]` 分成几堆。怪物种类:首领取 3,其余取 0(与经验的做法一致,推断)。
+- 随机数走 `IDropRandom`(`DropRandom` 是 xorshift32,按局种子播种):只复刻范围与取法,不是服务端的随机数序列(它与客户端流程无关)。
+- 没做的修正:拜金率、行情调节、队伍人数大于 1;物品掉落不在这一版(`[item drop ref table]` 只读不用)。
+
+**掉在地上、捡起来**(`Dnf.Play` 的 `FieldDrop`、`GainPopup`、`RoomCombatSession`):
+
+- 每堆金币从怪物身上抛出,落到周围随机的可站点(`CanStandAt` 过滤障碍与悬崖),按抛物线落地、小弹几下停住;画面按金额的四个门槛选 `Item/FieldImage.img` 的帧(客户端 0x007ad760),落在地上不会消失(没有存活时间上限,推断)。
+- 主角走进范围(横向、进深各一个半宽,离地不高)就捡起:放拾取声(`GOLD_DROP1`/`GOLD_DROP2`,在捡起那一刻放,推断)、头顶飘出金额字(`Common/Etc/MoneyUp.img` 逐位拼,淡出上升)、钱进 `HeroProgress.Gold`(整个流程共用一份,`TownDemo` 的 `_progress`)。
+- 整局汇总在 `DungeonSession`:`GoldDropped`、`GoldPicked`、`GoldEarned`、`ExpEarned`;首领清空后主角仍可走动,把房里剩下的金币捡完再选结算菜单。
+
+**结算页战果小结**(`DungeonSession.AddRewardPanel`):结算菜单出现时左上角画四行占位文字(英文、像素字库,补了冒号与加号):通关用时、击杀数、经验、金币。版式是自己的设计;原版结算页的内容与版式没有读(见 [settlement.md](settlement.md))。
+
+**自动机与验证**:
+
+- `DungeonBot`、`FlowBot`:房里还有没捡的金币时自动机先走过去捡(含首领清空之后),捡完才去选结算菜单;这是测试工具,不代表原版行为。
+- 合成数据单元测试(新增 100 条,全套 1746 条):`MonsterDropTableTests`(标签读取、选行、概率与舍入、金额浮动、首领分堆、标准等级)、`FieldDropTests`(抛物线、落点、弹跳、拾取范围、选帧与声音)、`GainPopupTests`、`HeroGoldTests`、`GoldDropSessionTests`(房间里击杀掷骰、拾取、统计、确定性)、`GoldCollectTests`(自动机捡金币、结算战果小结、字库)。
+- `dungeon-check --bot` 与 `flow-check` 的末尾各打印一行金币(掉出与捡起的堆数、总额、身上有多少);`verify-all` 的流程项(选角起、副本起)断言"至少掉出一堆、掉出的都被捡起"。具体数值是用户数据,只在终端显示。
+- 播放器日志有 `DNF_GOLD dropped=… picked=… earned=… purse=…` 一行(每捡一堆打一次)。
+- 测试旋钮(不是原版规则):`RoomCombatSession.DropRate`、`DropDungeonLevel`、`UseDrops`、`UseDropArt`。
+
+**推断与占位(非 REA)**:抛出的初速、重力、弹跳与静止判定、拾取范围、金币没有存活时限、拾取声音时刻、飘字的位置与动画、每只怪只掷一次、首领以外一律按种类 0、清空后可继续走动捡金币、结算战果小结的内容与版式、自动机捡金币的路线。
+
+**没做**:物品掉落与背包(M25)、评分、结算页的原版内容、原版是否自动吸附金币、放弃回城的惩罚、金币上限与存档(M26)、中文文字。

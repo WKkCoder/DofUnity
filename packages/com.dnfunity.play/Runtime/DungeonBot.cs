@@ -71,6 +71,15 @@ namespace Dnf.Play
         /// <summary>实时运行时最多欠多少毫秒的心跳:卡顿很久之后只补这么多,其余丢掉。</summary>
         public const double MaxDebtMs = 200.0;
 
+        /// <summary>房间清空后捡金币最多花多少个心跳(够不着、走不到的金币不能拖住自动机;证据 E-116 的拾取是玩家自己走过去捡)。</summary>
+        public const int GoldChaseSteps = 480;
+
+        /// <summary>捡金币时横向走到离它这么近(像素)就停,小于拾取范围 <see cref="FieldDrop.PickupHalfWidth"/>。</summary>
+        public const double GoldStopX = 16;
+
+        /// <summary>捡金币时进深方向走到离它这么近(像素)就停,小于拾取范围 <see cref="FieldDrop.PickupHalfDepth"/>。</summary>
+        public const double GoldStopY = 5;
+
         private readonly bool _explore;
         private double _debtMs;
         private int _steps;
@@ -80,6 +89,12 @@ namespace Dnf.Play
         private int _wiggle;
         private double _prevY = double.NaN;
         private int _yBlocked;
+
+        /// <summary>这个房间里已经花在捡金币上的心跳数(换房间清零)。</summary>
+        private int _goldSteps;
+
+        /// <summary>这一步在捡金币(给 <see cref="Intent"/> 看)。</summary>
+        private bool _collecting;
 
         // 寻路:每间房间一张格子表;目标走不近时(见 StallSteps)对这个目标改走寻路,直到换目标或换房间
         private RoomCombatSession _pathRoom;
@@ -154,7 +169,7 @@ namespace Dnf.Play
             }
             _debtMs = Math.Min(_debtMs + Math.Max(0.0, deltaMs), MaxDebtMs);
             int beats = 0;
-            while (beats < MaxBeatsPerFrame && _debtMs >= CombatScript.StepMs && !session.Finished && !session.Failed)
+            while (beats < MaxBeatsPerFrame && _debtMs >= CombatScript.StepMs && !session.Failed && (!session.Finished || WantsToCollect(session)))
             {
                 bool attack = Next(session, out int dx, out int dy);
                 session.Update(CombatScript.StepMs, dx, dy, attack);
@@ -164,7 +179,17 @@ namespace Dnf.Play
             return beats;
         }
 
-        /// <summary>读会话当前的状态,给出这一步的方向与是否按攻击键。副本已经走完时全部为 0 / false。</summary>
+        /// <summary>
+        /// 副本走完(首领清空)之后自动机还想做的事:结算菜单还没选、主角活着、地上还有金币、捡金币的步数没用完。
+        /// 为真时 <see cref="Advance"/> 与 <see cref="Next"/> 照常给出方向(别的不做),调用方不能在副本走完时就让主角站着。
+        /// </summary>
+        public bool WantsToCollect(DungeonSession session)
+        {
+            return session != null && session.BossCleared && session.Choice == SettlementChoice.None && !session.Failed && !session.HeroDead
+                && _goldSteps < GoldChaseSteps && session.Current.Drops.Count > 0;
+        }
+
+        /// <summary>读会话当前的状态,给出这一步的方向与是否按攻击键。副本已经走完时,除了 <see cref="WantsToCollect"/> 的捡金币,全部为 0 / false。</summary>
         public bool Next(DungeonSession session, out int dirX, out int dirY)
         {
             dirX = 0;
@@ -172,6 +197,16 @@ namespace Dnf.Play
             _steps++;
             if (session.Finished)
             {
+                // 首领清空之后主角仍可操作:结算菜单还没选之前,把地上(首领掉的)金币捡完;别的什么也不做
+                _collecting = false;
+                if (WantsToCollect(session))
+                {
+                    RoomCombatSession last = session.Current;
+                    if (Collect(last, last.Hero, out dirX, out dirY))
+                    {
+                        Intent = "捡金币 方向 (" + dirX + "," + dirY + ")";
+                    }
+                }
                 return false;
             }
             if (session.HeroDead)
@@ -195,6 +230,7 @@ namespace Dnf.Play
             TownHero hero = fight.Hero;
             if (!ReferenceEquals(fight, _pathRoom))
             {
+                _goldSteps = 0;
                 _wiggle = 0;
                 _stuck = 0;
                 _lastX = double.NaN;
@@ -209,6 +245,7 @@ namespace Dnf.Play
             }
             MonsterActor target = Nearest(fight, hero);
             bool attack = false;
+            _collecting = false;
             if (target != null)
             {
                 double dx = target.X - hero.X;
@@ -248,13 +285,53 @@ namespace Dnf.Play
                 _yBlocked = 0;
                 if (fight.AliveCount == 0 && AllGone(fight))
                 {
-                    Navigate(session, fight, hero, out dirX, out dirY);
+                    // 先把地上的金币捡完(限时),再去出口
+                    if (!Collect(fight, hero, out dirX, out dirY))
+                    {
+                        Navigate(session, fight, hero, out dirX, out dirY);
+                    }
                 }
             }
             Unstick(hero, ref dirX, ref dirY);
-            Intent = (target != null ? "打怪 #" + target.Index : "出口") + (_wiggle > 0 ? " 摆脱卡住" : string.Empty) + (_arrivedKey != null ? " 到达" + _arrivedKey : string.Empty)
+            Intent = (target != null ? "打怪 #" + target.Index : _collecting ? "捡金币" : "出口") + (_wiggle > 0 ? " 摆脱卡住" : string.Empty) + (_arrivedKey != null ? " 到达" + _arrivedKey : string.Empty)
                 + (_latchedKey != null ? " 寻路接管" + _latchedKey : string.Empty) + " 方向 (" + dirX + "," + dirY + ")" + (attack ? " 出手" : string.Empty);
             return attack;
+        }
+
+        /// <summary>
+        /// 房间清空后朝最近的一堆金币走(落地前也往它的当前位置靠,它落在原处附近);够近了就站住等它落地、被捡起。
+        /// 总共最多 <see cref="GoldChaseSteps"/> 步,用完就不管了;地上没有金币返回 false。
+        /// </summary>
+        private bool Collect(RoomCombatSession fight, TownHero hero, out int dirX, out int dirY)
+        {
+            dirX = 0;
+            dirY = 0;
+            if (_goldSteps >= GoldChaseSteps)
+            {
+                return false;
+            }
+            FieldDrop best = null;
+            double bestD = double.MaxValue;
+            foreach (FieldDrop d in fight.Drops)
+            {
+                double dist = Math.Abs(d.X - hero.X) + 4 * Math.Abs(d.Y - hero.Y);
+                if (dist < bestD)
+                {
+                    bestD = dist;
+                    best = d;
+                }
+            }
+            if (best == null)
+            {
+                return false;
+            }
+            _goldSteps++;
+            _collecting = true;
+            double dx = best.X - hero.X;
+            double dy = best.Y - hero.Y;
+            dirX = Math.Abs(dx) > GoldStopX ? Math.Sign(dx) : 0;
+            dirY = Math.Abs(dy) > GoldStopY ? Math.Sign(dy) : 0;
+            return true;
         }
 
         private static bool AllGone(RoomCombatSession fight)

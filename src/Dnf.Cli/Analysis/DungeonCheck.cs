@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Dnf.Game;
 using Dnf.Play;
 using Dnf.Render;
 
@@ -73,7 +74,7 @@ internal static class DungeonCheck
         bool settleLogged = false;
         int lastDeaths = 0;
         int lastRevives = 0;
-        while (t < totalMs && (!session.Finished || (finishedAt >= 0 && t - finishedAt < afterClearMs)))
+        while (t < totalMs && (!session.Finished || (finishedAt >= 0 && t - finishedAt < afterClearMs) || (opts.Bot && bot.WantsToCollect(session))))
         {
             int fromX = session.CellX, fromY = session.CellY;
             double fromHeroY = session.Hero.Y;
@@ -81,7 +82,7 @@ internal static class DungeonCheck
             {
                 frameMs = baseFrameMs * (1.0 + opts.Jitter * (jitterRandom.NextDouble() * 2.0 - 1.0));
             }
-            if (session.Finished)
+            if (session.Finished && !(opts.Bot && bot.WantsToCollect(session)))
             {
                 // 清空之后(--after-clear):主角站着不动,只让时间走,结算画面随之出现
                 session.Update(frameMs, 0, 0);
@@ -186,6 +187,20 @@ internal static class DungeonCheck
         if (session.Progress != null)
         {
             Console.WriteLine(ExpCheck.Summary(session.Progress, opts.HeroLevel));
+        }
+        MonsterDrops drops = MonsterDrops.Load(assets);
+        Console.WriteLine("金币(E-116):" + (drops.Available
+            ? "掉出 " + session.GoldDropped + " 堆共 " + session.GoldDroppedAmount + ",捡起 " + session.GoldPicked + " 堆共 " + session.GoldEarned
+                + (session.Progress != null ? ",身上 " + session.Progress.Gold : string.Empty)
+            : "没有掉落数据(" + drops.Error + ")"));
+        if (drops.Available)
+        {
+            // 诊断:这座副本的标准等级选到哪一行概率行,普通怪与首领的金币概率各是万分之几(只打印在终端)
+            int standard = GoldDrop.StandardLevel(assets.ReadScript(opts.Dungeon));
+            int row = drops.Table.FindRow(standard);
+            Console.WriteLine("  标准等级 " + standard + ",概率行 " + row + (row >= 0
+                ? ",普通怪 " + drops.Table.GoldProbability(row, 0, 0, 1) + "/10000,首领 " + drops.Table.GoldProbability(row, 3, 0, 1) + "/10000"
+                : "(没有行,不掉)"));
         }
         for (int y = 0; y < maze.Rows; y++)
         {

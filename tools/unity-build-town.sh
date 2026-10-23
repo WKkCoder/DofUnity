@@ -20,6 +20,8 @@
 #      场景音乐(E-097):日志里第一首 DNF_MUSIC 是选角音乐 M_CHARACTER_SELECT、背景音乐至少开始七次、三个结算界面各有一行 DNF_RESULT_SOUND(M_RESULT)。
 #   8. 触屏操作层(M13,docs/mobile.md,本项目自己的设计):-dnftouchscript 按时间表替手指操作,走真实的触屏路径(时间表 → TouchControls → 与键盘同一组输入 → 会话);
 #      城镇里把摇杆推到最外圈向左再抬起,与键盘 -dnfautowalk 同一个终点;房间里用 stick/tap 复刻技能时间表,A、S、D 各放出一次且命中过怪物。
+#   9. 死亡复活、失败回城与 Esc 菜单(E-115):一击必杀的怪物伤害(测试旋钮)下的三段实机运行,查 DNF_REVIVE、DNF_FLOW、DNF_MENU 行;
+#      金币(E-116):整条流程日志里最后一行 DNF_GOLD 掉出与捡起一样多,带伤害的复活那一趟里钱包(purse)不为 0。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -525,6 +527,11 @@ if [ "$platform" = "macos" ]; then
       || { echo "三个结算界面应各放一声 M_RESULT(DNF_RESULT_SOUND 行):$flow_log" >&2; exit 1; }
     echo "$flow_audio" | grep -q -E "musicStarts=$music_lines resultSounds=3 " \
       || { echo "声音计数里的 musicStarts/resultSounds 与日志行数不一致:$flow_log" >&2; exit 1; }
+    # 金币(证据 E-116):整条流程的日志里有 DNF_GOLD 行,最后一行掉出的与捡起的一样多且不为 0(自动机把地上的金币都捡完了);
+    # 这一趟带 -dnfnodamage(没有等级进度),钱包恒为 0,钱包在下面的死亡复活那一趟里查
+    grep -E 'DNF_GOLD dropped=' "$flow_log" | cut -c1-120 || true
+    grep -E 'DNF_GOLD dropped=' "$flow_log" | tail -1 | grep -q -E 'DNF_GOLD dropped=([1-9][0-9]*) picked=\1 ' \
+      || { echo "整条流程里自动机应捡完掉在地上的金币(最后一行 DNF_GOLD 的 dropped 与 picked 相等且不为 0):$flow_log" >&2; exit 1; }
     # 失败分支(证据 E-115):怪物伤害放大到一击必杀、复活币 0 枚,无人值守地打副本——主角死后没有币可用,躺平 10 秒的计时走完,副本失败回城镇,
     # 不算结算(回城先经过加载画面,所以从副本出去的第一行是 to=Loading);一并看 DNF_REVIVE 行(死了一次、没复活)与流程计数(failures=1、settlements=0)
     fail_log="$PWD/re/unity-run-town-fail-macos.log"
@@ -554,7 +561,7 @@ if [ "$platform" = "macos" ]; then
     rc=$?
     set -e
     echo "播放器退出码(死亡复活): $rc"
-    grep -E 'DNF_FLOW|DNF_REVIVE' "$revive_log" | cut -c1-260 | head -12 || true
+    grep -E 'DNF_FLOW|DNF_REVIVE|DNF_GOLD' "$revive_log" | cut -c1-260 | head -16 || true
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$revive_log"; then
       echo "死亡复活的日志里有异常:$revive_log" >&2
@@ -566,6 +573,9 @@ if [ "$platform" = "macos" ]; then
       echo "币给足时不应失败回城:$revive_log" >&2
       exit 1
     fi
+    # 金币(证据 E-116):这一趟带伤害、有等级进度,捡到的金币进钱包(purse 不为 0)
+    grep -q -E 'DNF_GOLD dropped=[1-9][0-9]* picked=[1-9][0-9]* earned=[1-9][0-9]* purse=[1-9][0-9]*' "$revive_log" \
+      || { echo "死亡复活那一趟里主角应捡到金币、钱包里有钱(DNF_GOLD 行的 picked、earned、purse 都不为 0):$revive_log" >&2; exit 1; }
     # Esc 系统菜单:无伤害打副本,阶段开始 3 秒后探针像按 Esc 一样打开菜单(游戏暂停)、再过一秒选第 2 项"放弃回城";
     # 流程应回城镇,算一次放弃(giveups=1),不算结算也不算失败
     menu_log="$PWD/re/unity-run-town-menu-macos.log"

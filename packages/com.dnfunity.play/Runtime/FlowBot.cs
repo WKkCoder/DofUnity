@@ -158,7 +158,14 @@ namespace Dnf.Play
                 _bot.Advance(dungeon, deltaMs);
                 return;
             }
-            dungeon.Update(deltaMs, 0, 0);       // 副本走完:主角站着不动,只让时间走,结算画面随之出现
+            if (_bot != null && _bot.WantsToCollect(dungeon))
+            {
+                _bot.Advance(dungeon, deltaMs);  // 副本走完:先把地上的金币捡完(限时),时间照样走,结算画面随之出现
+            }
+            else
+            {
+                dungeon.Update(deltaMs, 0, 0);   // 主角站着不动,只让时间走
+            }
             if (dungeon.SettlementActive && dungeon.Choice == SettlementChoice.None && dungeon.SettlementAgeMs >= SettlementDwellMs)
             {
                 if (ChoicesMade < _choices.Count)

@@ -103,6 +103,11 @@ namespace Dnf.Play
         private ClearCamp _camp;
         private int _hoverRow = -1;
 
+        /// <summary>结算战果小结的左边距与顶部(屏幕像素;占位版式)。</summary>
+        public const int RewardPanelLeft = 24;
+
+        public const int RewardPanelTop = 150;
+
         public DungeonLayout Layout => _layout;
         public DungeonMaze Maze => _layout.Maze;
 
@@ -203,6 +208,16 @@ namespace Dnf.Play
 
         public int Kills => Sum(s => s.Kills);
         public long TotalDamage => SumLong(s => s.TotalDamage);
+
+        /// <summary>整座副本里掉出过的金币堆数、捡起的堆数与捡到的金币总额(各房间之和,证据 E-116)。</summary>
+        public int GoldDropped => Sum(s => s.GoldDropped);
+
+        public int GoldPicked => Sum(s => s.GoldPicked);
+        public long GoldEarned => SumLong(s => s.GoldEarned);
+        public long GoldDroppedAmount => SumLong(s => s.GoldDroppedAmount);
+
+        /// <summary>整座副本里主角从击杀得到的经验总和(各房间之和,证据 E-111)。</summary>
+        public long ExpEarned => SumLong(s => s.ExpEarned);
 
         private int Sum(Func<RoomCombatSession, int> f)
         {
@@ -334,8 +349,11 @@ namespace Dnf.Play
             DungeonLayout layout = DungeonLayout.Create(maze, pool, random);
             AvatarOutfit outfit = DemoRoom.DefaultOutfit(assets, weaponEqu);
             // 给了复活币库存就有复活窗口与副本失败(证据 E-115):整座副本一个 HeroRevive,各房间共用;没给就是老行为(死了一直躺着)
-            HeroRevive revive = coins == null ? null : new HeroRevive(DungeonCoinRules.Parse(assets.ReadScript(dungeonPath)), coins);
-            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals, progress, maze.ExpWeight, heroDamageScale, revive, monsterDamageScale), heroObjectId, assets);
+            ScriptLine[] dungeonScript = assets.ReadScript(dungeonPath);
+            HeroRevive revive = coins == null ? null : new HeroRevive(DungeonCoinRules.Parse(dungeonScript), coins);
+            // 金币掉落按副本的标准等级([basis level],证据 E-116)选概率行
+            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals, progress, maze.ExpWeight, heroDamageScale, revive,
+                monsterDamageScale, GoldDrop.StandardLevel(dungeonScript)), heroObjectId, assets);
         }
 
         /// <summary>
@@ -350,7 +368,7 @@ namespace Dnf.Play
         /// </summary>
         public static DungeonRoomFactory CreateAssetFactory(DnfAssets assets, DungeonLayout layout, AvatarOutfit outfit, int seed,
             int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true, HeroProgress progress = null, float expWeight = 1f,
-            int heroDamageScale = 1, HeroRevive revive = null, int monsterDamageScale = 1)
+            int heroDamageScale = 1, HeroRevive revive = null, int monsterDamageScale = 1, int dropLevel = 0)
         {
             return (cx, cy) =>
             {
@@ -379,6 +397,7 @@ namespace Dnf.Play
                 combat.HeroDamageScale = heroDamageScale;
                 combat.Revive = revive;
                 combat.MonsterDamageScale = monsterDamageScale;
+                combat.DropDungeonLevel = dropLevel;
                 return combat;
             };
         }
@@ -848,6 +867,31 @@ namespace Dnf.Play
             else
             {
                 SettlementArt.BuildFallback(hud, ref order, _art, HoverRow);
+            }
+            AddRewardPanel(hud, ref order);
+        }
+
+        /// <summary>
+        /// 结算时屏幕左侧的战果小结:通关用时、击杀、经验与金币(本局的合计)。<b>占位</b>:原版结果窗口的版式与内容没有读出来,
+        /// 这里只是把本局的数字列出来,英文像素字,位置随意。
+        /// </summary>
+        private void AddRewardPanel(List<SceneSprite> hud, ref int order)
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            long seconds = (long)(_bossClearedAtMs / 1000.0);
+            string[] lines =
+            {
+                "CLEAR TIME " + (seconds / 60).ToString("00", inv) + ":" + (seconds % 60).ToString("00", inv),
+                "KILLS " + Kills.ToString(inv),
+                "EXP +" + ExpEarned.ToString(inv),
+                "GOLD +" + GoldEarned.ToString(inv),
+            };
+            int y = RewardPanelTop;
+            foreach (string text in lines)
+            {
+                SpriteFrame line = _art.Text(text, 3, OverlayArt.White);
+                hud.Add(OverlayArt.Place(line, RewardPanelLeft, y, order++, "reward"));
+                y += line.Height + 6;
             }
         }
     }

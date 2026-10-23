@@ -209,10 +209,11 @@ def check_sweep():
 def check_flow():
     # (标题, 参数, 日志文件, 输出里必须出现的正则, 输出里不许出现的正则)
     runs = [
-        ("选角→城镇→副本→结算→回城", ["flow-check", "--from", "char"], "flow_char.txt", [], []),
+        # 金币(E-116):每一局的自动机把掉在地上的金币都捡完,至少掉过一堆;"掉出 N 堆,捡起 N 堆" 用反向引用要求两数相同
+        ("选角→城镇→副本→结算→回城", ["flow-check", "--from", "char"], "flow_char.txt", [r"金币\(E-116\):各局掉出 ([1-9]\d*) 堆,捡起 \1 堆"], []),
         ("城镇起(含加载画面与出口)", ["flow-check", "--from", "town"], "flow_town.txt", [], []),
         ("副本选择起", ["flow-check", "--from", "select"], "flow_select.txt", [], []),
-        ("副本起", ["flow-check", "--from", "dungeon"], "flow_dungeon.txt", [], []),
+        ("副本起", ["flow-check", "--from", "dungeon"], "flow_dungeon.txt", [r"金币\(E-116\):各局掉出 ([1-9]\d*) 堆,捡起 \1 堆"], []),
         ("旧版单图城镇", ["flow-check", "--legacy-town", "--from", "char"], "flow_legacy.txt", [], []),
         # 主角不动站着挨打:一座首领房间里被打死,倒地、躺平不再动(E-105)
         # M22 起怪物要先发现主角、按节拍走近、站着才出招,打死不动的主角比以前慢,时限放宽到 300 秒
@@ -240,8 +241,8 @@ def check_flow():
         names.append(title)
         if code not in codes or any(re.search(pattern, text) is None for pattern in expect) or any(re.search(pattern, text) is not None for pattern in forbid):
             bad += 1
-    return [item("flow", "整条流程无人值守检查(真实数据,自动机从起点打到结算、再回城镇;外加主角被打死倒地、活着被打倒又起身、死亡后用币复活、没有币时副本失败)", "整条流程", "E-093、E-096、E-097、E-105、E-115", len(runs), bad, total,
-                 "%d 项:" % len(runs) + "、".join(names) + ";前五项退出码 0 = 切换次数、首领清空、音乐序列、读文件失败数全部符合预期;后四项另查输出里的倒地与起身、复活与失败(没有币那一项退出码 2 是预期)")]
+    return [item("flow", "整条流程无人值守检查(真实数据,自动机从起点打到结算、再回城镇;外加主角被打死倒地、活着被打倒又起身、死亡后用币复活、没有币时副本失败)", "整条流程", "E-093、E-096、E-097、E-105、E-115、E-116", len(runs), bad, total,
+                 "%d 项:" % len(runs) + "、".join(names) + ";前五项退出码 0 = 切换次数、首领清空、音乐序列、读文件失败数全部符合预期(选角起与副本起两项另查金币:至少掉出一堆、掉出的都被捡起);后四项另查输出里的倒地与起身、复活与失败(没有币那一项退出码 2 是预期)")]
 
 
 def check_dungeons():

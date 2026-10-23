@@ -50,6 +50,12 @@ namespace Dnf.Play
         /// <summary>等级与经验的变化次数:各个房间的战斗会话据此发现"别的房间里升了级",把自己的生命上限与攻击面板换成新等级的。</summary>
         public int Version { get; private set; }
 
+        /// <summary>身上的金币(拾取地上的金币加上来,证据 E-116;花钱的地方还没有,存档是后面的事)。副本里各房间的战斗会话共用同一个对象。</summary>
+        public long Gold { get; private set; }
+
+        /// <summary>从创建起一共拾到多少金币(<see cref="Gold"/> 之后会被花掉,这个不减)。</summary>
+        public long GoldGained { get; private set; }
+
         public HeroProgress(ExpTable table, SpTable sp, CharacterGrowth growth, MobRewardTable rewards, ExpRates rates, int level = 1, int exp = -1,
             int growtype = DefaultGrowtype, int awakening = 0)
         {
@@ -98,6 +104,28 @@ namespace Dnf.Play
             SkillPoints += r.SkillPoints;
             AwakeningPoints += r.AwakeningPoints;
             return r;
+        }
+
+        /// <summary>拾到 <paramref name="amount"/> 金币;不大于 0 什么都不变。</summary>
+        public void AddGold(long amount)
+        {
+            if (amount <= 0)
+            {
+                return;
+            }
+            Gold += amount;
+            GoldGained += amount;
+        }
+
+        /// <summary>花掉 <paramref name="amount"/> 金币;不够就一个也不扣并返回 false(金额不大于 0 也返回 false)。</summary>
+        public bool TrySpendGold(long amount)
+        {
+            if (amount <= 0 || amount > Gold)
+            {
+                return false;
+            }
+            Gold -= amount;
+            return true;
         }
 
         /// <summary>直接设成某个等级(经验设成这一级的门槛;测试与 --level 之类的开关用),不给点数。</summary>
