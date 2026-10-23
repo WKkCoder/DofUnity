@@ -83,6 +83,9 @@ namespace Dnf.Play
         /// <summary>现在有几种消耗品在冷却。</summary>
         public int CooldownsActive => Cooldowns.Active;
 
+        /// <summary>让药水冷却走 <paramref name="deltaMs"/> 毫秒(宿主层不引用 Dnf.Game):副本里由房间会话推进,副本外由宿主按墙钟推进,城镇底栏上的遮罩才会退。</summary>
+        public void AdvanceCooldowns(double deltaMs) => Cooldowns.Advance(deltaMs);
+
         /// <summary>装备栏(证据 E-118:武器、称号、上衣……魔法石共 12 格,从背包穿上去;副本里各房间共用同一个对象)。</summary>
         public EquipmentSlots Worn { get; } = new EquipmentSlots();
 

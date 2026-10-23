@@ -10,7 +10,7 @@ namespace Dnf.Play.Tests;
 /// </summary>
 public class HudArtTests
 {
-    private sealed class FakeSprites : ISpriteSource
+    internal sealed class FakeSprites : ISpriteSource
     {
         public Dictionary<(string, int), SpriteFrame> Frames { get; } = new Dictionary<(string, int), SpriteFrame>();
 
@@ -18,7 +18,7 @@ public class HudArtTests
     }
 
     /// <summary>像素 (x, y) = (R=y%256, G=x%256, B=tag, A=255):从任何一块裁出来的像素都能反推它在原图里的行与列。</summary>
-    private static SpriteFrame Coded(int width, int height, byte tag, int offsetX = 0, int offsetY = 0)
+    internal static SpriteFrame Coded(int width, int height, byte tag, int offsetX = 0, int offsetY = 0)
     {
         var rgba = new byte[width * height * 4];
         for (int y = 0; y < height; y++)
@@ -35,7 +35,7 @@ public class HudArtTests
         return new SpriteFrame(width, height, offsetX, offsetY, width, height, rgba);
     }
 
-    private static FakeSprites Hud(bool bar = true, bool hp = true, bool mp = true, bool strip = true, bool extras = true, bool exp = true, bool sp = true)
+    internal static FakeSprites Hud(bool bar = true, bool hp = true, bool mp = true, bool strip = true, bool extras = true, bool exp = true, bool sp = true)
     {
         var f = new FakeSprites();
         if (sp)
@@ -106,7 +106,7 @@ public class HudArtTests
 
     private static ScriptValue Num(int n) => new ScriptValue(ScriptValueKind.Int, n, null);
 
-    private static SkillDef SkillWithIcon(int id, string image, int normal, int gray)
+    internal static SkillDef SkillWithIcon(int id, string image, int normal, int gray)
     {
         return new SkillDef(id, "skill/test/s" + id + ".skl", new[] { new ScriptLine("[icon]", new[] { Str(image), Num(normal), Str(image), Num(gray) }) });
     }

@@ -222,6 +222,12 @@ namespace Dnf.Play
         public int ItemsPicked => Sum(s => s.ItemsPicked);
         public int ItemsBagFull => Sum(s => s.ItemsBagFull);
 
+        /// <summary>整座副本里画出过多少块地上名牌(各房间之和;没有字体或文字表时是 0)。</summary>
+        public int DropLabelsDrawn => Sum(s => s.DropLabelsDrawn);
+
+        /// <summary>整座副本里出图时带着"选中"名牌的次数(各房间之和)。</summary>
+        public int SelectedLabelFrames => Sum(s => s.SelectedLabelFrames);
+
         /// <summary>整座副本里主角从击杀得到的经验总和(各房间之和,证据 E-111)。</summary>
         public long ExpEarned => SumLong(s => s.ExpEarned);
 

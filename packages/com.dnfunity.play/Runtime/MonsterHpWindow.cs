@@ -27,13 +27,17 @@ namespace Dnf.Play
         /// <summary>血条总长(像素,<see cref="HpGauge.Length"/>);不小于 0。</summary>
         public int GaugeLength { get; }
 
-        public MonsterPanelInfo(MonsterKind kind, string faceImage, int faceIndex, IReadOnlyList<string> categories, int gaugeLength)
+        /// <summary>.mob [name] 的文字键(形如 name_660;名字文本在 monster.kor.str,运行时由 <see cref="WorldTexts"/> 取,M30);没有为 null。</summary>
+        public string NameKey { get; }
+
+        public MonsterPanelInfo(MonsterKind kind, string faceImage, int faceIndex, IReadOnlyList<string> categories, int gaugeLength, string nameKey = null)
         {
             Kind = kind;
             FaceImage = faceImage;
             FaceIndex = faceIndex;
             Categories = categories ?? Array.Empty<string>();
             GaugeLength = gaugeLength < 0 ? 0 : gaugeLength;
+            NameKey = nameKey;
         }
 
         /// <summary>
@@ -52,7 +56,7 @@ namespace Dnf.Play
             }
             string face = def.FaceImage == null ? null : "sprite/" + def.FaceImage.ToLowerInvariant();
             int gauge = HpGauge.LengthFor(kind, hpMax, level, data.MonsterBaseTables[MonsterBaseTables.Common], data.HpGaugeFactors);
-            return new MonsterPanelInfo(kind, face, def.FaceIndex, def.CategoryNames, gauge);
+            return new MonsterPanelInfo(kind, face, def.FaceIndex, def.CategoryNames, gauge, def.NameKey);
         }
     }
 
@@ -225,6 +229,9 @@ namespace Dnf.Play
                 ? new MonsterHpWindow(sprites, art)
                 : null;
         }
+
+        /// <summary>这个窗口自己的名字文字表(测试用,免得改全进程共用的 <see cref="WorldTexts.Shared"/>);为 null 时用共用的。</summary>
+        public WorldTexts Texts { get; set; }
 
         /// <summary>现在的目标(没有为 null)。目标死后窗口消失了目标还在,直到换一个。</summary>
         public MonsterActor Target => _target;
@@ -425,6 +432,25 @@ namespace Dnf.Play
             {
                 // 文字的原点是 (牌子末端 + 2, 牌子行 + 3);我们的字高 7、带 1 像素边,放进那一行的中间
                 into.Add(OverlayArt.Place(text, tagX + 2 - 1, tagY + 3 + 2 - 1, order++, "mhp-text"));
+                AddName(into, ref order, info, tagX + 2 - 1 + text.Width, tagY);
+            }
+        }
+
+        /// <summary>
+        /// 怪物名字(M30,证据 E-122):紧接在 "Lv 等级" 后面,白字黑边的 12 像素汉字。要有字体与文字表(<see cref="WorldTexts.Shared"/>),
+        /// 查不到名字或没有字体时什么也不画(窗口保持原样)。
+        /// </summary>
+        private void AddName(List<SceneSprite> into, ref int order, MonsterPanelInfo info, int textRight, int tagY)
+        {
+            WorldTexts texts = Texts ?? WorldTexts.Shared;
+            if (texts == null || info == null || info.NameKey == null)
+            {
+                return;
+            }
+            SpriteFrame name = NamePlates.TextFrame(_art, texts.MonsterName(info.NameKey), 0xFFFFFFu);
+            if (name != null)
+            {
+                into.Add(OverlayArt.Place(name, textRight + NamePlates.MonsterNameGap, tagY + NamePlates.MonsterInkBelowTagRow - NamePlates.InkBottom(name), order++, "mhp-name"));
             }
         }
 

@@ -129,6 +129,10 @@ namespace Dnf.Client
         private bool _noFont;                              // -dnfnofont:不装汉字字体,界面保持英文占位(与 CPU 参照一致)
         private UnityGlyphFonts _fonts;
         private ItemTexts _itemTexts;
+        private NpcNames _npcNames;                        // 城镇 NPC 头顶的名字(M30):装了字体与文字表之后才有,按 NPC 编号缓存
+        private TownHud _townHud;                          // 城镇里的原版底栏(M30):只在有等级进度的流程里画,取不到底栏的图包时是 null
+        private bool _townHudTried;
+        private int _townHudSerial = -1;                   // 最近一次画出城镇底栏的阶段序号(日志只记每个阶段第一次)
         private bool _fontStatsLogged;
         private bool _menuWasOpen;
         private double _menuProbeAtSeconds = -1.0;
@@ -164,6 +168,9 @@ namespace Dnf.Client
         private int _noteRevives;
         private int _noteGoldPicked = -1;
         private int _noteItemsPicked = -1;
+        private bool _noteLabelsDrawn;                     // 这一局已经为"画出过地上名牌"写过 DNF_LABEL
+        private bool _noteLabelsSelected;                  // 这一局已经为"画出过选中的名牌"写过 DNF_LABEL
+        private int _platesSerial = -1;                    // 最近一次画出城镇名牌的阶段序号(日志只记每个阶段第一次)
         private double _playAtSeconds = -1.0;
         private double _afterClearSeconds;
         private SettlementChoice _loggedChoice;
@@ -528,7 +535,9 @@ namespace Dnf.Client
             _fontStatsLogged = false;
             OverlayArt.SharedFonts = _fonts;
             PvfArchive pvf = _assets.Pvf;
-            _itemTexts = new ItemTexts(new StrLibrary(path => pvf.TryGetEntry(path, out PvfEntry entry) ? pvf.Read(entry) : null));
+            var library = new StrLibrary(path => pvf.TryGetEntry(path, out PvfEntry entry) ? pvf.Read(entry) : null);
+            _itemTexts = new ItemTexts(library);
+            WorldTexts.Shared = new WorldTexts(library);     // NPC 头顶的名字与怪物目标血条里的名字(M30)
         }
 
         /// <summary>
@@ -933,6 +942,10 @@ namespace Dnf.Client
                 _fonts = null;
             }
             _itemTexts = null;
+            WorldTexts.Shared = null;
+            _npcNames = null;
+            _townHud = null;
+            _townHudTried = false;
         }
 
         private void Update()
@@ -1255,7 +1268,87 @@ namespace Dnf.Client
             Debug.Log("DNF_SHOP town serial=" + _flow.StageSerial + " npcs=" + npcs + " shopnpcs=" + shopNpcs);
         }
 
-        /// <summary>当前要叠在画面上的窗口(商店、背包或系统菜单,没开返回 null;城镇里走到商店 NPC 旁时叠一行提示);挂在 <see cref="TownView.Overlay"/> 上。</summary>
+        /// <summary>
+        /// 城镇里头顶的名牌(M30,证据 E-122;挂在 <see cref="TownView.SceneOverlay"/> 上):城镇阶段、装了汉字字体与文字表时,画每个 NPC 的名字与主角的 "Lv.等级 名字"。
+        /// 其余情况(没字体、不在城镇、没有等级进度)返回 null,画面与没有这一步时完全相同。
+        /// </summary>
+        private List<SceneSprite> BuildPlates(IReadOnlyList<SceneSprite> scene)
+        {
+            WorldTexts texts = WorldTexts.Shared;
+            var town = _view?.Session as TownSession;
+            if (texts == null || town == null || _flow == null || _progress == null || _assets == null || _flow.Stage != GameStage.Town || !_menuArt.HasFonts)
+            {
+                return null;
+            }
+            if (_npcNames == null)
+            {
+                _npcNames = NpcNames.Create(_assets, texts);
+            }
+            var plates = new List<SceneSprite>(16);
+            int order = 0;
+            int cameraX = town.Camera.IntX;
+            int npcPlates = NamePlates.AddNpcs(plates, ref order, _menuArt, _npcNames, scene, town.Npcs, cameraX);
+            bool heroPlate = NamePlates.AddHero(plates, ref order, _menuArt, _progress.Level, CharacterRoster.LocalName,
+                (int)Math.Floor(town.Hero.X) - cameraX, (int)Math.Floor(town.Hero.Y) + town.GroundY);
+            if (_platesSerial != _flow.StageSerial && (npcPlates > 0 || heroPlate))
+            {
+                _platesSerial = _flow.StageSerial;
+                Debug.Log("DNF_PLATE town serial=" + _flow.StageSerial + " npcs=" + npcPlates + " hero=" + (heroPlate ? 1 : 0));
+            }
+            return plates;
+        }
+
+        /// <summary>
+        /// 叠在画面上的全部外挂精灵(挂在 <see cref="TownView.Overlay"/> 上):先是城镇底栏(只在城镇阶段、有等级进度时画;副本里的底栏是战斗会话自己画的),
+        /// 再是窗口(<see cref="BuildMenuOverlay"/>),窗口压在底栏上面。
+        /// </summary>
+        private List<SceneSprite> BuildOverlay()
+        {
+            List<SceneSprite> hud = BuildTownHud();
+            List<SceneSprite> menu = BuildMenuOverlay();
+            if (hud == null)
+            {
+                return menu;
+            }
+            if (menu != null && menu.Count > 0)
+            {
+                hud.AddRange(menu);
+            }
+            return hud;
+        }
+
+        /// <summary>城镇底栏(M30);不在城镇、没有等级进度、没有底栏的图时返回 null。</summary>
+        private List<SceneSprite> BuildTownHud()
+        {
+            if (_flow == null || _progress == null || _assets == null || _flow.Stage != GameStage.Town)
+            {
+                return null;
+            }
+            if (!_townHudTried)
+            {
+                _townHudTried = true;
+                _townHud = TownHud.TryCreate(_assets);
+                Debug.Log("DNF_HUD town " + (_townHud == null ? "none" : "ready skills=" + _townHud.Skills.Slots.Count));
+            }
+            if (_townHud == null)
+            {
+                return null;
+            }
+            var sprites = new List<SceneSprite>(80);
+            int order = 0;
+            if (!_townHud.Build(sprites, ref order, _progress))
+            {
+                return null;
+            }
+            if (_townHudSerial != _flow.StageSerial)
+            {
+                _townHudSerial = _flow.StageSerial;
+                Debug.Log("DNF_HUD town drawn serial=" + _flow.StageSerial + " level=" + _progress.Level + " sprites=" + sprites.Count);
+            }
+            return sprites;
+        }
+
+        /// <summary>当前要叠在画面上的窗口(商店、背包或系统菜单,没开返回 null;城镇里走到商店 NPC 旁时叠一行提示);由 <see cref="BuildOverlay"/> 叠在底栏上面。</summary>
         private List<SceneSprite> BuildMenuOverlay()
         {
             if (_flow == null)
@@ -1377,6 +1470,10 @@ namespace Dnf.Client
             }
             NoteRevive();
             NoteGold();
+            if (_progress != null && _flow.Stage != GameStage.Dungeon)
+            {
+                _progress.AdvanceCooldowns(deltaMs);     // 副本外(城镇、结算)药水冷却也照墙钟走,城镇底栏上的遮罩才会退;副本里由房间会话推进,不重复算
+            }
             FlushSave("auto");                       // 隔十秒查一次有没有变(捡了东西、升了级),变了才写
             if (_flow.CharacterSelect != null && _flow.CharacterSelect.Outcome == CharacterSelectOutcome.Quit)
             {
@@ -1408,7 +1505,8 @@ namespace Dnf.Client
                 Debug.Log("DNF_SAVE look matches=" + HeroLook.Matches(_flow.Session?.Hero, _progress) + " weapon=" + (_progress.WeaponPath != null));
             }
             _view = new TownView(_assets, _flow.Scene, StageBackground);
-            _view.Overlay = BuildMenuOverlay;        // 系统菜单叠在每个阶段的画面之上(没开时不叠)
+            _view.SceneOverlay = BuildPlates;        // 城镇里头顶的名牌(M30):有字体与文字表时才画,压在场景之上、底栏之下
+            _view.Overlay = BuildOverlay;            // 城镇底栏(城镇阶段)与窗口(商店、背包、系统菜单)叠在每个阶段的画面之上(没有就不叠)
             _stageRealStart = Time.realtimeSinceStartup;
             previous?.Dispose();
             _shownSerial = _flow.StageSerial;
@@ -1418,6 +1516,8 @@ namespace Dnf.Client
             _noteRevives = 0;
             _noteGoldPicked = -1;
             _noteItemsPicked = -1;
+            _noteLabelsDrawn = false;
+            _noteLabelsSelected = false;
             if (!_flow.LastSwitchStaysInTown)
             {
                 _audio?.StopAll();                   // 城镇换区域时不停:相同的音乐标签接着放,只换环境声(E-097)
@@ -1472,6 +1572,17 @@ namespace Dnf.Client
                 _noteGoldPicked = picked;
                 Debug.Log("DNF_GOLD dropped=" + dungeon.GoldDropped + " picked=" + picked + " earned=" + dungeon.GoldEarned
                     + " purse=" + (_progress == null ? 0L : _progress.Gold));
+            }
+            // 地上名牌(M30,E-122):这一局第一次画出名牌、第一次画出"选中"的名牌各写一行 DNF_LABEL
+            if (!_noteLabelsDrawn && dungeon.DropLabelsDrawn > 0)
+            {
+                _noteLabelsDrawn = true;
+                Debug.Log("DNF_LABEL drawn=" + dungeon.DropLabelsDrawn + " selected=" + dungeon.SelectedLabelFrames);
+            }
+            if (!_noteLabelsSelected && dungeon.SelectedLabelFrames > 0)
+            {
+                _noteLabelsSelected = true;
+                Debug.Log("DNF_LABEL drawn=" + dungeon.DropLabelsDrawn + " selected=" + dungeon.SelectedLabelFrames);
             }
             // 物品(E-117):捡起的件数变了写一行 DNF_ITEM(掉了几件、捡了几件、背包放不下留在地上的件数、背包里一共几件占几格)
             int items = dungeon.ItemsPicked;

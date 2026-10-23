@@ -61,17 +61,33 @@ namespace Dnf.Client
         /// </summary>
         public Func<List<SceneSprite>> Overlay { get; set; }
 
+        /// <summary>
+        /// 叠在场景之上、<see cref="Overlay"/> 之下的外挂精灵(城镇里头顶的名牌,M30):每次 <see cref="ShowAt"/> 取一次,参数是这一帧排好的场景精灵
+        /// (名牌要按 NPC 精灵的位置摆);返回 null 或空表就什么也不叠。同样不改场景自己的绘制列表。
+        /// </summary>
+        public Func<IReadOnlyList<SceneSprite>, List<SceneSprite>> SceneOverlay { get; set; }
+
         /// <summary>把场景摆到 <paramref name="timeMs"/> 时刻并返回这次的绘制列表(与 CPU 合成共用)。</summary>
         public List<SceneSprite> ShowAt(long timeMs)
         {
             List<SceneSprite> sprites = _source != null
                 ? _source.Build(timeMs)
                 : TownScene.BuildResolvedScene(_assets, _layers, _npcs, _projection, timeMs);
+            List<SceneSprite> under = SceneOverlay?.Invoke(sprites);
             List<SceneSprite> extra = Overlay?.Invoke();
-            if (extra != null && extra.Count > 0)
+            bool anyUnder = under != null && under.Count > 0;
+            bool anyExtra = extra != null && extra.Count > 0;
+            if (anyUnder || anyExtra)
             {
                 sprites = new List<SceneSprite>(sprites);
-                sprites.AddRange(extra);
+                if (anyUnder)
+                {
+                    sprites.AddRange(under);
+                }
+                if (anyExtra)
+                {
+                    sprites.AddRange(extra);
+                }
             }
             Stage.SetSprites(sprites);
             return sprites;

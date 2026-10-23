@@ -189,7 +189,7 @@ namespace Dnf.Play
                 && _goldSteps < GoldChaseSteps && HasCollectable(session.Current);
         }
 
-        /// <summary>地上有没有捡得了的东西(金币,或背包放得下的物品;够得着却放不下的物品不算)。</summary>
+        /// <summary>地上有没有捡得了的东西(金币,或背包放得下的物品;够得着却放不下、按过一次攻击键的物品不算)。</summary>
         private static bool HasCollectable(RoomCombatSession fight)
         {
             foreach (FieldDrop d in fight.Drops)
@@ -219,6 +219,7 @@ namespace Dnf.Play
                     {
                         Intent = "捡金币 方向 (" + dirX + "," + dirY + ")";
                     }
+                    return last.SelectedDrop != null;      // 物品要按攻击键才捡(证据 E-122)
                 }
                 return false;
             }
@@ -306,6 +307,10 @@ namespace Dnf.Play
                 }
             }
             Unstick(hero, ref dirX, ref dirY);
+            if (fight.SelectedDrop != null)
+            {
+                attack = true;      // 够得着物品:攻击键就是拾取键,先把它捡了(证据 E-122)
+            }
             Intent = (target != null ? "打怪 #" + target.Index : _collecting ? "捡金币" : "出口") + (_wiggle > 0 ? " 摆脱卡住" : string.Empty) + (_arrivedKey != null ? " 到达" + _arrivedKey : string.Empty)
                 + (_latchedKey != null ? " 寻路接管" + _latchedKey : string.Empty) + " 方向 (" + dirX + "," + dirY + ")" + (attack ? " 出手" : string.Empty);
             return attack;

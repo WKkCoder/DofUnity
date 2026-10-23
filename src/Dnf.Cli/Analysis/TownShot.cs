@@ -30,6 +30,35 @@ internal static class TownShot
             Apply(session, opts.Hero);
         }
         List<SceneSprite> sprites = session.Build(opts.TimeMs);
+        if (opts.NpcRects)
+        {
+            foreach (SceneSprite s in sprites)
+            {
+                if (s.NpcId > 0)
+                {
+                    string anchor = "";
+                    foreach (TownNpc n in session.Npcs)
+                    {
+                        if (n.Id == s.NpcId)
+                        {
+                            anchor = " 锚点屏幕=(" + (n.X - session.Camera.IntX) + "," + (n.Y - n.Z + session.GroundY) + ")";
+                        }
+                    }
+                    Console.WriteLine("NPC " + s.NpcId + " 精灵矩形 x=" + s.ScreenX + " y=" + s.ScreenY + " 宽=" + s.Frame.Width + " 高=" + s.Frame.Height + anchor);
+                }
+            }
+        }
+        string hudNote = "";
+        if (opts.TownHudOn)
+        {
+            // 城镇底栏(M30):和 Unity 流程里同一条,等级取 --level
+            TownHud hud = TownHud.TryCreate(assets);
+            HeroProgress progress = HeroProgress.CreateForLocalHero(assets, opts.HeroLevel);
+            int order = 0;
+            int before = sprites.Count;
+            bool drawn = hud != null && hud.Build(sprites, ref order, progress);
+            hudNote = ",底栏 " + (drawn ? (sprites.Count - before) + " 个精灵(等级 " + progress.Level + ")" : "没画");
+        }
         var canvas = new RgbaCanvas(800, 600);
         canvas.Clear(40, 40, 40, 255);
         TownScene.Render(canvas, sprites);
@@ -37,7 +66,7 @@ internal static class TownShot
         var inv = CultureInfo.InvariantCulture;
         Console.WriteLine("区域 " + place.Town + "/" + place.Area + " 地图 " + session.MapPath + ",时间 " + opts.TimeMs + " ms:绘制列表 " + sprites.Count + " 个精灵,NPC "
             + session.NpcCount + " 个,图层 " + session.LayerCount + " 个;主角 (" + session.Hero.X.ToString("F1", inv) + "," + session.Hero.Y.ToString("F1", inv) + ") 朝"
-            + (session.Hero.FacingLeft ? "左" : "右") + ",镜头 x " + session.Camera.IntX);
+            + (session.Hero.FacingLeft ? "左" : "右") + ",镜头 x " + session.Camera.IntX + hudNote);
         Console.WriteLine("已写 " + opts.PngFile);
         return 0;
     }

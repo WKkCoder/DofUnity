@@ -184,9 +184,13 @@ public class ItemDropSessionTests
         var cues = new List<SoundCue>();
         s.DrainSounds(cues);
         cues.Clear();
-        s.Update(10, 0, 0, false);
+        s.Update(10, 0, 0, false);                               // 走到了、没按键:东西还在地上,只是被选中
+        Assert.Equal((0, 1), (s.ItemsPicked, s.Drops.Count));
+        Assert.Same(drop, s.SelectedDrop);
+        s.Update(10, 0, 0, true);                                // 攻击键就是拾取键
         s.DrainSounds(cues);
         Assert.Empty(s.Drops);
+        Assert.Null(s.SelectedDrop);
         Assert.Equal(1, s.ItemsPicked);
         Assert.Same(item, s.LastItemPickup);
         Assert.Equal(1, progress.Bag.CountOf(101));
@@ -206,17 +210,19 @@ public class ItemDropSessionTests
         SwingUntilKill(s);
         FieldDrop drop = s.Drops[0];
         Assert.False(drop.Landed);
-        s.Hero.Place(drop.X, drop.Y, false, HeroMotion.Rest, 0);          // 还在空中:站在它下面也捡不到
-        s.Update(10, 0, 0, false);
+        s.Hero.Place(drop.X, drop.Y, false, HeroMotion.Rest, 0);          // 还在空中:站在它下面按键也捡不到
+        s.Update(10, 0, 0, true);
         Assert.Equal(0, s.ItemsPicked);
+        Assert.Null(s.SelectedDrop);
         Away(s);
         LandAll(s);
         Assert.True(drop.Landed);
         s.Hero.Place(drop.X + FieldDrop.PickupHalfWidth + 40, drop.Y, false, HeroMotion.Rest, 0);
-        s.Update(10, 0, 0, false);
+        s.Update(10, 0, 0, true);
         Assert.Equal((0, 1), (s.ItemsPicked, s.Drops.Count));
+        Assert.Null(s.SelectedDrop);
         s.Hero.Place(drop.X, drop.Y, false, HeroMotion.Rest, 0);
-        s.Update(10, 0, 0, false);
+        s.Update(10, 0, 0, true);
         Assert.Equal((1, 0), (s.ItemsPicked, s.Drops.Count));
     }
 
@@ -231,7 +237,7 @@ public class ItemDropSessionTests
         Away(s);
         LandAll(s);
         s.Hero.Place(s.Drops[0].X, s.Drops[0].Y, false, HeroMotion.Rest, 0);
-        s.Update(10, 0, 0, false);
+        s.Update(10, 0, 0, true);
         Assert.Null(s.Progress);
         Assert.Equal((1, 0), (s.ItemsPicked, s.Drops.Count));
     }
@@ -253,17 +259,96 @@ public class ItemDropSessionTests
         LandAll(s);
         FieldDrop drop = s.Drops[0];
         s.Hero.Place(drop.X, drop.Y, false, HeroMotion.Rest, 0);
-        for (int i = 0; i < 5; i++)
+        s.Update(10, 0, 0, false);
+        Assert.Same(drop, s.SelectedDrop);                                       // 放不下也先被选中
+        s.Update(10, 0, 0, true);                                                // 第一下按键被吃掉:提示放不下
+        Assert.False(s.Hero.IsAttacking);
+        Assert.Equal((0, 1, 1), (s.ItemsPicked, s.ItemsBagFull, s.Drops.Count));
+        Assert.True(drop.Blocked);
+        Assert.Null(s.SelectedDrop);                                             // 之后不再被选中,攻击键照常出招
+        s.Update(10, 0, 0, true);
+        Assert.True(s.Hero.IsAttacking);
+        for (int i = 0; i < 4; i++)
+        {
+            s.Update(10, 0, 0, true);
+        }
+        Assert.Equal((0, 1, 1), (s.ItemsPicked, s.ItemsBagFull, s.Drops.Count));
+        Assert.Equal(0, progress.ItemsGained);
+        Assert.True(progress.Bag.Remove(1000));                                   // 腾出一格:再按键就捡起来
+        s.Update(10, 0, 0, false);
+        Assert.Same(drop, s.SelectedDrop);
+        s.Update(10, 0, 0, true);
+        Assert.Equal((1, 1, 0), (s.ItemsPicked, s.ItemsBagFull, s.Drops.Count));
+        Assert.Equal(1, progress.Bag.CountOf(101));
+    }
+
+    [Fact]
+    public void WalkingOverAnItemDoesNotPickItUpOnlyThePressDoes()
+    {
+        using var arena = new Arena(new[] { (340, 100) }, hp: 1, monsterLevel: 10);
+        RoomCombatSession s = arena.Session;
+        MonsterDropTable table = Table();
+        s.UseDrops(table, null, 4, PoolOf(table, StackItem()));
+        SwingUntilKill(s);
+        Away(s);
+        LandAll(s);
+        FieldDrop drop = s.Drops[0];
+        s.Hero.Place(drop.X, drop.Y, false, HeroMotion.Rest, 0);
+        for (int i = 0; i < 20; i++)
         {
             s.Update(10, 0, 0, false);
         }
-        Assert.Equal((0, 1, 1), (s.ItemsPicked, s.ItemsBagFull, s.Drops.Count));
-        Assert.True(drop.Blocked);
-        Assert.Equal(0, progress.ItemsGained);
-        Assert.True(progress.Bag.Remove(1000));                                   // 腾出一格:再站着就捡起来
+        Assert.Equal((0, 1), (s.ItemsPicked, s.Drops.Count));
+        Assert.Same(drop, s.SelectedDrop);
+    }
+
+    [Fact]
+    public void ThePressPicksTheItemInsteadOfSwingingAndTheNextPressSwings()
+    {
+        using var arena = new Arena(new[] { (340, 100) }, hp: 1, monsterLevel: 10);
+        RoomCombatSession s = arena.Session;
+        MonsterDropTable table = Table();
+        s.UseDrops(table, null, 4, PoolOf(table, StackItem()));
+        SwingUntilKill(s);
+        Away(s);
+        LandAll(s);
+        for (int i = 0; i < 200 && s.Hero.IsAttacking; i++)
+        {
+            s.Update(10, 0, 0, false);                          // 等上一下挥完
+        }
+        FieldDrop drop = s.Drops[0];
+        s.Hero.Place(drop.X, drop.Y, false, HeroMotion.Rest, 0);
         s.Update(10, 0, 0, false);
-        Assert.Equal((1, 1, 0), (s.ItemsPicked, s.ItemsBagFull, s.Drops.Count));
-        Assert.Equal(1, progress.Bag.CountOf(101));
+        s.Update(10, 0, 0, true);
+        Assert.Equal(1, s.ItemsPicked);
+        Assert.False(s.Hero.IsAttacking);                       // 这一下按键用来捡东西了
+        s.Update(10, 0, 0, true);
+        Assert.True(s.Hero.IsAttacking);                        // 地上没东西了:攻击键照常出招
+    }
+
+    [Fact]
+    public void TheSelectedItemIsTheNearestReachableOne()
+    {
+        using var arena = new Arena(new[] { (340, 100) }, hp: 1, monsterLevel: 10);
+        RoomCombatSession s = arena.Session;
+        Away(s);
+        FieldDrop a = s.SpawnItem(StackItem(101), 300, 100);
+        FieldDrop b = s.SpawnItem(StackItem(102), 300, 100);
+        s.SpawnItem(StackItem(103), 300, 100);
+        LandAll(s);
+        s.Hero.Place((a.X + b.X) / 2, a.Y, false, HeroMotion.Rest, 0);
+        s.Update(10, 0, 0, false);
+        FieldDrop first = s.SelectedDrop;
+        Assert.NotNull(first);
+        Assert.True(first.IsInReach(s.Hero.X, s.Hero.Y, s.Hero.Z));
+        double HeroDistance(FieldDrop d) => Math.Abs(d.X - s.Hero.X) + 4.0 * Math.Abs(d.Y - s.Hero.Y);
+        foreach (FieldDrop other in s.Drops.Where(d => d != first && d.IsInReach(s.Hero.X, s.Hero.Y, s.Hero.Z)))
+        {
+            Assert.True(HeroDistance(first) <= HeroDistance(other));
+        }
+        s.Update(10, 0, 0, true);                                // 捡走最近的,下一件接着被选中(如果还够得着)
+        Assert.Equal(1, s.ItemsPicked);
+        Assert.NotSame(first, s.SelectedDrop);
     }
 
     [Fact]
@@ -324,7 +409,7 @@ public class ItemDropSessionTests
         foreach (FieldDrop d in s.Drops.ToList())
         {
             s.Hero.Place(d.X, d.Y, false, HeroMotion.Rest, 0);
-            s.Update(10, 0, 0, false);
+            s.Update(10, 0, 0, d.IsItem);                       // 金币走到就捡,物品要按键
         }
         Assert.Empty(s.Drops);
         Assert.Equal((1, 1, 100L), (s.GoldPicked, s.ItemsPicked, progress.Gold));

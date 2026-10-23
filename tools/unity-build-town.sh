@@ -661,6 +661,12 @@ if [ "$platform" = "macos" ]; then
     done
     grep -q -E 'DNF_FONT stats glyphs=[1-9][0-9]* sizes=[1-9]' "$shop_log" \
       || { echo "商店窗口应当画过汉字(DNF_FONT stats glyphs>0):$shop_log" >&2; exit 1; }
+    # 城镇底栏与头顶名牌(M30,证据 E-122):有等级进度的城镇里底栏画过(DNF_HUD town drawn),装了字体与文字表时主角名牌与至少一个 NPC 名字画过(DNF_PLATE town);日志里只有个数
+    grep -E 'DNF_HUD|DNF_PLATE' "$shop_log" | cut -c1-160 || true
+    grep -q -E 'DNF_HUD town drawn serial=[0-9]+ level=[0-9]+ sprites=[1-9][0-9]*' "$shop_log" \
+      || { echo "有等级进度的城镇里应画过底栏(DNF_HUD town drawn … sprites>0):$shop_log" >&2; exit 1; }
+    grep -q -E 'DNF_PLATE town serial=[0-9]+ npcs=[1-9][0-9]* hero=1' "$shop_log" \
+      || { echo "城镇里应画过主角名牌与至少一个 NPC 名字(DNF_PLATE town … npcs>0 hero=1):$shop_log" >&2; exit 1; }
     # 消耗品(M28,证据 E-120):副本里阶段开始 3 秒后探针往背包放一种回血药与一种回蓝药(快捷栏自动放进前两格)、把主角的生命压到四成、魔法压到三成,
     # 过一秒像按键 1、1、2 那样连着用(同一种药连用第二次应被冷却拒绝),等药效发完(时间步放大 4 倍),再过一秒再用一次;日志里只有数与结果名,没有物品名与编号
     potion_log="$PWD/re/unity-run-town-potion-macos.log"
@@ -684,6 +690,12 @@ if [ "$platform" = "macos" ]; then
       || { echo "连用三次后应是用成两件、快捷栏占两格、一到两种药在冷却(used=2 quick=2 cooling=1或2):$potion_log" >&2; exit 1; }
     grep -q -E 'DNF_POTION probe settled recovering=False .* pending=0/0 ' "$potion_log" \
       || { echo "药效应已发完(pending=0/0):$potion_log" >&2; exit 1; }
+    # 地上名牌(M30,证据 E-122):这一趟装了字体与文字表,自动机打的副本里掉出的金币要画过名牌(DNF_LABEL drawn>0)。
+    # "选中"的名牌只在主角停在物品旁、而且这一步之后正好出了一帧图时才画得出来——自动机下一步就按攻击键捡走,4 倍时间步下常常来不及出图,
+    # 所以实机不要求 selected>0(选中与拾取的规则由单元测试和 EditMode 出图查;物品被捡起本身就说明选中过,见上面的 DNF_ITEM 检查)
+    grep -E 'DNF_LABEL' "$potion_log" | cut -c1-120 || true
+    grep -q -E 'DNF_LABEL drawn=[1-9][0-9]* selected=[0-9]+' "$potion_log" \
+      || { echo "副本里掉在地上的金币应画过名牌(DNF_LABEL drawn>0):$potion_log" >&2; exit 1; }
     # 角色存档(M26,本项目自己的设计):第一趟无人值守打副本、探针往背包放一件武器并穿上,退出时存档;第二趟读同一个存档进城镇,
     # 日志里读到的等级、经验、金币、背包与装备栏和第一趟最后存下的一模一样,主角的外观已是穿着的那件武器,而且读完不用再写
     save_file="$PWD/out/m26-hero.sav"

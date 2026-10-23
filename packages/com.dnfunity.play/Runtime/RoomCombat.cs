@@ -441,6 +441,16 @@ namespace Dnf.Play
         private DropRandom _itemRandom = new DropRandom(2);
         private int _dropSerial;
 
+        /// <summary>被选中的地上物品(每一小步末尾重算,见 <see cref="SelectedDrop"/>)。</summary>
+        private FieldDrop _selectedDrop;
+
+        /// <summary>地上名牌的画法(只在有字体和文字表的运行里出图)。</summary>
+        private DropLabels _dropLabels;
+
+        /// <summary>名牌用的画笔与文字表;不给就用全进程共用的字体(<see cref="OverlayArt.SharedFonts"/>)与文字表(<see cref="WorldTexts.Shared"/>)。</summary>
+        private OverlayArt _labelArt;
+        private WorldTexts _labelTexts;
+
         /// <summary>地上金币与拾取飘字取图用的图源;默认是素材库,测试里换成合成的(<see cref="UseDropArt"/>)。</summary>
         private ISpriteSource _dropSprites;
         private readonly List<string> _throwSoundScratch = new List<string>();
@@ -561,8 +571,20 @@ namespace Dnf.Play
         /// <summary>主角够得着、但背包放不下的物品有多少件(每件只算一次;东西留在地上)。</summary>
         public int ItemsBagFull { get; private set; }
 
+        /// <summary>一共画出过多少块地上名牌(每次出图画了几块就加几;没有字体或文字表时一直是 0),无人值守的检查靠它确认名牌真的画出来过。</summary>
+        public int DropLabelsDrawn { get; private set; }
+
+        /// <summary>出图时带着"选中"名牌(主角够得着、按攻击键就会捡的那一件)的次数。</summary>
+        public int SelectedLabelFrames { get; private set; }
+
         /// <summary>最近一次捡到的物品(没捡过是 null)。</summary>
         public ItemInfo LastItemPickup { get; private set; }
+
+        /// <summary>
+        /// 被选中的地上物品(证据 E-122):主角够得着的物品里离他最近的一件(背包放不下、已经提示过的不算),按攻击键就捡它;没有就是 null。
+        /// 画成名牌带黄框的那一件。金币不选,走到就捡。
+        /// </summary>
+        public FieldDrop SelectedDrop => _selectedDrop;
 
         /// <summary>
         /// 装上怪物金币掉落数据(证据 E-116):<paramref name="table"/> 与 <paramref name="gold"/> 任一为 null 都等于关掉金币掉落;
@@ -1311,6 +1333,10 @@ namespace Dnf.Play
                     SkillCasts++;
                     SpawnEffects(cast);
                 }
+                else if (attackPressed && TryPickupSelected(_room.Hero))
+                {
+                    attackPressed = false;     // 攻击键这一下用来捡东西了(证据 E-122)
+                }
                 _room.Update(heroDelta, dirX, dirY, attackPressed, jumpPressed);
             }
             EmitHeroCues();
@@ -1666,8 +1692,8 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 推进地上的金币与飘字:金币受重力落地后,主角活着、走到它的范围里就捡起——加到身上(有进度时)与本房间的统计、放拾取声音、在头顶升起金额;
-        /// 飘字存满寿命就清掉。一个小步里同时够得着的几堆都会捡。
+        /// 推进地上的东西与飘字:受重力落地;金币在主角活着、走到它的范围里就捡起——加到身上(有进度时)与本房间的统计、放拾取声音、在头顶升起金额,
+        /// 飘字存满寿命就清掉,一个小步里同时够得着的几堆都会捡;物品不自动捡,只重算被选中的那一件(见 <see cref="SelectedDrop"/>、<see cref="TryPickupSelected"/>)。
         /// </summary>
         private void UpdateDrops(double deltaMs, TownHero hero)
         {
@@ -1683,28 +1709,9 @@ namespace Dnf.Play
             {
                 FieldDrop drop = _drops[i];
                 drop.Advance(deltaMs);
-                if (HeroDead || !drop.IsInReach(hero.X, hero.Y, hero.Z))
+                if (HeroDead || drop.IsItem || !drop.IsInReach(hero.X, hero.Y, hero.Z))
                 {
-                    continue;
-                }
-                if (drop.IsItem)
-                {
-                    // 背包放不下就留在地上(只记一次),腾出地方后再走过去还能捡
-                    if (Progress != null && !Progress.Bag.CanAdd(drop.Item))
-                    {
-                        if (!drop.Blocked)
-                        {
-                            drop.Blocked = true;
-                            ItemsBagFull++;
-                        }
-                        continue;
-                    }
-                    _drops.RemoveAt(i--);
-                    ItemsPicked++;
-                    LastItemPickup = drop.Item;
-                    Progress?.AddItem(drop.Item);
-                    _sounds.Add(drop.PickupSound, SoundCueKind.Effect);
-                    continue;
+                    continue;      // 物品要按攻击键才捡(见 TryPickupSelected),这里只自动捡金币
                 }
                 _drops.RemoveAt(i--);
                 GoldPicked++;
@@ -1714,6 +1721,64 @@ namespace Dnf.Play
                 _sounds.Add(FieldDrop.SoundFor(drop.Amount), SoundCueKind.Effect);
                 _gains.Add(new GainPopup(drop.Amount, hero.X, hero.Y, (int)Math.Round(hero.Z)));
             }
+            _selectedDrop = HeroDead ? null : FindSelectable(hero);
+        }
+
+        /// <summary>
+        /// 够得着的物品里离主角最近的一件(横向距离加四倍进深距离,同样远取先掉的);背包放不下、已经提示过的(<see cref="FieldDrop.Blocked"/> 且背包还是放不下)不选,
+        /// 免得主角站在它旁边攻击键永远被吃掉。没有返回 null。
+        /// </summary>
+        private FieldDrop FindSelectable(TownHero hero)
+        {
+            FieldDrop best = null;
+            double bestDistance = double.MaxValue;
+            foreach (FieldDrop drop in _drops)
+            {
+                if (!drop.IsItem || !drop.IsInReach(hero.X, hero.Y, hero.Z))
+                {
+                    continue;
+                }
+                if (drop.Blocked && Progress != null && !Progress.Bag.CanAdd(drop.Item))
+                {
+                    continue;
+                }
+                double distance = Math.Abs(drop.X - hero.X) + 4.0 * Math.Abs(drop.Y - hero.Y);
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = drop;
+                }
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// 攻击键的"拾取"用法(证据 E-122;推断):有被选中的物品时,这一下按键捡它而不出招。背包放得下就放进去、放拾取声音;
+        /// 放不下就留在地上、只记一次(第一下被吃掉,之后它不再被选中,攻击键照常出招)。没有被选中的物品返回 false(按键照常出招)。
+        /// </summary>
+        private bool TryPickupSelected(TownHero hero)
+        {
+            FieldDrop drop = FindSelectable(hero);
+            if (drop == null)
+            {
+                return false;
+            }
+            if (Progress != null && !Progress.Bag.CanAdd(drop.Item))
+            {
+                if (!drop.Blocked)
+                {
+                    drop.Blocked = true;
+                    ItemsBagFull++;
+                }
+                return true;
+            }
+            _drops.Remove(drop);
+            ItemsPicked++;
+            LastItemPickup = drop.Item;
+            Progress?.AddItem(drop.Item);
+            _sounds.Add(drop.PickupSound, SoundCueKind.Effect);
+            _selectedDrop = FindSelectable(hero);
+            return true;
         }
 
         /// <summary>
@@ -2102,9 +2167,45 @@ namespace Dnf.Play
             return _room.Build(timeMs, extra);
         }
 
+        /// <summary>
+        /// 换掉名牌用的画笔(带字体)与文字表,不再看全进程共用的那两份(测试与要自己管字体的宿主用);都给 null 就回到共用的。
+        /// </summary>
+        public void UseDropLabels(OverlayArt art, WorldTexts texts)
+        {
+            _labelArt = art;
+            _labelTexts = texts;
+            _dropLabels = null;
+        }
+
+        /// <summary>地上物品与金币的名牌(证据 E-122);没有字体或文字表时什么也不画。</summary>
+        private void AddDropLabels(List<SceneSprite> into, ref int order, TownProjection projection)
+        {
+            OverlayArt art = _labelArt ?? _art;
+            WorldTexts texts = _labelTexts ?? WorldTexts.Shared;
+            if (texts == null || _drops.Count == 0 || !art.HasFonts)
+            {
+                return;
+            }
+            if (_dropLabels == null)
+            {
+                _dropLabels = new DropLabels(art);
+            }
+            int before = into.Count;
+            DropLabelsDrawn += _dropLabels.Add(into, ref order, _drops, _dropSprites, projection, _selectedDrop, texts);
+            for (int i = before; i < into.Count; i++)
+            {
+                if (into[i].AnimationPath == "drop-label-selected")
+                {
+                    SelectedLabelFrames++;
+                    break;
+                }
+            }
+        }
+
         private void AddOverlay(List<SceneSprite> into, TownProjection projection)
         {
             int order = 0;
+            AddDropLabels(into, ref order, projection);
             MonsterActor target = Target;
             if (_monsterHp != null)
             {
@@ -2136,6 +2237,10 @@ namespace Dnf.Play
                 if (!Vitals.IsAlive)
                 {
                     AddDeathOverlay(into, ref order);
+                }
+                else
+                {
+                    AddHeroPlate(into, ref order, projection);
                 }
             }
             foreach (HitPopup p in _popups)
@@ -2206,6 +2311,20 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>
+        /// 主角头顶的名牌 "Lv.等级 名字"(M30,证据 E-122):只在有汉字字体的运行里画;主角倒下后不画。
+        /// </summary>
+        private void AddHeroPlate(List<SceneSprite> into, ref int order, TownProjection projection)
+        {
+            if (!_art.HasFonts)
+            {
+                return;
+            }
+            TownHero hero = Hero;
+            NamePlates.AddHero(into, ref order, _art, Vitals.Level, CharacterRoster.LocalName,
+                (int)Math.Floor(hero.X) - projection.CameraX, (int)Math.Floor(hero.Y) + projection.GroundY);
+        }
+
         /// <summary>主角受伤飘字的颜色(红)。</summary>
         public const uint HeroPopupColor = 0xFF5050u;
 
@@ -2251,21 +2370,7 @@ namespace Dnf.Play
         /// </summary>
         public IReadOnlyList<HudItemState> ItemSlotStates()
         {
-            var states = new List<HudItemState>(QuickSlots.Count);
-            HeroProgress progress = Progress;
-            if (progress == null)
-            {
-                return states;
-            }
-            for (int i = 0; i < QuickSlots.Count; i++)
-            {
-                ItemInfo item = progress.Quick[i];
-                if (item != null)
-                {
-                    states.Add(new HudItemState(i, item.IconKey, item.IconFrame, progress.Bag.CountOf(item.Code), progress.Cooldowns.Fraction(item)));
-                }
-            }
-            return states;
+            return HudStates.ItemSlots(Progress);
         }
 
         /// <summary>从创建起这个房间会话里成功用掉几件消耗品(日志与检查用)。</summary>

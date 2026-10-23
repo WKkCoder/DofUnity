@@ -179,6 +179,12 @@ namespace Dnf.Cli
         /// <summary>shop-shot --prompt:在光标处按一次回车(可叠加物品弹出数量框)。</summary>
         public bool ShopPrompt { get; set; }
 
+        /// <summary>town-shot --hud:在城镇画面上叠城镇底栏(<see cref="Dnf.Play.TownHud"/>,M30;等级取 --level)。</summary>
+        public bool TownHudOn { get; set; }
+
+        /// <summary>town-shot --npc-rects:逐个打印画面上 NPC 精灵的编号与屏幕矩形(量名牌位置用)。</summary>
+        public bool NpcRects { get; set; }
+
         /// <summary>flow-check --legacy-town:城镇只用赛丽亚房间一张图(没有出口与加载画面,城镇图册之前的行为);默认走城镇图册(证据 E-095)。</summary>
         public bool LegacyTown { get; set; }
 
@@ -269,7 +275,7 @@ namespace Dnf.Cli
             "      (整座副本:读迷宫、选每格的房间、打印布局;--bot 让自动机从起点打到首领清空,逐个房间打印进出与清房时刻;--after-clear 清空之后再空转几秒(看结算画面);--shots-at 在指定时刻输出画面;--frame-ms、--jitter 改每帧的毫秒数与抖动,模拟帧率不固定的实时运行(自动机按固定心跳补步,不受影响;时间表按帧长取样);证据 E-070、E-072)\n" +
             "  dnf flow-check [--dungeon <副本定义>] [--from char|town|select|dungeon] [--town N] [--legacy-town] [--worldmap <世界地图定义>|none] [--choices retry,select,town] [--explore] [--seed N] [--no-damage] [--seconds N(默认 1800)] [--frame-ms 毫秒] [--shots-at 秒,… --png 前缀]\n" +
             "      (整条流程的无人值守检查:城镇(默认从城镇图册的登录区域出发,自动机沿出口走到地下城入口,换区域与进图有加载画面;--legacy-town 退回只有赛丽亚房间一张图、阶段瞬间切换的老行为;--town 指定起始城镇) → 副本选择 → 副本 → 结算 → 按 --choices 清单依次选再次挑战(retry)、选择其它地下城(select)、返回城镇(town),打印每次阶段切换与每局的战绩;清单用完或到时间为止;默认清单 retry,select,town;--shots-at 在指定时刻输出当时阶段的画面;证据 E-093)\n" +
-            "  dnf town-shot --area <城镇>/<区域> --png <输出.png> [--time <毫秒>] [--hero x,y,left|right,rest|move,毫秒[,镜头x]]\n" +
+            "  dnf town-shot --area <城镇>/<区域> --png <输出.png> [--time <毫秒>] [--hero x,y,left|right,rest|move,毫秒[,镜头x]] [--hud [--level N]]\n" +
             "      (城镇图册里一块区域的 800×600 画面:主角在登录落脚点,房间式合成,证据 E-095;Unity 的 -dnftownarea 离屏渲染以它为 CPU 参照)\n" +
             "  dnf charselect-shot --png <输出.png> [--time <毫秒>] [--chars N(1 到 12,默认 1)] [--select N] [--no-avatars]\n" +
             "      (选角界面在界面打开 --time 毫秒时的 800×600 画面,证据 E-096:名册是 N 个默认角色,--select 选中第几个(从 1 数);Unity 的 -dnfflowfrom char 离屏渲染以它为 CPU 参照)\n" +
@@ -526,6 +532,12 @@ namespace Dnf.Cli
                         break;
                     case "--prompt":
                         opts.ShopPrompt = true;
+                        break;
+                    case "--hud":
+                        opts.TownHudOn = true;
+                        break;
+                    case "--npc-rects":
+                        opts.NpcRects = true;
                         break;
                     case "--town":
                         opts.TownId = int.TryParse(NextValue(args, ref i), out int townId) && townId >= 0 ? townId : throw new UserError("--town 需要非负整数");
