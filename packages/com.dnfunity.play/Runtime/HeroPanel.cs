@@ -128,14 +128,44 @@ namespace Dnf.Play
         /// <summary>主角穿着的全部装备(<see cref="AvatarOutfit"/> 里每一件的 .equ)的攻击与暴击加总;没有穿装备时是 0。</summary>
         public static EquipmentStats WornEquipment(DnfAssets assets, TownHero hero)
         {
-            var total = default(EquipmentStats);
-            if (hero?.Outfit == null)
+            return WornEquipment(assets, hero, null);
+        }
+
+        /// <summary>
+        /// 同上,再加上装备栏(<see cref="HeroProgress.Worn"/>,证据 E-118)里每一件的 .equ:外观那一套里的武器被装备栏里的武器顶掉(只算装备栏的那件),
+        /// 其余外观件(默认的发型、上衣等)照旧算。没给进度就是只看外观。
+        /// </summary>
+        public static EquipmentStats WornEquipment(DnfAssets assets, TownHero hero, HeroProgress progress)
+        {
+            return WornEquipment(path => EquipmentStats.Read(assets, path), hero, progress);
+        }
+
+        /// <summary>同上,单件装备的数值由 <paramref name="read"/> 读(测试里用合成的)。</summary>
+        public static EquipmentStats WornEquipment(Func<string, EquipmentStats> read, TownHero hero, HeroProgress progress)
+        {
+            if (read == null)
             {
-                return total;
+                throw new ArgumentNullException(nameof(read));
             }
-            foreach (AvatarItem item in hero.Outfit.Items)
+            var total = default(EquipmentStats);
+            bool weaponWorn = progress != null && progress.Worn.Get(EquipmentParts.Weapon) != null;
+            if (hero?.Outfit != null)
             {
-                total = total.Plus(EquipmentStats.Read(assets, item.EquPath));
+                foreach (AvatarItem item in hero.Outfit.Items)
+                {
+                    if (weaponWorn && string.Equals(item.EquipmentType, "[weapon]", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                    total = total.Plus(read(item.EquPath));
+                }
+            }
+            if (progress != null)
+            {
+                foreach (ItemInfo worn in progress.Worn.Items)
+                {
+                    total = total.Plus(read(worn.Path));
+                }
             }
             return total;
         }

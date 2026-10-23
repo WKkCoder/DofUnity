@@ -68,6 +68,15 @@ namespace Dnf.Game
             }
         }
 
+        /// <summary>装备列表里的物品编号(升序)。检查与探针按编号逐件读(<see cref="Get"/>)时用,不扫整库。</summary>
+        public IReadOnlyList<int> EquipmentCodes()
+        {
+            ReadLists();
+            var codes = new List<int>(_equipment.Keys);
+            codes.Sort();
+            return codes;
+        }
+
         /// <summary>按编号取一件物品(缓存);编号不在两张列表里、脚本读不到或不是标记流返回 null。</summary>
         public ItemInfo Get(int code)
         {

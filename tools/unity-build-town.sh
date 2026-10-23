@@ -23,6 +23,7 @@
 #   9. 死亡复活、失败回城与 Esc 菜单(E-115):一击必杀的怪物伤害(测试旋钮)下的三段实机运行,查 DNF_REVIVE、DNF_FLOW、DNF_MENU 行;
 #      金币(E-116):整条流程日志里最后一行 DNF_GOLD 掉出与捡起一样多,带伤害的复活那一趟里钱包(purse)不为 0。
 #      物品(E-117):日志里若有 DNF_ITEM 行,最后一行掉出与捡起一样多、没有因背包满而留下的。
+#     背包与装备栏(E-118):副本里探针放一件武器、开背包、试穿、关上,日志里 DNF_BAG 各行齐全,主角的武器外观已换成装备栏里的那件。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -604,6 +605,25 @@ if [ "$platform" = "macos" ]; then
     done
     grep -q -E 'DNF_FLOW serial=[0-9]+ from=Dungeon to=(Loading|Town) reason="menu return" runs=1 settlements=0 failures=0 giveups=1' "$menu_log" \
       || { echo "菜单放弃回城应回城镇、算一次放弃(reason=menu return、settlements=0、failures=0、giveups=1):$menu_log" >&2; exit 1; }
+    # 背包窗口与装备栏(证据 E-118):副本里阶段开始 3 秒后探针先往背包里放一件剑魂穿得上的武器,像按 I 键一样打开背包(游戏暂停)、再过一秒按回车试穿、再过一秒关上,
+    # 再过一秒看战斗会话是否已把主角的武器外观换成装备栏里的那件;等级给 30 级好让背包里放得进武器
+    bag_log="$PWD/re/unity-run-town-bag-macos.log"
+    rm -f "$bag_log"
+    set +e
+    "$app" -batchmode -logFile "$bag_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" -dnflevel 30 \
+      -dnfbagat 3 -dnftimescale 4 -dnfquitafter 25
+    rc=$?
+    set -e
+    echo "播放器退出码(背包与装备栏): $rc"
+    grep -E 'DNF_BAG' "$bag_log" | cut -c1-260 || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$bag_log"; then
+      echo "背包与装备栏的日志里有异常:$bag_log" >&2
+      exit 1
+    fi
+    for pat in 'DNF_BAG probe open granted=True' 'DNF_BAG open stage=Dungeon paused=True' 'DNF_BAG probe equip ok=True' 'DNF_BAG probe closed equipped=1' 'DNF_BAG closed paused=False' 'DNF_BAG probe look matches=True weapon=True'; do
+      grep -q -F "$pat" "$bag_log" || { echo "背包与装备栏的日志里缺 \"$pat\":$bag_log" >&2; exit 1; }
+    done
   else
     echo "没有设置 DNF_DIR:跳过离屏渲染校验"
   fi

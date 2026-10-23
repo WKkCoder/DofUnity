@@ -139,6 +139,31 @@ public class AvatarTests
     }
 
     [Fact]
+    public void WithWeaponSwapsOnlyTheWeaponAndKeepsTheSkinAndTheOtherItems()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        AvatarClass cls = Class(assets);
+        AvatarOutfit outfit = AvatarOutfit.CreateDefault(assets, cls, AvatarFixture.EquipRoot, AvatarFixture.WeaponEqu);
+        AvatarItem other = AvatarItem.Read(assets, cls, AvatarFixture.EquipRoot + "/" + AvatarFixture.SecondWeaponEqu);
+
+        AvatarOutfit swapped = outfit.WithWeapon(other);
+        Assert.NotSame(outfit, swapped);
+        Assert.Same(cls, swapped.Class);
+        Assert.Equal(outfit.SkinNumber, swapped.SkinNumber);
+        // 原来的武器层(swordb、swordc)没了,新武器的层 swordb1(键 654)按键排进去,其余照旧
+        Assert.Equal(new[] { "skin", "swordb1", "coat_b", "coat_a", "hair_a" }, swapped.Layers.Select(l => l.Name).ToArray());
+        Assert.Equal(outfit.Items.Count, swapped.Items.Count);
+        Assert.Contains(swapped.Items, i => i.EquPath.EndsWith("sw_digit.equ", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(swapped.Items, i => i.EquPath.EndsWith("sw_start.equ", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(outfit.Layers, l => l.Name == "swordb");                      // 原来的穿戴没变(不可变)
+
+        AvatarOutfit bare = outfit.WithWeapon(null);
+        Assert.Equal(new[] { "skin", "coat_b", "coat_a", "hair_a" }, bare.Layers.Select(l => l.Name).ToArray());
+        Assert.Equal(outfit.Items.Count - 1, bare.Items.Count);
+    }
+
+    [Fact]
     public void EveryLayerUsesTheAniFramesImageFrameAndTheModelPosition()
     {
         using var fx = new AvatarFixture();

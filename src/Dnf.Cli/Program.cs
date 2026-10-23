@@ -164,6 +164,12 @@ namespace Dnf.Cli
         /// <summary>charselect-shot --no-avatars:不画角色头像(只剩底座、框与文字),拿来和带头像的画面相减量出头像的位置。</summary>
         public bool NoAvatars { get; set; }
 
+        /// <summary>bag-shot --tab:背包窗口翻到第几个页签(0 到 3,默认 0 = 装备页)。</summary>
+        public int BagTab { get; set; }
+
+        /// <summary>bag-shot --panel:光标放进装备栏(默认在物品格子上)。</summary>
+        public bool BagPanel { get; set; }
+
         /// <summary>flow-check --legacy-town:城镇只用赛丽亚房间一张图(没有出口与加载画面,城镇图册之前的行为);默认走城镇图册(证据 E-095)。</summary>
         public bool LegacyTown { get; set; }
 
@@ -298,6 +304,11 @@ namespace Dnf.Cli
             "  dnf item-check [--level N] [--samples N] [--seed N]\n" +
             "      怪物物品掉落(证据 E-117):整库扫描装备与可叠加物品的脚本头(创建率、稀有度、等级、类型、地上图与图标),建掉落池,按怪物等级 --level 掷 --samples 只怪物\n" +
             "      并汇总各类物品与稀有度的件数(数值与物品名来自本机的数据,只打印在终端,不要抄进入库的文件;通过与否只看结构)。\n" +
+            "  dnf bag-shot --png <输出.png> [--level N] [--seed N] [--tab 0..3] [--select N(从 1 数的格子)] [--panel]\n" +
+            "      背包窗口(证据 E-118)的一帧:剑魂 --level 级穿满能穿的装备,背包里放些穿不上与能穿的装备和可叠加物品(用户数据,只在本机看,不入库)。\n" +
+            "  dnf equip-check [--level N] [--seed N]\n" +
+            "      装备栏与穿脱(证据 E-118):整库扫描能掉落的装备,检查类型、可用职业与穿戴规则的结构,剑魂能穿的武器有没有外观图层与每个攻击动作的动画,\n" +
+            "      再让一个 --level 级的剑魂把每个部位随机一件穿得上的穿上、全部脱下,核对装备栏、背包与面板加成的账(数值、物品名与件数来自本机的数据,只打印在终端,不要抄进入库的文件;通过与否只看结构)。\n" +
             "  dnf damage-check [--cases <文件>]\n" +
             "      伤害公式(证据 E-049)。不带 --cases:读 PVF 里的 Etc/EtcParameter.etc 与 Creature/Common/creatureCommon.cre,只报告个数与完整性(不输出原版数值);\n" +
             "      带 --cases:读 tools/py/damage_ref.py --gen 生成的随机用例,用 C# 公式复算并与 Python 参考实现逐项比较。\n" +
@@ -477,6 +488,12 @@ namespace Dnf.Cli
                         break;
                     case "--no-avatars":
                         opts.NoAvatars = true;
+                        break;
+                    case "--tab":
+                        opts.BagTab = int.TryParse(NextValue(args, ref i), out int bagTab) && bagTab >= 0 && bagTab <= 3 ? bagTab : throw new UserError("--tab 需要 0 到 3 的整数");
+                        break;
+                    case "--panel":
+                        opts.BagPanel = true;
                         break;
                     case "--town":
                         opts.TownId = int.TryParse(NextValue(args, ref i), out int townId) && townId >= 0 ? townId : throw new UserError("--town 需要非负整数");
@@ -678,6 +695,10 @@ namespace Dnf.Cli
                     return ExpCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "item-check":
                     return ItemCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "equip-check":
+                    return EquipCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "bag-shot":
+                    return BagShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "damage-check":
                     return opts.CasesFile != null
                         ? DamageCheck.RunCases(opts)

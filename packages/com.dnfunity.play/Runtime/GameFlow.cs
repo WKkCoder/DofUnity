@@ -172,6 +172,29 @@ namespace Dnf.Play
         /// </summary>
         public SystemMenu Menu { get; } = new SystemMenu();
 
+        /// <summary>
+        /// 背包窗口(I 键;本项目自己的占位设计,见 <see cref="BagWindow"/>,证据 E-118):只在城镇与副本阶段能打开,开着的时候宿主让游戏暂停
+        /// (和系统菜单一样,<see cref="Poll"/> 在它开着时不处理各阶段的结果);换阶段时自动关上。
+        /// </summary>
+        public BagWindow Bag { get; } = new BagWindow();
+
+        /// <summary>
+        /// I 键:背包开着就关上;没开且当前阶段有背包(城镇、副本)、系统菜单也没开就打开。返回有没有处理这次按键。
+        /// </summary>
+        public bool ToggleBag()
+        {
+            if (StageSerial == 0)
+            {
+                return false;
+            }
+            if (Bag.Open)
+            {
+                Bag.Close();
+                return true;
+            }
+            return !Menu.Open && Bag.Show(Stage);
+        }
+
         /// <summary>系统菜单里选了"退出游戏":宿主看到它就退出(流程自己不退出)。</summary>
         public bool QuitRequested { get; private set; }
 
@@ -184,6 +207,11 @@ namespace Dnf.Play
             if (StageSerial == 0)
             {
                 return false;
+            }
+            if (Bag.Open)
+            {
+                Bag.Close();             // 背包开着时 Esc 先关背包
+                return true;
             }
             if (Menu.Open)
             {
@@ -314,9 +342,9 @@ namespace Dnf.Play
             {
                 return ApplyMenuAction(picked);
             }
-            if (Menu.Open)
+            if (Menu.Open || Bag.Open)
             {
-                return false;   // 菜单开着:游戏暂停,各阶段的结果(出口、结算)等关上之后再处理
+                return false;   // 菜单或背包开着:游戏暂停,各阶段的结果(出口、结算)等关上之后再处理
             }
             switch (Stage)
             {
@@ -458,6 +486,7 @@ namespace Dnf.Play
             GameStage from = Stage;
             bool first = StageSerial == 0;
             Menu.Close();                        // 换阶段时系统菜单作废(没取走的选择也一起丢)
+            Bag.Close();                         // 背包窗口也关上
             Stage = to;
             Session = session;
             Select = select;

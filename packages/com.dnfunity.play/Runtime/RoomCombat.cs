@@ -458,6 +458,12 @@ namespace Dnf.Play
         /// <summary>最近一次同步过的等级进度版本(<see cref="HeroProgress.Version"/>):别的房间里升了级,这个房间回来时据此换上新等级的属性。</summary>
         private int _progressVersion;
 
+        /// <summary>最近一次同步过的装备栏版本(<see cref="HeroProgress.EquipVersion"/>):穿脱之后据此换武器外观与跟武器走的常量、重算攻击面板的装备加成(证据 E-118)。</summary>
+        private int _equipVersion;
+
+        /// <summary>现在的 <see cref="WeaponStunMs"/> 等常量是按哪件武器取的(外观里的武器路径)。</summary>
+        private string _derivedWeapon;
+
         /// <summary>跟着主角走的特效(升级光效,证据 E-111):每一步把它们挪到主角脚下。</summary>
         private readonly List<AnimatedEffect> _followEffects = new List<AnimatedEffect>();
 
@@ -488,7 +494,7 @@ namespace Dnf.Play
 
         // 声音提示(证据 E-089、E-090):逻辑只发提示,播放在别处
         private readonly SoundCueQueue _sounds = new SoundCueQueue();
-        private readonly WeaponSound _weaponSound;
+        private WeaponSound _weaponSound;
         private HeroMotion _cueMotion;
         private long _cueSwing;
         private readonly Dictionary<MonsterActor, long> _cueMonsterSwing = new Dictionary<MonsterActor, long>();
@@ -651,13 +657,13 @@ namespace Dnf.Play
         /// 主角手上这件武器的命中停顿毫秒数(角色 .chr [weapon hit info] 里按装备 [sub type] 取的那一项,证据 E-077)。
         /// 攻击信息的 [hit info] 整数是 -1 或没写时用它;0 表示没有这张表(那就不停顿)。
         /// </summary>
-        public int WeaponStunMs { get; }
+        public int WeaponStunMs { get; private set; }
 
         /// <summary>
         /// 主角手上这件武器的命中延迟倍率(同一项 [weapon hit info] 里的浮点,证据 E-077、E-080):受击一侧的硬直要乘它。
         /// 攻击信息的 [hit info] 浮点项是 -1 或没写时用它;-1 表示没有这张表。
         /// </summary>
-        public float WeaponDelayRate { get; }
+        public float WeaponDelayRate { get; private set; }
 
         /// <summary>
         /// 受击硬直的三张表(取自 Etc/EtcParameter.etc,证据 E-080);null 表示没有,怪物挨打退回占位硬直。
@@ -764,6 +770,12 @@ namespace Dnf.Play
         /// <summary>主角的等级与经验(证据 E-111);为 null 时杀怪不给经验(旧行为)。副本里各房间的会话共用同一个对象。</summary>
         public HeroProgress Progress { get; }
 
+        /// <summary>
+        /// 主角的角色定义(.chr):穿脱武器之后重新取跟武器走的常量(命中停顿、命中延迟倍率、挥砍与命中声音)要用;
+        /// <see cref="Create"/> 给了它,直接 new 出来的会话没有(那样换武器时只换外观与攻击面板,不换这些常量)。
+        /// </summary>
+        public CharacterDef Character { get; set; }
+
         /// <summary>这座副本的经验权重(.dgn 的 [experience increasing point],证据 E-111);没有副本背景时是 1。</summary>
         public float ExpWeight { get; }
 
@@ -808,6 +820,8 @@ namespace Dnf.Play
             ExpWeight = expWeight;
             ExpDifficulty = expDifficulty;
             _progressVersion = progress == null ? 0 : progress.Version;
+            _equipVersion = progress == null ? 0 : progress.EquipVersion;
+            _derivedWeapon = HeroLook.WeaponPathOf(room.Hero.Outfit);
             Skills = skills ?? new HeroSkills(new HeroSkillSlot[0]);
             _cueCooling = new bool[Skills.Slots.Count];
             WeaponStunMs = weaponStunMs;
@@ -1034,6 +1048,11 @@ namespace Dnf.Play
             var data = new GameData(new PvfScriptSource(assets.Pvf));
             var strikes = new List<HeroStrikeInfo>();
             CharacterDef chr = data.GetCharacter(0);
+            // 装备栏里穿着武器时,外观与跟武器走的常量都按它来(证据 E-118);房间造出来时已经是这件的话什么也不做
+            if (progress?.WeaponPath != null)
+            {
+                HeroLook.Apply(assets, room.Hero, progress);
+            }
             for (int i = 0; chr != null && i < room.Hero.AttackCount; i++)
             {
                 strikes.Add(HeroStrikeInfo.Read(data, chr.AttackInfoPath(i)));
@@ -1107,12 +1126,13 @@ namespace Dnf.Play
             HeroPanel heroPanel = null;
             if (vitals != null)
             {
-                EquipmentStats worn = HeroPanel.WornEquipment(assets, room.Hero);
+                EquipmentStats worn = HeroPanel.WornEquipment(assets, room.Hero, progress);
                 heroPanel = progress != null ? HeroPanel.FromStats(progress.Level, progress.Stats, worn) : HeroPanel.FromChr(chr, vitals.Level, worn);
             }
             var session = new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, HeroSkills.Create(data, chr, 0), hasWeapon ? weapon.StunMs : 0,
                 hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null, weaponSound, heroPanel,
                 progress, expWeight);
+            session.Character = chr;
             MonsterDrops drops = MonsterDrops.Load(assets);
             if (drops.Available)
             {
@@ -1728,7 +1748,16 @@ namespace Dnf.Play
         public void SyncProgress()
         {
             HeroProgress progress = Progress;
-            if (progress == null || _progressVersion == progress.Version)
+            if (progress == null)
+            {
+                return;
+            }
+            if (_equipVersion != progress.EquipVersion)
+            {
+                _equipVersion = progress.EquipVersion;
+                ApplyEquipment(progress);
+            }
+            if (_progressVersion == progress.Version)
             {
                 return;
             }
@@ -1742,6 +1771,41 @@ namespace Dnf.Play
             if (_heroPanel != null)
             {
                 _heroPanel = HeroPanel.FromStats(progress.Level, stats, _heroPanel.Equipment);
+                _attacker = _heroPanel.ToAttacker();
+            }
+        }
+
+        /// <summary>
+        /// 装备栏变了(证据 E-118):装备栏里的武器换了就换主角的外观(没穿武器退回起手的演示武器),
+        /// 并重取跟武器走的常量(命中停顿、命中延迟倍率、挥砍与命中声音);攻击面板的装备加成按装备栏重算(外观里的武器被装备栏的顶掉)。
+        /// 新武器读不出外观(没有这个职业的动画图层)就保留原来的外观与常量。
+        /// </summary>
+        private void ApplyEquipment(HeroProgress progress)
+        {
+            TownHero hero = _room.Hero;
+            string want = progress.WeaponPath ?? DemoHero.StarterWeapon;
+            if (!HeroLook.SameEquipPath(want, HeroLook.WeaponPathOf(hero.Outfit)))
+            {
+                HeroLook.TrySwapWeapon(_assets, hero, want);
+            }
+            string have = HeroLook.WeaponPathOf(hero.Outfit);
+            if (!HeroLook.SameEquipPath(have, _derivedWeapon))
+            {
+                _derivedWeapon = have;
+                CharacterDef chr = Character;
+                if (chr != null)
+                {
+                    bool has = TryWeaponHit(chr, hero, out WeaponHitInfo weapon);
+                    WeaponStunMs = has ? weapon.StunMs : 0;
+                    WeaponDelayRate = has ? weapon.DelayRate : -1f;
+                    TryWeaponSound(chr, hero, out WeaponSound sound);
+                    _weaponSound = sound;
+                }
+            }
+            if (_heroPanel != null)
+            {
+                EquipmentStats worn = HeroPanel.WornEquipment(_assets, hero, progress);
+                _heroPanel = new HeroPanel(_heroPanel.Level, _heroPanel.PhysicalAttack, _heroPanel.MagicalAttack, worn);
                 _attacker = _heroPanel.ToAttacker();
             }
         }
@@ -2212,7 +2276,7 @@ namespace Dnf.Play
         public static RoomCombatSession CreateSession(DnfAssets assets, string mapPath, string weaponEqu = DemoHero.StarterWeapon, int seed = 1,
             bool heroVitals = true, HeroProgress progress = null)
         {
-            RoomSession room = DemoRoom.CreateSession(assets, mapPath, weaponEqu);
+            RoomSession room = DemoRoom.CreateSession(assets, mapPath, progress?.WeaponPath ?? weaponEqu);   // 装备栏里穿着武器就用它(证据 E-118)
             return RoomCombatSession.Create(assets, room, seed, heroVitals, progress);
         }
     }

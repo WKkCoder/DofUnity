@@ -203,6 +203,34 @@ namespace Dnf.Game
             return count - remaining;
         }
 
+        /// <summary>整格拿走这一页第 <paramref name="index"/> 格(后面的格子往前补);返回被拿走的格,没有这一格返回 null。</summary>
+        public ItemStack TakeAt(InventoryTab tab, int index)
+        {
+            List<ItemStack> list = _tabs[(int)tab];
+            if ((uint)index >= (uint)list.Count)
+            {
+                return null;
+            }
+            ItemStack stack = list[index];
+            list.RemoveAt(index);
+            return stack;
+        }
+
+        /// <summary>
+        /// 把这一页第 <paramref name="index"/> 格换成一件 <paramref name="info"/>(穿装备换下来的那件放回原来的格):
+        /// 格子不存在、物品不属于这一页、或者物品不是装备(只有装备一格一件,可以原位换)时返回 false、什么都不动。
+        /// </summary>
+        public bool ReplaceAt(InventoryTab tab, int index, ItemInfo info)
+        {
+            List<ItemStack> list = _tabs[(int)tab];
+            if ((uint)index >= (uint)list.Count || info == null || !info.IsEquipment || TabOf(info) != tab)
+            {
+                return false;
+            }
+            list[index] = new ItemStack(info, 1);
+            return true;
+        }
+
         /// <summary>拿掉 <paramref name="count"/> 件某编号的物品(先拿后放进去的格);不够就一件也不拿并返回 false。</summary>
         public bool Remove(int code, int count = 1)
         {

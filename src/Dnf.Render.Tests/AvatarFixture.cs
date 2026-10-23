@@ -99,6 +99,15 @@ internal sealed class AvatarFixture : IDisposable
     public const string EquipRoot = "equipment/character/test";
     public const string WeaponEqu = "weapon/sword/sw_start.equ";
 
+    /// <summary>第二把夹具武器(只有一个图层 swordb1);换装备栏武器的测试用它。</summary>
+    public const string SecondWeaponEqu = "weapon/sword/sw_digit.equ";
+
+    /// <summary>两把夹具武器脚本里的 [equipment physical attack] / [equipment magical attack] 第一个数(合成的,供装备加成的测试用)。</summary>
+    public const int WeaponStartPhysical = 10;
+    public const int WeaponStartMagical = 4;
+    public const int SecondWeaponPhysical = 25;
+    public const int SecondWeaponMagical = 9;
+
     /// <summary>夹具武器的 [sub type](写在各职业的 [animation job] 块之后,证据 E-077)。</summary>
     public const int WeaponSubType = 4;
     public const string AvatarImageRoot = "sprite/character/test/equipment/avatar";
@@ -378,6 +387,8 @@ internal sealed class AvatarFixture : IDisposable
             // 武器:变体两个数里只有第二个(B = 2)进文件名;swordd 的图片不存在。别的职业的块之后才写 [sub type](与原版装备脚本同序)
             (EquipRoot + "/" + WeaponEqu, NewScript()
                 .Tag("[equipment type]").Str("[weapon]")
+                .Tag("[equipment physical attack]").Int(WeaponStartPhysical, 1)
+                .Tag("[equipment magical attack]").Int(WeaponStartMagical, 0)
                 .Tag("[animation job]").Str(JobTag)
                 .Tag("[variation]").Int(3, 2)
                 .Tag("[layer variation]").Int(650).Str("swordb").Int(2999).Str("swordc").Int(3000).Str("swordd")
@@ -385,8 +396,10 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[variation]").Int(8, 8)
                 .Tag("[layer variation]").Int(1).Str("swordz")
                 .Tag("[sub type]").Int(WeaponSubType).Build()),
-            (EquipRoot + "/weapon/sword/sw_digit.equ", NewScript()
+            (EquipRoot + "/" + SecondWeaponEqu, NewScript()
                 .Tag("[equipment type]").Str("[weapon]")
+                .Tag("[equipment physical attack]").Int(SecondWeaponPhysical, 2)
+                .Tag("[equipment magical attack]").Int(SecondWeaponMagical, 0)
                 .Tag("[animation job]").Str(JobTag)
                 .Tag("[variation]").Int(3, 2)
                 .Tag("[layer variation]").Int(654).Str("swordb1").Build()),

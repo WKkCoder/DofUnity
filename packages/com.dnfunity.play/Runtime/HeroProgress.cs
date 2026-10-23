@@ -56,8 +56,38 @@ namespace Dnf.Play
         /// <summary>从创建起一共拾到多少金币(<see cref="Gold"/> 之后会被花掉,这个不减)。</summary>
         public long GoldGained { get; private set; }
 
-        /// <summary>背包(证据 E-117:拾取地上的物品放进去;副本里各房间共用同一个对象)。装备栏、穿脱与使用还没有做。</summary>
+        /// <summary>背包(证据 E-117:拾取地上的物品放进去;副本里各房间共用同一个对象)。使用消耗品、出售还没有做。</summary>
         public Inventory Bag { get; } = new Inventory();
+
+        /// <summary>装备栏(证据 E-118:武器、称号、上衣……魔法石共 12 格,从背包穿上去;副本里各房间共用同一个对象)。</summary>
+        public EquipmentSlots Worn { get; } = new EquipmentSlots();
+
+        /// <summary>主角的职业下标(穿装备的职业检查用,<see cref="EquipRules.JobOf"/>);默认主角是剑魂。</summary>
+        public int Job { get; set; } = EquipRules.SwordmanJob;
+
+        /// <summary>装备栏的变化次数:战斗会话据此重算攻击面板、换武器外观(穿脱各算一次)。</summary>
+        public int EquipVersion => Worn.Version;
+
+        /// <summary>穿着几件装备(宿主层不引用 Dnf.Game,日志与界面用它)。</summary>
+        public int EquippedCount => Worn.EquippedCount;
+
+        /// <summary>穿着的武器的脚本路径(.equ,规范化的小写 PVF 路径);没有穿武器返回 null(这时用起手的演示武器)。</summary>
+        public string WeaponPath => Worn.Get(EquipmentParts.Weapon)?.Path;
+
+        /// <summary>
+        /// 穿上背包装备页第 <paramref name="bagIndex"/> 格的装备(规则见 <see cref="EquipRules"/>,用主角现在的职业与等级);
+        /// <paramref name="canShow"/> 给了就再问一次"画面上穿不穿得出来"。成功时背包里原位换成被换下来的那件(没有就腾空这一格)。
+        /// </summary>
+        public EquipResult Equip(int bagIndex, Func<ItemInfo, bool> canShow = null)
+        {
+            return EquipActions.Equip(Bag, Worn, bagIndex, Job, Level, canShow);
+        }
+
+        /// <summary>把 <paramref name="part"/> 号部位的装备脱下放回背包;槽是空的或背包装备页满了返回 false。</summary>
+        public bool Unequip(int part)
+        {
+            return EquipActions.Unequip(Bag, Worn, part);
+        }
 
         /// <summary>从创建起一共拾到多少件物品(<see cref="Bag"/> 里的东西以后会被用掉、卖掉,这个不减)。</summary>
         public int ItemsGained { get; private set; }

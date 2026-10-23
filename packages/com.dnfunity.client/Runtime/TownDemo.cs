@@ -123,6 +123,16 @@ namespace Dnf.Client
         private float _menuProbeOpenedAt = -1f;
         private bool _menuProbeDone;
         private bool _menuPausedIt;
+        private bool _bagWasOpen;
+        private bool _overlayWasOpen;
+        private double _bagProbeAtSeconds = -1.0;
+        private float _bagProbeOpenedAt = -1f;
+        private bool _bagProbeEquipped;
+        private float _bagProbeClosedAt = -1f;
+        private bool _bagProbeDone;
+        private EquipmentStats _bagWorn;
+        private int _bagWornVersion = -1;
+        private TownHero _bagWornHero;
         private int _noteDeaths;
         private int _noteRevives;
         private int _noteGoldPicked = -1;
@@ -262,6 +272,10 @@ namespace Dnf.Client
                     case "-dnfmenuchoose":
                         if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
                                 System.Globalization.CultureInfo.InvariantCulture, out int mch) && mch >= 1 && mch <= 9) { _menuProbeChoice = mch; i++; }
+                        break;
+                    case "-dnfbagat":
+                        if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out double bat) && bat >= 0.0) { _bagProbeAtSeconds = bat; i++; }
                         break;
                     case "-dnfplayat":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
@@ -801,11 +815,24 @@ namespace Dnf.Client
                 return;
             }
             RunMenuProbe();
-            bool open = _flow.Menu.Open;
-            if (open != _menuWasOpen)
+            RunBagProbe();
+            bool menuOpen = _flow.Menu.Open;
+            bool bagOpen = _flow.Bag.Open;
+            if (menuOpen != _menuWasOpen)
             {
-                _menuWasOpen = open;
-                Debug.Log("DNF_MENU " + (open ? "open stage=" + _flow.Stage : "closed") + " paused=" + _paused);
+                _menuWasOpen = menuOpen;
+                Debug.Log("DNF_MENU " + (menuOpen ? "open stage=" + _flow.Stage : "closed") + " paused=" + _paused);
+            }
+            string bagEvent = null;                      // 背包开关的日志放在暂停与恢复之后打,paused 才是开关之后的状态
+            if (bagOpen != _bagWasOpen)
+            {
+                _bagWasOpen = bagOpen;
+                bagEvent = bagOpen ? "open stage=" + _flow.Stage : "closed";
+            }
+            bool open = menuOpen || bagOpen;             // 系统菜单与背包窗口开着都暂停游戏
+            if (open != _overlayWasOpen)
+            {
+                _overlayWasOpen = open;
                 if (open)
                 {
                     _menuPausedIt = !_paused;        // 已经被空格暂停着就不碰:合上菜单也不替人恢复
@@ -823,7 +850,12 @@ namespace Dnf.Client
                     }
                 }
             }
-            if (open && TryGetCanvasPoint(Input.mousePosition, out int mx, out int my))
+            if (bagEvent != null)
+            {
+                Debug.Log("DNF_BAG " + bagEvent + " paused=" + _paused
+                    + " equipped=" + (_progress == null ? 0 : _progress.EquippedCount) + " bag=" + (_progress == null ? 0 : _progress.BagItems));
+            }
+            if (menuOpen && TryGetCanvasPoint(Input.mousePosition, out int mx, out int my))
             {
                 _flow.Menu.SetPointer(mx, my);
             }
@@ -853,14 +885,92 @@ namespace Dnf.Client
             }
         }
 
-        /// <summary>当前系统菜单的叠加精灵(菜单没开返回 null);挂在 <see cref="TownView.Overlay"/> 上。</summary>
+        /// <summary>
+        /// -dnfbagat 的无人值守探针(背包窗口,证据 E-118):在副本阶段开始后过了指定秒数,先往背包里放一件穿得上的武器(<see cref="HeroLook.GrantWearableWeapon"/>),
+        /// 像按 I 键一样打开背包,再过一秒按回车试穿(光标走过装备页每一格),再过一秒关上;日志里留 DNF_BAG probe 行(各只做一次)。
+        /// </summary>
+        private void RunBagProbe()
+        {
+            if (_bagProbeAtSeconds < 0.0 || _bagProbeDone || _flow == null)
+            {
+                return;
+            }
+            float now = Time.realtimeSinceStartup;
+            if (_bagProbeOpenedAt < 0f)
+            {
+                if (_flow.Stage == GameStage.Dungeon && now - _stageRealStart >= _bagProbeAtSeconds && HeroProgressForRun() != null)
+                {
+                    bool granted = HeroLook.GrantWearableWeapon(_assets, _progress);
+                    if (_flow.ToggleBag())
+                    {
+                        _bagProbeOpenedAt = now;
+                        Debug.Log("DNF_BAG probe open granted=" + granted + " items=" + _progress.BagItems + " slots=" + _progress.BagSlots);
+                    }
+                }
+            }
+            else if (!_bagProbeEquipped && now - _bagProbeOpenedAt >= 1f)
+            {
+                _bagProbeEquipped = true;
+                bool ok = _flow.Bag.TryEquipAny(_progress, out int tried);
+                Debug.Log("DNF_BAG probe equip ok=" + ok + " tried=" + tried + " equipped=" + _progress.EquippedCount + " weapon=" + (_progress.WeaponPath != null)
+                    + " msg=\"" + _flow.Bag.Message + "\"" + " changes=" + _flow.Bag.Changes);
+            }
+            else if (_bagProbeEquipped && _bagProbeClosedAt < 0f && now - _bagProbeOpenedAt >= 2f)
+            {
+                _bagProbeClosedAt = now;
+                _flow.ToggleBag();
+                Debug.Log("DNF_BAG probe closed equipped=" + _progress.EquippedCount);
+            }
+            else if (_bagProbeClosedAt >= 0f && now - _bagProbeClosedAt >= 1f)
+            {
+                // 关上背包、游戏继续跑了一秒:战斗会话应已按装备栏换了主角的武器外观
+                _bagProbeDone = true;
+                Debug.Log("DNF_BAG probe look matches=" + HeroLook.Matches(_flow.Session?.Hero, _progress) + " weapon=" + (_progress.WeaponPath != null));
+            }
+        }
+
+        /// <summary>当前要叠在画面上的窗口(背包或系统菜单,没开返回 null);挂在 <see cref="TownView.Overlay"/> 上。</summary>
         private List<SceneSprite> BuildMenuOverlay()
         {
-            if (_flow == null || !_flow.Menu.Open)
+            if (_flow == null)
+            {
+                return null;
+            }
+            if (_flow.Bag.Open)
+            {
+                return _progress == null ? null : BagWindowArt.Build(_flow.Bag, _progress, _assets, _menuArt, BagWornStats());
+            }
+            if (!_flow.Menu.Open)
             {
                 return null;
             }
             return SystemMenuArt.Build(_flow.Menu, _menuArt);
+        }
+
+        /// <summary>背包窗口上显示的"穿着装备的攻击加成":按当前主角与装备栏算(装备栏变了或换了主角才重算,不是每帧读脚本)。</summary>
+        private EquipmentStats BagWornStats()
+        {
+            TownHero hero = _flow.Session?.Hero;
+            if (_bagWornVersion != _progress.EquipVersion || !ReferenceEquals(_bagWornHero, hero))
+            {
+                _bagWornVersion = _progress.EquipVersion;
+                _bagWornHero = hero;
+                _bagWorn = HeroPanel.WornEquipment(_assets, hero, _progress);
+            }
+            return _bagWorn;
+        }
+
+        /// <summary>
+        /// 背包里穿脱了装备:城镇里的主角立刻换上装备栏里的武器(外观是会话外的共用状态,城镇会话没有自己的同步);
+        /// 副本里的战斗会话下一步更新时自己同步(换外观、换武器常量、重算攻击面板),所以这里只管城镇。
+        /// </summary>
+        private void SyncHeroLook()
+        {
+            if (_flow == null || _progress == null || _flow.Stage != GameStage.Town)
+            {
+                return;
+            }
+            HeroLook.Apply(_assets, _flow.Session?.Hero, _progress);
         }
 
         /// <summary>
@@ -1046,7 +1156,7 @@ namespace Dnf.Client
             // -dnflegacytown 退回只有赛丽亚房间一张图、阶段瞬间切换的老行为;-dnfnosplash 去掉所有加载画面
             ITownWorld townWorld = _legacyTown
                 ? new LegacyTownWorld(() => DemoHero.CreateSession(_assets, DefaultMap, DemoHero.SeriaRoom))
-                : (ITownWorld)new AtlasTownWorld(_assets, TownAtlas.Open(_assets), 1, withSplashes: !_noSplash);
+                : (ITownWorld)new AtlasTownWorld(_assets, TownAtlas.Open(_assets), 1, withSplashes: !_noSplash, weaponPath: () => _progress?.WeaponPath);
             Func<string, SplashScene> dungeonSplash = _legacyTown || _noSplash ? (Func<string, SplashScene>)null : path => SplashCatalog.ForDungeon(_assets, path);
             // 选角界面(E-096):原版图包与鬼剑士头像;名册是本地存档占位(一个 1 级的默认鬼剑士)
             CharacterSelectScene characterScene = CharacterSelectScene.From(_assets);
@@ -1057,6 +1167,7 @@ namespace Dnf.Client
                 realSelect ? world.Scene : null,
                 dungeonSplash,
                 () => new CharacterSelectScreen(CharacterRoster.Local(), characterScene));
+            _flow.Bag.UseAssets(_assets);            // 背包里穿武器前先问"画面上穿得出来吗"(HeroLook.CanShow)
             switch (_flowFrom)
             {
                 case "char":
@@ -1411,11 +1522,73 @@ namespace Dnf.Client
             }
         }
 
+        /// <summary>
+        /// 背包窗口开着时的输入(开着就独占):方向键移动光标(格子最左一列再按左键进装备栏),Q / E 或 Tab 换页,回车或 X 穿脱,I 或 Esc 关上,鼠标点格子(再点一下穿脱)。
+        /// 键位是本项目自己的占位设计(原版背包界面没有读到)。
+        /// </summary>
+        private void HandleBagInput(Event e)
+        {
+            BagWindow bag = _flow.Bag;
+            bool changed = false;
+            if (e.type == EventType.KeyDown)
+            {
+                switch (e.keyCode)
+                {
+                    case KeyCode.Escape:
+                        _flow.ToggleMenu();          // 菜单的开关键:开着背包时先把背包关上
+                        break;
+                    case KeyCode.I:
+                        _flow.ToggleBag();
+                        break;
+                    case KeyCode.UpArrow:
+                        bag.Move(0, -1);
+                        break;
+                    case KeyCode.DownArrow:
+                        bag.Move(0, 1);
+                        break;
+                    case KeyCode.LeftArrow:
+                        bag.Move(-1, 0);
+                        break;
+                    case KeyCode.RightArrow:
+                        bag.Move(1, 0);
+                        break;
+                    case KeyCode.Q:
+                        bag.NextTab(-1);
+                        break;
+                    case KeyCode.E:
+                    case KeyCode.Tab:
+                        bag.NextTab(1);
+                        break;
+                    case KeyCode.Return:
+                    case KeyCode.KeypadEnter:
+                    case KeyCode.X:
+                        changed = bag.Activate(_progress);
+                        break;
+                }
+            }
+            else if (e.type == EventType.MouseDown && e.button == 0 && _progress != null && TryGetCanvasPoint(Input.mousePosition, out int cx, out int cy))
+            {
+                int before = bag.Changes;
+                bag.Click(cx, cy, _progress);
+                changed = bag.Changes != before;
+            }
+            if (changed)
+            {
+                SyncHeroLook();
+                Debug.Log("DNF_BAG changed equipped=" + _progress.EquippedCount + " weapon=" + (_progress.WeaponPath != null) + " msg=\"" + bag.Message + "\"");
+            }
+        }
+
         private void HandleRunningInput(Event e)
         {
             if (_flow != null && _flow.Menu.Open)
             {
                 HandleMenuInput(e);
+                return;
+            }
+            if (_flow != null && _flow.Bag.Open)
+            {
+                HandleBagInput(e);
                 return;
             }
             if (e.type == EventType.KeyDown)
@@ -1493,6 +1666,12 @@ namespace Dnf.Client
                         break;
                     case KeyCode.H:
                         _hud = !_hud;
+                        break;
+                    case KeyCode.I:
+                        if (_flow != null && HeroProgressForRun() != null)
+                        {
+                            _flow.ToggleBag();           // 背包窗口(城镇与副本里;没有等级进度的运行模式没有背包)
+                        }
                         break;
                     case KeyCode.Escape:
                         if (_flow != null && _flow.ToggleMenu())

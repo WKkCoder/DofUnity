@@ -72,11 +72,15 @@ namespace Dnf.Play
         private readonly Dictionary<int, SplashScene> _splashes = new Dictionary<int, SplashScene>();
         private readonly bool _withSplashes;
         private AvatarOutfit _outfit;
+        private string _outfitWeapon;
+        private readonly Func<string> _weaponPath;
 
         /// <param name="withSplashes">为 false 时换区域一律不停加载画面(无人值守检查与离屏对拍用)。</param>
-        public AtlasTownWorld(DnfAssets assets, TownAtlas atlas, int startTown = 1, bool withSplashes = true)
+        /// <param name="weaponPath">给了就在每次造城镇会话时取主角现在穿着的武器的脚本路径(没穿返回 null,用起手的演示武器,证据 E-118);武器变了才重造外观。</param>
+        public AtlasTownWorld(DnfAssets assets, TownAtlas atlas, int startTown = 1, bool withSplashes = true, Func<string> weaponPath = null)
         {
             _withSplashes = withSplashes;
+            _weaponPath = weaponPath;
             _assets = assets ?? throw new ArgumentNullException(nameof(assets));
             _atlas = atlas ?? throw new ArgumentNullException(nameof(atlas));
             TownDef def = atlas.GetTown(startTown) ?? throw new ArgumentException("城镇图册里没有城镇 " + startTown, nameof(startTown));
@@ -110,9 +114,12 @@ namespace Dnf.Play
 
         public IHeroSession Create(TownPlace place)
         {
-            if (_outfit == null)
+            string weapon = _weaponPath?.Invoke() ?? DemoHero.StarterWeapon;
+            if (_outfit == null || !string.Equals(weapon, _outfitWeapon, StringComparison.OrdinalIgnoreCase))
             {
-                _outfit = DemoHero.CreateOutfit(_assets);
+                AvatarOutfit outfit = DemoHero.CreateOutfit(_assets, weapon);
+                _outfit = HeroLook.WeaponPathOf(outfit) != null || _outfit == null ? outfit : _outfit;   // 新武器读不出外观就沿用原来的
+                _outfitWeapon = weapon;
             }
             return TownWorld.CreateSession(_assets, _atlas, place, _outfit);
         }

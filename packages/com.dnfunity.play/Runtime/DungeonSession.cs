@@ -353,7 +353,7 @@ namespace Dnf.Play
                 ?? throw new DnfFormatException("副本定义里没有可用的迷宫: " + dungeonPath);
             DungeonRoomPool pool = DungeonRoomPool.ReadFor(assets, dungeonPath);
             DungeonLayout layout = DungeonLayout.Create(maze, pool, random);
-            AvatarOutfit outfit = DemoRoom.DefaultOutfit(assets, weaponEqu);
+            AvatarOutfit outfit = DemoRoom.DefaultOutfit(assets, progress?.WeaponPath ?? weaponEqu);   // 装备栏里穿着武器就用它(证据 E-118)
             // 给了复活币库存就有复活窗口与副本失败(证据 E-115):整座副本一个 HeroRevive,各房间共用;没给就是老行为(死了一直躺着)
             ScriptLine[] dungeonScript = assets.ReadScript(dungeonPath);
             HeroRevive revive = coins == null ? null : new HeroRevive(DungeonCoinRules.Parse(dungeonScript), coins);

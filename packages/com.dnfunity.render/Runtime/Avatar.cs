@@ -286,12 +286,16 @@ namespace Dnf.Render
         public AvatarClass Class { get; }
         public IReadOnlyList<AvatarLayer> Layers { get; }
 
+        /// <summary>皮肤的编号(<see cref="AvatarClass.BodyImage"/> 的参数);换一件装备重造穿戴时要用。</summary>
+        public int SkinNumber { get; }
+
         /// <summary>穿上的装备(不含皮肤),按放入顺序。</summary>
         public IReadOnlyList<AvatarItem> Items { get; }
 
         public AvatarOutfit(AvatarClass cls, int skinNumber, IEnumerable<AvatarItem> items)
         {
             Class = cls ?? throw new ArgumentNullException(nameof(cls));
+            SkinNumber = skinNumber;
             var list = new List<AvatarLayer> { new AvatarLayer("skin", SkinKey, cls.BodyImage(skinNumber)) };
             var kept = new List<AvatarItem>();
             if (items != null)
@@ -330,6 +334,27 @@ namespace Dnf.Render
             }
             Layers = sorted;
             Items = kept;
+        }
+
+        /// <summary>
+        /// 同一套穿戴,把武器换成 <paramref name="weapon"/>(为 null 就是脱掉武器):皮肤与其余装备不变,新武器排在最后
+        /// (与 <see cref="CreateDefault"/> 放进武器的位置一致,同一个顺序键时它画在后面)。
+        /// </summary>
+        public AvatarOutfit WithWeapon(AvatarItem weapon)
+        {
+            var items = new List<AvatarItem>(Items.Count + 1);
+            foreach (AvatarItem item in Items)
+            {
+                if (!string.Equals(item.EquipmentType, "[weapon]", StringComparison.OrdinalIgnoreCase))
+                {
+                    items.Add(item);
+                }
+            }
+            if (weapon != null)
+            {
+                items.Add(weapon);
+            }
+            return new AvatarOutfit(Class, SkinNumber, items);
         }
 
         /// <summary>
