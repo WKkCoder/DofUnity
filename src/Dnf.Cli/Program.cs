@@ -324,6 +324,10 @@ namespace Dnf.Cli
             "      (商店内容、价格与 NPC 对应来自本机的数据,只打印在终端,不要抄进入库的文件;通过与否只看结构)。\n" +
             "  dnf shop-shot --png <输出.png> [--shop N] [--sell] [--tab 0..3] [--select N(从 1 数的格子)] [--prompt] [--level N] [--seed N]\n" +
             "      商店窗口(证据 E-119)的一帧:--shop 商店编号(默认第一家有商品的),--sell 出售页,--prompt 在光标处按一次回车(可叠加物品弹出数量框)(用户数据,只在本机看,不入库)。\n" +
+            "  dnf consumable-check [--level N]\n" +
+            "      消耗品(证据 E-120):整库读 stackable.lst 里的脚本,检查回复类物品([hp recovery]、[mp recovery])的字段(持续时间与冷却不为负、图标帧都在图包里、种类认得),按 --level 逐件检查使用规则,\n" +
+            "      再让 85 级剑魂对每一种用得了的回复药演习:放进背包自动进快捷栏、压低生命魔法、用一件、每 10 毫秒推进到发完,核对终值与背包的账、冷却登记与冷却中拒绝、冷却走完再用,\n" +
+            "      最后快捷栏放满六种做存档往返(数值、物品名与件数来自本机的数据,只打印在终端,不要抄进入库的文件;通过与否只看结构与账)。\n" +
             "  dnf damage-check [--cases <文件>]\n" +
             "      伤害公式(证据 E-049)。不带 --cases:读 PVF 里的 Etc/EtcParameter.etc 与 Creature/Common/creatureCommon.cre,只报告个数与完整性(不输出原版数值);\n" +
             "      带 --cases:读 tools/py/damage_ref.py --gen 生成的随机用例,用 C# 公式复算并与 Python 参考实现逐项比较。\n" +
@@ -727,6 +731,8 @@ namespace Dnf.Cli
                     return ShopCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "shop-shot":
                     return ShopShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "consumable-check":
+                    return ConsumableCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "damage-check":
                     return opts.CasesFile != null
                         ? DamageCheck.RunCases(opts)

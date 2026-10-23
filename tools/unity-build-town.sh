@@ -26,6 +26,7 @@
 #     背包与装备栏(E-118):副本里探针放一件武器、开背包、试穿、关上,日志里 DNF_BAG 各行齐全,主角的武器外观已换成装备栏里的那件。
 #     角色存档(M26):第一趟打副本、穿一件武器,退出时存;第二趟读同一个存档,日志里读到的与存下的一样,主角外观已是那件武器,读完没有新写。
 #     NPC 商店(E-119):城镇里探针打开第一家有商品的店(游戏暂停)、买一件再卖回去、关上(游戏恢复),日志里 DNF_SHOP 各行齐全,进城时记到摆着开商店的 NPC。
+#     消耗品(M28,E-120):副本里探针放一种回血药与一种回蓝药、压低主角的生命魔法,像按键 1、1、2 那样连用(同一种药连用第二次被冷却拒绝),等药效发完,日志里 DNF_POTION 各行齐全。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -651,6 +652,29 @@ if [ "$platform" = "macos" ]; then
     for pat in 'DNF_SHOP probe trade bought=True sold=True' 'DNF_SHOP probe closed open=False' 'DNF_SHOP closed paused=False' 'DNF_SHOP probe done'; do
       grep -q -F "$pat" "$shop_log" || { echo "NPC 商店的日志里缺 \"$pat\":$shop_log" >&2; exit 1; }
     done
+    # 消耗品(M28,证据 E-120):副本里阶段开始 3 秒后探针往背包放一种回血药与一种回蓝药(快捷栏自动放进前两格)、把主角的生命压到四成、魔法压到三成,
+    # 过一秒像按键 1、1、2 那样连着用(同一种药连用第二次应被冷却拒绝),等药效发完(时间步放大 4 倍),再过一秒再用一次;日志里只有数与结果名,没有物品名与编号
+    potion_log="$PWD/re/unity-run-town-potion-macos.log"
+    rm -f "$potion_log"
+    set +e
+    "$app" -batchmode -logFile "$potion_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" -dnflevel 30 \
+      -dnfpotionat 3 -dnftimescale 4 -dnfquitafter 40
+    rc=$?
+    set -e
+    echo "播放器退出码(消耗品): $rc"
+    grep -E 'DNF_POTION' "$potion_log" | cut -c1-260 || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$potion_log"; then
+      echo "消耗品的日志里有异常:$potion_log" >&2
+      exit 1
+    fi
+    for pat in 'DNF_POTION probe grant kinds=2 hurt=True' 'DNF_POTION probe use first=Ok again=Cooling second=Ok' 'DNF_POTION probe settled recovering=False' 'DNF_POTION probe done last='; do
+      grep -q -F "$pat" "$potion_log" || { echo "消耗品的日志里缺 \"$pat\":$potion_log" >&2; exit 1; }
+    done
+    grep -q -E 'DNF_POTION probe use first=Ok again=Cooling second=Ok .* used=2 quick=2 cooling=[12]$' "$potion_log" \
+      || { echo "连用三次后应是用成两件、快捷栏占两格、一到两种药在冷却(used=2 quick=2 cooling=1或2):$potion_log" >&2; exit 1; }
+    grep -q -E 'DNF_POTION probe settled recovering=False .* pending=0/0 ' "$potion_log" \
+      || { echo "药效应已发完(pending=0/0):$potion_log" >&2; exit 1; }
     # 角色存档(M26,本项目自己的设计):第一趟无人值守打副本、探针往背包放一件武器并穿上,退出时存档;第二趟读同一个存档进城镇,
     # 日志里读到的等级、经验、金币、背包与装备栏和第一趟最后存下的一模一样,主角的外观已是穿着的那件武器,而且读完不用再写
     save_file="$PWD/out/m26-hero.sav"

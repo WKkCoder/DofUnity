@@ -206,6 +206,18 @@ namespace Dnf.Game
         /// <summary><c>[move wav]</c>:物品"被拿起、放下"时的声音标签(audio.xml 的 ID,如某某_TOUCH);拾取地上物品时放它是推断。没写为 null。</summary>
         public string MoveSound { get; set; }
 
+        /// <summary><c>[hp recovery]</c>:使用后回复生命(<see cref="RecoveryEffect"/>:定额或百分比、总量、发放的毫秒数);没写为 null(证据 E-120)。</summary>
+        public RecoveryEffect HpRecovery { get; set; }
+
+        /// <summary><c>[mp recovery]</c>:使用后回复魔法值,形状同 <see cref="HpRecovery"/>;没写为 null。</summary>
+        public RecoveryEffect MpRecovery { get; set; }
+
+        /// <summary><c>[cool time]</c>:使用后的冷却毫秒数(服务端按物品编号登记);没写为 0(没有冷却)。</summary>
+        public int CoolTimeMs { get; set; }
+
+        /// <summary><c>[cooltime group]</c>:冷却的归类号,同组共用冷却(推断);没写为 −1(按物品编号各自冷却)。</summary>
+        public int CoolGroup { get; set; } = -1;
+
         public bool IsEquipment => Kind == ItemKind.Equipment;
 
         public bool IsStackable => Kind == ItemKind.Stackable;
@@ -253,6 +265,10 @@ namespace Dnf.Game
             KiriProtectable,
             StackLimit,
             MoveSound,
+            HpRecovery,
+            MpRecovery,
+            CoolTime,
+            CoolGroup,
         }
 
         private static readonly Dictionary<string, Field> Fields = new Dictionary<string, Field>(StringComparer.OrdinalIgnoreCase)
@@ -275,6 +291,10 @@ namespace Dnf.Game
             ["[possible kiri protect]"] = Field.KiriProtectable,
             ["[stack limit]"] = Field.StackLimit,
             ["[move wav]"] = Field.MoveSound,
+            ["[hp recovery]"] = Field.HpRecovery,
+            ["[mp recovery]"] = Field.MpRecovery,
+            ["[cool time]"] = Field.CoolTime,
+            ["[cooltime group]"] = Field.CoolGroup,
         };
 
         /// <summary>
@@ -301,6 +321,9 @@ namespace Dnf.Game
             Field field = Field.None;
             bool haveString = false;      // 当前标签下是否已经读到第一个字符串(路径、类型名)
             bool haveInt = false;         // 当前标签下是否已经读到第一个整数
+            bool recoveryPercent = false; // [hp recovery]/[mp recovery] 下:符号字符串是不是 "%"
+            int recoveryInts = 0;         // 同上:已经读到几个整数(第一个是数量,第二个是持续毫秒)
+            int recoveryAmount = 0;
             for (int i = 0; i < tokens.Length; i++)
             {
                 ScriptToken t = tokens[i];
@@ -321,6 +344,20 @@ namespace Dnf.Game
                     else if (field == Field.KiriProtectable)
                     {
                         info.KiriProtectable = true;         // 标签本身就是开关
+                    }
+                    else if (field == Field.HpRecovery || field == Field.MpRecovery)
+                    {
+                        recoveryPercent = false;             // 同名标签后一次覆盖前一次
+                        recoveryInts = 0;
+                        recoveryAmount = 0;
+                        if (field == Field.HpRecovery)
+                        {
+                            info.HpRecovery = null;
+                        }
+                        else
+                        {
+                            info.MpRecovery = null;
+                        }
                     }
                     continue;
                 }
@@ -473,6 +510,46 @@ namespace Dnf.Game
                         {
                             info.MoveSound = StringAt(strings, t.Value);
                             haveString = true;
+                        }
+                        break;
+                    case Field.CoolTime:
+                        if (isInt && !haveInt)
+                        {
+                            info.CoolTimeMs = t.Value;
+                            haveInt = true;
+                        }
+                        break;
+                    case Field.CoolGroup:
+                        if (isInt && !haveInt)
+                        {
+                            info.CoolGroup = t.Value;
+                            haveInt = true;
+                        }
+                        break;
+                    case Field.HpRecovery:
+                    case Field.MpRecovery:
+                        // 形状:"+"|"%" 数量 持续毫秒 "myself";第一个字符串是符号(整数之前),第一个整数是数量,第二个是持续毫秒,其余忽略
+                        if (isString && !haveString && recoveryInts == 0)
+                        {
+                            recoveryPercent = string.Equals(StringAt(strings, t.Value), "%", StringComparison.Ordinal);
+                            haveString = true;
+                        }
+                        else if (isInt && recoveryInts < 2)
+                        {
+                            if (recoveryInts == 0)
+                            {
+                                recoveryAmount = t.Value;
+                            }
+                            var effect = new RecoveryEffect(recoveryPercent, recoveryAmount, recoveryInts == 0 ? 0 : t.Value);
+                            recoveryInts++;
+                            if (field == Field.HpRecovery)
+                            {
+                                info.HpRecovery = effect;
+                            }
+                            else
+                            {
+                                info.MpRecovery = effect;
+                            }
                         }
                         break;
                 }

@@ -35,6 +35,20 @@ namespace Dnf.Play
         public int Code { get; }
     }
 
+    /// <summary>存档里快捷栏的一格:格号(0 到 5)与物品编号。</summary>
+    public readonly struct SavedQuick
+    {
+        public SavedQuick(int slot, int code)
+        {
+            Slot = slot;
+            Code = code;
+        }
+
+        public int Slot { get; }
+
+        public int Code { get; }
+    }
+
     /// <summary>还原存档时发生了什么(宿主写进日志)。</summary>
     public sealed class SaveApplyReport
     {
@@ -61,7 +75,7 @@ namespace Dnf.Play
 
     /// <summary>
     /// 角色进度的存档快照(M26):等级、经验、点数、金币、背包的每一格、装备栏的每一格。纯数据;文本格式 <see cref="ToText"/> 与 <see cref="TryParse"/>:
-    /// 第一行 <c>DNFUNITY-SAVE 版本号</c>,之后每行 <c>键 值…</c>(<c>bag 编号 数量</c>、<c>worn 部位 编号</c> 可以有很多行),空行与 # 开头的行忽略,
+    /// 第一行 <c>DNFUNITY-SAVE 版本号</c>,之后每行 <c>键 值…</c>(<c>bag 编号 数量</c>、<c>worn 部位 编号</c>、<c>quick 格号 编号</c> 可以有很多行),空行与 # 开头的行忽略,
     /// 不认得的键忽略(以后加字段旧版本还能读),认得的键值写坏了整个存档当作读不懂(不读一半)。
     /// </summary>
     public sealed class HeroSave
@@ -103,6 +117,9 @@ namespace Dnf.Play
         /// <summary>装备栏穿着的每一件(部位从小到大)。</summary>
         public List<SavedWorn> Worn { get; } = new List<SavedWorn>();
 
+        /// <summary>快捷栏放了什么(格号从小到大,只写有物品的格;M28 加的键,旧存档没有这些行)。</summary>
+        public List<SavedQuick> Quick { get; } = new List<SavedQuick>();
+
         /// <summary>写成文本(换行用 \n,键的次序固定,所以内容没变文本也不变)。</summary>
         public string ToText()
         {
@@ -125,6 +142,10 @@ namespace Dnf.Play
             foreach (SavedWorn worn in Worn)
             {
                 sb.Append("worn ").Append(worn.Part.ToString(Inv)).Append(' ').Append(worn.Code.ToString(Inv)).Append('\n');
+            }
+            foreach (SavedQuick quick in Quick)
+            {
+                sb.Append("quick ").Append(quick.Slot.ToString(Inv)).Append(' ').Append(quick.Code.ToString(Inv)).Append('\n');
             }
             return sb.ToString();
         }
@@ -212,6 +233,7 @@ namespace Dnf.Play
                     break;
                 case "bag":
                 case "worn":
+                case "quick":
                     arity = 3;
                     break;
                 default:
@@ -277,6 +299,13 @@ namespace Dnf.Play
                     if (ok)
                     {
                         r.Bag.Add(new SavedStack((int)a, (int)b));
+                    }
+                    break;
+                case "quick":
+                    ok = InRange(a, 0, Dnf.Game.QuickSlots.Count - 1) && InRange(b, 1, int.MaxValue);
+                    if (ok)
+                    {
+                        r.Quick.Add(new SavedQuick((int)a, (int)b));
                     }
                     break;
                 default:                      // worn

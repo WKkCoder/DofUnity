@@ -10,6 +10,7 @@ namespace Dnf.Play
     /// (当前生命与魔法不变——没有证据表明升级会回复)。装备与属性点对生命魔法的加成都没有做。证据 E-086。
     /// 魔法值(证据 E-087):放技能时扣 .skl 的 [consume MP](<see cref="TrySpendMp"/>),按 .chr 的 [MP regen speed] 回复(<see cref="RegenMp"/>);
     /// 回复速度的单位(每分钟)是从基线魔法球液面的粗测推断的,客户端的扣蓝与回蓝代码没有读到。
+    /// 药水(证据 E-120):<see cref="StartRecovery"/> 开始一次药效,总量在持续毫秒里线性发完(<see cref="AdvanceRecovery"/>),倒下就作废。
     /// </summary>
     public sealed class HeroVitals
     {
@@ -29,6 +30,11 @@ namespace Dnf.Play
         private double _mpBank;
 
         private const double BankPerPoint = 60000.0;
+
+        // 药水的回复(证据 E-120):生命与魔法各一条通道,每一批"总量 + 持续毫秒"按已过时间线性发完(RecoveryChannel);
+        // 发出来的量再加到当前值上(不超上限;负数是扣,生命扣到 1 为止、魔法扣到 0 为止,不会因为喝药死掉)。
+        private readonly RecoveryChannel _hpRecovery = new RecoveryChannel();
+        private readonly RecoveryChannel _mpRecovery = new RecoveryChannel();
 
         /// <summary>物理防御力([physical defense])。</summary>
         public double PhysicalDefense { get; private set; }
@@ -139,6 +145,11 @@ namespace Dnf.Play
                 return false;
             }
             Hp = Math.Max(0, Hp - Math.Max(0, amount));
+            if (Hp == 0)
+            {
+                _hpRecovery.Clear();                // 倒下了:还没发完的药效作废
+                _mpRecovery.Clear();
+            }
             return Hp == 0;
         }
 
@@ -188,12 +199,115 @@ namespace Dnf.Play
             }
         }
 
-        /// <summary>回满生命与魔法(复活、重置用)。</summary>
+        /// <summary>生命通道里还没发出去的量(宿主层日志与界面用;没有药效在发放是 0)。</summary>
+        public int PendingHp => ClampInt(_hpRecovery.Pending);
+
+        /// <summary>魔法通道里还没发出去的量。</summary>
+        public int PendingMp => ClampInt(_mpRecovery.Pending);
+
+        /// <summary>现在有没有药效在发放(生命或魔法)。</summary>
+        public bool Recovering => _hpRecovery.Active > 0 || _mpRecovery.Active > 0;
+
+        private static int ClampInt(long value)
+        {
+            return value > int.MaxValue ? int.MaxValue : value < int.MinValue ? int.MinValue : (int)value;
+        }
+
+        /// <summary>直接回复生命(不超上限);主角已倒下或数量不大于 0 什么都不做。返回实际加了多少。</summary>
+        public int Heal(int amount)
+        {
+            if (Hp <= 0 || amount <= 0)
+            {
+                return 0;
+            }
+            int before = Hp;
+            Hp = (int)Math.Min((long)HpMax, (long)Hp + amount);
+            return Hp - before;
+        }
+
+        /// <summary>直接回复魔法值(不超上限);主角已倒下或数量不大于 0 什么都不做。返回实际加了多少。</summary>
+        public int AddMp(int amount)
+        {
+            if (Hp <= 0 || amount <= 0)
+            {
+                return 0;
+            }
+            int before = Mp;
+            Mp = (int)Math.Min((long)MpMax, (long)Mp + amount);
+            return Mp - before;
+        }
+
+        /// <summary>
+        /// 开始一次药效(<paramref name="hp"/>、<paramref name="mp"/> 都可以是 null):每个效果按这个上限算出总量(定额或百分比,<see cref="RecoveryEffect.TotalFor"/>),
+        /// 在它的持续毫秒里线性发完(<see cref="AdvanceRecovery"/>);持续时间为 0 的当场发完。主角已倒下、两个效果都是 null 或总量都是 0 返回 false。
+        /// 多次药效可以同时进行,各发各的。
+        /// </summary>
+        public bool StartRecovery(RecoveryEffect hp, RecoveryEffect mp)
+        {
+            if (Hp <= 0)
+            {
+                return false;
+            }
+            bool started = false;
+            if (hp != null)
+            {
+                int total = hp.TotalFor(HpMax);
+                _hpRecovery.Start(total, hp.DurationMs);
+                started |= total != 0;
+            }
+            if (mp != null)
+            {
+                int total = mp.TotalFor(MpMax);
+                _mpRecovery.Start(total, mp.DurationMs);
+                started |= total != 0;
+            }
+            if (started)
+            {
+                AdvanceRecovery(0.0);                // 持续时间为 0 的当场发完
+            }
+            return started;
+        }
+
+        /// <summary>
+        /// 药效过了 <paramref name="deltaMs"/> 毫秒:两条通道各发出这一步的量,加到当前生命与魔法上。正的加到上限为止;负的扣(生命最低扣到 1、魔法最低到 0)。
+        /// 主角已倒下就丢掉所有还没发完的药效。墙钟时间(与魔法恢复、冷却同一个假设)。
+        /// </summary>
+        public void AdvanceRecovery(double deltaMs)
+        {
+            if (Hp <= 0)
+            {
+                _hpRecovery.Clear();
+                _mpRecovery.Clear();
+                return;
+            }
+            int hp = _hpRecovery.Advance(deltaMs);
+            int mp = _mpRecovery.Advance(deltaMs);
+            if (hp > 0)
+            {
+                Heal(hp);
+            }
+            else if (hp < 0)
+            {
+                Hp = (int)Math.Max(1L, (long)Hp + hp);
+            }
+            if (mp > 0)
+            {
+                AddMp(mp);
+            }
+            else if (mp < 0)
+            {
+                Mp = (int)Math.Max(0L, (long)Mp + mp);
+            }
+        }
+
+        /// <summary>回满生命与魔法(复活、重置用),没发完的药效作废。</summary>
         public void Restore()
         {
             Hp = HpMax;
             Mp = MpMax;
             _mpBank = 0.0;
+            _hpRecovery.Clear();
+            _mpRecovery.Clear();
         }
 
         /// <summary>
@@ -209,6 +323,13 @@ namespace Dnf.Play
             Hp = Math.Max(0, Math.Min(HpMax, other.Hp));
             Mp = Math.Max(0, Math.Min(MpMax, other.Mp));
             _mpBank = Mp >= MpMax ? 0.0 : other._mpBank;
+            _hpRecovery.CopyFrom(other._hpRecovery);   // 没发完的药效跟着人走
+            _mpRecovery.CopyFrom(other._mpRecovery);
+            if (Hp <= 0)
+            {
+                _hpRecovery.Clear();
+                _mpRecovery.Clear();
+            }
         }
     }
 }

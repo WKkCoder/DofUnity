@@ -29,7 +29,7 @@ namespace Dnf.Play
     /// 没做 / 没量过:客户端"走进出口就换房间"的触发代码(没有读到,触发条件是推断)、主角对象编号的来源(<see cref="HeroObjectId"/>)、淡入期间是否接受操作(现在接受)、
     /// 转场时怪物是否冻结(现在不冻结)、清房时站姿切换的确切时刻、结算的时机与过程(清空到结算菜单之间的 3 秒是占位,掉落、评分、经验结算没读到)、掉落物。
     /// </summary>
-    public sealed class DungeonSession : ISkillSession, ISoundSource, IRunSession
+    public sealed class DungeonSession : ISkillSession, ISoundSource, IRunSession, IItemSession
     {
         /// <summary>
         /// 没有碰撞体的左右出口的触发范围:主角离出口的横向距离不超过它(像素;近似,没有量过;真实数据里左右出口都有碰撞体)。
@@ -366,6 +366,12 @@ namespace Dnf.Play
         /// 主角的等级与经验(证据 E-111);所有房间共用同一个对象,创建时没给就是 null(杀怪不给经验)。
         /// </summary>
         public HeroProgress Progress => Current.Progress;
+
+        /// <summary>用快捷栏第 <paramref name="slot"/> 格的消耗品(证据 E-120):交给现在这个房间的战斗会话(药效与冷却随人走,不随房间)。</summary>
+        public UseResult TryUseQuickSlot(int slot) => Current.TryUseQuickSlot(slot);
+
+        /// <summary>用这件物品(背包窗口里按回车),同上。</summary>
+        public UseResult TryUseItem(ItemInfo item) => Current.TryUseItem(item);
 
         /// <summary>
         /// 用真实素材造房间:读这一格选中的房间地图,按迷宫给的出口种类摆出口,主角放在出生点

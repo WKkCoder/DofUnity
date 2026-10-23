@@ -144,6 +144,11 @@ namespace Dnf.Client
         private bool _shopProbeTraded;
         private float _shopProbeClosedAt = -1f;
         private bool _shopProbeDone;
+        private double _potionProbeAtSeconds = -1.0;
+        private float _potionProbeStepAt = -1f;
+        private int _potionProbeStep;
+        private bool _potionProbeDone;
+        private int _bagUsesLogged;
         private int _shopSeenSerial = -1;
         private int _shopTradesLogged;
         private EquipmentStats _bagWorn;
@@ -299,6 +304,10 @@ namespace Dnf.Client
                     case "-dnfshopat":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
                                 System.Globalization.CultureInfo.InvariantCulture, out double sat) && sat >= 0.0) { _shopProbeAtSeconds = sat; i++; }
+                        break;
+                    case "-dnfpotionat":
+                        if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out double pat) && pat >= 0.0) { _potionProbeAtSeconds = pat; i++; }
                         break;
                     case "-dnfplayat":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
@@ -936,6 +945,7 @@ namespace Dnf.Client
             RunMenuProbe();
             RunBagProbe();
             RunShopProbe();
+            RunPotionProbe();
             NoteTownShops();
             bool menuOpen = _flow.Menu.Open;
             bool bagOpen = _flow.Bag.Open;
@@ -1115,6 +1125,62 @@ namespace Dnf.Client
             {
                 _shopProbeDone = true;
                 Debug.Log("DNF_SHOP probe done gold=" + _progress.Gold + " bag=" + _progress.BagItems);
+            }
+        }
+
+        /// <summary>
+        /// -dnfpotionat 的无人值守探针(消耗品,证据 E-120):副本阶段开始后过了指定秒数,先往背包放一种回血药与一种回蓝药、把主角的生命魔法压低
+        /// (<see cref="ItemProbe.GrantPotions"/>、<see cref="ItemUse.Hurt"/>),过一秒像按键 1、1、2 那样连着用(同一种药连用两次,有冷却的第二次应被拒绝),
+        /// 等回复发完(最多等一分钟),再过一秒再用一次;每一步日志里留 DNF_POTION probe 行,只有数与结果名,没有物品名与编号(各只做一次)。
+        /// </summary>
+        private void RunPotionProbe()
+        {
+            if (_potionProbeAtSeconds < 0.0 || _potionProbeDone || _flow == null)
+            {
+                return;
+            }
+            float now = Time.realtimeSinceStartup;
+            IHeroSession session = _flow.Session;
+            switch (_potionProbeStep)
+            {
+                case 0:
+                    if (_flow.Stage == GameStage.Dungeon && now - _stageRealStart >= _potionProbeAtSeconds && HeroProgressForRun() != null)
+                    {
+                        int kinds = ItemProbe.GrantPotions(_assets, _progress);
+                        bool hurt = ItemUse.Hurt(session, 40, 30);
+                        _potionProbeStep = 1;
+                        _potionProbeStepAt = now;
+                        Debug.Log("DNF_POTION probe grant kinds=" + kinds + " hurt=" + hurt + " " + ItemUse.Status(session));
+                    }
+                    break;
+                case 1:
+                    if (now - _potionProbeStepAt >= 1f)
+                    {
+                        string first = _flow.UseQuickSlot(0);
+                        string again = _flow.UseQuickSlot(0);
+                        string second = _flow.UseQuickSlot(1);
+                        _potionProbeStep = 2;
+                        _potionProbeStepAt = now;
+                        Debug.Log("DNF_POTION probe use first=" + first + " again=" + again + " second=" + second + " " + ItemUse.Status(session));
+                    }
+                    break;
+                case 2:
+                    if (now - _potionProbeStepAt >= 1f && (!ItemUse.Recovering(session) || now - _potionProbeStepAt >= 60f))
+                    {
+                        _potionProbeStep = 3;
+                        Debug.Log("DNF_POTION probe settled recovering=" + ItemUse.Recovering(session) + " waited=" + (now - _potionProbeStepAt).ToString("F1", System.Globalization.CultureInfo.InvariantCulture)
+                            + " " + ItemUse.Status(session));
+                        _potionProbeStepAt = now;
+                    }
+                    break;
+                case 3:
+                    if (now - _potionProbeStepAt >= 1f)
+                    {
+                        string last = _flow.UseQuickSlot(0);
+                        _potionProbeDone = true;
+                        Debug.Log("DNF_POTION probe done last=" + last + " " + ItemUse.Status(session));
+                    }
+                    break;
             }
         }
 
@@ -1801,6 +1867,12 @@ namespace Dnf.Client
                 SyncHeroLook();
                 Debug.Log("DNF_BAG changed equipped=" + _progress.EquippedCount + " weapon=" + (_progress.WeaponPath != null) + " msg=\"" + bag.Message + "\"");
             }
+            if (bag.Uses != _bagUsesLogged)
+            {
+                // 在背包里用了药(M28):日志里留一行结果与主角此刻的生命魔法
+                _bagUsesLogged = bag.Uses;
+                Debug.Log("DNF_POTION bag use uses=" + bag.Uses + " msg=\"" + bag.Message + "\" " + ItemUse.Status(_flow.Session));
+            }
         }
 
         /// <summary>
@@ -1992,17 +2064,33 @@ namespace Dnf.Client
                         break;
                     // 副本结算菜单的热键(原版界面上写的是 F13 再次挑战、F11 选择其它地下城、F12 返回城镇,证据 E-091);
                     // 笔记本键盘没有 F13,所以数字键 1、2、3 也行(这是本演示加的,原版没有)
+                    // 数字键 1 到 6 同时是物品快捷栏(M28):结算菜单显示着时 1、2、3 是结算选项,其余时候是用快捷栏第几格的药
                     case KeyCode.F13:
-                    case KeyCode.Alpha1:
                         ChooseSettlement(SettlementChoice.Retry);
                         break;
                     case KeyCode.F11:
-                    case KeyCode.Alpha2:
                         ChooseSettlement(SettlementChoice.SelectDungeon);
                         break;
                     case KeyCode.F12:
-                    case KeyCode.Alpha3:
                         ChooseSettlement(SettlementChoice.ReturnToTown);
+                        break;
+                    case KeyCode.Alpha1:
+                        PressNumber(0, SettlementChoice.Retry);
+                        break;
+                    case KeyCode.Alpha2:
+                        PressNumber(1, SettlementChoice.SelectDungeon);
+                        break;
+                    case KeyCode.Alpha3:
+                        PressNumber(2, SettlementChoice.ReturnToTown);
+                        break;
+                    case KeyCode.Alpha4:
+                        PressNumber(3, null);
+                        break;
+                    case KeyCode.Alpha5:
+                        PressNumber(4, null);
+                        break;
+                    case KeyCode.Alpha6:
+                        PressNumber(5, null);
                         break;
                 }
             }
@@ -2045,6 +2133,28 @@ namespace Dnf.Client
             {
                 dungeon.Choose(choice);
             }
+        }
+
+        /// <summary>
+        /// 数字键 1 到 6(<paramref name="slot"/> 是 0 到 5):结算菜单显示着时 1、2、3 选结算项(<paramref name="settlement"/>,4 到 6 没有反应);
+        /// 其余时候用物品快捷栏第 <paramref name="slot"/> 格的药(M28;暂停、选择界面、载入时不响应),日志里留一行 DNF_POTION key。
+        /// </summary>
+        private void PressNumber(int slot, SettlementChoice? settlement)
+        {
+            if (_session is DungeonSession settling && settling.SettlementActive)
+            {
+                if (settlement.HasValue)
+                {
+                    ChooseSettlement(settlement.Value);
+                }
+                return;
+            }
+            if (_paused || InSelect || InCharacterSelect || InLoading)
+            {
+                return;
+            }
+            string result = _flow != null ? _flow.UseQuickSlot(slot) : ItemUse.QuickSlot(_session, slot);
+            Debug.Log("DNF_POTION key slot=" + slot + " result=" + result + " " + ItemUse.Status(_session));
         }
 
         /// <summary>

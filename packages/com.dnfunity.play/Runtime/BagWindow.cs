@@ -78,6 +78,18 @@ namespace Dnf.Play
         public Func<ItemInfo, bool> CanShow { get; set; }
 
         /// <summary>
+        /// 在背包里按回车用一件消耗品(证据 E-120):流程(<see cref="GameFlow"/>)把它接到当前会话(<see cref="IItemSession.TryUseItem"/>);
+        /// 没接(城镇会话、测试)时消耗品一律提示"还不能用"。
+        /// </summary>
+        public Func<ItemInfo, UseResult> UseItem { get; set; }
+
+        /// <summary>最近一次在背包里用消耗品的结果(没用过是 <see cref="UseResult.Ok"/>;日志与探针用)。</summary>
+        public UseResult LastUse { get; private set; }
+
+        /// <summary>累计在背包里成功用掉的件数。</summary>
+        public int Uses { get; private set; }
+
+        /// <summary>
         /// 用游戏数据做 <see cref="CanShow"/>(<see cref="HeroLook.CanShow"/>):武器要能造出外观、各个动作的动画都在。
         /// 宿主(客户端)只认识渲染层的类型,所以从这里接,不直接写 <see cref="Func{T, TResult}"/>。
         /// </summary>
@@ -249,6 +261,46 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>使用结果的占位英文提示(<see cref="UseResult.Ok"/> 是 USED)。</summary>
+        public static string MessageOf(UseResult result)
+        {
+            switch (result)
+            {
+                case UseResult.Ok:
+                    return "USED";
+                case UseResult.Cooling:
+                    return "COOLING DOWN";
+                case UseResult.LevelTooLow:
+                    return "LEVEL TOO LOW";
+                case UseResult.WrongJob:
+                    return "WRONG CLASS";
+                case UseResult.Unavailable:
+                    return "CANNOT USE HERE";
+                case UseResult.NotInBag:
+                    return "NONE LEFT";
+                default:
+                    return MessageOf(EquipResult.NotEquipment);       // 不是消耗品、没有这个版本做了的效果:还不能用
+            }
+        }
+
+        private bool UseStackable(ItemInfo item)
+        {
+            if (UseItem == null)
+            {
+                Message = MessageOf(EquipResult.NotEquipment);
+                return false;
+            }
+            UseResult result = UseItem(item);
+            LastUse = result;
+            Message = MessageOf(result);
+            if (result == UseResult.Ok)
+            {
+                Uses++;
+                return true;
+            }
+            return false;
+        }
+
         // ------------------------------------------------------------------ 输入
 
         /// <summary>移动光标:在物品格子里夹在边界内;在最左一列再往左进入装备栏,在装备栏最右一列再往右回到物品格子。</summary>
@@ -310,7 +362,7 @@ namespace Dnf.Play
 
         /// <summary>
         /// 回车:光标在装备栏上就脱下那一格的装备;在物品格子上、是装备就穿上(规则与结果见 <see cref="EquipRules"/>、<see cref="MessageOf"/>),
-        /// 是可叠加物品就提示"还不能用"。返回这一次有没有真的改变装备栏。画面上穿不穿得出来按 <see cref="CanShow"/>。
+        /// 是消耗品就用一件(<see cref="UseItem"/>,证据 E-120;没接就提示"还不能用")。返回这一次有没有真的改变装备栏或用掉了一件。画面上穿不穿得出来按 <see cref="CanShow"/>。
         /// </summary>
         public bool Activate(HeroProgress progress)
         {
@@ -342,8 +394,7 @@ namespace Dnf.Play
             }
             if (!stacks[Cursor].Info.IsEquipment)
             {
-                Message = MessageOf(EquipResult.NotEquipment);
-                return false;
+                return UseStackable(stacks[Cursor].Info);
             }
             EquipResult result = progress.Equip(Cursor, CanShow);
             LastResult = result;

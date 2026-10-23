@@ -157,7 +157,7 @@ namespace Dnf.Play
         }
 
         /// <summary>底部按键提示(占位英文)。</summary>
-        public const string HintText = "ARROWS MOVE   ENTER EQUIP OR UNEQUIP   Q E PAGE   I CLOSE";
+        public const string HintText = "ARROWS MOVE   ENTER EQUIP OR USE   Q E PAGE   I CLOSE";
 
         /// <summary>同上,返回新建的列表(窗口没开时是空表)。</summary>
         public static List<SceneSprite> Build(BagWindow window, HeroProgress progress, ISpriteSource sprites, OverlayArt art, EquipmentStats worn = default)
@@ -192,12 +192,26 @@ namespace Dnf.Play
                 + "  PRICE " + item.Price.ToString(CultureInfo.InvariantCulture);
         }
 
-        /// <summary>第二行(没有操作提示时):物品格子里的装备,说这位主角穿不穿得了。</summary>
+        /// <summary>第二行(没有操作提示时):物品格子里的装备,说这位主角穿不穿得了;能回复生命魔法的消耗品,说这位主角用不用得了(证据 E-120)。</summary>
         public static string FitText(BagWindow window, ItemInfo item, HeroProgress progress)
         {
-            if (item == null || window.OnEquipment || !item.IsEquipment)
+            if (item == null || window.OnEquipment)
             {
                 return string.Empty;
+            }
+            if (!item.IsEquipment)
+            {
+                switch (ConsumableRules.Check(item, progress.Job, progress.Level))
+                {
+                    case UseResult.Ok:
+                        return "CAN USE";
+                    case UseResult.LevelTooLow:
+                        return "NEED LEVEL " + item.MinimumLevel.ToString(CultureInfo.InvariantCulture);
+                    case UseResult.WrongJob:
+                        return BagWindow.MessageOf(UseResult.WrongJob);
+                    default:
+                        return string.Empty;
+                }
             }
             EquipResult r = EquipRules.Check(item, progress.Job, progress.Level);
             switch (r)

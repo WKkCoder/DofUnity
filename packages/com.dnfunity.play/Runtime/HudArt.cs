@@ -43,6 +43,33 @@ namespace Dnf.Play
         }
     }
 
+    /// <summary>一个物品快捷槽此刻的状态(画底栏用,证据 E-120):槽号、图标(图包键与帧号,取自物品脚本的 [icon])、背包里这种物品的件数、冷却还剩的比例。</summary>
+    public readonly struct HudItemState
+    {
+        /// <summary>第几个槽(0 到 5,对应数字键 1 到 6)。</summary>
+        public int Slot { get; }
+
+        /// <summary>图标所在的图包键(<c>sprite/item/….img</c>)与帧号;没有图标时只画件数。</summary>
+        public string IconKey { get; }
+
+        public int IconFrame { get; }
+
+        /// <summary>背包里这种物品一共几件(右上角的小字);不大于 0 不画。</summary>
+        public int Count { get; }
+
+        /// <summary>冷却还剩的比例(0 到 1,0 表示没在冷却),遮罩的画法同技能槽(<see cref="HudArt.CooldownRows"/>)。</summary>
+        public double CooldownFraction { get; }
+
+        public HudItemState(int slot, string iconKey, int iconFrame, int count, double cooldownFraction = 0.0)
+        {
+            Slot = slot;
+            IconKey = iconKey;
+            IconFrame = iconFrame;
+            Count = count;
+            CooldownFraction = cooldownFraction;
+        }
+    }
+
     /// <summary>
     /// 经验条此刻的数(证据 E-111):<see cref="Value"/> 是在本级里已经攒的经验,<see cref="Span"/> 是本级一共要攒的经验
     /// (客户端取这两个数的来源是推断的:读到的是一对成对存放的受保护整数,按数据流判断为"本级已攒、本级总量"),
@@ -70,7 +97,9 @@ namespace Dnf.Play
     /// 经验条(证据 E-111):<see cref="HudExp"/> 给了才画——hud.img 的 #4(625×4)放在 (88, 591),只露出前 <see cref="ExpBarWidth"/> 列;等级 85 再盖 #60。
     /// 技能槽(证据 E-112):图标之上是 "Lv.N" 小字(自己的 3×5 点阵,金色加黑边,不是原版字体)、冷却遮罩(图标自上而下盖一层 (8,8,8) 半透明,盖住行数随冷却减少),
     /// 热键字母最后画、不受遮罩影响;右球下方的 SP 框里画剩余技能点(<c>sp.img</c> 的数字,居中)。
-    /// 没做:疲劳条的数据、状态图标、物品快捷栏(1 到 6)、鼠标悬停与点击、球上的高光。
+    /// 物品快捷槽(证据 E-120):左边 6 个 28×28 的槽(<see cref="HudItemState"/>),图标取物品脚本的 [icon],右上角画件数(自己的点阵字),冷却遮罩同技能槽,
+    /// 右下角的数字标签 1 到 6 来自同一张 hud.img 的 #45 条(位置与基线逐像素吻合;件数小字的位置是量出来的近似)。
+    /// 没做:疲劳条的数据、状态图标、鼠标悬停与点击、球上的高光。
     /// 取不到 hud.img 时 <see cref="TryCreate"/> 返回 null,调用方退回占位的色块血条。
     /// </summary>
     public sealed class HudArt
@@ -159,11 +188,33 @@ namespace Dnf.Play
         /// <summary>最多有几个技能槽(A S D F G H)。</summary>
         public const int SlotCount = 6;
 
+        // ----- 物品快捷槽(1 到 6;证据 E-120):图标 28×28,在技能槽的左边,同一行、同样的间距;数字标签在每个槽的右下角
+        /// <summary>物品快捷槽的个数(服务端快捷栏是 6 格)。</summary>
+        public const int ItemSlotCount = 6;
+
+        public const int ItemSlotX = 85;
+        public const int ItemSlotPitch = 30;
+        public const int ItemSlotY = 558;
+
+        /// <summary>数字键标签(1 到 6)取自 <see cref="KeyLabelStripFrame"/> 那条图的最前面:每个数字的起始列与宽度(基线里逐像素吻合,"1" 窄一点)。</summary>
+        public static readonly int[] ItemLabelColumns = { 0, 28, 58, 88, 118, 148 };
+        public static readonly int[] ItemLabelWidths = { 4, 6, 6, 6, 6, 6 };
+
+        /// <summary>数字标签画在 (<see cref="ItemLabelOriginX"/> + 起始列, <see cref="ItemLabelY"/>)。</summary>
+        public const int ItemLabelOriginX = 109;
+        public const int ItemLabelY = 579;
+
+        /// <summary>件数小字:填充的右端落在槽内 x = 26(与技能等级小字同一条线),帧的最上一行在槽内 y = 2(基线里的数字占 2 到 8 行,这里的点阵字矮一点,按上沿对齐);白色加黑边。</summary>
+        public const int ItemCountTop = 2;
+        public const uint CountRgb = 0xFFFFFFu;
+        public const uint CountOutlineRgb = 0x000000u;
+
         private readonly ISpriteSource _sprites;
         private readonly SpriteFrame _bar;
         private readonly SpriteFrame _hpFull;
         private readonly SpriteFrame _mpFull;
         private readonly SpriteFrame[] _labels = new SpriteFrame[SlotCount];
+        private readonly SpriteFrame[] _itemLabels = new SpriteFrame[ItemSlotCount];
         private readonly Dictionary<int, SpriteFrame> _hpFills = new Dictionary<int, SpriteFrame>();
         private readonly Dictionary<int, SpriteFrame> _mpFills = new Dictionary<int, SpriteFrame>();
         private readonly Dictionary<int, SpriteFrame> _digits = new Dictionary<int, SpriteFrame>();
@@ -181,6 +232,10 @@ namespace Dnf.Play
             for (int i = 0; i < SlotCount; i++)
             {
                 _labels[i] = Crop(strip, KeyLabelColumns[i], 0, KeyLabelWidth, KeyLabelHeight);
+            }
+            for (int i = 0; i < ItemSlotCount; i++)
+            {
+                _itemLabels[i] = Crop(strip, ItemLabelColumns[i], 0, ItemLabelWidths[i], KeyLabelHeight);
             }
         }
 
@@ -290,7 +345,7 @@ namespace Dnf.Play
         /// → 每个技能槽的图标、"Lv.N" 小字、冷却遮罩 → 热键字母。
         /// </summary>
         public void Build(List<SceneSprite> into, ref int order, int level, int hp, int hpMax, int mp, int mpMax, IReadOnlyList<HudSkillState> skills,
-            HudExp? exp = null, int? skillPoints = null)
+            HudExp? exp = null, int? skillPoints = null, IReadOnlyList<HudItemState> items = null)
         {
             PlaceBlock(into, ref order, _bar, BarX, BarY, "hud-bar");
 
@@ -346,14 +401,49 @@ namespace Dnf.Play
                         int slotX = SkillSlotX + SkillSlotPitch * s.Slot;
                         PlaceFrom(into, ref order, pick, anchor, slotX, SkillSlotY, "hud-skill");
                         AddSkillLevel(into, ref order, s, slotX, SkillSlotY);
-                        AddCooldownShade(into, ref order, s, slotX, SkillSlotY);
+                        AddCooldownShade(into, ref order, s.CooldownFraction, slotX, SkillSlotY);
                     }
                 }
+            }
+            if (items != null)
+            {
+                foreach (HudItemState item in items)
+                {
+                    AddItem(into, ref order, item);
+                }
+            }
+            for (int i = 0; i < ItemSlotCount; i++)
+            {
+                into.Add(OverlayArt.Place(_itemLabels[i], ItemLabelOriginX + ItemLabelColumns[i], ItemLabelY, order++, "hud-item-key"));
             }
             for (int i = 0; i < SlotCount; i++)
             {
                 into.Add(OverlayArt.Place(_labels[i], KeyLabelX + SkillSlotPitch * i, KeyLabelY, order++, "hud-key"));
             }
+        }
+
+        /// <summary>
+        /// 一个物品快捷槽(证据 E-120):图标(取物品脚本 [icon] 那一帧,居中摆进 28×28 的槽)、右上角的件数(自己的点阵字,白色加黑边,不是原版字体)、
+        /// 冷却遮罩(与技能槽同一套,盖在图标与件数上;数字键标签在遮罩之后画,不被压暗)。图标取不到就只画件数。
+        /// </summary>
+        private void AddItem(List<SceneSprite> into, ref int order, HudItemState item)
+        {
+            if (item.Slot < 0 || item.Slot >= ItemSlotCount)
+            {
+                return;
+            }
+            int slotX = ItemSlotX + ItemSlotPitch * item.Slot;
+            if (Frame(item.IconKey, item.IconFrame) is SpriteFrame icon && icon.Width > 0 && icon.Height > 0)
+            {
+                into.Add(OverlayArt.Place(icon, slotX + (SkillIconSize - icon.CanvasWidth) / 2 + icon.OffsetX, ItemSlotY + (SkillIconSize - icon.CanvasHeight) / 2 + icon.OffsetY,
+                    order++, "hud-item"));
+            }
+            if (item.Count > 0)
+            {
+                SpriteFrame count = LabelText(item.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), "c:", CountRgb, CountOutlineRgb);
+                into.Add(OverlayArt.Place(count, slotX + LabelNumberRight + 2 - count.Width, ItemSlotY + ItemCountTop, order++, "hud-item-count"));
+            }
+            AddCooldownShade(into, ref order, item.CooldownFraction, slotX, ItemSlotY, "hud-item-cooldown");
         }
 
         private void AddOrb(List<SceneSprite> into, ref int order, SpriteFrame full, Dictionary<int, SpriteFrame> cache, int rows, int blockX, string tag)
@@ -453,9 +543,9 @@ namespace Dnf.Play
         /// 冷却遮罩:图标自上而下盖 <see cref="CooldownRows"/> 行 (8,8,8)、整体不透明度 <see cref="CooldownShadeAlpha"/>/255 的暗色,
         /// 压在图标与小字上、在热键字母下面(基线里字母不被压暗)。
         /// </summary>
-        private void AddCooldownShade(List<SceneSprite> into, ref int order, HudSkillState s, int slotX, int slotY)
+        private void AddCooldownShade(List<SceneSprite> into, ref int order, double fraction, int slotX, int slotY, string tag = "hud-skill-cooldown")
         {
-            int rows = CooldownRows(s.CooldownFraction);
+            int rows = CooldownRows(fraction);
             if (rows <= 0)
             {
                 return;
@@ -473,7 +563,7 @@ namespace Dnf.Play
                 shade = new SpriteFrame(SkillIconSize, rows, 0, 0, SkillIconSize, rows, rgba);
                 _shades[rows] = shade;
             }
-            into.Add(OverlayArt.Place(shade, slotX, slotY, order++, "hud-skill-cooldown", CooldownShadeAlpha));
+            into.Add(OverlayArt.Place(shade, slotX, slotY, order++, tag, CooldownShadeAlpha));
         }
 
         /// <summary>小字的点阵高度(行)。</summary>
@@ -506,7 +596,13 @@ namespace Dnf.Play
         /// </summary>
         private SpriteFrame LabelText(string text, bool gray)
         {
-            string key = (gray ? "g:" : "n:") + text;
+            return LabelText(text, gray ? "g:" : "n:", gray ? LabelGrayRgb : LabelGoldRgb, gray ? LabelGrayOutlineRgb : LabelGoldOutlineRgb);
+        }
+
+        /// <summary>同上,颜色自己给;<paramref name="cachePrefix"/> 区分不同颜色的缓存。</summary>
+        private SpriteFrame LabelText(string text, string cachePrefix, uint fillRgb, uint outlineRgb)
+        {
+            string key = cachePrefix + text;
             if (_labelTexts.TryGetValue(key, out SpriteFrame cached))
             {
                 return cached;
@@ -536,8 +632,6 @@ namespace Dnf.Play
                 }
                 left += g[0].Length + 1;
             }
-            uint fillRgb = gray ? LabelGrayRgb : LabelGoldRgb;
-            uint outlineRgb = gray ? LabelGrayOutlineRgb : LabelGoldOutlineRgb;
             var rgba = new byte[width * height * 4];
             for (int pass = 0; pass < 2; pass++)
             {

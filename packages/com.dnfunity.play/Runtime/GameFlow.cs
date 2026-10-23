@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Dnf.Game;
 using Dnf.Render;
 
 namespace Dnf.Play
@@ -116,6 +117,25 @@ namespace Dnf.Play
             _world = world;
             _dungeonSplash = dungeonSplash;
             _characterSelect = characterSelect;
+            Bag.UseItem = UseBagItem;             // 背包窗口里按回车用消耗品:交给当前阶段的会话(副本里能用,城镇里不能)
+        }
+
+        private UseResult UseBagItem(ItemInfo item)
+        {
+            return Session is IItemSession items ? items.TryUseItem(item) : UseResult.Unavailable;
+        }
+
+        /// <summary>
+        /// 键 1 到 6:用当前副本会话里快捷栏第 <paramref name="slot"/> 格(0 到 5)的消耗品(证据 E-120),返回结果名(<see cref="UseResult"/> 的枚举名;宿主层不引用 Dnf.Game,用名字交接)。
+        /// 只在副本阶段、系统菜单与背包窗口都没开的时候有效,其余返回 <see cref="ItemUse.UnavailableName"/>。
+        /// </summary>
+        public string UseQuickSlot(int slot)
+        {
+            if (StageSerial == 0 || Stage != GameStage.Dungeon || Menu.Open || Bag.Open || Shop.Open)
+            {
+                return ItemUse.UnavailableName;
+            }
+            return ItemUse.QuickSlot(Session, slot);
         }
 
         /// <summary>城镇世界(自动机用它查出口路线)。</summary>

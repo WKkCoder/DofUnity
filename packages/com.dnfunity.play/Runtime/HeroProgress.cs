@@ -56,8 +56,32 @@ namespace Dnf.Play
         /// <summary>从创建起一共进账多少金币(拾到的加上卖东西得到的;<see cref="Gold"/> 之后会被花掉,这个不减)。</summary>
         public long GoldGained { get; private set; }
 
-        /// <summary>背包(证据 E-117:拾取地上的物品放进去,商店买卖,E-119;副本里各房间共用同一个对象)。使用消耗品还没有做。</summary>
+        /// <summary>背包(证据 E-117:拾取地上的物品放进去,商店买卖,E-119;副本里各房间共用同一个对象)。消耗品在这里使用(<see cref="UseConsumable"/>,E-120)。</summary>
         public Inventory Bag { get; } = new Inventory();
+
+        /// <summary>
+        /// 快捷栏(证据 E-120):6 格,放背包里的药水(能回复生命魔法的消耗品),键 1 到 6 用第 0 到 5 格。拿到(拾取、买)合格的物品时自动放进第一个空格,
+        /// 背包里这种物品用光或卖光时那一格腾空;存进存档。
+        /// </summary>
+        public QuickSlots Quick { get; } = new QuickSlots();
+
+        /// <summary>消耗品的冷却(随战斗会话的时间推进,城镇里不走;不存档)。</summary>
+        public ItemCooldowns Cooldowns { get; } = new ItemCooldowns();
+
+        /// <summary>从创建起一共用掉多少件消耗品。</summary>
+        public int ItemsUsed { get; private set; }
+
+        /// <summary>快捷栏放了几格(宿主层不引用 Dnf.Game,日志用)。</summary>
+        public int QuickFilled => Quick.Filled;
+
+        /// <summary>快捷栏第 <paramref name="slot"/> 格的物品编号(空格或越界为 0)。</summary>
+        public int QuickCodeAt(int slot) => Quick[slot]?.Code ?? 0;
+
+        /// <summary>快捷栏第 <paramref name="slot"/> 格的物品在背包里还有几件(空格为 0)。</summary>
+        public int QuickCountAt(int slot) => Quick[slot] == null ? 0 : Bag.CountOf(Quick[slot].Code);
+
+        /// <summary>现在有几种消耗品在冷却。</summary>
+        public int CooldownsActive => Cooldowns.Active;
 
         /// <summary>装备栏(证据 E-118:武器、称号、上衣……魔法石共 12 格,从背包穿上去;副本里各房间共用同一个对象)。</summary>
         public EquipmentSlots Worn { get; } = new EquipmentSlots();
@@ -165,7 +189,75 @@ namespace Dnf.Play
         {
             int put = Bag.Add(info, count);
             ItemsGained += put;
+            if (put > 0)
+            {
+                Quick.Place(info);               // 药水自动进快捷栏第一个空格(合格才放,放不下就只留在背包里)
+            }
             return put == count && count > 0;
+        }
+
+        /// <summary>
+        /// 用一件消耗品(证据 E-120):检查(种类、效果、等级、职业)→ 主角此刻有生命魔法可回复(<paramref name="vitals"/> 不为 null 且活着)→ 背包里有 →
+        /// 不在冷却 → 扣一件、起冷却、开始药效。服务端 <c>use_stackable</c> 是先查冷却再消耗;其余检查次序是这一层自己定的。
+        /// 不合规则时什么都不动,返回原因;用掉最后一件时快捷栏那一格腾空。
+        /// </summary>
+        public UseResult UseConsumable(ItemInfo item, HeroVitals vitals)
+        {
+            UseResult check = ConsumableRules.Check(item, Job, Level);
+            if (check != UseResult.Ok)
+            {
+                return check;
+            }
+            if (vitals == null || !vitals.IsAlive)
+            {
+                return UseResult.Unavailable;
+            }
+            if (Bag.CountOf(item.Code) < 1)
+            {
+                return UseResult.NotInBag;
+            }
+            if (Cooldowns.IsCooling(item))
+            {
+                return UseResult.Cooling;
+            }
+            Bag.Remove(item.Code, 1);
+            Cooldowns.Start(item);
+            vitals.StartRecovery(item.HpRecovery, item.MpRecovery);
+            ItemsUsed++;
+            SyncQuick();
+            return UseResult.Ok;
+        }
+
+        /// <summary>用快捷栏第 <paramref name="slot"/> 格(键 1 到 6 是第 0 到 5 格)的消耗品;格子空着或越界返回 <see cref="UseResult.EmptySlot"/>。</summary>
+        public UseResult UseQuickSlot(int slot, HeroVitals vitals)
+        {
+            ItemInfo item = Quick[slot];
+            return item == null ? UseResult.EmptySlot : UseConsumable(item, vitals);
+        }
+
+        /// <summary>背包里已经没有的物品从快捷栏拿掉(用光、卖光之后)。</summary>
+        private void SyncQuick()
+        {
+            for (int i = 0; i < QuickSlots.Count; i++)
+            {
+                ItemInfo item = Quick[i];
+                if (item != null && Bag.CountOf(item.Code) <= 0)
+                {
+                    Quick.Clear(i);
+                }
+            }
+        }
+
+        /// <summary>把背包里合格又没在快捷栏里的物品按背包的次序放进空格(存档还原后补齐用)。</summary>
+        private void PlaceBagPotions()
+        {
+            for (int t = 0; t < Inventory.TabCount; t++)
+            {
+                foreach (ItemStack stack in Bag.Tab((InventoryTab)t))
+                {
+                    Quick.Place(stack.Info);
+                }
+            }
         }
 
         /// <summary>花掉 <paramref name="amount"/> 金币;不够就一个也不扣并返回 false(金额不大于 0 也返回 false)。</summary>
@@ -194,6 +286,7 @@ namespace Dnf.Play
             int n = item.IsEquipment ? 1 : count;
             long cost = ItemPricing.BuyPrice(item, n);
             Bag.Add(item, n);
+            Quick.Place(item);
             Gold -= cost;
             return ShopResult.Ok;
         }
@@ -220,6 +313,7 @@ namespace Dnf.Play
             int n = stack.Info.IsEquipment ? 1 : count;
             long price = ItemPricing.SellPrice(stack.Info, n, rates);
             Bag.RemoveAt(tab, index, n);
+            SyncQuick();
             AddGold(price);
             earned = price;
             return ShopResult.Ok;
@@ -270,6 +364,14 @@ namespace Dnf.Play
                 if (worn != null)
                 {
                     save.Worn.Add(new SavedWorn(part, worn.Code));
+                }
+            }
+            for (int slot = 0; slot < QuickSlots.Count; slot++)
+            {
+                ItemInfo quick = Quick[slot];
+                if (quick != null)
+                {
+                    save.Quick.Add(new SavedQuick(slot, quick.Code));
                 }
             }
             return save;
@@ -343,6 +445,17 @@ namespace Dnf.Play
                     dropped++;
                 }
             }
+            Quick.ClearAll();                      // 快捷栏:存档里记的格先回原位(物品还在背包里才算),再把没放进去的合格药水按背包次序补进空格
+            Cooldowns.Clear();
+            foreach (SavedQuick saved in save.Quick)
+            {
+                ItemInfo info = lookup(saved.Code);
+                if (info != null && QuickSlots.Eligible(info) && Bag.CountOf(info.Code) > 0)
+                {
+                    Quick.Set(saved.Slot, info);
+                }
+            }
+            PlaceBagPotions();
             return new SaveApplyReport(stacks, wornCount, moved, dropped);
         }
 

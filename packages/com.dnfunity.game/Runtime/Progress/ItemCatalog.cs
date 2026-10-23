@@ -77,6 +77,15 @@ namespace Dnf.Game
             return codes;
         }
 
+        /// <summary>可叠加物品列表里的物品编号(升序)。消耗品检查与探针按编号逐件读(<see cref="Get"/>)时用,不扫整库。</summary>
+        public IReadOnlyList<int> StackableCodes()
+        {
+            ReadLists();
+            var codes = new List<int>(_stackable.Keys);
+            codes.Sort();
+            return codes;
+        }
+
         /// <summary>按编号取一件物品(缓存);编号不在两张列表里、脚本读不到或不是标记流返回 null。</summary>
         public ItemInfo Get(int code)
         {

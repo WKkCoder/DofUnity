@@ -378,7 +378,7 @@ namespace Dnf.Play
     /// 没做:属性点与技能点的花费、装备的其余加成、技能的逐级成长、上挑自己的攻击信息与伤害数、
     /// 复活与结算里的经验显示、技能音效与语音、掉落。出口开关与换房间在 <see cref="DungeonSession"/>。证据 E-069。
     /// </summary>
-    public sealed class RoomCombatSession : ISkillSession, ISoundSource
+    public sealed class RoomCombatSession : ISkillSession, ISoundSource, IItemSession
     {
         /// <summary>一小步的最长时间(毫秒):比任何动画帧都短,保证每一帧的判定框至少被检查一次。</summary>
         public const double MaxStepMs = 10;
@@ -1246,6 +1246,11 @@ namespace Dnf.Play
             SyncProgress();   // 别的房间里升了级的话,换上新等级的生命上限与攻击面板(证据 E-111)
             Skills.Advance(deltaMs);
             Vitals?.RegenMp(deltaMs);   // 魔法值按墙钟恢复(证据 E-087);死了不恢复在 RegenMp 里判断
+            if (Vitals != null)
+            {
+                Vitals.AdvanceRecovery(deltaMs);        // 药水的药效按墙钟线性发放(证据 E-120),倒下就作废
+                Progress?.Cooldowns.Advance(deltaMs);   // 消耗品的冷却也走墙钟
+            }
             if (_invincibleMs > 0)
             {
                 _invincibleMs = Math.Max(0.0, _invincibleMs - deltaMs);   // 复活后的无敌也按墙钟走
@@ -2238,7 +2243,60 @@ namespace Dnf.Play
             HeroVitals v = Vitals;
             // 经验条(证据 E-111):有等级进度才画;分子是本级已攒的经验,分母是本级一共要攒的,等级 85 盖满级图
             HudExp? exp = Progress == null ? (HudExp?)null : new HudExp(Progress.ExpInLevel, Progress.LevelSpan, Progress.Level == Leveling.MaxLevel);
-            _hud.Build(into, ref order, v.Level, v.Hp, v.HpMax, v.Mp, v.MpMax, SkillSlotStates(), exp, Progress?.SkillPoints);
+            _hud.Build(into, ref order, v.Level, v.Hp, v.HpMax, v.Mp, v.MpMax, SkillSlotStates(), exp, Progress?.SkillPoints, ItemSlotStates());
+        }
+
+        /// <summary>
+        /// 物品快捷槽此刻的显示状态(证据 E-120):快捷栏里每个放了药水的格子——图标、背包里这种药水的件数、冷却还剩的比例。没有等级进度(没有背包)时返回空表。
+        /// </summary>
+        public IReadOnlyList<HudItemState> ItemSlotStates()
+        {
+            var states = new List<HudItemState>(QuickSlots.Count);
+            HeroProgress progress = Progress;
+            if (progress == null)
+            {
+                return states;
+            }
+            for (int i = 0; i < QuickSlots.Count; i++)
+            {
+                ItemInfo item = progress.Quick[i];
+                if (item != null)
+                {
+                    states.Add(new HudItemState(i, item.IconKey, item.IconFrame, progress.Bag.CountOf(item.Code), progress.Cooldowns.Fraction(item)));
+                }
+            }
+            return states;
+        }
+
+        /// <summary>从创建起这个房间会话里成功用掉几件消耗品(日志与检查用)。</summary>
+        public int ItemsUsed { get; private set; }
+
+        /// <summary>最近一次用消耗品的结果(没用过是 <see cref="UseResult.Ok"/>;日志与检查用)。</summary>
+        public UseResult LastUse { get; private set; }
+
+        /// <summary>
+        /// 用快捷栏第 <paramref name="slot"/> 格的消耗品(键 1 到 6;证据 E-120):规则见 <see cref="HeroProgress.UseQuickSlot"/>,
+        /// 回复发在主角的生命值对象上(<see cref="HeroVitals.StartRecovery"/>)。没有等级进度(没有背包)或没有生命值对象(无伤害模式)返回 <see cref="UseResult.Unavailable"/>。
+        /// </summary>
+        public UseResult TryUseQuickSlot(int slot)
+        {
+            return Progress == null ? NoteUse(UseResult.Unavailable) : NoteUse(Progress.UseQuickSlot(slot, Vitals));
+        }
+
+        /// <summary>用这件物品(背包窗口里按回车):同 <see cref="TryUseQuickSlot"/>,只是物品由调用方指定。</summary>
+        public UseResult TryUseItem(ItemInfo item)
+        {
+            return Progress == null ? NoteUse(UseResult.Unavailable) : NoteUse(Progress.UseConsumable(item, Vitals));
+        }
+
+        private UseResult NoteUse(UseResult result)
+        {
+            LastUse = result;
+            if (result == UseResult.Ok)
+            {
+                ItemsUsed++;
+            }
+            return result;
         }
 
         /// <summary>
