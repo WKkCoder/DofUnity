@@ -27,6 +27,7 @@
 #     角色存档(M26):第一趟打副本、穿一件武器,退出时存;第二趟读同一个存档,日志里读到的与存下的一样,主角外观已是那件武器,读完没有新写。
 #     NPC 商店(E-119):城镇里探针打开第一家有商品的店(游戏暂停)、买一件再卖回去、关上(游戏恢复),日志里 DNF_SHOP 各行齐全,进城时记到摆着开商店的 NPC。
 #     消耗品(M28,E-120):副本里探针放一种回血药与一种回蓝药、压低主角的生命魔法,像按键 1、1、2 那样连用(同一种药连用第二次被冷却拒绝),等药效发完,日志里 DNF_POTION 各行齐全。
+#     中文文字(M29,E-121):流程里装系统自带的带汉字字体与原版文字表;背包与商店的窗口画过汉字(日志 DNF_FONT ready 与 DNF_FONT stats glyphs>0,只记字体文件名与个数)。对拍与离屏出图不装字体,画面与 CPU 参照一致。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -627,6 +628,12 @@ if [ "$platform" = "macos" ]; then
     for pat in 'DNF_BAG probe open granted=True' 'DNF_BAG open stage=Dungeon paused=True' 'DNF_BAG probe equip ok=True' 'DNF_BAG probe closed equipped=1' 'DNF_BAG closed paused=False' 'DNF_BAG probe look matches=True weapon=True'; do
       grep -q -F "$pat" "$bag_log" || { echo "背包与装备栏的日志里缺 \"$pat\":$bag_log" >&2; exit 1; }
     done
+    # 汉字(M29,证据 E-121):真的在玩的流程里装了系统里带汉字的字体,背包窗口画过汉字(栅格化过的字形数大于 0);日志里只记字体文件名与个数,不记文字
+    grep -E 'DNF_FONT' "$bag_log" | cut -c1-200 || true
+    grep -q -E 'DNF_FONT ready file=' "$bag_log" \
+      || { echo "流程里应当装上带汉字的系统字体(DNF_FONT ready):$bag_log" >&2; exit 1; }
+    grep -q -E 'DNF_FONT stats glyphs=[1-9][0-9]* sizes=[1-9]' "$bag_log" \
+      || { echo "背包窗口应当画过汉字(DNF_FONT stats glyphs>0):$bag_log" >&2; exit 1; }
     # NPC 商店(证据 E-119,窗口与键位是本项目自己的占位设计):城镇里阶段开始 3 秒后探针先给钱包放一笔钱,像走到商店 NPC 旁按空格一样打开第一家有商品的店(游戏暂停),
     # 再过一秒无人值守地买一件、卖回去,再过一秒按 Esc 的路关上(游戏恢复),再过一秒收尾;进城时日志里记这座城镇摆着几个 NPC、其中几个开商店
     shop_log="$PWD/re/unity-run-town-shop-macos.log"
@@ -652,6 +659,8 @@ if [ "$platform" = "macos" ]; then
     for pat in 'DNF_SHOP probe trade bought=True sold=True' 'DNF_SHOP probe closed open=False' 'DNF_SHOP closed paused=False' 'DNF_SHOP probe done'; do
       grep -q -F "$pat" "$shop_log" || { echo "NPC 商店的日志里缺 \"$pat\":$shop_log" >&2; exit 1; }
     done
+    grep -q -E 'DNF_FONT stats glyphs=[1-9][0-9]* sizes=[1-9]' "$shop_log" \
+      || { echo "商店窗口应当画过汉字(DNF_FONT stats glyphs>0):$shop_log" >&2; exit 1; }
     # 消耗品(M28,证据 E-120):副本里阶段开始 3 秒后探针往背包放一种回血药与一种回蓝药(快捷栏自动放进前两格)、把主角的生命压到四成、魔法压到三成,
     # 过一秒像按键 1、1、2 那样连着用(同一种药连用第二次应被冷却拒绝),等药效发完(时间步放大 4 倍),再过一秒再用一次;日志里只有数与结果名,没有物品名与编号
     potion_log="$PWD/re/unity-run-town-potion-macos.log"

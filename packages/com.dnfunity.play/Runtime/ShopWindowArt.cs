@@ -41,12 +41,12 @@ namespace Dnf.Play
         /// 标签:<c>shop-dim</c>、<c>shop-frame</c>、<c>shop-panel</c>、<c>shop-title-bar</c>、<c>shop-title</c>、<c>shop-gold</c>、
         /// <c>shop-mode</c>/<c>shop-mode-selected</c>/<c>shop-mode-label</c>、<c>shop-tab</c>/<c>shop-tab-selected</c>/<c>shop-tab-label</c>、
         /// <c>shop-cell</c>/<c>shop-cell-selected</c>、<c>shop-icon-dim</c>、<c>shop-count</c>、<c>shop-track</c>/<c>shop-thumb</c>、
-        /// <c>shop-detail</c>/<c>shop-detail-slot</c>/<c>shop-detail-line</c>、<c>shop-info</c>、<c>shop-message</c>、<c>shop-hint</c>、
+        /// <c>shop-detail</c>/<c>shop-detail-slot</c>/<c>shop-detail-line</c>、<c>shop-item-name</c>/<c>shop-item-explain</c>(有字体与文字表时)、<c>shop-info</c>、<c>shop-message</c>、<c>shop-hint</c>、
         /// 数量框:<c>shop-prompt-dim</c>、<c>shop-prompt-frame</c>、<c>shop-prompt-panel</c>、<c>shop-prompt-title</c>、<c>shop-prompt-count</c>、
         /// <c>shop-prompt-price</c>、<c>shop-prompt-button</c>/<c>shop-prompt-label</c>。
         /// (图标与稀有度条沿用背包窗口的标签 <c>bag-icon</c>、<c>bag-icon-block</c>、<c>bag-rarity</c>。)
         /// </summary>
-        public static void Build(List<SceneSprite> into, ref int order, ShopWindow window, HeroProgress progress, ISpriteSource sprites, OverlayArt art)
+        public static void Build(List<SceneSprite> into, ref int order, ShopWindow window, HeroProgress progress, ISpriteSource sprites, OverlayArt art, ItemTexts texts = null)
         {
             if (window == null || !window.Open)
             {
@@ -86,7 +86,7 @@ namespace Dnf.Play
                 (int tx, int ty, int tw, int th) = ShopWindow.TabRect(window.Mode, i);
                 bool selected = currentTab == i;
                 into.Add(OverlayArt.Place(art.Solid(tw, th, selected ? BagWindowArt.TabSelectedColor : BagWindowArt.TabColor), tx, ty, order++, selected ? "shop-tab-selected" : "shop-tab"));
-                SpriteFrame label = art.Text(TabLabel(window.Mode, i), 2, selected ? OverlayArt.Yellow : OverlayArt.White);
+                SpriteFrame label = art.Text(TabText(window, i, art, texts), 2, selected ? OverlayArt.Yellow : OverlayArt.White);
                 into.Add(OverlayArt.Place(label, tx + (tw - label.Width) / 2, ty + (th - label.Height) / 2, order++, "shop-tab-label"));
             }
 
@@ -102,7 +102,7 @@ namespace Dnf.Play
 
             // ---- 详情与说明
             ItemInfo item = window.ItemAtCursor(progress);
-            BuildDetail(into, ref order, window, progress, sprites, art, item);
+            BuildDetail(into, ref order, window, progress, sprites, art, item, texts);
             BagWindowArt.AddLine(into, ref order, art, InfoText(item), ShopWindow.GridX, InfoY, OverlayArt.White, "shop-info");
             bool hasMessage = !string.IsNullOrEmpty(window.Message);
             string detail = hasMessage ? window.Message : FitText(item, progress);
@@ -120,11 +120,11 @@ namespace Dnf.Play
         }
 
         /// <summary>同上,返回新建的列表(窗口没开时是空表)。</summary>
-        public static List<SceneSprite> Build(ShopWindow window, HeroProgress progress, ISpriteSource sprites, OverlayArt art)
+        public static List<SceneSprite> Build(ShopWindow window, HeroProgress progress, ISpriteSource sprites, OverlayArt art, ItemTexts texts = null)
         {
             var list = new List<SceneSprite>();
             int order = 0;
-            Build(list, ref order, window, progress, sprites, art);
+            Build(list, ref order, window, progress, sprites, art, texts);
             return list;
         }
 
@@ -218,10 +218,12 @@ namespace Dnf.Play
             }
         }
 
-        private static void BuildDetail(List<SceneSprite> into, ref int order, ShopWindow window, HeroProgress progress, ISpriteSource sprites, OverlayArt art, ItemInfo item)
+        private static void BuildDetail(List<SceneSprite> into, ref int order, ShopWindow window, HeroProgress progress, ISpriteSource sprites, OverlayArt art, ItemInfo item, ItemTexts texts)
         {
             int dx = ShopWindow.DetailX, dy = ShopWindow.DetailY, dw = ShopWindow.DetailWidth;
-            const int boxHeight = 190;
+            // 有字体、取得到名字时详情栏向下加长,放下物品名与说明;否则还是原来的高度
+            bool hasText = item != null && art.HasFonts && texts != null && texts.NameOf(item) != null;
+            int boxHeight = hasText ? TextBoxHeight : 190;
             into.Add(OverlayArt.Place(art.Solid(dw, boxHeight, BagWindowArt.CellColor), dx, dy, order++, "shop-detail"));
             if (item == null)
             {
@@ -242,6 +244,29 @@ namespace Dnf.Play
                 }
                 line += 20;
             }
+            if (hasText)
+            {
+                ItemDetailArt.Build(into, ref order, art, texts, item, dx + 8, line + 4, dw - 16, dy + boxHeight - 6, "shop-item");
+            }
+        }
+
+        /// <summary>有物品文字时详情栏的高(画布像素):从 y 124 到 474,不压到底下的说明行。</summary>
+        public const int TextBoxHeight = 350;
+
+        /// <summary>
+        /// 页签上的字:买入页在字符串表里取得到这一页的名字就用它(装着字体时),否则是 <see cref="TabLabel"/> 的占位英文。
+        /// </summary>
+        public static string TabText(ShopWindow window, int index, OverlayArt art, ItemTexts texts)
+        {
+            if (window.Mode == ShopMode.Buy && texts != null && art != null && art.HasFonts && window.Shop != null && (uint)index < (uint)window.Shop.Tabs.Count)
+            {
+                string name = texts.ShopTabName(window.Shop.Tabs[index].NameKey);
+                if (name != null)
+                {
+                    return name;
+                }
+            }
+            return TabLabel(window.Mode, index);
         }
 
         /// <summary>详情栏的几行(占位英文):最低等级、买入价或收购价、身上有几件。</summary>

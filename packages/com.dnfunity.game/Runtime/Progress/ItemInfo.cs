@@ -132,6 +132,7 @@ namespace Dnf.Game
             Part = -1;
             StackableType = StackableTypes.Unknown;
             UsableJobs = new List<string>();
+            TextKind = -1;
         }
 
         /// <summary>物品编号(.lst 里的编号;装备与可叠加物品的编号不重叠)。</summary>
@@ -142,8 +143,23 @@ namespace Dnf.Game
 
         public ItemKind Kind { get; }
 
-        /// <summary><c>[name]</c> 的字符串键(如 name_12345);原文在 equipment.kor.str / stackable.kor.str 里,没有文字系统之前不显示。</summary>
+        /// <summary><c>[name]</c> 的字符串键(如 name_12345);原文在 equipment.kor.str / stackable.kor.str 里,用 <see cref="TextKind"/> 与键查(见 StrLibrary)。</summary>
         public string NameKey { get; set; }
+
+        /// <summary><c>[explain]</c> 的字符串键;没写为 null。</summary>
+        public string ExplainKey { get; set; }
+
+        /// <summary><c>[basic explain]</c> 的字符串键(装备的基础说明);没写为 null。</summary>
+        public string BasicExplainKey { get; set; }
+
+        /// <summary><c>[flavor text]</c> 的字符串键(背景故事一类的文字);没写为 null。</summary>
+        public string FlavorKey { get; set; }
+
+        /// <summary>
+        /// 文字引用的种类编号(<c>[name]</c> 等标签的值是"种类编号 + 键"一对,这里是前一半,决定去哪份 *.kor.str 里查,见 StrLibrary.PathOfKind);
+        /// 没读到任何文字引用时为 −1。
+        /// </summary>
+        public int TextKind { get; set; }
 
         /// <summary><c>[grade]</c>:物品等级,掉落池按它和怪物等级的差选(见 <see cref="ItemPool"/>)。</summary>
         public int Grade { get; set; }
@@ -248,6 +264,9 @@ namespace Dnf.Game
         {
             None,
             Name,
+            Explain,
+            BasicExplain,
+            FlavorText,
             Grade,
             Rarity,
             CreationRate,
@@ -274,6 +293,9 @@ namespace Dnf.Game
         private static readonly Dictionary<string, Field> Fields = new Dictionary<string, Field>(StringComparer.OrdinalIgnoreCase)
         {
             ["[name]"] = Field.Name,
+            ["[explain]"] = Field.Explain,
+            ["[basic explain]"] = Field.BasicExplain,
+            ["[flavor text]"] = Field.FlavorText,
             ["[grade]"] = Field.Grade,
             ["[rarity]"] = Field.Rarity,
             ["[creation rate]"] = Field.CreationRate,
@@ -370,10 +392,33 @@ namespace Dnf.Game
                 switch (field)
                 {
                     case Field.Name:
+                    case Field.Explain:
+                    case Field.BasicExplain:
+                    case Field.FlavorText:
                         if (t.Type == (byte)TokenType.StringRefKind && i + 1 < tokens.Length && tokens[i + 1].Type == (byte)TokenType.StringRefKey && !haveString)
                         {
                             int key = tokens[i + 1].Value;
-                            info.NameKey = (uint)key < (uint)strings.Count ? strings[key] : null;
+                            string text = (uint)key < (uint)strings.Count ? strings[key] : null;
+                            switch (field)
+                            {
+                                case Field.Name:
+                                    info.NameKey = text;
+                                    info.TextKind = t.Value;
+                                    break;
+                                case Field.Explain:
+                                    info.ExplainKey = text;
+                                    break;
+                                case Field.BasicExplain:
+                                    info.BasicExplainKey = text;
+                                    break;
+                                default:
+                                    info.FlavorKey = text;
+                                    break;
+                            }
+                            if (info.TextKind < 0)
+                            {
+                                info.TextKind = t.Value;
+                            }
                             haveString = true;
                         }
                         break;

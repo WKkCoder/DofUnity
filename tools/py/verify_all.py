@@ -10,7 +10,7 @@
 
 用法(由 tools/verify-all.sh 调用;需要先 . tools/env.sh 并已构建 dnf):
   python3 tools/py/verify_all.py [--only 名字,名字] [--skip 名字,名字] [--out out/verify-all.json]
-名字:unit p1 atk act mob damage sq sweep flow dungeons sound exp oracle(oracle 需要 re/venv 里的 Unicorn 与本机的服务端二进制;dungeons 是全库副本扫描,非门槛项)
+名字:unit p1 atk act mob damage sq sweep flow dungeons sound exp text oracle(oracle 需要 re/venv 里的 Unicorn 与本机的服务端二进制;dungeons 是全库副本扫描,非门槛项)
 """
 import argparse
 import json
@@ -295,6 +295,22 @@ def check_exp():
                  "只含个数;原版数值只在本机 out/verify-all/exp.txt 里,不入库;基础经验表缺 monster_reward_ref 导出时用占位表(输出里有标注)")]
 
 
+def check_text():
+    """中文文字表(E-121):Python 参照读每张 *.kor.str 得到指纹,C# 的 text-check 另读一遍(并与 .NET 自带的 GB18030 解码逐条比对、查物品与商店页的文字键),指纹要逐张相同。"""
+    c1, ref_text, s1 = sh(PY + ["tools/py/str_ref.py"], "text_ref.txt")
+    c2, cs_text, s2 = sh(DNF + ["text-check"], "text_cs.txt")
+    ref = dict(re.findall(r"^(\S+) sha256=([0-9a-f]{64})", ref_text, re.M))
+    cs = dict(re.findall(r"^\s+(\S+) keys=\d+ bytes=\d+ fffd=\d+ mismatch=\d+ absent=\d+ sha256=([0-9a-f]{64})", cs_text, re.M))
+    ok = len(re.findall(r"^\s*\[通过\]", cs_text, re.M))
+    failed = len(re.findall(r"^\s*\[失败\]", cs_text, re.M))
+    if c1 != 0 or not ref or not cs:
+        return [item("text", "中文文字表 vs Python 参照", "对拍:独立参照", "E-121", 0, 1, s1 + s2, "没跑成,见 out/verify-all/text_ref.txt 与 text_cs.txt")]
+    diff = sum(1 for k in set(ref) | set(cs) if ref.get(k) != cs.get(k))
+    return [item("text", "中文文字表(GB18030 解码的指纹与 Python 参照逐张相同;与 .NET 的 GB18030 逐条一致;物品与商店页的文字键都查得到)", "对拍:独立参照", "E-121",
+                 len(set(ref) | set(cs)) + ok + failed, diff + failed + (0 if c2 == 0 else 1), s1 + s2,
+                 "只含个数与是否一致;文字与条数在 out/verify-all/text_cs.txt,是用户自己的数据,不入库")]
+
+
 def check_oracle():
     if not os.path.exists(VENV_PY):
         return [item("oracle", "怪物数值 vs 原版机器码(模拟器)", "对拍:原版二进制", "E-063", 0, 1, 0, "缺 re/venv(Unicorn)")]
@@ -313,7 +329,7 @@ def check_oracle():
 CHECKS = [
     ("unit", check_unit), ("p1", check_p1), ("atk", check_atk), ("act", check_act), ("mob", check_mob),
     ("damage", check_damage), ("sq", check_sq), ("sweep", check_sweep), ("flow", check_flow), ("dungeons", check_dungeons), ("sound", check_sound),
-    ("exp", check_exp), ("oracle", check_oracle),
+    ("exp", check_exp), ("text", check_text), ("oracle", check_oracle),
 ]
 
 

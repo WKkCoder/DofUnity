@@ -112,6 +112,32 @@ namespace Dnf.Play
             [' '] = new[] { ".....", ".....", ".....", ".....", ".....", ".....", "....." },
         };
 
+        /// <summary>字号的下限与上限(像素):点阵字库的放大倍数 <c>scale</c> 换成字体字号 = 8 + 4 × scale,夹在这个范围里。</summary>
+        public const int MinGlyphPixels = 12;
+        public const int MaxGlyphPixels = 64;
+
+        /// <summary>
+        /// 全进程共用的字体集:宿主(有系统字体可用的平台)启动时设一次。设了之后 <see cref="Text"/> 遇到点阵字库画不出的字符(汉字、小写字母……)
+        /// 改用字体画,并把占位英文换成中文(<see cref="UiText"/>);没设(null)时一切照旧,只用点阵字库。
+        /// </summary>
+        public static IGlyphFonts SharedFonts { get; set; }
+
+        /// <summary>这个实例自己的字体集,优先于 <see cref="SharedFonts"/>(测试用,免得改全进程共用的状态)。</summary>
+        public IGlyphFonts Fonts { get; set; }
+
+        /// <summary>为 true(默认)时,装着字体的情况下 <see cref="Text"/> 先把占位英文换成中文;设成 false 保留英文。</summary>
+        public bool Localize { get; set; } = true;
+
+        /// <summary>有没有可用的字体集(实例的或全进程共用的)。</summary>
+        public bool HasFonts => (Fonts ?? SharedFonts) != null;
+
+        /// <summary>点阵字库的放大倍数对应的字体字号(像素)。</summary>
+        public static int GlyphPixelSize(int scale)
+        {
+            int px = 8 + 4 * (scale < 1 ? 1 : scale);
+            return px < MinGlyphPixels ? MinGlyphPixels : (px > MaxGlyphPixels ? MaxGlyphPixels : px);
+        }
+
         private readonly Dictionary<string, SpriteFrame> _texts = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
         private readonly Dictionary<string, SpriteFrame> _bars = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
         private readonly Dictionary<string, SpriteFrame> _maps = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
@@ -148,6 +174,19 @@ namespace Dnf.Play
             if (scale < 1)
             {
                 scale = 1;
+            }
+            IGlyphFonts fonts = Fonts ?? SharedFonts;
+            if (fonts != null)
+            {
+                string shown = Localize ? UiText.Translate(text) : text;
+                if (NeedsGlyphs(shown))
+                {
+                    SpriteFrame glyphs = GlyphFrame(fonts, shown, scale, fill, outline, 0, 0);
+                    if (glyphs != null)
+                    {
+                        return glyphs;
+                    }
+                }
             }
             string key = scale + "|" + fill + "|" + outline + "|" + text;
             if (_texts.TryGetValue(key, out SpriteFrame cached))
@@ -203,6 +242,61 @@ namespace Dnf.Play
             }
             var frame = new SpriteFrame(w, h, 0, 0, w, h, rgba);
             _texts[key] = frame;
+            return frame;
+        }
+
+        /// <summary>
+        /// 用字体画一段可以折行的文字(数据文字:物品说明、对白一类,不做占位英文翻译):<paramref name="maxWidth"/> 大于 0 时按像素宽折行,
+        /// <paramref name="maxLines"/> 大于 0 时超出的行截掉并补省略号。没有字体集或文字为空返回 null。同样的参数总是返回同一个对象。
+        /// </summary>
+        public SpriteFrame Wrapped(string text, int scale, uint fill, int maxWidth, int maxLines = 0, uint outline = Black)
+        {
+            IGlyphFonts fonts = Fonts ?? SharedFonts;
+            if (fonts == null || string.IsNullOrEmpty(text))
+            {
+                return null;
+            }
+            return GlyphFrame(fonts, text, scale < 1 ? 1 : scale, fill, outline, maxWidth, maxLines);
+        }
+
+        /// <summary>用字体画 <paramref name="scale"/> 倍的文字时,每行占的像素(行距加行间空);没有字体集是 0。</summary>
+        public int GlyphLineHeight(int scale)
+        {
+            IGlyphFonts fonts = Fonts ?? SharedFonts;
+            IGlyphSource font = fonts?.ForSize(GlyphPixelSize(scale));
+            return font == null ? 0 : font.LineHeight + GlyphText.DefaultLineGap;
+        }
+
+        /// <summary>点阵字库画不全这段文字(有字符不在字库里)。</summary>
+        private static bool NeedsGlyphs(string text)
+        {
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (!Glyphs.ContainsKey(text[i]))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private SpriteFrame GlyphFrame(IGlyphFonts fonts, string text, int scale, uint fill, uint outline, int maxWidth, int maxLines)
+        {
+            string key = "g|" + scale + "|" + fill + "|" + outline + "|" + maxWidth + "|" + maxLines + "|" + text;
+            if (_texts.TryGetValue(key, out SpriteFrame cached))
+            {
+                return cached;
+            }
+            IGlyphSource font = fonts.ForSize(GlyphPixelSize(scale));
+            if (font == null)
+            {
+                return null;
+            }
+            SpriteFrame frame = GlyphText.Render(font, text, fill, outline, maxWidth, maxLines);
+            if (frame != null)
+            {
+                _texts[key] = frame;
+            }
             return frame;
         }
 

@@ -328,6 +328,10 @@ namespace Dnf.Cli
             "      消耗品(证据 E-120):整库读 stackable.lst 里的脚本,检查回复类物品([hp recovery]、[mp recovery])的字段(持续时间与冷却不为负、图标帧都在图包里、种类认得),按 --level 逐件检查使用规则,\n" +
             "      再让 85 级剑魂对每一种用得了的回复药演习:放进背包自动进快捷栏、压低生命魔法、用一件、每 10 毫秒推进到发完,核对终值与背包的账、冷却登记与冷却中拒绝、冷却走完再用,\n" +
             "      最后快捷栏放满六种做存档往返(数值、物品名与件数来自本机的数据,只打印在终端,不要抄进入库的文件;通过与否只看结构与账)。\n" +
+            "  dnf text-check\n" +
+            "      汉字文字系统(证据 E-121):整库读每个种类的 *.kor.str 文字表(GB18030),与 .NET 自带编码加独立写的行解析逐条比对,值里不应有解码失败的字符;" +
+            "      物品目录里每件物品的名字、说明、背景故事,商店的页名都要查得到;打印每张表解码后文字的 SHA-256 供 Python 参考实现比对" +
+            "      (文字与条数是用户自己的数据,只打印在终端,不要抄进入库的文件;通过与否只看比对结果与查得到与否)。\n" +
             "  dnf damage-check [--cases <文件>]\n" +
             "      伤害公式(证据 E-049)。不带 --cases:读 PVF 里的 Etc/EtcParameter.etc 与 Creature/Common/creatureCommon.cre,只报告个数与完整性(不输出原版数值);\n" +
             "      带 --cases:读 tools/py/damage_ref.py --gen 生成的随机用例,用 C# 公式复算并与 Python 参考实现逐项比较。\n" +
@@ -733,6 +737,8 @@ namespace Dnf.Cli
                     return ShopShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "consumable-check":
                     return ConsumableCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "text-check":
+                    return TextCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "damage-check":
                     return opts.CasesFile != null
                         ? DamageCheck.RunCases(opts)

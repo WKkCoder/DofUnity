@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using Dnf.Data;
 using Dnf.Play;
 using Dnf.Render;
 using UnityEngine;
@@ -124,6 +125,11 @@ namespace Dnf.Client
         private int _coinStock = ReviveCoins.DefaultStock;
         private int _monsterDamageScale = 1;
         private readonly OverlayArt _menuArt = new OverlayArt();
+        private string _fontArg;                           // -dnffont <路径[#下标]>(M29):指定画汉字的字体文件;没给时读环境变量 DNF_FONT,再按平台的候选清单找
+        private bool _noFont;                              // -dnfnofont:不装汉字字体,界面保持英文占位(与 CPU 参照一致)
+        private UnityGlyphFonts _fonts;
+        private ItemTexts _itemTexts;
+        private bool _fontStatsLogged;
         private bool _menuWasOpen;
         private double _menuProbeAtSeconds = -1.0;
         private int _menuProbeChoice = 2;
@@ -385,6 +391,12 @@ namespace Dnf.Client
                     case "-dnfnohud":
                         _hud = false;
                         break;
+                    case "-dnffont":
+                        if (value != null) { _fontArg = value; i++; }
+                        break;
+                    case "-dnfnofont":
+                        _noFont = true;
+                        break;
                 }
             }
         }
@@ -453,6 +465,7 @@ namespace Dnf.Client
             {
                 DisposeView();
                 _assets = DnfAssets.Open(dir);
+                InstallFonts();
                 if (_flowMode)
                 {
                     StartFlow();
@@ -493,6 +506,29 @@ namespace Dnf.Client
             _runningSince = Time.realtimeSinceStartup;
             CreateTouch();
             Debug.Log("DNF_TOWN_DEMO running map=" + (_session != null ? _session.MapPath : mapPath) + " npcs=" + _view.NpcCount + " layers=" + _view.LayerCount + HeroLog());
+        }
+
+        /// <summary>
+        /// 汉字文字系统(M29,证据 E-121):真的在玩(-dnfflow)时才装系统字体与原版文字表,窗口里的占位英文换成中文、物品有名字与说明;
+        /// 离屏出图(-dnfshot)与对拍不装,画面保持和 CPU 参照逐像素一致。找不到带汉字的字体时安静地保持英文占位(日志里 DNF_FONT none)。
+        /// </summary>
+        private void InstallFonts()
+        {
+            if (_noFont || !_flowMode || !string.IsNullOrEmpty(_shotPath))
+            {
+                return;
+            }
+            string requested = !string.IsNullOrEmpty(_fontArg) ? _fontArg : Environment.GetEnvironmentVariable("DNF_FONT");
+            _fonts = UnityGlyphFonts.TryCreate(requested, out string note);
+            Debug.Log("DNF_FONT " + note);
+            if (_fonts == null)
+            {
+                return;
+            }
+            _fontStatsLogged = false;
+            OverlayArt.SharedFonts = _fonts;
+            PvfArchive pvf = _assets.Pvf;
+            _itemTexts = new ItemTexts(new StrLibrary(path => pvf.TryGetEntry(path, out PvfEntry entry) ? pvf.Read(entry) : null));
         }
 
         /// <summary>
@@ -729,6 +765,18 @@ namespace Dnf.Client
         private void OnApplicationQuit()
         {
             FlushSave("quit");
+            LogFontStats();
+        }
+
+        /// <summary>汉字字体用了多少:栅格化过的字形数、字号数、花的毫秒(日志里只记个数,不记文字)。每次装字体只记一回。</summary>
+        private void LogFontStats()
+        {
+            if (_fonts == null || _fontStatsLogged)
+            {
+                return;
+            }
+            _fontStatsLogged = true;
+            Debug.Log("DNF_FONT stats glyphs=" + _fonts.GlyphCount + " sizes=" + _fonts.SizeCount + " rasterMs=" + _fonts.RasterMilliseconds.ToString("F0", System.Globalization.CultureInfo.InvariantCulture));
         }
 
         /// <summary>
@@ -874,6 +922,17 @@ namespace Dnf.Client
             _flowBot = null;
             _assets?.Dispose();
             _assets = null;
+            if (_fonts != null)
+            {
+                LogFontStats();
+                if (ReferenceEquals(OverlayArt.SharedFonts, _fonts))
+                {
+                    OverlayArt.SharedFonts = null;
+                }
+                _fonts.Dispose();
+                _fonts = null;
+            }
+            _itemTexts = null;
         }
 
         private void Update()
@@ -1205,11 +1264,11 @@ namespace Dnf.Client
             }
             if (_flow.Shop.Open)
             {
-                return _progress == null ? null : ShopWindowArt.Build(_flow.Shop, _progress, _assets, _menuArt);
+                return _progress == null ? null : ShopWindowArt.Build(_flow.Shop, _progress, _assets, _menuArt, _itemTexts);
             }
             if (_flow.Bag.Open)
             {
-                return _progress == null ? null : BagWindowArt.Build(_flow.Bag, _progress, _assets, _menuArt, BagWornStats());
+                return _progress == null ? null : BagWindowArt.Build(_flow.Bag, _progress, _assets, _menuArt, BagWornStats(), _itemTexts);
             }
             if (!_flow.Menu.Open)
             {

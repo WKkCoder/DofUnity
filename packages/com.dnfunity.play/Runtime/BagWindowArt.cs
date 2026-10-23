@@ -32,6 +32,9 @@ namespace Dnf.Play
         /// <summary>稀有度 0 到 5 的占位颜色(格子底边的色条、没有图标时的方块);原版的稀有度配色没有读到。</summary>
         public static readonly uint[] RarityColors = { 0x9A9A9Au, 0xF2F2F2u, 0x4C8CFFu, 0xB060F0u, 0xFF70C0u, 0xFFA030u };
 
+        /// <summary>左下角物品名与说明的文字块宽(画布像素;装备栏之右、物品格子之左的空档)。</summary>
+        public const int DetailWidth = 148;
+
         /// <summary>说明行(每行一个 y,画布像素)。</summary>
         public const int InfoY = 496;
         public const int MessageY = 518;
@@ -45,10 +48,10 @@ namespace Dnf.Play
         /// <paramref name="worn"/> 是穿着装备的攻击加成(左下角显示),<paramref name="sprites"/> 取物品图标(可为 null,那就全用色块)。
         /// 标签:<c>bag-dim</c>、<c>bag-frame</c>、<c>bag-panel</c>、<c>bag-title</c>、<c>bag-gold</c>、<c>bag-caption</c>、
         /// <c>bag-tab</c>/<c>bag-tab-selected</c>/<c>bag-tab-label</c>、<c>bag-cell</c>/<c>bag-cell-selected</c>、<c>bag-icon</c>/<c>bag-icon-block</c>/<c>bag-icon-dim</c>、
-        /// <c>bag-rarity</c>、<c>bag-count</c>、<c>bag-slot</c>/<c>bag-slot-selected</c>/<c>bag-slot-label</c>/<c>bag-slot-icon</c>/<c>bag-slot-rarity</c>、<c>bag-stat</c>、<c>bag-info</c>、<c>bag-message</c>、<c>bag-hint</c>。
+        /// <c>bag-rarity</c>、<c>bag-count</c>、<c>bag-slot</c>/<c>bag-slot-selected</c>/<c>bag-slot-label</c>/<c>bag-slot-icon</c>/<c>bag-slot-rarity</c>、<c>bag-stat</c>、<c>bag-item-name</c>/<c>bag-item-explain</c>(有字体与文字表时)、<c>bag-info</c>、<c>bag-message</c>、<c>bag-hint</c>。
         /// </summary>
         public static void Build(List<SceneSprite> into, ref int order, BagWindow window, HeroProgress progress, ISpriteSource sprites, OverlayArt art,
-            EquipmentStats worn = default)
+            EquipmentStats worn = default, ItemTexts texts = null)
         {
             if (window == null || !window.Open)
             {
@@ -106,6 +109,9 @@ namespace Dnf.Play
             line += 20;
             AddLine(into, ref order, art, "ATK M +" + worn.MagicalAttack.ToString(CultureInfo.InvariantCulture), BagWindow.SlotX, line, OverlayArt.White, "bag-stat");
 
+            // ---- 光标处物品的名字与说明(装了字体、字符串表取得到名字时才有;在左下角主角数据下面的空档里)
+            ItemDetailArt.Build(into, ref order, art, texts, SelectedItem(window, progress), BagWindow.SlotX, line + 28, DetailWidth, InfoY - 6, "bag-item");
+
             // ---- 页签
             for (int i = 0; i < Inventory.TabCount; i++)
             {
@@ -160,11 +166,11 @@ namespace Dnf.Play
         public const string HintText = "ARROWS MOVE   ENTER EQUIP OR USE   Q E PAGE   I CLOSE";
 
         /// <summary>同上,返回新建的列表(窗口没开时是空表)。</summary>
-        public static List<SceneSprite> Build(BagWindow window, HeroProgress progress, ISpriteSource sprites, OverlayArt art, EquipmentStats worn = default)
+        public static List<SceneSprite> Build(BagWindow window, HeroProgress progress, ISpriteSource sprites, OverlayArt art, EquipmentStats worn = default, ItemTexts texts = null)
         {
             var list = new List<SceneSprite>();
             int order = 0;
-            Build(list, ref order, window, progress, sprites, art, worn);
+            Build(list, ref order, window, progress, sprites, art, worn, texts);
             return list;
         }
 

@@ -26,6 +26,8 @@
     <!-- 合成数据构造器(internal,直接编译进来)与"迷你职业 + 迷你怪物"夹具(与渲染层测试共用) -->
     <Compile Include="..\Dnf.Data.Tests\TestData.cs" Link="TestData.cs" />
     <Compile Include="..\Dnf.Render.Tests\AvatarFixture.cs" Link="AvatarFixture.cs" />
+    <!-- 合成的方块字体(文字系统的测试用,不含真实字形) -->
+    <Compile Include="..\Dnf.Render.Tests\BlockFont.cs" Link="BlockFont.cs" />
     <!-- 手工拼令牌脚本的构造器(金币掉落表的合成数据用) -->
     <Compile Include="..\Dnf.Game.Tests\TokenStreamBuilder.cs" Link="TokenStreamBuilder.cs" />
   </ItemGroup>
