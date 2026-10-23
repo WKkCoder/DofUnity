@@ -126,6 +126,7 @@ namespace Dnf.Client
         private int _noteDeaths;
         private int _noteRevives;
         private int _noteGoldPicked = -1;
+        private int _noteItemsPicked = -1;
         private double _playAtSeconds = -1.0;
         private double _afterClearSeconds;
         private SettlementChoice _loggedChoice;
@@ -964,6 +965,7 @@ namespace Dnf.Client
             _noteDeaths = 0;
             _noteRevives = 0;
             _noteGoldPicked = -1;
+            _noteItemsPicked = -1;
             if (!_flow.LastSwitchStaysInTown)
             {
                 _audio?.StopAll();                   // 城镇换区域时不停:相同的音乐标签接着放,只换环境声(E-097)
@@ -1018,6 +1020,18 @@ namespace Dnf.Client
                 _noteGoldPicked = picked;
                 Debug.Log("DNF_GOLD dropped=" + dungeon.GoldDropped + " picked=" + picked + " earned=" + dungeon.GoldEarned
                     + " purse=" + (_progress == null ? 0L : _progress.Gold));
+            }
+            // 物品(E-117):捡起的件数变了写一行 DNF_ITEM(掉了几件、捡了几件、背包放不下留在地上的件数、背包里一共几件占几格)
+            int items = dungeon.ItemsPicked;
+            if (_noteItemsPicked < 0)
+            {
+                _noteItemsPicked = 0;
+            }
+            if (items != _noteItemsPicked)
+            {
+                _noteItemsPicked = items;
+                Debug.Log("DNF_ITEM dropped=" + dungeon.ItemsDropped + " picked=" + items + " full=" + dungeon.ItemsBagFull
+                    + " bag=" + (_progress == null ? 0 : _progress.BagItems) + " slots=" + (_progress == null ? 0 : _progress.BagSlots));
             }
         }
 

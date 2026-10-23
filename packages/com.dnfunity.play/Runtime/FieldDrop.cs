@@ -4,6 +4,7 @@ using Dnf.Render;
 
 // 证据:E-116(客户端 0x007ad760 是"地上的金币"的初始化:按金额选 Item/FieldImage.img 的帧与声音名;
 // 0x006e6870 是它的构造函数,0x007c19d0 在"加入地面物品"时造它)。落地的抛物线、拾取范围、弹跳都没有读到客户端代码,下面的数值全是推断。
+// 地上的物品(E-117)与金币共用这套抛出、落地与拾取:图是物品脚本 [field image] 写的那一帧,声音取 [move wav](拾取时放,推断)。
 namespace Dnf.Play
 {
     /// <summary>
@@ -16,6 +17,10 @@ namespace Dnf.Play
     /// <para>
     /// <b>推断</b>(没有读到客户端的物理与拾取代码):从怪物身上以向上的初速抛出、水平落点在怪物周围随机、受重力落地、落地后小弹一下停住;
     /// 落地后主角走到它附近(进深与横向各一个范围)就拾取,拾取要求主角离地不高;不会消失(原版有没有时限没有读到)。
+    /// </para>
+    /// <para>
+    /// 地上也可以是一件物品(<see cref="Item"/> 不为 null,证据 E-117):画的是物品脚本 <c>[field image]</c> 的图,声音是它的 <c>[move wav]</c>,
+    /// 物理与拾取范围同金币;<b>推断</b>:原版的物品要按键才捡(这里与金币一样走到就捡),背包放不下时留在地上(<see cref="Blocked"/>)。
     /// </para>
     /// </summary>
     public sealed class FieldDrop
@@ -83,10 +88,13 @@ namespace Dnf.Play
 
         /// <param name="landX">给了落点,第一次触地时位置就取它(免得浮点误差让像素位置差 1);不给则按速度积分的结果。</param>
         /// <param name="landY">同上,进深。</param>
-        public FieldDrop(int id, int amount, double x, double y, double z, double vx, double vy, double vz, double? landX = null, double? landY = null)
+        /// <param name="item">地上是一件物品时给它(<paramref name="amount"/> 此时按 1 件);金币堆不给。</param>
+        public FieldDrop(int id, int amount, double x, double y, double z, double vx, double vy, double vz, double? landX = null, double? landY = null,
+            ItemInfo item = null)
         {
             Id = id;
             Amount = amount;
+            Item = item;
             X = x;
             Y = y;
             Z = z;
@@ -101,8 +109,17 @@ namespace Dnf.Play
         /// <summary>这一堆的序号(一个房间里从 1 数起,日志与测试用)。</summary>
         public int Id { get; }
 
-        /// <summary>金额。</summary>
+        /// <summary>金额(物品时是 1,表示一件)。</summary>
         public int Amount { get; }
+
+        /// <summary>地上的物品(证据 E-117);金币堆是 null。</summary>
+        public ItemInfo Item { get; }
+
+        /// <summary>是物品不是金币。</summary>
+        public bool IsItem => Item != null;
+
+        /// <summary>主角够得着了,但背包放不下,留在地上(<see cref="RoomCombatSession"/> 置位,用来只提示一次)。</summary>
+        public bool Blocked { get; set; }
 
         public double X { get; private set; }
 
@@ -145,11 +162,29 @@ namespace Dnf.Play
             return amount < 100 ? SmallSound : LargeSound;
         }
 
+        /// <summary>拾取时放的声音名:金币按金额(<see cref="SoundFor"/>),物品用脚本的 <c>[move wav]</c>(可能是 null)。</summary>
+        public string PickupSound => Item != null ? Item.MoveSound : SoundFor(Amount);
+
         /// <summary>
         /// 从 (<paramref name="x"/>, <paramref name="y"/>) 抛出一堆:水平偏移在 ±<see cref="ScatterX"/> 与 ±<see cref="ScatterY"/> 里取,
         /// 落点不能站人(<paramref name="canStand"/> 返回 false)时把偏移折半再试,最后退回原地。水平速度按"刚好在落地那一刻到落点"算。
         /// </summary>
         public static FieldDrop Launch(int id, int amount, double x, double y, IDropRandom random, Func<double, double, bool> canStand = null)
+        {
+            return LaunchCore(id, amount, null, x, y, random, canStand);
+        }
+
+        /// <summary>抛出一件物品(证据 E-117):与 <see cref="Launch"/> 同一套落点与物理,<paramref name="item"/> 不能为 null。</summary>
+        public static FieldDrop LaunchItem(int id, ItemInfo item, double x, double y, IDropRandom random, Func<double, double, bool> canStand = null)
+        {
+            if (item == null)
+            {
+                throw new ArgumentNullException(nameof(item));
+            }
+            return LaunchCore(id, 1, item, x, y, random, canStand);
+        }
+
+        private static FieldDrop LaunchCore(int id, int amount, ItemInfo item, double x, double y, IDropRandom random, Func<double, double, bool> canStand)
         {
             double dx = random.Range(-ScatterX, ScatterX);
             double dy = random.Range(-ScatterY, ScatterY);
@@ -167,7 +202,7 @@ namespace Dnf.Play
                 }
             }
             double flight = FlightMs(StartHeight, LaunchSpeed);
-            return new FieldDrop(id, amount, x, y, StartHeight, dx / flight, dy / flight, LaunchSpeed, x + dx, y + dy);
+            return new FieldDrop(id, amount, x, y, StartHeight, dx / flight, dy / flight, LaunchSpeed, x + dx, y + dy, item);
         }
 
         /// <summary>从高度 <paramref name="z"/> 以竖直速度 <paramref name="vz"/>(向上为正)出发,多少毫秒后落到地面(高度 0;已在地面且不往上走是 0)。</summary>
@@ -244,13 +279,14 @@ namespace Dnf.Play
         /// <summary>此刻的精灵;图包里没有这一帧时返回 null。画在同进深的角色后面一点(排序键减 1)。</summary>
         public SceneSprite Sprite(ISpriteSource sprites, TownProjection projection)
         {
-            int frame = FrameFor(Amount);
-            if (sprites == null || !sprites.TryGetFrame(ImagePath, frame, out SpriteFrame f) || f == null || f.Width == 0 || f.Height == 0)
+            string path = Item != null ? Item.FieldImageKey : ImagePath;
+            int frame = Item != null ? Item.FieldFrame : FrameFor(Amount);
+            if (path == null || frame < 0 || sprites == null || !sprites.TryGetFrame(path, frame, out SpriteFrame f) || f == null || f.Width == 0 || f.Height == 0)
             {
                 return null;
             }
             projection.TopLeft((int)Math.Floor(X), (int)Math.Floor(Y), (int)Math.Round(Z), 0, 0, f.OffsetX, f.OffsetY, f.Width, false, out int sx, out int sy);
-            return new SceneSprite(f, sx, sy, (int)Math.Floor(Y) - 1, -1, ImagePath, frame);
+            return new SceneSprite(f, sx, sy, (int)Math.Floor(Y) - 1, -1, path, frame);
         }
     }
 }

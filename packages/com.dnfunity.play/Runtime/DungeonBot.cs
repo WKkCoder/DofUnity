@@ -186,7 +186,20 @@ namespace Dnf.Play
         public bool WantsToCollect(DungeonSession session)
         {
             return session != null && session.BossCleared && session.Choice == SettlementChoice.None && !session.Failed && !session.HeroDead
-                && _goldSteps < GoldChaseSteps && session.Current.Drops.Count > 0;
+                && _goldSteps < GoldChaseSteps && HasCollectable(session.Current);
+        }
+
+        /// <summary>地上有没有捡得了的东西(金币,或背包放得下的物品;够得着却放不下的物品不算)。</summary>
+        private static bool HasCollectable(RoomCombatSession fight)
+        {
+            foreach (FieldDrop d in fight.Drops)
+            {
+                if (!d.Blocked)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>读会话当前的状态,给出这一步的方向与是否按攻击键。副本已经走完时,除了 <see cref="WantsToCollect"/> 的捡金币,全部为 0 / false。</summary>
@@ -314,6 +327,10 @@ namespace Dnf.Play
             double bestD = double.MaxValue;
             foreach (FieldDrop d in fight.Drops)
             {
+                if (d.Blocked)
+                {
+                    continue;      // 背包放不下的物品:走过去也捡不了,别追
+                }
                 double dist = Math.Abs(d.X - hero.X) + 4 * Math.Abs(d.Y - hero.Y);
                 if (dist < bestD)
                 {

@@ -295,6 +295,9 @@ namespace Dnf.Cli
             "      combat-check、dungeon-check、flow-check、sound-check 默认带主角的等级进度(杀怪给经验、升级、底栏有经验条):--level N 指定起始等级,--no-exp 关掉(--no-damage 时本来就没有)。\n" +
             "      dungeon-check、flow-check、sound-check 里主角死了会开复活窗口(证据 E-115:躺平后 10 秒失败计时,攻击键用币复活,计时走完副本失败、流程回城):--coins N 指定复活币的起始库存(默认 5,占位),\n" +
             "      --monster-damage-scale N(测试旋钮,不是原版规则)让怪物打中主角的伤害乘上 N,用来无人值守地检查死亡、复活与失败回城。\n" +
+            "  dnf item-check [--level N] [--samples N] [--seed N]\n" +
+            "      怪物物品掉落(证据 E-117):整库扫描装备与可叠加物品的脚本头(创建率、稀有度、等级、类型、地上图与图标),建掉落池,按怪物等级 --level 掷 --samples 只怪物\n" +
+            "      并汇总各类物品与稀有度的件数(数值与物品名来自本机的数据,只打印在终端,不要抄进入库的文件;通过与否只看结构)。\n" +
             "  dnf damage-check [--cases <文件>]\n" +
             "      伤害公式(证据 E-049)。不带 --cases:读 PVF 里的 Etc/EtcParameter.etc 与 Creature/Common/creatureCommon.cre,只报告个数与完整性(不输出原版数值);\n" +
             "      带 --cases:读 tools/py/damage_ref.py --gen 生成的随机用例,用 C# 公式复算并与 Python 参考实现逐项比较。\n" +
@@ -673,6 +676,8 @@ namespace Dnf.Cli
                     return HeroDamageCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "exp-check":
                     return ExpCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "item-check":
+                    return ItemCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "damage-check":
                     return opts.CasesFile != null
                         ? DamageCheck.RunCases(opts)

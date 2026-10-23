@@ -434,7 +434,11 @@ namespace Dnf.Play
         private readonly List<GainPopup> _gains = new List<GainPopup>();
         private MonsterDropTable _dropTable;
         private GoldGenTable _goldTable;
+        private ItemPool _itemPool;
         private DropRandom _dropRandom = new DropRandom(1);
+
+        /// <summary>物品掉落(掷骰与落点)用的随机数,与金币的分开:装上物品池不改变金币的金额与落点序列。</summary>
+        private DropRandom _itemRandom = new DropRandom(2);
         private int _dropSerial;
 
         /// <summary>地上金币与拾取飘字取图用的图源;默认是素材库,测试里换成合成的(<see cref="UseDropArt"/>)。</summary>
@@ -539,15 +543,33 @@ namespace Dnf.Play
         /// <summary>最近一次捡到的金额(没捡过是 0)。</summary>
         public int LastGoldPickup { get; private set; }
 
+        /// <summary>物品掉落池(证据 E-117);没有时为 null(杀怪只掉金币)。</summary>
+        public ItemPool ItemPool => _itemPool;
+
+        /// <summary>这个房间里一共掉出过多少件物品(含已经捡走的)。</summary>
+        public int ItemsDropped { get; private set; }
+
+        /// <summary>主角在这个房间里捡了多少件物品。</summary>
+        public int ItemsPicked { get; private set; }
+
+        /// <summary>主角够得着、但背包放不下的物品有多少件(每件只算一次;东西留在地上)。</summary>
+        public int ItemsBagFull { get; private set; }
+
+        /// <summary>最近一次捡到的物品(没捡过是 null)。</summary>
+        public ItemInfo LastItemPickup { get; private set; }
+
         /// <summary>
-        /// 装上怪物金币掉落数据(证据 E-116):<paramref name="table"/> 与 <paramref name="gold"/> 任一为 null 都等于关掉掉落;
+        /// 装上怪物金币掉落数据(证据 E-116):<paramref name="table"/> 与 <paramref name="gold"/> 任一为 null 都等于关掉金币掉落;
+        /// <paramref name="items"/>(证据 E-117)有就同时掉物品(需要 <paramref name="table"/>),不给就不掉物品;
         /// <paramref name="seed"/> 是掷骰与落点用的随机数种子(与其余随机数分开,免得改变伤害序列)。
         /// </summary>
-        public void UseDrops(MonsterDropTable table, GoldGenTable gold, int seed = 1)
+        public void UseDrops(MonsterDropTable table, GoldGenTable gold, int seed = 1, ItemPool items = null)
         {
             _dropTable = table;
             _goldTable = gold;
+            _itemPool = items;
             _dropRandom = new DropRandom(seed);
+            _itemRandom = new DropRandom(unchecked(seed * 31 + 0x2545F491));
         }
 
         /// <summary>换地上金币与拾取飘字的图源(没有原版图包的测试里喂合成的图);传 null 回到素材库。图源里缺帧时金币不画、飘字退回占位文字。</summary>
@@ -1094,7 +1116,7 @@ namespace Dnf.Play
             MonsterDrops drops = MonsterDrops.Load(assets);
             if (drops.Available)
             {
-                session.UseDrops(drops.Table, drops.Gold, unchecked(seed * 7919 + 17));
+                session.UseDrops(drops.Table, drops.Gold, unchecked(seed * 7919 + 17), drops.Pool);
             }
             return session;
         }
@@ -1529,7 +1551,7 @@ namespace Dnf.Play
             {
                 Kills++;
                 AwardKillExp(monster);
-                SpawnGoldDrops(monster);
+                SpawnDrops(monster);
             }
             AddNumber(damage, DamageNumberFlags.AttackerIsHero | (critical ? DamageNumberFlags.Critical : 0), hit, monster.Y);
         }
@@ -1563,23 +1585,43 @@ namespace Dnf.Play
         // ------------------------------------------------------------------ 金币掉落与拾取(证据 E-116)
 
         /// <summary>
-        /// 主角杀死一只怪物时掷金币(<see cref="GoldDrop.Roll"/>):种类首领为 3、其余 0(与经验同一条取法,推断),难度取 <see cref="ExpDifficulty"/>,单人,
-        /// 副本等级见 <see cref="DropDungeonLevel"/>,掷一次(服务端 <c>map_monster</c> 里的次数这里按 1,推断)。每一堆从怪物身上抛到周围的可站处。
+        /// 主角杀死一只怪物时先掷金币(<see cref="GoldDrop.Roll"/>)再掷物品(<see cref="ItemDrop.Roll"/>,证据 E-117,服务端同一个函数里也是这个顺序):
+        /// 种类首领为 3、其余 0(与经验同一条取法,推断),难度取 <see cref="ExpDifficulty"/>,单人,
+        /// 副本等级见 <see cref="DropDungeonLevel"/>,掷一次(服务端 <c>map_monster</c> 里的次数这里按 1,推断)。每一堆、每一件都从怪物身上抛到周围的可站处。
         /// 没装掉落数据时什么也不做。
         /// </summary>
-        private void SpawnGoldDrops(MonsterActor monster)
+        private void SpawnDrops(MonsterActor monster)
         {
-            if (_dropTable == null || _goldTable == null)
+            if (_dropTable == null)
             {
                 return;
             }
             int role = monster.IsBoss ? (int)MonsterKind.Boss : (int)MonsterKind.Normal;
             int dungeonLevel = DropDungeonLevel > 0 ? DropDungeonLevel : monster.Level;
             var context = new DropContext(monster.Level, role, dungeonLevel, ExpDifficulty, 1, 0, DropRate, 1);
-            foreach (int amount in GoldDrop.Roll(_dropTable, _goldTable, context, _dropRandom))
+            if (_goldTable != null)
             {
-                SpawnGold(amount, monster.X, monster.Y);
+                foreach (int amount in GoldDrop.Roll(_dropTable, _goldTable, context, _dropRandom))
+                {
+                    SpawnGold(amount, monster.X, monster.Y);
+                }
             }
+            if (_itemPool != null)
+            {
+                foreach (RolledItem rolled in ItemDrop.Roll(_dropTable, _itemPool, context, _itemRandom))
+                {
+                    SpawnItem(rolled.Info, monster.X, monster.Y);
+                }
+            }
+        }
+
+        /// <summary>在 (<paramref name="x"/>, <paramref name="y"/>) 抛出一件物品(落点与物理同金币,见 <see cref="FieldDrop.LaunchItem"/>);怪物死亡的物品掉落走这里。</summary>
+        public FieldDrop SpawnItem(ItemInfo item, double x, double y)
+        {
+            FieldDrop drop = FieldDrop.LaunchItem(++_dropSerial, item, x, y, _itemRandom, CanStandAt);
+            _drops.Add(drop);
+            ItemsDropped++;
+            return drop;
         }
 
         /// <summary>在 (<paramref name="x"/>, <paramref name="y"/>) 抛出一堆 <paramref name="amount"/> 金币(落点在周围的可站处,见 <see cref="FieldDrop.Launch"/>);怪物死亡的掉落走这里。</summary>
@@ -1618,6 +1660,25 @@ namespace Dnf.Play
                 drop.Advance(deltaMs);
                 if (HeroDead || !drop.IsInReach(hero.X, hero.Y, hero.Z))
                 {
+                    continue;
+                }
+                if (drop.IsItem)
+                {
+                    // 背包放不下就留在地上(只记一次),腾出地方后再走过去还能捡
+                    if (Progress != null && !Progress.Bag.CanAdd(drop.Item))
+                    {
+                        if (!drop.Blocked)
+                        {
+                            drop.Blocked = true;
+                            ItemsBagFull++;
+                        }
+                        continue;
+                    }
+                    _drops.RemoveAt(i--);
+                    ItemsPicked++;
+                    LastItemPickup = drop.Item;
+                    Progress?.AddItem(drop.Item);
+                    _sounds.Add(drop.PickupSound, SoundCueKind.Effect);
                     continue;
                 }
                 _drops.RemoveAt(i--);

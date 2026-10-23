@@ -112,14 +112,14 @@ public class GoldCollectTests
     [Fact]
     public void TheRewardPanelCharactersAreAllInThePixelFont()
     {
-        foreach (char c in "CLEAR TIME 0123456789: KILLS EXP + GOLD")
+        foreach (char c in "CLEAR TIME 0123456789: KILLS EXP + GOLD ITEMS")
         {
             Assert.True(OverlayArt.HasGlyph(c), "字库里没有 '" + c + "'");
         }
     }
 
     [Fact]
-    public void TheSettlementShowsFourPlaceholderLinesOfTheRunTotalsAndNotBefore()
+    public void TheSettlementShowsFivePlaceholderLinesOfTheRunTotalsAndNotBefore()
     {
         using var d = new Dungeon(TwoRoomBossLayout(), (cx, cy) => None());
         DungeonSession s = d.Session;
@@ -136,9 +136,9 @@ public class GoldCollectTests
         Assert.True(s.SettlementActive);
         List<SceneSprite> after = s.Build(0);
         List<SceneSprite> lines = after.Where(x => x.AnimationPath == "reward").ToList();
-        Assert.Equal(4, lines.Count);
+        Assert.Equal(5, lines.Count);
         Assert.All(lines, x => Assert.Equal((DungeonSession.RewardPanelLeft, OverlayArt.UiRank), (x.ScreenX, x.LayerRank)));
         Assert.Equal(DungeonSession.RewardPanelTop, lines[0].ScreenY);
-        Assert.True(lines[0].ScreenY < lines[1].ScreenY && lines[1].ScreenY < lines[2].ScreenY && lines[2].ScreenY < lines[3].ScreenY);
+        Assert.True(lines[0].ScreenY < lines[1].ScreenY && lines[1].ScreenY < lines[2].ScreenY && lines[2].ScreenY < lines[3].ScreenY && lines[3].ScreenY < lines[4].ScreenY);
     }
 }

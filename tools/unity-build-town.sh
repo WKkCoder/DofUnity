@@ -22,6 +22,7 @@
 #      城镇里把摇杆推到最外圈向左再抬起,与键盘 -dnfautowalk 同一个终点;房间里用 stick/tap 复刻技能时间表,A、S、D 各放出一次且命中过怪物。
 #   9. 死亡复活、失败回城与 Esc 菜单(E-115):一击必杀的怪物伤害(测试旋钮)下的三段实机运行,查 DNF_REVIVE、DNF_FLOW、DNF_MENU 行;
 #      金币(E-116):整条流程日志里最后一行 DNF_GOLD 掉出与捡起一样多,带伤害的复活那一趟里钱包(purse)不为 0。
+#      物品(E-117):日志里若有 DNF_ITEM 行,最后一行掉出与捡起一样多、没有因背包满而留下的。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -532,6 +533,12 @@ if [ "$platform" = "macos" ]; then
     grep -E 'DNF_GOLD dropped=' "$flow_log" | cut -c1-120 || true
     grep -E 'DNF_GOLD dropped=' "$flow_log" | tail -1 | grep -q -E 'DNF_GOLD dropped=([1-9][0-9]*) picked=\1 ' \
       || { echo "整条流程里自动机应捡完掉在地上的金币(最后一行 DNF_GOLD 的 dropped 与 picked 相等且不为 0):$flow_log" >&2; exit 1; }
+    # 物品(证据 E-117):怪物的物品概率很低,一趟里可能一件也没掉,所以只在有 DNF_ITEM 行时要求最后一行掉出的与捡起的一样多、没有因背包满留在地上的
+    grep -E 'DNF_ITEM dropped=' "$flow_log" | cut -c1-140 || true
+    if grep -q -E 'DNF_ITEM dropped=' "$flow_log"; then
+      grep -E 'DNF_ITEM dropped=' "$flow_log" | tail -1 | grep -q -E 'DNF_ITEM dropped=([0-9]+) picked=\1 full=0 ' \
+        || { echo "整条流程里自动机应捡完掉在地上的物品(最后一行 DNF_ITEM 的 dropped 与 picked 相等、full=0):$flow_log" >&2; exit 1; }
+    fi
     # 失败分支(证据 E-115):怪物伤害放大到一击必杀、复活币 0 枚,无人值守地打副本——主角死后没有币可用,躺平 10 秒的计时走完,副本失败回城镇,
     # 不算结算(回城先经过加载画面,所以从副本出去的第一行是 to=Loading);一并看 DNF_REVIVE 行(死了一次、没复活)与流程计数(failures=1、settlements=0)
     fail_log="$PWD/re/unity-run-town-fail-macos.log"

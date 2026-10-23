@@ -216,6 +216,12 @@ namespace Dnf.Play
         public long GoldEarned => SumLong(s => s.GoldEarned);
         public long GoldDroppedAmount => SumLong(s => s.GoldDroppedAmount);
 
+        /// <summary>整座副本里掉出过多少件物品、捡起了多少件、有多少件够得着却因背包满了留在地上(各房间之和,证据 E-117)。</summary>
+        public int ItemsDropped => Sum(s => s.ItemsDropped);
+
+        public int ItemsPicked => Sum(s => s.ItemsPicked);
+        public int ItemsBagFull => Sum(s => s.ItemsBagFull);
+
         /// <summary>整座副本里主角从击杀得到的经验总和(各房间之和,证据 E-111)。</summary>
         public long ExpEarned => SumLong(s => s.ExpEarned);
 
@@ -872,7 +878,7 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 结算时屏幕左侧的战果小结:通关用时、击杀、经验与金币(本局的合计)。<b>占位</b>:原版结果窗口的版式与内容没有读出来,
+        /// 结算时屏幕左侧的战果小结:通关用时、击杀、经验、金币与捡到的物品件数(本局的合计)。<b>占位</b>:原版结果窗口的版式与内容没有读出来,
         /// 这里只是把本局的数字列出来,英文像素字,位置随意。
         /// </summary>
         private void AddRewardPanel(List<SceneSprite> hud, ref int order)
@@ -885,6 +891,7 @@ namespace Dnf.Play
                 "KILLS " + Kills.ToString(inv),
                 "EXP +" + ExpEarned.ToString(inv),
                 "GOLD +" + GoldEarned.ToString(inv),
+                "ITEMS " + ItemsPicked.ToString(inv),
             };
             int y = RewardPanelTop;
             foreach (string text in lines)

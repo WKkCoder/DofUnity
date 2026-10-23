@@ -56,6 +56,17 @@ namespace Dnf.Play
         /// <summary>从创建起一共拾到多少金币(<see cref="Gold"/> 之后会被花掉,这个不减)。</summary>
         public long GoldGained { get; private set; }
 
+        /// <summary>背包(证据 E-117:拾取地上的物品放进去;副本里各房间共用同一个对象)。装备栏、穿脱与使用还没有做。</summary>
+        public Inventory Bag { get; } = new Inventory();
+
+        /// <summary>从创建起一共拾到多少件物品(<see cref="Bag"/> 里的东西以后会被用掉、卖掉,这个不减)。</summary>
+        public int ItemsGained { get; private set; }
+
+        /// <summary>背包里一共有多少件、占了多少格(宿主层不引用 Dnf.Game,日志与界面用这两个数)。</summary>
+        public int BagItems => Bag.TotalCount;
+
+        public int BagSlots => Bag.StackCount;
+
         public HeroProgress(ExpTable table, SpTable sp, CharacterGrowth growth, MobRewardTable rewards, ExpRates rates, int level = 1, int exp = -1,
             int growtype = DefaultGrowtype, int awakening = 0)
         {
@@ -115,6 +126,16 @@ namespace Dnf.Play
             }
             Gold += amount;
             GoldGained += amount;
+        }
+
+        /// <summary>
+        /// 拾到 <paramref name="count"/> 件物品放进背包(<see cref="Inventory.Add"/>);全部放进去返回 true,放不下的不放(返回 false,已放进去的那部分保留、也计入累计)。
+        /// </summary>
+        public bool AddItem(ItemInfo info, int count = 1)
+        {
+            int put = Bag.Add(info, count);
+            ItemsGained += put;
+            return put == count && count > 0;
         }
 
         /// <summary>花掉 <paramref name="amount"/> 金币;不够就一个也不扣并返回 false(金额不大于 0 也返回 false)。</summary>

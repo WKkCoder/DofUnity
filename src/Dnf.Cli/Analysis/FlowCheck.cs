@@ -144,6 +144,8 @@ internal static class FlowCheck
         Console.WriteLine("  每一局都打到首领清空:" + (allCleared ? "是" : "否"));
         Console.WriteLine("  金币(E-116):各局掉出 " + stats.Sum(s => s.GoldDropped) + " 堆,捡起 " + stats.Sum(s => s.GoldPicked) + " 堆共 " + stats.Sum(s => s.GoldEarned)
             + (progress != null ? ",身上 " + progress.Gold : string.Empty));
+        Console.WriteLine("  物品(E-117):各局掉出 " + stats.Sum(s => s.ItemsDropped) + " 件,捡起 " + stats.Sum(s => s.ItemsPicked) + " 件"
+            + (progress != null ? ",背包 " + progress.Bag.TotalCount + " 件占 " + progress.Bag.StackCount + " 格" : string.Empty));
         bool musicOk = true;
         if (music == null)
         {
@@ -254,6 +256,8 @@ internal static class FlowCheck
         public int GoldDropped { get; private set; }
         public int GoldPicked { get; private set; }
         public long GoldEarned { get; private set; }
+        public int ItemsDropped { get; private set; }
+        public int ItemsPicked { get; private set; }
 
         public static RunStats Of(DungeonSession s, int run)
         {
@@ -266,6 +270,8 @@ internal static class FlowCheck
                 GoldDropped = s.GoldDropped,
                 GoldPicked = s.GoldPicked,
                 GoldEarned = s.GoldEarned,
+                ItemsDropped = s.ItemsDropped,
+                ItemsPicked = s.ItemsPicked,
                 BossCleared = s.BossCleared,
                 Kills = s.Kills,
                 Hits = s.Hits,
@@ -279,7 +285,7 @@ internal static class FlowCheck
         public override string ToString()
         {
             return "第 " + Run + " 局 " + (BossCleared ? "首领清空" : Failed ? "副本失败" : "没打完") + ",用时 " + Sec(ClockMs) + " 秒,清空 " + RoomsCleared + " 个房间,击杀 " + Kills
-                + " 个,命中 " + Hits + " 次;金币掉 " + GoldDropped + " 堆、捡 " + GoldPicked + " 堆共 " + GoldEarned + ";" + (Deaths > 0 ? "死亡 " + Deaths + " 次、复活 " + Revives + " 次;" : string.Empty)
+                + " 个,命中 " + Hits + " 次;金币掉 " + GoldDropped + " 堆、捡 " + GoldPicked + " 堆共 " + GoldEarned + ";物品掉 " + ItemsDropped + " 件、捡 " + ItemsPicked + " 件;" + (Deaths > 0 ? "死亡 " + Deaths + " 次、复活 " + Revives + " 次;" : string.Empty)
                 + "结算菜单 " + (SettlementShown ? "出现过" : "没出现") + ",选择 " + Name(Choice);
         }
     }

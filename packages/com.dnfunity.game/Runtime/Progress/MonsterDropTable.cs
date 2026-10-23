@@ -87,7 +87,7 @@ namespace Dnf.Game
         /// <summary>区间上界(含)。</summary>
         public int LevelTo { get; }
 
-        /// <summary>五个数:下标 0 是金币,1 到 4 是四类物品(物品这一版不用)。</summary>
+        /// <summary>五个数:下标 0 是金币,1 到 4 是四类物品(1 可叠加物品、2 装备、3 设计图、4 宠物与宠物装备,见 <see cref="ItemPool.TypeAccepts"/>)。</summary>
         public int[] Values { get; }
 
         /// <summary>金币的基础概率(万分之几)。</summary>
@@ -99,10 +99,10 @@ namespace Dnf.Game
     /// 服务端 <c>CMonsterDrop::loadScript</c> 按"一个标签一块"依次读下面这些标签,这里照同一套读取原语(<see cref="ScriptCursor"/>)读:
     /// <list type="bullet">
     /// <item><c>[drop prob count]</c> 行数 n;<c>[drop prob]</c> n 行,每行 <c>区间下界 区间上界</c> 加五个数(金币与四类物品的基础概率);</item>
-    /// <item><c>[basis of rarity dicision]</c> 四行各六个整数(物品稀有度的分界,这一版只读不用);</item>
+    /// <item><c>[basis of rarity dicision]</c> 四行各六个整数(物品类型 1 到 4 的稀有度分界,<see cref="ItemRarity"/>);</item>
     /// <item><c>[party member drop bonusrate]</c> 5 × 4 个浮点(行:金币与四类物品;列:队伍人数 1 到 4);
     /// <c>[dungeon difficulty drop bonusrate]</c> 5 × 5(列:副本难度 0 到 4);<c>[monster type drop bonusrate]</c> 5 × 4(列:怪物种类 0 到 3);</item>
-    /// <item><c>[item drop ref table]</c> 200 组三个整数(物品池的等级映射,只读不用);<c>[first boss/named mob hunting]</c> 两个整数(只读不用);</item>
+    /// <item><c>[item drop ref table]</c> 200 组三个整数(等级、向下、向上:物品池的等级窗口,<see cref="ItemWindow"/>);<c>[first boss/named mob hunting]</c> 两个整数(只读不用);</item>
     /// <item><c>[condition rate]</c> 四对整数(按队伍人数:不触发/触发的权重);<c>[gold quantity]</c> 四个整数(两组 最少、最多 堆数);
     /// <c>[gold volume]</c> 两个整数(两组的金额百分比)——这三个只用于首领的金币堆。</item>
     /// </list>
@@ -126,7 +126,19 @@ namespace Dnf.Game
         /// <summary>金币掷骰的分母:随机数取 0 到 10000(含),比概率小就掉(<c>_generateRandomItem</c> 里的 10000)。</summary>
         public const int RollMax = 10000;
 
+        /// <summary>稀有度的档数(0 到 5;<c>[basis of rarity dicision]</c> 每行六个分界)。</summary>
+        public const int RarityCount = 6;
+
+        /// <summary>物品等级窗口表的最大等级(<c>[item drop ref table]</c> 的 200 组)。</summary>
+        public const int ItemLevelMax = 200;
+
+        /// <summary>稀有度掷骰的上界:随机数取 1 到 1000000(含,<c>generateNumber(1, 1000000)</c>)。</summary>
+        public const int RarityRollMax = 1000000;
+
         private DropProbRow[] _rows;
+        private readonly int[,] _rarityBasis = new int[TypeCount, RarityCount];
+        private readonly byte[] _windowBefore = new byte[ItemLevelMax + 1];
+        private readonly byte[] _windowAfter = new byte[ItemLevelMax + 1];
         private readonly float[,] _party = new float[TypeCount, MemberCount];
         private readonly float[,] _difficulty = new float[TypeCount, DifficultyCount];
         private readonly float[,] _role = new float[TypeCount, RoleCount];
@@ -214,6 +226,64 @@ namespace Dnf.Game
         }
 
         /// <summary>
+        /// 某一类物品(<paramref name="type"/> 为 1 到 4)的掉落概率(万分之几,<c>_generateRandomItem</c> 里物品那一段,证据 E-117):
+        /// 队伍加成 × 种类加成 × 难度加成 × 该行这一类的基础概率,取整(x87 默认舍入,到最近、平局取偶),再乘掉落率 / 100(整数除法)。
+        /// 第 2 类(装备)在服务端还要乘两个"行情"因子——自动市场控制的 <c>GetItemDropRate</c> 0x082f8ae8 和对象上的两个全局值(0x259380、0x259384),
+        /// 默认都是 1(控制没打开时 <c>GetItemDropRate</c> 返回 1.0、构造函数把后两者设成 1 与 1.0f),这里不做。行号或类型越界返回 0。
+        /// </summary>
+        public int ItemProbability(int row, int type, int role, int difficulty, int members, int dropRate = 100)
+        {
+            if (row < 0 || row >= _rows.Length || type < 1 || type >= TypeCount)
+            {
+                return 0;
+            }
+            double product = (double)PartyBonus(type, members);
+            product *= RoleBonus(type, role);
+            product *= DifficultyBonus(type, difficulty);
+            product *= (float)_rows[row].Values[type];
+            int rounded = (int)Math.Round(product, MidpointRounding.ToEven);
+            return (int)((long)rounded * dropRate / 100);
+        }
+
+        /// <summary>
+        /// 稀有度掷骰(<c>CLuckPoint::GetItemRarity</c> 0x08550be4 里没有幸运点、没有队伍重叠加成时的那一支,证据 E-117):
+        /// 在这一类的六个分界里从头找第一个 <c>掷出的数 ≤ 分界</c>,返回它的下标 0 到 5;一个也不满足返回 0。
+        /// 幸运点与组队重叠掉落率会把分界往下挪,默认都是 0,这里不做。类型越界返回 0。
+        /// </summary>
+        public int ItemRarity(int type, int roll)
+        {
+            if (type < 1 || type >= TypeCount)
+            {
+                return 0;
+            }
+            for (int i = 0; i < RarityCount; i++)
+            {
+                if (roll <= _rarityBasis[type, i])
+                {
+                    return i;
+                }
+            }
+            return 0;
+        }
+
+        /// <summary>
+        /// 等级 <paramref name="level"/> 的怪物能掉的物品等级窗口(<c>generateTable</c> 0x0853466c 里的 <c>[item drop ref table]</c>,证据 E-117):
+        /// 物品的 <c>[grade]</c> 在 [level − <paramref name="before"/>, level + <paramref name="after"/> − 1] 里(再截到 200 以内)的才进池。
+        /// 等级越界(不在 0 到 200)时两端都是 0。
+        /// </summary>
+        public void ItemWindow(int level, out int before, out int after)
+        {
+            if (level < 0 || level > ItemLevelMax)
+            {
+                before = 0;
+                after = 0;
+                return;
+            }
+            before = _windowBefore[level];
+            after = _windowAfter[level];
+        }
+
+        /// <summary>
         /// 首领的金币堆(<c>_getBossGoldDrop</c>):按队伍人数(<paramref name="members"/> 为 1 到 4,其余返回 false = 这一次不分堆、只出一堆)
         /// 先掷 [0, 不触发权重 + 触发权重],比"触发权重"小就走第二组,否则第一组;堆数在该组的 [最少, 最多] 里均匀取(含两端);
         /// 每堆的金额 = 基础金额 × 该组的百分比 / 100。
@@ -292,9 +362,17 @@ namespace Dnf.Game
                 }
                 else if (Is(name, "[basis of rarity dicision]"))
                 {
-                    for (int i = 0; ok && i < 4 * 6; i++)
+                    // 四行各六个数,依次是物品类型 1 到 4 的稀有度分界(服务端存在对象偏移 0x30 + 类型 × 0x18 起的六个整数)
+                    for (int type = 1; ok && type < TypeCount; type++)
                     {
-                        cursor.ScanInt(out ok);
+                        for (int i = 0; ok && i < RarityCount; i++)
+                        {
+                            int v = cursor.ScanInt(out ok);
+                            if (ok)
+                            {
+                                table._rarityBasis[type, i] = v;
+                            }
+                        }
                     }
                 }
                 else if (Is(name, "[party member drop bonusrate]"))
@@ -311,9 +389,17 @@ namespace Dnf.Game
                 }
                 else if (Is(name, "[item drop ref table]"))
                 {
-                    for (int i = 0; ok && i < 200 * 3; i++)
+                    // 200 组 "等级 向下 向上":第一个数是等级(下标),后两个数各取低 8 位存成窗口的两端(服务端存成两个字节)
+                    for (int i = 0; ok && i < ItemLevelMax; i++)
                     {
-                        cursor.ScanInt(out ok);
+                        int level = cursor.ScanInt(out ok);
+                        int before = ok ? cursor.ScanInt(out ok) : 0;
+                        int after = ok ? cursor.ScanInt(out ok) : 0;
+                        if (ok && level >= 0 && level <= ItemLevelMax)
+                        {
+                            table._windowBefore[level] = (byte)before;
+                            table._windowAfter[level] = (byte)after;
+                        }
                     }
                 }
                 else if (Is(name, "[first boss/named mob hunting]"))

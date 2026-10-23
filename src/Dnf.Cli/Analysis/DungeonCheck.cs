@@ -195,6 +195,14 @@ internal static class DungeonCheck
             : "没有掉落数据(" + drops.Error + ")"));
         if (drops.Available)
         {
+            Console.WriteLine("物品(E-117):" + (drops.Pool != null
+                ? "池里 " + drops.Pool.Items + " 件;掉出 " + session.ItemsDropped + " 件,捡起 " + session.ItemsPicked + " 件"
+                    + (session.Progress != null ? ",背包 " + session.Progress.Bag.TotalCount + " 件占 " + session.Progress.Bag.StackCount + " 格" : string.Empty)
+                    + (session.ItemsBagFull > 0 ? ",背包满了留在地上 " + session.ItemsBagFull + " 件" : string.Empty)
+                : "没有物品池(读不到装备或物品列表)"));
+        }
+        if (drops.Available)
+        {
             // 诊断:这座副本的标准等级选到哪一行概率行,普通怪与首领的金币概率各是万分之几(只打印在终端)
             int standard = GoldDrop.StandardLevel(assets.ReadScript(opts.Dungeon));
             int row = drops.Table.FindRow(standard);

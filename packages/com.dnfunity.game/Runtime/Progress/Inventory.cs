@@ -1,0 +1,235 @@
+using System;
+using System.Collections.Generic;
+
+// 证据:E-117 只确认了物品怎么掉(服务端 _MakeDropItems 0x0830adf6 把每件掉落包成 map_item、没有格子概念);背包的页签、格子数与叠加上限
+// 没有读到客户端或服务端的实现,下面的数值与分页全是推断。
+namespace Dnf.Game
+{
+    /// <summary>背包的页签(推断:原版有装备、消耗品、材料、任务等页;具体怎么分没有查明)。</summary>
+    public enum InventoryTab
+    {
+        Equipment = 0,
+        Consumable = 1,
+        Material = 2,
+        Quest = 3,
+    }
+
+    /// <summary>背包里的一格:一种物品和它的数量。</summary>
+    public sealed class ItemStack
+    {
+        public ItemStack(ItemInfo info, int count)
+        {
+            Info = info ?? throw new ArgumentNullException(nameof(info));
+            Count = count;
+        }
+
+        public ItemInfo Info { get; }
+
+        public int Count { get; internal set; }
+    }
+
+    /// <summary>
+    /// 主角的背包:按页签存格子(每页最多 <see cref="SlotsPerTab"/> 格),可叠加物品同编号叠在一起(上限见 <see cref="StackLimitOf"/>),装备一件一格。
+    /// 满了放不下就放不进(<see cref="Add"/> 返回实际放进去的数量),东西留在地上。<b>推断</b>:页签的划分、每页格数、叠加上限的缺省值都没有读到原版实现。
+    /// </summary>
+    public sealed class Inventory
+    {
+        /// <summary>页签数。</summary>
+        public const int TabCount = 4;
+
+        /// <summary>每页格数(推断)。</summary>
+        public const int SlotsPerTab = 56;
+
+        /// <summary>脚本没写 <c>[stack limit]</c> 时一格最多叠多少(推断)。</summary>
+        public const int DefaultStackLimit = 1000;
+
+        private readonly List<ItemStack>[] _tabs = new List<ItemStack>[TabCount];
+        private readonly int _slotsPerTab;
+
+        public Inventory(int slotsPerTab = SlotsPerTab)
+        {
+            _slotsPerTab = slotsPerTab < 1 ? 1 : slotsPerTab;
+            for (int i = 0; i < TabCount; i++)
+            {
+                _tabs[i] = new List<ItemStack>();
+            }
+        }
+
+        /// <summary>每页的格数上限。</summary>
+        public int Capacity => _slotsPerTab;
+
+        /// <summary>
+        /// 物品放进哪一页(推断):装备放装备页;可叠加物品里,任务类放任务页,材料、设计图、杂项放材料页,其余放消耗品页。
+        /// </summary>
+        public static InventoryTab TabOf(ItemInfo info)
+        {
+            if (info == null || info.IsEquipment)
+            {
+                return InventoryTab.Equipment;
+            }
+            switch (info.StackableType)
+            {
+                case StackableTypes.Quest:
+                case 19:   // [quest receive]
+                    return InventoryTab.Quest;
+                case StackableTypes.Material:
+                case 2:    // [material expert job]
+                case StackableTypes.Recipe:
+                case StackableTypes.Etc:
+                case 21:   // [unlimited etc]
+                    return InventoryTab.Material;
+                default:
+                    return InventoryTab.Consumable;
+            }
+        }
+
+        /// <summary>一格最多放几个:装备 1,可叠加物品取 <c>[stack limit]</c>(没写按 <see cref="DefaultStackLimit"/>)。</summary>
+        public static int StackLimitOf(ItemInfo info)
+        {
+            if (info == null || info.IsEquipment)
+            {
+                return 1;
+            }
+            return info.StackLimit > 0 ? info.StackLimit : DefaultStackLimit;
+        }
+
+        /// <summary>这一页的全部格子(按放入的先后)。</summary>
+        public IReadOnlyList<ItemStack> Tab(InventoryTab tab)
+        {
+            return _tabs[(int)tab];
+        }
+
+        /// <summary>背包里一共有多少件(各格数量之和)。</summary>
+        public int TotalCount
+        {
+            get
+            {
+                int total = 0;
+                foreach (List<ItemStack> tab in _tabs)
+                {
+                    foreach (ItemStack stack in tab)
+                    {
+                        total += stack.Count;
+                    }
+                }
+                return total;
+            }
+        }
+
+        /// <summary>占了多少格。</summary>
+        public int StackCount
+        {
+            get
+            {
+                int total = 0;
+                foreach (List<ItemStack> tab in _tabs)
+                {
+                    total += tab.Count;
+                }
+                return total;
+            }
+        }
+
+        /// <summary>某个编号的物品一共有多少件。</summary>
+        public int CountOf(int code)
+        {
+            int total = 0;
+            foreach (List<ItemStack> tab in _tabs)
+            {
+                foreach (ItemStack stack in tab)
+                {
+                    if (stack.Info.Code == code)
+                    {
+                        total += stack.Count;
+                    }
+                }
+            }
+            return total;
+        }
+
+        /// <summary>
+        /// 能不能把 <paramref name="count"/> 件 <paramref name="info"/> 全部放进去(先填同编号还没满的格,再占空格)。
+        /// </summary>
+        public bool CanAdd(ItemInfo info, int count = 1)
+        {
+            return count > 0 && info != null && Room(info) >= count;
+        }
+
+        private int Room(ItemInfo info)
+        {
+            List<ItemStack> tab = _tabs[(int)TabOf(info)];
+            int limit = StackLimitOf(info);
+            long room = (long)(_slotsPerTab - tab.Count) * limit;
+            foreach (ItemStack stack in tab)
+            {
+                if (stack.Info.Code == info.Code)
+                {
+                    room += Math.Max(0, limit - stack.Count);
+                }
+            }
+            return room > int.MaxValue ? int.MaxValue : (int)room;
+        }
+
+        /// <summary>放进 <paramref name="count"/> 件物品;返回实际放进去几件(放不下的不放;没有物品或数量不大于 0 返回 0)。</summary>
+        public int Add(ItemInfo info, int count = 1)
+        {
+            if (info == null || count <= 0)
+            {
+                return 0;
+            }
+            List<ItemStack> tab = _tabs[(int)TabOf(info)];
+            int limit = StackLimitOf(info);
+            int remaining = count;
+            foreach (ItemStack stack in tab)
+            {
+                if (remaining == 0)
+                {
+                    break;
+                }
+                if (stack.Info.Code != info.Code || stack.Count >= limit)
+                {
+                    continue;
+                }
+                int put = Math.Min(remaining, limit - stack.Count);
+                stack.Count += put;
+                remaining -= put;
+            }
+            while (remaining > 0 && tab.Count < _slotsPerTab)
+            {
+                int put = Math.Min(remaining, limit);
+                tab.Add(new ItemStack(info, put));
+                remaining -= put;
+            }
+            return count - remaining;
+        }
+
+        /// <summary>拿掉 <paramref name="count"/> 件某编号的物品(先拿后放进去的格);不够就一件也不拿并返回 false。</summary>
+        public bool Remove(int code, int count = 1)
+        {
+            if (count <= 0 || CountOf(code) < count)
+            {
+                return false;
+            }
+            int remaining = count;
+            foreach (List<ItemStack> tab in _tabs)
+            {
+                for (int i = tab.Count - 1; i >= 0 && remaining > 0; i--)
+                {
+                    ItemStack stack = tab[i];
+                    if (stack.Info.Code != code)
+                    {
+                        continue;
+                    }
+                    int take = Math.Min(remaining, stack.Count);
+                    stack.Count -= take;
+                    remaining -= take;
+                    if (stack.Count == 0)
+                    {
+                        tab.RemoveAt(i);
+                    }
+                }
+            }
+            return true;
+        }
+    }
+}
