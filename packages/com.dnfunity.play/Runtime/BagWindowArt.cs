@@ -211,7 +211,7 @@ namespace Dnf.Play
             }
         }
 
-        private static void AddLine(List<SceneSprite> into, ref int order, OverlayArt art, string text, int x, int y, uint color, string tag)
+        internal static void AddLine(List<SceneSprite> into, ref int order, OverlayArt art, string text, int x, int y, uint color, string tag)
         {
             SpriteFrame frame = art.Text(text, 2, color);
             if (frame != null)
@@ -220,7 +220,7 @@ namespace Dnf.Play
             }
         }
 
-        private static void PlaceIcon(List<SceneSprite> into, ref int order, ISpriteSource sprites, OverlayArt art, ItemInfo info, int rx, int ry, int rw, int rh, string tag)
+        internal static void PlaceIcon(List<SceneSprite> into, ref int order, ISpriteSource sprites, OverlayArt art, ItemInfo info, int rx, int ry, int rw, int rh, string tag)
         {
             SpriteFrame frame = null;
             if (sprites != null && info.IconKey != null && info.IconFrame >= 0)
@@ -238,7 +238,7 @@ namespace Dnf.Play
             into.Add(OverlayArt.Place(art.Solid(side, side, RarityColor(info.Rarity)), rx + (rw - side) / 2, ry + (rh - side) / 2, order++, "bag-icon-block"));
         }
 
-        private static void PlaceRarity(List<SceneSprite> into, ref int order, OverlayArt art, ItemInfo info, int rx, int ry, int rw, int rh, string tag)
+        internal static void PlaceRarity(List<SceneSprite> into, ref int order, OverlayArt art, ItemInfo info, int rx, int ry, int rw, int rh, string tag)
         {
             into.Add(OverlayArt.Place(art.Solid(rw - 8, 3, RarityColor(info.Rarity)), rx + 4, ry + rh - 6, order++, tag));
         }

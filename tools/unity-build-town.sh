@@ -25,6 +25,7 @@
 #      物品(E-117):日志里若有 DNF_ITEM 行,最后一行掉出与捡起一样多、没有因背包满而留下的。
 #     背包与装备栏(E-118):副本里探针放一件武器、开背包、试穿、关上,日志里 DNF_BAG 各行齐全,主角的武器外观已换成装备栏里的那件。
 #     角色存档(M26):第一趟打副本、穿一件武器,退出时存;第二趟读同一个存档,日志里读到的与存下的一样,主角外观已是那件武器,读完没有新写。
+#     NPC 商店(E-119):城镇里探针打开第一家有商品的店(游戏暂停)、买一件再卖回去、关上(游戏恢复),日志里 DNF_SHOP 各行齐全,进城时记到摆着开商店的 NPC。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -624,6 +625,31 @@ if [ "$platform" = "macos" ]; then
     fi
     for pat in 'DNF_BAG probe open granted=True' 'DNF_BAG open stage=Dungeon paused=True' 'DNF_BAG probe equip ok=True' 'DNF_BAG probe closed equipped=1' 'DNF_BAG closed paused=False' 'DNF_BAG probe look matches=True weapon=True'; do
       grep -q -F "$pat" "$bag_log" || { echo "背包与装备栏的日志里缺 \"$pat\":$bag_log" >&2; exit 1; }
+    done
+    # NPC 商店(证据 E-119,窗口与键位是本项目自己的占位设计):城镇里阶段开始 3 秒后探针先给钱包放一笔钱,像走到商店 NPC 旁按空格一样打开第一家有商品的店(游戏暂停),
+    # 再过一秒无人值守地买一件、卖回去,再过一秒按 Esc 的路关上(游戏恢复),再过一秒收尾;进城时日志里记这座城镇摆着几个 NPC、其中几个开商店
+    shop_log="$PWD/re/unity-run-town-shop-macos.log"
+    rm -f "$shop_log"
+    set +e
+    "$app" -batchmode -logFile "$shop_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom town -dnflevel 30 \
+      -dnfshopat 3 -dnftimescale 4 -dnfquitafter 10
+    rc=$?
+    set -e
+    echo "播放器退出码(NPC 商店): $rc"
+    grep -E 'DNF_SHOP' "$shop_log" | cut -c1-260 || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$shop_log"; then
+      echo "NPC 商店的日志里有异常:$shop_log" >&2
+      exit 1
+    fi
+    grep -q -E 'DNF_SHOP town serial=[0-9]+ npcs=[0-9]+ shopnpcs=[1-9][0-9]*' "$shop_log" \
+      || { echo "NPC 商店的日志里进城时应记到摆着开商店的 NPC(DNF_SHOP town … shopnpcs>0):$shop_log" >&2; exit 1; }
+    grep -q -E 'DNF_SHOP probe open shop=[0-9]+ items=[1-9][0-9]* tabs=' "$shop_log" \
+      || { echo "NPC 商店的探针应打开一家有商品的店(DNF_SHOP probe open … items>0):$shop_log" >&2; exit 1; }
+    grep -q -E 'DNF_SHOP open shop=[0-9]+ items=[1-9][0-9]* paused=True' "$shop_log" \
+      || { echo "开商店时游戏应暂停(DNF_SHOP open … paused=True):$shop_log" >&2; exit 1; }
+    for pat in 'DNF_SHOP probe trade bought=True sold=True' 'DNF_SHOP probe closed open=False' 'DNF_SHOP closed paused=False' 'DNF_SHOP probe done'; do
+      grep -q -F "$pat" "$shop_log" || { echo "NPC 商店的日志里缺 \"$pat\":$shop_log" >&2; exit 1; }
     done
     # 角色存档(M26,本项目自己的设计):第一趟无人值守打副本、探针往背包放一件武器并穿上,退出时存档;第二趟读同一个存档进城镇,
     # 日志里读到的等级、经验、金币、背包与装备栏和第一趟最后存下的一模一样,主角的外观已是穿着的那件武器,而且读完不用再写

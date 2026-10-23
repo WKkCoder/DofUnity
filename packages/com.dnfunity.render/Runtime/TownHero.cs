@@ -2400,7 +2400,7 @@ namespace Dnf.Render
     /// 一场城镇游戏:地图图层、NPC、主角与镜头。每帧先 <see cref="Update"/> 推进主角,再 <see cref="Build"/> 取绘制列表
     /// (地图图层与 NPC 的动画按墙钟时间 <c>timeMs</c> 播放,主角按自己的状态计时)。
     /// </summary>
-    public sealed class TownSession : IHeroSession, ITownExitSource, IMapSoundSource
+    public sealed class TownSession : IHeroSession, ITownExitSource, IMapSoundSource, ITownNpcSource
     {
         /// <summary>纵向常数,E-024 在网关地图上拟合出的 200。</summary>
         public const int DefaultGroundY = 200;
@@ -2417,6 +2417,10 @@ namespace Dnf.Render
         public TownCamera Camera { get; }
         public int GroundY { get; }
         public int NpcCount => _npcs.Count;
+
+        /// <summary>地图里摆着的 NPC(<see cref="ITownNpcSource"/>):只含脚本与动画都读得出来的那些,和画面上看到的一致。</summary>
+        public IReadOnlyList<TownNpc> Npcs { get; private set; }
+
         public int LayerCount => _room != null ? _room.Layers.Count : _layers.Count;
 
         /// <summary>主角走进、还没被流程处理的出口;没有出口表、或还没走进时为 null。</summary>
@@ -2474,6 +2478,12 @@ namespace Dnf.Render
             _exits = exits;
             _layers = room != null ? new List<TownScene.ResolvedLayer>() : TownScene.ResolveLayers(assets, mapPath);
             _npcs = TownScene.Resolve(assets, TownScene.ReadMapNpcs(assets, mapPath));
+            var placed = new List<TownNpc>(_npcs.Count);
+            foreach (TownScene.ResolvedNpc r in _npcs)
+            {
+                placed.Add(r.Npc);
+            }
+            Npcs = placed;
             _exits?.Arrive(hero.X, hero.Y);
         }
 

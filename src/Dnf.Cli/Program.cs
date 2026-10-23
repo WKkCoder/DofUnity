@@ -170,6 +170,15 @@ namespace Dnf.Cli
         /// <summary>bag-shot --panel:光标放进装备栏(默认在物品格子上)。</summary>
         public bool BagPanel { get; set; }
 
+        /// <summary>shop-shot --shop:商店编号(<c>itemshop.lst</c> 的编号);−1 = 第一家有商品的商店。</summary>
+        public int ShopIndex { get; set; } = -1;
+
+        /// <summary>shop-shot --sell:画出售页(默认买入页)。</summary>
+        public bool ShopSell { get; set; }
+
+        /// <summary>shop-shot --prompt:在光标处按一次回车(可叠加物品弹出数量框)。</summary>
+        public bool ShopPrompt { get; set; }
+
         /// <summary>flow-check --legacy-town:城镇只用赛丽亚房间一张图(没有出口与加载画面,城镇图册之前的行为);默认走城镇图册(证据 E-095)。</summary>
         public bool LegacyTown { get; set; }
 
@@ -309,6 +318,12 @@ namespace Dnf.Cli
             "  dnf equip-check [--level N] [--seed N]\n" +
             "      装备栏与穿脱(证据 E-118):整库扫描能掉落的装备,检查类型、可用职业与穿戴规则的结构,剑魂能穿的武器有没有外观图层与每个攻击动作的动画,\n" +
             "      再让一个 --level 级的剑魂把每个部位随机一件穿得上的穿上、全部脱下,核对装备栏、背包与面板加成的账(数值、物品名与件数来自本机的数据,只打印在终端,不要抄进入库的文件;通过与否只看结构)。\n" +
+            "  dnf shop-check [--level N]\n" +
+            "      NPC 商店(证据 E-119):整库读 itemshop.lst 与每家店的脚本、npc.lst 与每个 NPC 的 [role]、城镇区域里摆着的 NPC、价格倍率表,检查结构(每家店读得出来、商品都认得、NPC 与商店编号互相指回、\n" +
+            "      走到商店 NPC 身边总在交互范围内);再对每家店的每件商品演习买一件卖回去、买三件卖三件,核对钱与背包的账,检查商店窗口的光标滚动、无人值守探针与画面\n" +
+            "      (商店内容、价格与 NPC 对应来自本机的数据,只打印在终端,不要抄进入库的文件;通过与否只看结构)。\n" +
+            "  dnf shop-shot --png <输出.png> [--shop N] [--sell] [--tab 0..3] [--select N(从 1 数的格子)] [--prompt] [--level N] [--seed N]\n" +
+            "      商店窗口(证据 E-119)的一帧:--shop 商店编号(默认第一家有商品的),--sell 出售页,--prompt 在光标处按一次回车(可叠加物品弹出数量框)(用户数据,只在本机看,不入库)。\n" +
             "  dnf damage-check [--cases <文件>]\n" +
             "      伤害公式(证据 E-049)。不带 --cases:读 PVF 里的 Etc/EtcParameter.etc 与 Creature/Common/creatureCommon.cre,只报告个数与完整性(不输出原版数值);\n" +
             "      带 --cases:读 tools/py/damage_ref.py --gen 生成的随机用例,用 C# 公式复算并与 Python 参考实现逐项比较。\n" +
@@ -494,6 +509,15 @@ namespace Dnf.Cli
                         break;
                     case "--panel":
                         opts.BagPanel = true;
+                        break;
+                    case "--shop":
+                        opts.ShopIndex = int.TryParse(NextValue(args, ref i), out int shopIndex) && shopIndex >= 0 ? shopIndex : throw new UserError("--shop 需要非负整数(itemshop.lst 里的商店编号)");
+                        break;
+                    case "--sell":
+                        opts.ShopSell = true;
+                        break;
+                    case "--prompt":
+                        opts.ShopPrompt = true;
                         break;
                     case "--town":
                         opts.TownId = int.TryParse(NextValue(args, ref i), out int townId) && townId >= 0 ? townId : throw new UserError("--town 需要非负整数");
@@ -699,6 +723,10 @@ namespace Dnf.Cli
                     return EquipCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "bag-shot":
                     return BagShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "shop-check":
+                    return ShopCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "shop-shot":
+                    return ShopShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "damage-check":
                     return opts.CasesFile != null
                         ? DamageCheck.RunCases(opts)

@@ -138,6 +138,14 @@ namespace Dnf.Client
         private bool _bagProbeEquipped;
         private float _bagProbeClosedAt = -1f;
         private bool _bagProbeDone;
+        private bool _shopWasOpen;
+        private double _shopProbeAtSeconds = -1.0;
+        private float _shopProbeOpenedAt = -1f;
+        private bool _shopProbeTraded;
+        private float _shopProbeClosedAt = -1f;
+        private bool _shopProbeDone;
+        private int _shopSeenSerial = -1;
+        private int _shopTradesLogged;
         private EquipmentStats _bagWorn;
         private int _bagWornVersion = -1;
         private TownHero _bagWornHero;
@@ -287,6 +295,10 @@ namespace Dnf.Client
                     case "-dnfbagat":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
                                 System.Globalization.CultureInfo.InvariantCulture, out double bat) && bat >= 0.0) { _bagProbeAtSeconds = bat; i++; }
+                        break;
+                    case "-dnfshopat":
+                        if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out double sat) && sat >= 0.0) { _shopProbeAtSeconds = sat; i++; }
                         break;
                     case "-dnfplayat":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
@@ -923,8 +935,11 @@ namespace Dnf.Client
             }
             RunMenuProbe();
             RunBagProbe();
+            RunShopProbe();
+            NoteTownShops();
             bool menuOpen = _flow.Menu.Open;
             bool bagOpen = _flow.Bag.Open;
+            bool shopOpen = _flow.Shop.Open;
             if (menuOpen != _menuWasOpen)
             {
                 _menuWasOpen = menuOpen;
@@ -936,7 +951,13 @@ namespace Dnf.Client
                 _bagWasOpen = bagOpen;
                 bagEvent = bagOpen ? "open stage=" + _flow.Stage : "closed";
             }
-            bool open = menuOpen || bagOpen;             // 系统菜单与背包窗口开着都暂停游戏
+            string shopEvent = null;                     // 商店窗口同理
+            if (shopOpen != _shopWasOpen)
+            {
+                _shopWasOpen = shopOpen;
+                shopEvent = shopOpen ? "open shop=" + _flow.Shop.ShopIndex + " items=" + _flow.Shop.ShopItemCount : "closed";
+            }
+            bool open = menuOpen || bagOpen || shopOpen; // 系统菜单、背包窗口与商店窗口开着都暂停游戏
             if (open != _overlayWasOpen)
             {
                 _overlayWasOpen = open;
@@ -961,6 +982,11 @@ namespace Dnf.Client
             {
                 Debug.Log("DNF_BAG " + bagEvent + " paused=" + _paused
                     + " equipped=" + (_progress == null ? 0 : _progress.EquippedCount) + " bag=" + (_progress == null ? 0 : _progress.BagItems));
+            }
+            if (shopEvent != null)
+            {
+                Debug.Log("DNF_SHOP " + shopEvent + " paused=" + _paused + " gold=" + (_progress == null ? 0L : _progress.Gold)
+                    + " bag=" + (_progress == null ? 0 : _progress.BagItems));
             }
             if (menuOpen && TryGetCanvasPoint(Input.mousePosition, out int mx, out int my))
             {
@@ -1036,12 +1062,84 @@ namespace Dnf.Client
             }
         }
 
-        /// <summary>当前要叠在画面上的窗口(背包或系统菜单,没开返回 null);挂在 <see cref="TownView.Overlay"/> 上。</summary>
+        /// <summary>探针给钱包放的一笔钱(够买得起几件常见商品,只在 -dnfshopat 的无人值守运行里用)。</summary>
+        private const long ShopProbeGold = 50000;
+
+        /// <summary>
+        /// -dnfshopat 的无人值守探针(NPC 商店,证据 E-119):城镇阶段开始后过了指定秒数,先给钱包放一笔钱,像走到商店 NPC 旁按空格一样打开第一家有商品的店
+        /// (<see cref="ShopWindow.FirstStockedShop"/>),再过一秒无人值守地买一件、再卖回去(<see cref="ShopWindow.TryTradeAny"/>),再过一秒按 Esc 的路关上,
+        /// 再过一秒收尾;日志里留 DNF_SHOP probe 行(各只做一次)。
+        /// </summary>
+        private void RunShopProbe()
+        {
+            if (_shopProbeAtSeconds < 0.0 || _shopProbeDone || _flow == null)
+            {
+                return;
+            }
+            float now = Time.realtimeSinceStartup;
+            if (_shopProbeOpenedAt < 0f)
+            {
+                if (_flow.Stage == GameStage.Town && now - _stageRealStart >= _shopProbeAtSeconds && HeroProgressForRun() != null)
+                {
+                    _progress.AddGold(ShopProbeGold);
+                    int index = _flow.Shop.FirstStockedShop();
+                    if (index >= 0 && _flow.OpenShop(index))
+                    {
+                        _shopProbeOpenedAt = now;
+                        Debug.Log("DNF_SHOP probe open shop=" + index + " items=" + _flow.Shop.ShopItemCount + " tabs=" + _flow.Shop.TabCount + " gold=" + _progress.Gold);
+                    }
+                    else
+                    {
+                        _shopProbeDone = true;
+                        Debug.Log("DNF_SHOP probe failed shop=" + index);
+                    }
+                }
+            }
+            else if (!_shopProbeTraded && now - _shopProbeOpenedAt >= 1f)
+            {
+                _shopProbeTraded = true;
+                long before = _progress.Gold;
+                (bool bought, bool sold) = _flow.Shop.TryTradeAny(_progress, out int tried);
+                ShopWindow shop = _flow.Shop;
+                Debug.Log("DNF_SHOP probe trade bought=" + bought + " sold=" + sold + " tried=" + tried + " purchases=" + shop.Purchases + " sales=" + shop.Sales
+                    + " spent=" + shop.Spent + " earned=" + shop.Earned + " net=" + (_progress.Gold - before) + " bag=" + _progress.BagItems + " msg=\"" + shop.Message + "\"");
+                _shopTradesLogged = shop.Purchases + shop.Sales;
+            }
+            else if (_shopProbeTraded && _shopProbeClosedAt < 0f && now - _shopProbeOpenedAt >= 2f)
+            {
+                _shopProbeClosedAt = now;
+                _flow.ToggleMenu();                  // Esc 的路:开着商店时先关商店
+                Debug.Log("DNF_SHOP probe closed open=" + _flow.Shop.Open);
+            }
+            else if (_shopProbeClosedAt >= 0f && now - _shopProbeClosedAt >= 1f)
+            {
+                _shopProbeDone = true;
+                Debug.Log("DNF_SHOP probe done gold=" + _progress.Gold + " bag=" + _progress.BagItems);
+            }
+        }
+
+        /// <summary>进了一个新的城镇阶段就记一行日志:这座城镇摆着几个 NPC、其中几个开商店(同时把每个 NPC 的商店编号读进缓存,走近时不再卡一下)。</summary>
+        private void NoteTownShops()
+        {
+            if (_flow == null || _flow.Stage != GameStage.Town || _flow.StageSerial == _shopSeenSerial)
+            {
+                return;
+            }
+            _shopSeenSerial = _flow.StageSerial;
+            int shopNpcs = _flow.CountShopNpcs(out int npcs);
+            Debug.Log("DNF_SHOP town serial=" + _flow.StageSerial + " npcs=" + npcs + " shopnpcs=" + shopNpcs);
+        }
+
+        /// <summary>当前要叠在画面上的窗口(商店、背包或系统菜单,没开返回 null;城镇里走到商店 NPC 旁时叠一行提示);挂在 <see cref="TownView.Overlay"/> 上。</summary>
         private List<SceneSprite> BuildMenuOverlay()
         {
             if (_flow == null)
             {
                 return null;
+            }
+            if (_flow.Shop.Open)
+            {
+                return _progress == null ? null : ShopWindowArt.Build(_flow.Shop, _progress, _assets, _menuArt);
             }
             if (_flow.Bag.Open)
             {
@@ -1049,6 +1147,10 @@ namespace Dnf.Client
             }
             if (!_flow.Menu.Open)
             {
+                if (_progress != null && !_paused && _flow.Stage == GameStage.Town && _flow.FindNearbyShop() >= 0)
+                {
+                    return ShopWindowArt.BuildNearHint(_menuArt);
+                }
                 return null;
             }
             return SystemMenuArt.Build(_flow.Menu, _menuArt);
@@ -1288,6 +1390,8 @@ namespace Dnf.Client
                 dungeonSplash,
                 () => new CharacterSelectScreen(CharacterRoster.Local(_progress != null ? _progress.Level : _savedLevel), characterScene));
             _flow.Bag.UseAssets(_assets);            // 背包里穿武器前先问"画面上穿得出来吗"(HeroLook.CanShow)
+            _flow.Shop.UseAssets(_assets);           // NPC 商店(E-119):商店目录、物品目录、收购价倍率表都按需从 PVF 读
+            _flow.UseShopNpcs(TownShopNpcs.FromAssets(_assets));
             switch (_flowFrom)
             {
                 case "char":
@@ -1699,11 +1803,82 @@ namespace Dnf.Client
             }
         }
 
+        /// <summary>
+        /// 商店窗口开着时的输入(开着就独占):方向键移动光标(数量框开着时上下 ±1、左右 ±10),Q / E 换页,Tab 在买入与出售之间切换,回车或 X 买卖
+        /// (可叠加物品先弹数量框,再按回车确认),Esc 关上(数量框开着时 Esc 只取消数量框),鼠标点模式按钮、页签、格子(再点一下已选中的格子等于回车)、数量框的按钮。
+        /// 键位是本项目自己的占位设计(原版商店界面没有读到)。
+        /// </summary>
+        private void HandleShopInput(Event e)
+        {
+            ShopWindow shop = _flow.Shop;
+            if (e.type == EventType.KeyDown)
+            {
+                switch (e.keyCode)
+                {
+                    case KeyCode.Escape:
+                        if (shop.IsPromptOpen)
+                        {
+                            shop.CancelPrompt();
+                        }
+                        else
+                        {
+                            _flow.ToggleMenu();      // 菜单的开关键:开着商店时先把商店关上
+                        }
+                        break;
+                    case KeyCode.UpArrow:
+                        shop.Move(0, -1);
+                        break;
+                    case KeyCode.DownArrow:
+                        shop.Move(0, 1);
+                        break;
+                    case KeyCode.LeftArrow:
+                        shop.Move(-1, 0);
+                        break;
+                    case KeyCode.RightArrow:
+                        shop.Move(1, 0);
+                        break;
+                    case KeyCode.Q:
+                        shop.NextTab(-1);
+                        break;
+                    case KeyCode.E:
+                        shop.NextTab(1);
+                        break;
+                    case KeyCode.Tab:
+                        shop.ToggleMode();
+                        break;
+                    case KeyCode.Return:
+                    case KeyCode.KeypadEnter:
+                    case KeyCode.X:
+                        if (_progress != null)
+                        {
+                            shop.Activate(_progress);
+                        }
+                        break;
+                }
+            }
+            else if (e.type == EventType.MouseDown && e.button == 0 && _progress != null && TryGetCanvasPoint(Input.mousePosition, out int cx, out int cy))
+            {
+                shop.Click(cx, cy, _progress);
+            }
+            int trades = shop.Purchases + shop.Sales;
+            if (trades != _shopTradesLogged)
+            {
+                _shopTradesLogged = trades;
+                Debug.Log("DNF_SHOP trade purchases=" + shop.Purchases + " sales=" + shop.Sales + " spent=" + shop.Spent + " earned=" + shop.Earned
+                    + " gold=" + _progress.Gold + " bag=" + _progress.BagItems + " msg=\"" + shop.Message + "\"");
+            }
+        }
+
         private void HandleRunningInput(Event e)
         {
             if (_flow != null && _flow.Menu.Open)
             {
                 HandleMenuInput(e);
+                return;
+            }
+            if (_flow != null && _flow.Shop.Open)
+            {
+                HandleShopInput(e);
                 return;
             }
             if (_flow != null && _flow.Bag.Open)
@@ -1723,6 +1898,10 @@ namespace Dnf.Client
                         else if (InCharacterSelect)
                         {
                             _flow.CharacterSelect.Confirm();
+                        }
+                        else if (!_paused && _flow != null && _flow.Stage == GameStage.Town && HeroProgressForRun() != null && _flow.TryOpenNearbyShop())
+                        {
+                            // 城镇里走到商店 NPC 身边按空格:打开商店(本项目自己的占位键位;游戏暂停由 PumpMenu 接着处理)
                         }
                         else
                         {

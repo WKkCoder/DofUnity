@@ -217,6 +217,26 @@ namespace Dnf.Game
         }
 
         /// <summary>
+        /// 从这一页第 <paramref name="index"/> 格拿走 <paramref name="count"/> 件(卖东西用):格子不存在、件数不大于 0 或超过这一格的件数时一件也不拿并返回 false;
+        /// 拿空的格子整格移除(后面的往前补)。
+        /// </summary>
+        public bool RemoveAt(InventoryTab tab, int index, int count)
+        {
+            List<ItemStack> list = _tabs[(int)tab];
+            if ((uint)index >= (uint)list.Count || count <= 0 || count > list[index].Count)
+            {
+                return false;
+            }
+            ItemStack stack = list[index];
+            stack.Count -= count;
+            if (stack.Count == 0)
+            {
+                list.RemoveAt(index);
+            }
+            return true;
+        }
+
+        /// <summary>
         /// 把这一页第 <paramref name="index"/> 格换成一件 <paramref name="info"/>(穿装备换下来的那件放回原来的格):
         /// 格子不存在、物品不属于这一页、或者物品不是装备(只有装备一格一件,可以原位换)时返回 false、什么都不动。
         /// </summary>

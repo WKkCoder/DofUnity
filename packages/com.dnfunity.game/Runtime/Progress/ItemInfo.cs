@@ -185,8 +185,20 @@ namespace Dnf.Game
         /// <summary><c>[usable job]</c> 里的职业标签(如 [all]);没写时为空表。</summary>
         public List<string> UsableJobs { get; }
 
-        /// <summary><c>[price]</c>(没写为 0)。</summary>
+        /// <summary><c>[price]</c>(没写为 0)。商店买入的单价。</summary>
         public int Price { get; set; }
+
+        /// <summary><c>[value]</c>(没写为 0):商店收购时的基准价,收购价 = 它乘上价格倍率表的一档再除以 1000(见 <see cref="ItemPricing"/>,证据 E-119)。</summary>
+        public int Value { get; set; }
+
+        /// <summary><c>[finish point price]</c>(没写为 0):不为 0 的物品商店不收(服务端 <c>user_sell_item</c> 的一道检查,证据 E-119)。</summary>
+        public int FinishPointPrice { get; set; }
+
+        /// <summary><c>[possible kiri protect]</c>(标签本身就是开关,后面不带值):收购价用价格倍率表的另一档(服务端 <c>getItemSellPrice</c> 的第四个参数,证据 E-119)。</summary>
+        public bool KiriProtectable { get; set; }
+
+        /// <summary><c>[attach type]</c> 是 <c>[trade delete]</c>:商店不收(证据 E-119)。</summary>
+        public bool IsTradeDelete => string.Equals(AttachType, "[trade delete]", StringComparison.OrdinalIgnoreCase);
 
         /// <summary><c>[stack limit]</c>(没写为 0,按 <see cref="Inventory.DefaultStackLimit"/> 处理)。</summary>
         public int StackLimit { get; set; }
@@ -236,6 +248,9 @@ namespace Dnf.Game
             AttachType,
             UsableJob,
             Price,
+            Value,
+            FinishPointPrice,
+            KiriProtectable,
             StackLimit,
             MoveSound,
         }
@@ -255,6 +270,9 @@ namespace Dnf.Game
             ["[attach type]"] = Field.AttachType,
             ["[usable job]"] = Field.UsableJob,
             ["[price]"] = Field.Price,
+            ["[value]"] = Field.Value,
+            ["[finish point price]"] = Field.FinishPointPrice,
+            ["[possible kiri protect]"] = Field.KiriProtectable,
             ["[stack limit]"] = Field.StackLimit,
             ["[move wav]"] = Field.MoveSound,
         };
@@ -299,6 +317,10 @@ namespace Dnf.Game
                     else if (field == Field.SpecialMonsterDrop)
                     {
                         info.SpecialMonsterDrop = false;
+                    }
+                    else if (field == Field.KiriProtectable)
+                    {
+                        info.KiriProtectable = true;         // 标签本身就是开关
                     }
                     continue;
                 }
@@ -357,6 +379,20 @@ namespace Dnf.Game
                         if (isInt && !haveInt)
                         {
                             info.Price = t.Value;
+                            haveInt = true;
+                        }
+                        break;
+                    case Field.Value:
+                        if (isInt && !haveInt)
+                        {
+                            info.Value = t.Value;
+                            haveInt = true;
+                        }
+                        break;
+                    case Field.FinishPointPrice:
+                        if (isInt && !haveInt)
+                        {
+                            info.FinishPointPrice = t.Value;
                             haveInt = true;
                         }
                         break;

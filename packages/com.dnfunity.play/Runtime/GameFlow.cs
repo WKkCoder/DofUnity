@@ -192,7 +192,82 @@ namespace Dnf.Play
                 Bag.Close();
                 return true;
             }
-            return !Menu.Open && Bag.Show(Stage);
+            return !Menu.Open && !Shop.Open && Bag.Show(Stage);
+        }
+
+        /// <summary>
+        /// NPC 商店窗口(本项目自己的占位设计,见 <see cref="ShopWindow"/>,证据 E-119):只在城镇阶段能打开(<see cref="OpenShop"/>、<see cref="TryOpenNearbyShop"/>),
+        /// 开着的时候宿主让游戏暂停(和背包一样,<see cref="Poll"/> 在它开着时不处理各阶段的结果);换阶段时自动关上。
+        /// 宿主要先接上数据本(<see cref="ShopWindow.UseAssets"/>)与"NPC → 商店"的对应(<see cref="UseShopNpcs"/>)。
+        /// </summary>
+        public ShopWindow Shop { get; } = new ShopWindow();
+
+        private TownShopNpcs _shopNpcs;
+
+        /// <summary>接上"NPC → 商店"的对应(宿主用游戏素材造,见 <see cref="TownShopNpcs.FromAssets"/>);没接就没有 NPC 商店。</summary>
+        public void UseShopNpcs(TownShopNpcs npcs)
+        {
+            _shopNpcs = npcs ?? throw new ArgumentNullException(nameof(npcs));
+        }
+
+        /// <summary>
+        /// 城镇里主角身边最近的商店 NPC 开的商店编号;不在城镇、会话没有 NPC 列表(<see cref="ITownNpcSource"/>)、没接对应
+        /// 或范围里没有商店 NPC 时返回 −1。宿主每帧可以问一次,用来画"空格打开商店"的提示。
+        /// </summary>
+        public int FindNearbyShop()
+        {
+            if (StageSerial == 0 || Stage != GameStage.Town || _shopNpcs == null || !(Session is ITownNpcSource source))
+            {
+                return -1;
+            }
+            return _shopNpcs.TryFindNear(source.Npcs, source.HeroX, source.HeroY, out TownNpc _, out int shop) ? shop : -1;
+        }
+
+        /// <summary>
+        /// 打开编号为 <paramref name="shopIndex"/> 的商店:只在城镇阶段、没有别的窗口(系统菜单、背包、商店)开着、数据本读得出这家店时成功。
+        /// 返回有没有打开。
+        /// </summary>
+        public bool OpenShop(int shopIndex)
+        {
+            if (StageSerial == 0 || Menu.Open || Bag.Open || Shop.Open)
+            {
+                return false;
+            }
+            return Shop.Show(Stage, shopIndex);
+        }
+
+        /// <summary>
+        /// 当前城镇会话里摆着的 NPC 有几个开商店(返回值),<paramref name="npcs"/> 是摆着的 NPC 总数;不在城镇、会话没有 NPC 列表或没接对应时返回 0、总数照给(没有列表是 0)。
+        /// 宿主进城时记一行日志用。
+        /// </summary>
+        public int CountShopNpcs(out int npcs)
+        {
+            npcs = 0;
+            if (StageSerial == 0 || Stage != GameStage.Town || !(Session is ITownNpcSource source))
+            {
+                return 0;
+            }
+            npcs = source.Npcs.Count;
+            if (_shopNpcs == null)
+            {
+                return 0;
+            }
+            int shops = 0;
+            for (int i = 0; i < source.Npcs.Count; i++)
+            {
+                if (_shopNpcs.ShopOf(source.Npcs[i].Id) >= 0)
+                {
+                    shops++;
+                }
+            }
+            return shops;
+        }
+
+        /// <summary>空格键:主角身边有商店 NPC 就打开它的商店(<see cref="FindNearbyShop"/> + <see cref="OpenShop"/>);返回有没有打开。</summary>
+        public bool TryOpenNearbyShop()
+        {
+            int shop = FindNearbyShop();
+            return shop >= 0 && OpenShop(shop);
         }
 
         /// <summary>系统菜单里选了"退出游戏":宿主看到它就退出(流程自己不退出)。</summary>
@@ -207,6 +282,11 @@ namespace Dnf.Play
             if (StageSerial == 0)
             {
                 return false;
+            }
+            if (Shop.Open)
+            {
+                Shop.Close();            // 商店开着时 Esc 先关商店(数量框开着时 Esc 只取消数量框,由宿主的输入处理)
+                return true;
             }
             if (Bag.Open)
             {
@@ -342,9 +422,9 @@ namespace Dnf.Play
             {
                 return ApplyMenuAction(picked);
             }
-            if (Menu.Open || Bag.Open)
+            if (Menu.Open || Bag.Open || Shop.Open)
             {
-                return false;   // 菜单或背包开着:游戏暂停,各阶段的结果(出口、结算)等关上之后再处理
+                return false;   // 菜单、背包或商店开着:游戏暂停,各阶段的结果(出口、结算)等关上之后再处理
             }
             switch (Stage)
             {
@@ -487,6 +567,7 @@ namespace Dnf.Play
             bool first = StageSerial == 0;
             Menu.Close();                        // 换阶段时系统菜单作废(没取走的选择也一起丢)
             Bag.Close();                         // 背包窗口也关上
+            Shop.Close();                        // 商店窗口也关上
             Stage = to;
             Session = session;
             Select = select;

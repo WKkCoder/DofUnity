@@ -50,13 +50,13 @@ namespace Dnf.Play
         /// <summary>等级与经验的变化次数:各个房间的战斗会话据此发现"别的房间里升了级",把自己的生命上限与攻击面板换成新等级的。</summary>
         public int Version { get; private set; }
 
-        /// <summary>身上的金币(拾取地上的金币加上来,证据 E-116;花钱的地方还没有,存档是后面的事)。副本里各房间的战斗会话共用同一个对象。</summary>
+        /// <summary>身上的金币(拾取地上的金币、向商店卖东西加上来,在商店买东西花掉;证据 E-116、E-119)。副本里各房间的战斗会话共用同一个对象。</summary>
         public long Gold { get; private set; }
 
-        /// <summary>从创建起一共拾到多少金币(<see cref="Gold"/> 之后会被花掉,这个不减)。</summary>
+        /// <summary>从创建起一共进账多少金币(拾到的加上卖东西得到的;<see cref="Gold"/> 之后会被花掉,这个不减)。</summary>
         public long GoldGained { get; private set; }
 
-        /// <summary>背包(证据 E-117:拾取地上的物品放进去;副本里各房间共用同一个对象)。使用消耗品、出售还没有做。</summary>
+        /// <summary>背包(证据 E-117:拾取地上的物品放进去,商店买卖,E-119;副本里各房间共用同一个对象)。使用消耗品还没有做。</summary>
         public Inventory Bag { get; } = new Inventory();
 
         /// <summary>装备栏(证据 E-118:武器、称号、上衣……魔法石共 12 格,从背包穿上去;副本里各房间共用同一个对象)。</summary>
@@ -177,6 +177,52 @@ namespace Dnf.Play
             }
             Gold -= amount;
             return true;
+        }
+
+        /// <summary>
+        /// 在商店买 <paramref name="count"/> 件 <paramref name="item"/>(规则见 <see cref="ShopRules.CheckBuy"/>,<paramref name="shop"/> 为 null 时不查"这家店卖不卖")。
+        /// 与服务端同一个次序:检查通过之后先放进背包、再扣钱;买到的不算"拾到的物品"(<see cref="ItemsGained"/> 不变)。装备按 1 件买。
+        /// 不合规则时什么都不动,返回原因。
+        /// </summary>
+        public ShopResult Buy(ItemShopDef shop, ItemInfo item, int count)
+        {
+            ShopResult result = ShopRules.CheckBuy(shop, item, count, Gold, Bag);
+            if (result != ShopResult.Ok)
+            {
+                return result;
+            }
+            int n = item.IsEquipment ? 1 : count;
+            long cost = ItemPricing.BuyPrice(item, n);
+            Bag.Add(item, n);
+            Gold -= cost;
+            return ShopResult.Ok;
+        }
+
+        /// <summary>
+        /// 把背包 <paramref name="tab"/> 页第 <paramref name="index"/> 格里的 <paramref name="count"/> 件卖给商店(规则见 <see cref="ShopRules.CheckSell"/>,
+        /// 价格见 <see cref="ItemPricing.SellPrice"/>,<paramref name="rates"/> 为 null 用替身倍率)。装备按 1 件卖。卖得的钱进 <see cref="Gold"/>(也算进 <see cref="GoldGained"/>)。
+        /// 不合规则时什么都不动,<paramref name="earned"/> 是 0。
+        /// </summary>
+        public ShopResult Sell(InventoryTab tab, int index, int count, ItemPriceRates rates, out long earned)
+        {
+            earned = 0;
+            System.Collections.Generic.IReadOnlyList<ItemStack> stacks = Bag.Tab(tab);
+            if ((uint)index >= (uint)stacks.Count)
+            {
+                return ShopResult.NoItem;
+            }
+            ItemStack stack = stacks[index];
+            ShopResult result = ShopRules.CheckSell(stack.Info, count, stack.Count);
+            if (result != ShopResult.Ok)
+            {
+                return result;
+            }
+            int n = stack.Info.IsEquipment ? 1 : count;
+            long price = ItemPricing.SellPrice(stack.Info, n, rates);
+            Bag.RemoveAt(tab, index, n);
+            AddGold(price);
+            earned = price;
+            return ShopResult.Ok;
         }
 
         /// <summary>直接设成某个等级(经验设成这一级的门槛;测试与 --level 之类的开关用),不给点数。</summary>
