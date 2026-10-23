@@ -24,6 +24,7 @@
 #      金币(E-116):整条流程日志里最后一行 DNF_GOLD 掉出与捡起一样多,带伤害的复活那一趟里钱包(purse)不为 0。
 #      物品(E-117):日志里若有 DNF_ITEM 行,最后一行掉出与捡起一样多、没有因背包满而留下的。
 #     背包与装备栏(E-118):副本里探针放一件武器、开背包、试穿、关上,日志里 DNF_BAG 各行齐全,主角的武器外观已换成装备栏里的那件。
+#     角色存档(M26):第一趟打副本、穿一件武器,退出时存;第二趟读同一个存档,日志里读到的与存下的一样,主角外观已是那件武器,读完没有新写。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -624,6 +625,54 @@ if [ "$platform" = "macos" ]; then
     for pat in 'DNF_BAG probe open granted=True' 'DNF_BAG open stage=Dungeon paused=True' 'DNF_BAG probe equip ok=True' 'DNF_BAG probe closed equipped=1' 'DNF_BAG closed paused=False' 'DNF_BAG probe look matches=True weapon=True'; do
       grep -q -F "$pat" "$bag_log" || { echo "背包与装备栏的日志里缺 \"$pat\":$bag_log" >&2; exit 1; }
     done
+    # 角色存档(M26,本项目自己的设计):第一趟无人值守打副本、探针往背包放一件武器并穿上,退出时存档;第二趟读同一个存档进城镇,
+    # 日志里读到的等级、经验、金币、背包与装备栏和第一趟最后存下的一模一样,主角的外观已是穿着的那件武器,而且读完不用再写
+    save_file="$PWD/out/m26-hero.sav"
+    rm -f "$save_file" "$save_file.tmp" "$save_file.bad" "$save_file.dropped"
+    save_log1="$PWD/re/unity-run-town-save1-macos.log"
+    save_log2="$PWD/re/unity-run-town-save2-macos.log"
+    rm -f "$save_log1" "$save_log2"
+    set +e
+    "$app" -batchmode -logFile "$save_log1" -dnfdir "$DNF_DIR" -dnfsave "$save_file" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" -dnflevel 30 \
+      -dnfbagat 3 -dnftimescale 4 -dnfquitafter 25
+    rc=$?
+    set -e
+    echo "播放器退出码(存档第一趟): $rc"
+    grep -E 'DNF_SAVE' "$save_log1" | cut -c1-260 || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$save_log1"; then
+      echo "存档第一趟的日志里有异常:$save_log1" >&2
+      exit 1
+    fi
+    grep -q -F 'DNF_SAVE open file=m26-hero.sav found=False' "$save_log1" \
+      || { echo "第一趟开始时不应有存档(DNF_SAVE open … found=False):$save_log1" >&2; exit 1; }
+    [ -s "$save_file" ] || { echo "第一趟结束后应有存档文件:$save_file" >&2; exit 1; }
+    saved_fields="$(grep -E 'DNF_SAVE saved' "$save_log1" | tail -1 | grep -o -E 'level=[0-9]+ exp=[0-9]+ gold=[0-9]+ bag=[0-9]+ equipped=[0-9]+' || true)"
+    case "$saved_fields" in
+      *' equipped=1') ;;
+      *) echo "第一趟最后存下的应穿着 1 件装备(DNF_SAVE saved … equipped=1),实际:$saved_fields" >&2; exit 1 ;;
+    esac
+    set +e
+    "$app" -batchmode -logFile "$save_log2" -dnfdir "$DNF_DIR" -dnfsave "$save_file" -dnfflow -dnfflowfrom town -dnftimescale 4 -dnfquitafter 6
+    rc=$?
+    set -e
+    echo "播放器退出码(存档第二趟): $rc"
+    grep -E 'DNF_SAVE' "$save_log2" | cut -c1-260 || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$save_log2"; then
+      echo "存档第二趟的日志里有异常:$save_log2" >&2
+      exit 1
+    fi
+    loaded_fields="$(grep -E 'DNF_SAVE loaded' "$save_log2" | tail -1 | grep -o -E 'level=[0-9]+ exp=[0-9]+ gold=[0-9]+ bag=[0-9]+ equipped=[0-9]+' || true)"
+    [ -n "$loaded_fields" ] && [ "$loaded_fields" = "$saved_fields" ] \
+      || { echo "第二趟读到的应与第一趟最后存下的一样:存下 \"$saved_fields\"、读到 \"$loaded_fields\":$save_log2" >&2; exit 1; }
+    grep -q -E 'DNF_SAVE loaded .* dropped=0' "$save_log2" || { echo "读存档时不应丢东西(dropped=0):$save_log2" >&2; exit 1; }
+    grep -q -F 'DNF_SAVE look matches=True weapon=True' "$save_log2" \
+      || { echo "读了存档进城镇,主角应已换上穿着的武器(DNF_SAVE look matches=True weapon=True):$save_log2" >&2; exit 1; }
+    if grep -q -E 'DNF_SAVE saved' "$save_log2"; then
+      echo "读完存档什么都没变,不应再写(DNF_SAVE saved):$save_log2" >&2
+      exit 1
+    fi
   else
     echo "没有设置 DNF_DIR:跳过离屏渲染校验"
   fi

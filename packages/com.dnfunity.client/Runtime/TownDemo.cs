@@ -112,6 +112,14 @@ namespace Dnf.Client
         private bool _noExp;
         private int _heroLevel = 1;
         private HeroProgress _progress;
+        private string _savePath;                          // -dnfsave <路径|none>(M26):存档文件;没给时有窗口的运行存在 persistentDataPath 里,无人值守(-batchmode)的运行不存档
+        private bool _heroLevelGiven;                      // 命令行给了 -dnflevel:读档之后等级以命令行为准,并且没有明确的 -dnfsave 时不碰默认存档
+        private FileHeroSaveStore _saveStore;
+        private HeroSave _loadedSave;
+        private HeroSaver _saver;
+        private string _saveError;
+        private bool _noteSaveLook;
+        private int _savedLevel = 1;                       // 选角界面上画的等级:存档里的(没有存档是 1)
         private ReviveCoins _coins;
         private int _coinStock = ReviveCoins.DefaultStock;
         private int _monsterDamageScale = 1;
@@ -255,7 +263,10 @@ namespace Dnf.Client
                         break;
                     case "-dnflevel":
                         if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
-                                System.Globalization.CultureInfo.InvariantCulture, out int heroLevel) && heroLevel >= 1 && heroLevel <= 85) { _heroLevel = heroLevel; i++; }
+                                System.Globalization.CultureInfo.InvariantCulture, out int heroLevel) && heroLevel >= 1 && heroLevel <= 85) { _heroLevel = heroLevel; _heroLevelGiven = true; i++; }
+                        break;
+                    case "-dnfsave":
+                        if (value != null) { _savePath = value; i++; }
                         break;
                     case "-dnfcoins":
                         if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
@@ -599,8 +610,104 @@ namespace Dnf.Client
             if (_progress == null)
             {
                 _progress = HeroProgress.CreateForLocalHero(_assets, _heroLevel);
+                RestoreSave();
             }
             return _progress;
+        }
+
+        /// <summary>
+        /// 存档(M26,本项目自己的设计):<c>-dnfsave 路径</c> 指定存档文件,<c>none</c> 不存;没给时有窗口的运行存在 persistentDataPath 的 hero.sav,
+        /// 无人值守(-batchmode)的运行与带 -dnflevel 的测试运行不存(免得把真存档弄脏)。在选角界面之前读,选角界面上画存档里的等级。
+        /// </summary>
+        private void OpenSave()
+        {
+            string path = _savePath;
+            if (path == null && !Application.isBatchMode && !_heroLevelGiven)
+            {
+                path = Path.Combine(Application.persistentDataPath, "hero.sav");
+            }
+            if (string.IsNullOrEmpty(path) || string.Equals(path, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+            _saveStore = new FileHeroSaveStore(path);
+            _loadedSave = _saveStore.Load(out string note);
+            _savedLevel = _loadedSave != null ? _loadedSave.Level : 1;
+            Debug.Log("DNF_SAVE open file=" + Path.GetFileName(path) + " found=" + (_loadedSave != null) + (_loadedSave != null ? " level=" + _loadedSave.Level : string.Empty));
+            if (note != null)
+            {
+                Debug.Log("DNF_SAVE problem " + note);
+            }
+        }
+
+        /// <summary>等级进度造好之后把存档还原上去,再交给存档员看着;还原时丢了东西(物品编号在当前数据里找不到)就先把原存档备份成 .dropped,免得被少了东西的新存档覆盖。</summary>
+        private void RestoreSave()
+        {
+            if (_saveStore == null || _progress == null)
+            {
+                return;
+            }
+            if (_loadedSave != null)
+            {
+                SaveApplyReport report = _progress.RestoreFromData(_loadedSave, _assets);
+                if (_heroLevelGiven)
+                {
+                    _progress.SetLevel(_heroLevel);
+                }
+                Debug.Log("DNF_SAVE loaded level=" + _progress.Level + " exp=" + _progress.Exp + " gold=" + _progress.Gold + " bag=" + _progress.BagItems
+                    + " equipped=" + _progress.EquippedCount + " stacks=" + report.BagStacks + " moved=" + report.Moved + " dropped=" + report.Dropped);
+                if (report.Dropped > 0)
+                {
+                    BackupSave(".dropped");
+                }
+            }
+            _saver = new HeroSaver(_saveStore, _progress, _loadedSave);
+        }
+
+        private void BackupSave(string suffix)
+        {
+            try
+            {
+                string backup = _saveStore.Path + suffix;
+                if (File.Exists(_saveStore.Path) && !File.Exists(backup))
+                {
+                    File.Copy(_saveStore.Path, backup);
+                    Debug.Log("DNF_SAVE backup " + Path.GetFileName(backup));
+                }
+            }
+            catch (IOException e)
+            {
+                Debug.Log("DNF_SAVE problem backup failed: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// 存一次档(<paramref name="reason"/> 写进日志;auto 是每帧的定时检查,别的是立刻存):内容没变不写,写了留一行 DNF_SAVE saved,写失败留一行 DNF_SAVE problem(同一个原因只写一次)。
+        /// </summary>
+        private void FlushSave(string reason)
+        {
+            if (_saver == null)
+            {
+                return;
+            }
+            double now = Time.realtimeSinceStartupAsDouble;
+            bool wrote = reason == "auto" ? _saver.Tick(now) : _saver.Flush(now);
+            if (wrote)
+            {
+                _saveError = null;
+                Debug.Log("DNF_SAVE saved reason=" + reason + " level=" + _progress.Level + " exp=" + _progress.Exp + " gold=" + _progress.Gold + " bag=" + _progress.BagItems
+                    + " equipped=" + _progress.EquippedCount + " saves=" + _saver.Saves);
+            }
+            else if (_saver.LastError != null && _saver.LastError != _saveError)
+            {
+                _saveError = _saver.LastError;
+                Debug.Log("DNF_SAVE problem " + _saver.LastError);
+            }
+        }
+
+        private void OnApplicationQuit()
+        {
+            FlushSave("quit");
         }
 
         /// <summary>
@@ -1043,6 +1150,7 @@ namespace Dnf.Client
             }
             NoteRevive();
             NoteGold();
+            FlushSave("auto");                       // 隔十秒查一次有没有变(捡了东西、升了级),变了才写
             if (_flow.CharacterSelect != null && _flow.CharacterSelect.Outcome == CharacterSelectOutcome.Quit)
             {
                 Debug.Log("DNF_FLOW quit from character select");
@@ -1066,11 +1174,18 @@ namespace Dnf.Client
         {
             TownView previous = _view;
             _session = _flow.Session;
+            if (!_noteSaveLook && _loadedSave != null && _progress != null && _flow.Stage == GameStage.Town)
+            {
+                // 读了存档之后第一次进城镇:主角的外观应已是存档里穿着的武器(日志留一行,无人值守的检查看它)
+                _noteSaveLook = true;
+                Debug.Log("DNF_SAVE look matches=" + HeroLook.Matches(_flow.Session?.Hero, _progress) + " weapon=" + (_progress.WeaponPath != null));
+            }
             _view = new TownView(_assets, _flow.Scene, StageBackground);
             _view.Overlay = BuildMenuOverlay;        // 系统菜单叠在每个阶段的画面之上(没开时不叠)
             _stageRealStart = Time.realtimeSinceStartup;
             previous?.Dispose();
             _shownSerial = _flow.StageSerial;
+            FlushSave("stage");                      // 每次阶段切换(副本打完回城、结算、换区域)都存一次
             _loggedChoice = SettlementChoice.None;
             _noteDeaths = 0;
             _noteRevives = 0;
@@ -1148,6 +1263,11 @@ namespace Dnf.Client
         /// <summary>流程模式的初始化:造 <see cref="GameFlow"/>(城镇、副本两种会话的工厂接上这个演示的数据与参数)并进入起始阶段;带自动机参数时再造流程自动机。</summary>
         private void StartFlow()
         {
+            OpenSave();
+            if (_saveStore != null)
+            {
+                HeroProgressForRun();                // 城镇里就要按存档里穿的武器造主角,所以进度在流程之前就造好
+            }
             string dungeon = string.IsNullOrEmpty(_dungeonPath) ? DefaultDungeon : _dungeonPath;
             // 副本选择界面:读得到世界地图就画原版的世界地图界面(E-094),读不到(数据不全、-dnfworldmap none)退回占位名单
             WorldMapSet world = string.Equals(_worldMapPath, "none", StringComparison.OrdinalIgnoreCase) ? null : WorldMapCatalog.Load(_assets, _worldMapPath);
@@ -1166,7 +1286,7 @@ namespace Dnf.Client
                 realSelect ? (System.Collections.Generic.IEnumerable<DungeonEntry>)world.Entries : new[] { new DungeonEntry(dungeon, null) },
                 realSelect ? world.Scene : null,
                 dungeonSplash,
-                () => new CharacterSelectScreen(CharacterRoster.Local(), characterScene));
+                () => new CharacterSelectScreen(CharacterRoster.Local(_progress != null ? _progress.Level : _savedLevel), characterScene));
             _flow.Bag.UseAssets(_assets);            // 背包里穿武器前先问"画面上穿得出来吗"(HeroLook.CanShow)
             switch (_flowFrom)
             {

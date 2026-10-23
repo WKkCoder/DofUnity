@@ -231,6 +231,37 @@ namespace Dnf.Game
             return true;
         }
 
+        /// <summary>清空整个背包(存档还原用)。</summary>
+        public void Clear()
+        {
+            foreach (List<ItemStack> tab in _tabs)
+            {
+                tab.Clear();
+            }
+        }
+
+        /// <summary>
+        /// 存档还原用:把 <paramref name="count"/> 件 <paramref name="info"/> 放成新的格子(不并进同编号已有的格子,所以存档里的格子布局原样回来);
+        /// 一格放不下的部分接着开新格,这一页满了就停。返回放进去几件(没有物品或数量不大于 0 返回 0)。
+        /// </summary>
+        public int RestoreStack(ItemInfo info, int count)
+        {
+            if (info == null || count <= 0)
+            {
+                return 0;
+            }
+            List<ItemStack> tab = _tabs[(int)TabOf(info)];
+            int limit = StackLimitOf(info);
+            int remaining = count;
+            while (remaining > 0 && tab.Count < _slotsPerTab)
+            {
+                int put = Math.Min(remaining, limit);
+                tab.Add(new ItemStack(info, put));
+                remaining -= put;
+            }
+            return count - remaining;
+        }
+
         /// <summary>拿掉 <paramref name="count"/> 件某编号的物品(先拿后放进去的格);不够就一件也不拿并返回 false。</summary>
         public bool Remove(int code, int count = 1)
         {

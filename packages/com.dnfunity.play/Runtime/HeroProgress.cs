@@ -193,6 +193,125 @@ namespace Dnf.Play
         }
 
         /// <summary>
+        /// 现在的进度拍成存档快照(M26,<see cref="HeroSave"/>):等级、经验、点数、金币、背包每一格(物品编号与数量)、装备栏每一件。
+        /// 只有数字与物品编号,不含物品本身的任何内容。
+        /// </summary>
+        public HeroSave Snapshot()
+        {
+            var save = new HeroSave
+            {
+                Job = Job,
+                Level = Level,
+                Exp = Exp,
+                SkillPoints = SkillPoints,
+                AwakeningPoints = AwakeningPoints,
+                LevelUps = LevelUps,
+                TotalGained = TotalGained,
+                Gold = Gold,
+                GoldGained = GoldGained,
+                ItemsGained = ItemsGained,
+            };
+            for (int t = 0; t < Inventory.TabCount; t++)
+            {
+                foreach (ItemStack stack in Bag.Tab((InventoryTab)t))
+                {
+                    save.Bag.Add(new SavedStack(stack.Info.Code, stack.Count));
+                }
+            }
+            for (int part = EquipmentSlots.First; part <= EquipmentSlots.Last; part++)
+            {
+                ItemInfo worn = Worn.Get(part);
+                if (worn != null)
+                {
+                    save.Worn.Add(new SavedWorn(part, worn.Code));
+                }
+            }
+            return save;
+        }
+
+        /// <summary>
+        /// 把存档还原到这个进度上(整个替换:等级、经验、点数、金币、背包与装备栏);<paramref name="lookup"/> 按物品编号取物品(没有返回 null)。
+        /// 背包的格子布局原样回来;存档里穿着的装备通过穿戴规则才穿回去,穿不上(数据变了)的放回背包,编号找不到或背包放不下的丢掉,数目在返回值里。
+        /// 等级夹在 1 到 <see cref="Leveling.MaxLevel"/>,经验不低于这一级的门槛。
+        /// </summary>
+        public SaveApplyReport Restore(HeroSave save, Func<int, ItemInfo> lookup)
+        {
+            if (save == null)
+            {
+                throw new ArgumentNullException(nameof(save));
+            }
+            if (lookup == null)
+            {
+                throw new ArgumentNullException(nameof(lookup));
+            }
+            Job = save.Job >= 0 && save.Job < EquipRules.JobCount ? save.Job : EquipRules.SwordmanJob;
+            Level = Math.Max(1, Math.Min(save.Level, Leveling.MaxLevel));
+            int floor = Table.LevelExp(Level);
+            Exp = save.Exp > floor ? save.Exp : floor;
+            SkillPoints = Math.Max(0, save.SkillPoints);
+            AwakeningPoints = Math.Max(0, save.AwakeningPoints);
+            LevelUps = Math.Max(0, save.LevelUps);
+            TotalGained = Math.Max(0L, save.TotalGained);
+            Gold = Math.Max(0L, save.Gold);
+            GoldGained = Math.Max(Gold, save.GoldGained);
+            ItemsGained = Math.Max(0, save.ItemsGained);
+            Version++;
+            Bag.Clear();
+            Worn.Clear();
+            int stacks = 0;
+            int moved = 0;
+            int dropped = 0;
+            int wornCount = 0;
+            foreach (SavedStack saved in save.Bag)
+            {
+                ItemInfo info = lookup(saved.Code);
+                int put = info == null ? 0 : Bag.RestoreStack(info, saved.Count);
+                if (put > 0)
+                {
+                    stacks++;
+                }
+                if (put < saved.Count)
+                {
+                    dropped++;
+                }
+            }
+            foreach (SavedWorn saved in save.Worn)
+            {
+                ItemInfo info = lookup(saved.Code);
+                if (info == null)
+                {
+                    dropped++;
+                }
+                else if (info.IsEquipment && info.Part == saved.Part && EquipmentSlots.IsSlot(saved.Part) && Worn.Get(saved.Part) == null
+                    && EquipRules.Check(info, saved.Part, Job, Level) == EquipResult.Ok)
+                {
+                    Worn.Restore(saved.Part, info);
+                    wornCount++;
+                }
+                else if (Bag.RestoreStack(info, 1) == 1)
+                {
+                    moved++;
+                }
+                else
+                {
+                    dropped++;
+                }
+            }
+            return new SaveApplyReport(stacks, wornCount, moved, dropped);
+        }
+
+        /// <summary>宿主用:物品按编号从用户的数据里读(<see cref="ItemCatalog.Get"/>),其余同 <see cref="Restore(HeroSave, Func{int, ItemInfo})"/>。</summary>
+        public SaveApplyReport RestoreFromData(HeroSave save, DnfAssets assets)
+        {
+            if (assets == null)
+            {
+                throw new ArgumentNullException(nameof(assets));
+            }
+            var catalog = new ItemCatalog(new GameData(new PvfScriptSource(assets.Pvf)));
+            return Restore(save, catalog.Get);
+        }
+
+        /// <summary>
         /// 读真实数据造一个主角的进度:升级经验表、技能点表、倍率表来自数据(缺文件时是空表或中性倍率),
         /// 基础经验表优先用用户导出的(<see cref="MobRewards"/>),没有就用占位表。
         /// </summary>

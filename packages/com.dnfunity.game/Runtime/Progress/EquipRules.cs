@@ -208,6 +208,35 @@ namespace Dnf.Game
             }
         }
 
+        /// <summary>存档还原用:清空全部格子(有东西才算一次变化)。</summary>
+        public void Clear()
+        {
+            bool any = false;
+            for (int i = 0; i < _items.Length; i++)
+            {
+                if (_items[i] != null)
+                {
+                    _items[i] = null;
+                    any = true;
+                }
+            }
+            if (any)
+            {
+                Version++;
+            }
+        }
+
+        /// <summary>存档还原用:直接放(不检查规则,规则由调用的一方先查)。部位没有格子或物品为空时什么也不做并返回 false。</summary>
+        public bool Restore(int part, ItemInfo item)
+        {
+            if (!IsSlot(part) || item == null)
+            {
+                return false;
+            }
+            Set(part, item);
+            return true;
+        }
+
         /// <summary>直接放(不检查规则;<see cref="EquipActions"/> 检查之后才调它)。部位没有格子或内容没变时什么也不做。</summary>
         internal void Set(int part, ItemInfo item)
         {

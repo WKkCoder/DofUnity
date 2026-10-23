@@ -161,6 +161,26 @@ internal static class EquipCheck
         Report(panel.PhysicalAttack == expected.PhysicalAttack && panel.MagicalAttack == expected.MagicalAttack,
             "面板装备加成等于挑出各件的加总(物攻 " + panel.PhysicalAttack + "、魔攻 " + panel.MagicalAttack + ")");
 
+        // 存档往返(M26):再放几样可叠加物品、记一笔金币与经验,拍快照写成文本、读回来,还原到一个新进度上:物品都能按编号找到,再拍的快照与原来逐字节相同
+        progress.AddGold(98765);
+        progress.Gain(1234);
+        foreach (ItemInfo stack in catalog.Droppable().Where(i => !i.IsEquipment).Take(5))
+        {
+            progress.AddItem(stack, 1 + random.Next(3));
+        }
+        string saveText = progress.Snapshot().ToText();
+        bool parsed = HeroSave.TryParse(saveText, out HeroSave parsedSave, out string parseError);
+        Report(parsed, "存档文本能读回来" + (parsed ? string.Empty : ":" + parseError));
+        if (parsed)
+        {
+            HeroProgress restored = HeroProgress.CreateForLocalHero(assets, 1);
+            SaveApplyReport applied = restored.RestoreFromData(parsedSave, assets);
+            Report(applied.Dropped == 0 && applied.Moved == 0, "按编号还原:丢掉 " + applied.Dropped + " 条、挪回背包 " + applied.Moved + " 件");
+            Report(restored.Snapshot().ToText() == saveText, "还原之后再拍的快照与原来逐字节相同(等级 " + restored.Level + "、金币 " + restored.Gold + "、穿着 " + restored.EquippedCount
+                + " 件、背包 " + restored.BagItems + " 件占 " + restored.BagSlots + " 格)");
+            Report(restored.WeaponPath == progress.WeaponPath && restored.EquippedCount == progress.EquippedCount, "穿着的件数与武器的路径一致");
+        }
+
         // 再脱下来
         int off = 0;
         for (int part = EquipmentSlots.First; part <= EquipmentSlots.Last; part++)

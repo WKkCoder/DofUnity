@@ -67,7 +67,13 @@ namespace Dnf.Play
         /// <summary>登录占位:本地存档里一个 1 级的鬼剑士。</summary>
         public static CharacterRoster Local()
         {
-            return new CharacterRoster(new[] { new CharacterSlot(LocalName, LocalJob, 1) });
+            return Local(1);
+        }
+
+        /// <summary>本地存档里的那个鬼剑士,等级取存档里的(M26:选角界面上画的就是存档里的等级;没有存档是 1 级)。</summary>
+        public static CharacterRoster Local(int level)
+        {
+            return new CharacterRoster(new[] { new CharacterSlot(LocalName, LocalJob, level) });
         }
 
         /// <summary>槽位在网格里的列、行(第 0 个在左上,先填满一行再换行)。</summary>
