@@ -492,11 +492,24 @@ public class RoomCombatTests
         Assert.InRange(damages[0], 21, 22);                               // 25.3 × 0.85 = 21.5
         Assert.InRange(damages[1], 25, 26);                               // 25.3 × 1.0
         Assert.Equal((2, 2, 1), (s.Hits, s.Combo, s.Kills));
+        Assert.Equal((2, 1), (s.MaxCombo, s.ComboKills));                 // 第二击(连击数 2)打死:算一个连击杀(M32 评分估计用)
         Assert.Equal(0, s.AliveCount);
         Assert.Equal(0, s.Monsters[0].Hp);
         Assert.Equal(MonsterPhase.Dying, s.Monsters[0].Phase);
         // 第一击发生在第 0 段,第二击发生在第 1 段(攻击框在第 1 帧,起点是第一段结束后的 100 毫秒);按各段的加成缩放伤害
         Assert.Equal(new[] { 0, 1 }, stagesAtHit.ToArray());
+    }
+
+    [Fact]
+    public void AKillOnTheFirstHitOfAComboIsNotAComboKillAndMaxComboStartsAtOne()
+    {
+        var strikes = new[] { new HeroStrikeInfo(-15, 0, false), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(100, 0, true) };
+        using var arena = new Arena(new[] { (340, 100) }, strikes, hp: 15);      // 第一击(伤害 21 到 22)就够了
+        RoomCombatSession s = arena.Session;
+        Assert.Equal((0, 0), (s.MaxCombo, s.ComboKills));
+        arena.Run(600, 0);
+        Assert.Equal((1, 1), (s.Hits, s.Kills));
+        Assert.Equal((1, 0), (s.MaxCombo, s.ComboKills));                 // 连击数 1(屏幕上还不显示)时的击杀不算连击杀
     }
 
     [Fact]

@@ -30,6 +30,8 @@
 #     中文文字(M29,E-121):流程里装系统自带的带汉字字体与原版文字表;背包与商店的窗口画过汉字(日志 DNF_FONT ready 与 DNF_FONT stats glyphs>0,只记字体文件名与个数)。对拍与离屏出图不装字体,画面与 CPU 参照一致。
 #     任务(M31,E-123):城镇里探针找第一个头顶带感叹号的 NPC、打开任务对话(游戏暂停)、接一个任务、关上、按 L 开任务日志、放弃选中的任务、再关上(游戏恢复);
 #       日志里 DNF_QUEST 各行齐全(只有个数与结果名,没有任务名与编号),进城时记到头顶带标记的 NPC;窗口画过汉字。
+#     副本结算(M32,E-124):整条流程三局副本各有一行 DNF_CLEAR(评分字母与帧一致、评分数据读到、没有等级进度时不发经验);单独一趟带等级进度打通副本,
+#       日志里 DNF_CLEAR 的经验已发给主角(granted=True、exp>0)。日志里只有字母与数字。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -546,6 +548,15 @@ if [ "$platform" = "macos" ]; then
       grep -E 'DNF_ITEM dropped=' "$flow_log" | tail -1 | grep -q -E 'DNF_ITEM dropped=([0-9]+) picked=\1 full=0 ' \
         || { echo "整条流程里自动机应捡完掉在地上的物品(最后一行 DNF_ITEM 的 dropped 与 picked 相等、full=0):$flow_log" >&2; exit 1; }
     fi
+    # 副本结算(M32,证据 E-124):三局副本各结算一次(DNF_CLEAR 三行),评分字母与图的帧一致(SSS 0、SS 1、S 2、A 3、B 4、C 5、D 6、E 7、F 8),评分数据读到(ranked=True);
+    # 这一趟带 -dnfnodamage(没有等级进度),经验不发(granted=False exp=0 bonus=0)
+    grep -E 'DNF_CLEAR rank=' "$flow_log" | cut -c1-200 || true
+    [ "$(grep -c -E 'DNF_CLEAR rank=' "$flow_log")" -eq 3 ] \
+      || { echo "整条流程三局副本应各有一行 DNF_CLEAR:$flow_log" >&2; exit 1; }
+    [ "$(grep -c -E 'DNF_CLEAR rank=[A-Z]+ frame=[0-8] ranked=True .* kills=[1-9][0-9]* .* granted=False exp=0 bonus=0 levels=0' "$flow_log")" -eq 3 ] \
+      || { echo "三行 DNF_CLEAR 都应读到评分数据(ranked=True)、打死过怪物、没有等级进度时不发经验(granted=False exp=0 bonus=0):$flow_log" >&2; exit 1; }
+    python3 tools/py/check_clear_log.py "$flow_log" 3 \
+      || { echo "DNF_CLEAR 的评分字母与帧对不上:$flow_log" >&2; exit 1; }
     # 失败分支(证据 E-115):怪物伤害放大到一击必杀、复活币 0 枚,无人值守地打副本——主角死后没有币可用,躺平 10 秒的计时走完,副本失败回城镇,
     # 不算结算(回城先经过加载画面,所以从副本出去的第一行是 to=Loading);一并看 DNF_REVIVE 行(死了一次、没复活)与流程计数(failures=1、settlements=0)
     fail_log="$PWD/re/unity-run-town-fail-macos.log"
@@ -590,6 +601,26 @@ if [ "$platform" = "macos" ]; then
     # 金币(证据 E-116):这一趟带伤害、有等级进度,捡到的金币进钱包(purse 不为 0)
     grep -q -E 'DNF_GOLD dropped=[1-9][0-9]* picked=[1-9][0-9]* earned=[1-9][0-9]* purse=[1-9][0-9]*' "$revive_log" \
       || { echo "死亡复活那一趟里主角应捡到金币、钱包里有钱(DNF_GOLD 行的 picked、earned、purse 都不为 0):$revive_log" >&2; exit 1; }
+    # 副本结算与通关经验(M32,证据 E-124):带等级进度(20 级)、怪物照常还手,自动机打通整座副本;首领清空的那一刻结算一次并把通关经验发给主角,
+    # 日志里 DNF_CLEAR 的评分数据读到(ranked=True)、经验发了(granted=True、exp>0),评分字母与帧一致;没有异常
+    clear_log="$PWD/re/unity-run-town-clear-macos.log"
+    rm -f "$clear_log"
+    set +e
+    "$app" -batchmode -logFile "$clear_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" -dnflevel 20 \
+      -dnftimescale 4 -dnfquitafter 25
+    rc=$?
+    set -e
+    echo "播放器退出码(副本结算与通关经验): $rc"
+    grep -E 'DNF_CLEAR rank=' "$clear_log" | cut -c1-200 || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$clear_log"; then
+      echo "副本结算的日志里有异常:$clear_log" >&2
+      exit 1
+    fi
+    grep -q -E 'DNF_CLEAR rank=[A-Z]+ frame=[0-8] ranked=True .* kills=[1-9][0-9]* .* granted=True exp=[1-9][0-9]* bonus=[0-9]+ levels=[0-9]+' "$clear_log" \
+      || { echo "带等级进度打通副本应结算出评分并发了通关经验(DNF_CLEAR … ranked=True … granted=True exp>0):$clear_log" >&2; exit 1; }
+    python3 tools/py/check_clear_log.py "$clear_log" 1 \
+      || { echo "DNF_CLEAR 的评分字母与帧对不上:$clear_log" >&2; exit 1; }
     # Esc 系统菜单:无伤害打副本,阶段开始 3 秒后探针像按 Esc 一样打开菜单(游戏暂停)、再过一秒选第 2 项"放弃回城";
     # 流程应回城镇,算一次放弃(giveups=1),不算结算也不算失败
     menu_log="$PWD/re/unity-run-town-menu-macos.log"

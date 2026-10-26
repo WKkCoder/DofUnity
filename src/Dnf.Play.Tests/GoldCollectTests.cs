@@ -112,7 +112,7 @@ public class GoldCollectTests
     [Fact]
     public void TheRewardPanelCharactersAreAllInThePixelFont()
     {
-        foreach (char c in "CLEAR TIME 0123456789: KILLS EXP + GOLD ITEMS")
+        foreach (char c in "CLEAR TIME 0123456789: KILLS EXP + GOLD ITEMS RANK BONUS LEVELED UP TO SSF")
         {
             Assert.True(OverlayArt.HasGlyph(c), "字库里没有 '" + c + "'");
         }

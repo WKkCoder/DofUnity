@@ -163,6 +163,75 @@ namespace Dnf.Play
             _quests?.DungeonCleared(QuestDungeonId, QuestDifficulty, (int)Math.Min(int.MaxValue, _clockMs));
         }
 
+        private RankSystem _rank;
+        private int _rankDungeonId = -1;
+        private int _standardLevel;
+        private int _rankDifficulty;
+
+        /// <summary>
+        /// 通关结算的结果(M32,证据 E-124):评分(用时分、基础分估计、字母)与通关经验;首领清空的那一刻算一次并把经验发给主角,没通关时为 null。
+        /// </summary>
+        public DungeonResult Result { get; private set; }
+
+        /// <summary>
+        /// 接上评分与通关经验的数据(M32):<paramref name="rank"/> 是 etc/ranksysteminfo.etc(null 当没有评分数据),<paramref name="dungeonId"/> 是 dungeon/dungeon.lst 的号
+        /// (查平均用时;−1 没有),<paramref name="standardLevel"/> 是 .dgn 的 [basis level](通关经验按它取基础经验与等级差,0 则通关经验为 0),
+        /// <paramref name="difficulty"/> 是副本难度(0 到 4)。没调用时首领清空只算评分里的估计部分、不发通关经验。
+        /// </summary>
+        public void UseRanking(RankSystem rank, int dungeonId, int standardLevel, int difficulty = 0)
+        {
+            _rank = rank;
+            _rankDungeonId = dungeonId;
+            _standardLevel = standardLevel;
+            _rankDifficulty = difficulty;
+        }
+
+        /// <summary>整座副本里最高的连击数(各房间取最大)。</summary>
+        public int MaxCombo
+        {
+            get
+            {
+                int best = 0;
+                foreach (CellState c in _cells)
+                {
+                    if (c.Session != null && c.Session.MaxCombo > best)
+                    {
+                        best = c.Session.MaxCombo;
+                    }
+                }
+                return best;
+            }
+        }
+
+        /// <summary>整座副本里在连击中打死的怪物数(各房间之和)。</summary>
+        public int ComboKills => Sum(s => s.ComboKills);
+
+        /// <summary>已经发给主角的通关经验(没通关或没发是 0);<see cref="ExpEarned"/> 里含这一部分。</summary>
+        public long ClearExpGranted => Result != null && Result.Granted ? Result.ExpTotal : 0;
+
+        /// <summary>
+        /// 通关的那一刻结算一次:收集战绩、按服务端的次序算评分与通关经验(<see cref="DungeonResult.Compute"/>),经验发给主角(升级走房间会话的升级处理:换属性、放声音与光效)。
+        /// 主角此刻在首领房(或唯一的房间)里,所以发经验用当前房间的会话。
+        /// </summary>
+        private void FinishRun()
+        {
+            if (Result != null)
+            {
+                return;
+            }
+            int clearMs = (int)Math.Min(int.MaxValue, Math.Round(_bossClearedAtMs));
+            var stats = new RunStats(clearMs, Kills, ComboKills, MaxCombo, HeroHits, Revive?.Used ?? 0);
+            DungeonResult result = DungeonResult.Compute(stats, _rank, Progress, _rankDungeonId, _standardLevel, _rankDifficulty, Maze.ExpWeight);
+            HeroProgress progress = Progress;
+            if (progress != null && result.ExpTotal > 0)
+            {
+                int before = progress.Level;
+                Current.GainExp((int)Math.Min(int.MaxValue, result.ExpTotal));
+                result.MarkGranted(before, progress.Level);
+            }
+            Result = result;
+        }
+
         /// <summary>造营地(<see cref="ClearCamp"/>)与结算菜单要用的图包;可以是 null(没有图包时营地是空的,菜单退回像素字的占位面板)。</summary>
         public DnfAssets Assets { get; }
 
@@ -404,10 +473,13 @@ namespace Dnf.Play
             // 金币掉落按副本的标准等级([basis level],证据 E-116)选概率行
             var session = new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals, progress, maze.ExpWeight, heroDamageScale, revive,
                 monsterDamageScale, GoldDrop.StandardLevel(dungeonScript)), heroObjectId, assets);
+            int dungeonId = DungeonRoomPool.DungeonIdOf(assets, dungeonPath);
             if (quests != null)
             {
-                session.UseQuests(quests, DungeonRoomPool.DungeonIdOf(assets, dungeonPath));
+                session.UseQuests(quests, dungeonId);
             }
+            // 评分与通关经验(M32,E-124):评分数据读 etc/ranksysteminfo.etc,标准等级是 [basis level];难度只有普通(0)
+            session.UseRanking(RankSystem.Parse(assets.ReadScript(RankSystem.Path)), dungeonId, GoldDrop.StandardLevel(dungeonScript));
             return session;
         }
 
@@ -587,6 +659,7 @@ namespace Dnf.Play
                 BossCleared = true;
                 _bossClearedAtMs = _clockMs;
                 NoteDungeonCleared();
+                FinishRun();
             }
             else if (!_layout.HasBoss && !BossCleared && !HasOpenableExit(cell))
             {
@@ -594,6 +667,7 @@ namespace Dnf.Play
                 BossCleared = true;
                 _bossClearedAtMs = _clockMs;
                 NoteDungeonCleared();
+                FinishRun();
             }
         }
 
@@ -941,22 +1015,50 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 结算时屏幕左侧的战果小结:通关用时、击杀、经验、金币与捡到的物品件数(本局的合计)。<b>占位</b>:原版结果窗口的版式与内容没有读出来,
-        /// 这里只是把本局的数字列出来,英文像素字,位置随意。
+        /// 结算时屏幕左侧的战果小结(M32):评分字母(<see cref="ResultArt"/>,图包缺这个图时退回一行 "RANK x"),然后是通关用时、击杀、击杀经验、通关经验、评分加成、
+        /// 金币、捡到的物品件数与升级(本局的合计)。通关经验与评分加成只在发了经验时才有那一行;没有评分数据(没读到 ranksysteminfo.etc)时不出评分。
+        /// <b>版式是占位</b>:原版结果窗口(Result_Ver2.0 的底板、数字滚动等)的版式没有恢复,文字是英文像素字(系统有字体时换成中文占位)。
+        /// 评分里的基础分是估计(<see cref="ScoreEstimate"/>),不是原版算法。
         /// </summary>
         private void AddRewardPanel(List<SceneSprite> hud, ref int order)
         {
             var inv = System.Globalization.CultureInfo.InvariantCulture;
-            long seconds = (long)(_bossClearedAtMs / 1000.0);
-            string[] lines =
-            {
-                "CLEAR TIME " + (seconds / 60).ToString("00", inv) + ":" + (seconds % 60).ToString("00", inv),
-                "KILLS " + Kills.ToString(inv),
-                "EXP +" + ExpEarned.ToString(inv),
-                "GOLD +" + GoldEarned.ToString(inv),
-                "ITEMS " + ItemsPicked.ToString(inv),
-            };
+            DungeonResult result = Result;
             int y = RewardPanelTop;
+            var lines = new List<string>(8);
+            if (result != null && result.HasRank)
+            {
+                SceneSprite letter = ResultArt.PlaceRankLetter(Assets, result.Frame, RewardPanelLeft, order);
+                if (letter != null)
+                {
+                    hud.Add(letter);
+                    order++;
+                    y = ResultArt.TextTop;
+                }
+                else
+                {
+                    lines.Add("RANK " + result.Letter);
+                }
+            }
+            long seconds = (long)(_bossClearedAtMs / 1000.0);
+            long clearExp = ClearExpGranted;
+            lines.Add("CLEAR TIME " + (seconds / 60).ToString("00", inv) + ":" + (seconds % 60).ToString("00", inv));
+            lines.Add("KILLS " + Kills.ToString(inv));
+            lines.Add("EXP +" + Math.Max(0, ExpEarned - clearExp).ToString(inv));
+            if (result != null && result.Granted && result.ExpBase > 0)
+            {
+                lines.Add("CLEAR EXP +" + result.ExpBase.ToString(inv));
+            }
+            if (result != null && result.Granted && result.ExpRankBonus > 0)
+            {
+                lines.Add("RANK BONUS +" + result.ExpRankBonus.ToString(inv));
+            }
+            lines.Add("GOLD +" + GoldEarned.ToString(inv));
+            lines.Add("ITEMS " + ItemsPicked.ToString(inv));
+            if (result != null && result.LevelsGained > 0)
+            {
+                lines.Add("LEVELED UP TO " + result.LevelAfter.ToString(inv));
+            }
             foreach (string text in lines)
             {
                 SpriteFrame line = _art.Text(text, 3, OverlayArt.White);

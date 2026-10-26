@@ -38,6 +38,11 @@ public class UiTextTests
     [InlineData("CLEAR TIME 01:23", "通关用时 01:23")]
     [InlineData("EXP +300", "经验 +300")]
     [InlineData("GOLD +45", "金币 +45")]
+    [InlineData("CLEAR EXP +1500", "通关经验 +1500")]
+    [InlineData("RANK BONUS +500", "评分加成 +500")]
+    [InlineData("RANK SSS", "评分 SSS")]
+    [InlineData("RANK F", "评分 F")]
+    [InlineData("LEVELED UP TO 12", "升到 12 级")]
     [InlineData("MAX 99", "最多 99")]
     [InlineData("PAGE 2", "第 2 页")]
     [InlineData("COINS 3", "复活币 3")]
@@ -135,6 +140,10 @@ public class UiTextTests
         Check(ShopWindowArt.TabLabel(ShopMode.Sell, 2));
         Check(BagWindowArt.HintText);
         Check("GOLD 10");
+        Check("CLEAR EXP +100");          // 通关结算(M32)
+        Check("RANK BONUS +10");
+        Check("RANK SS");
+        Check("LEVELED UP TO 5");
         Check("SPACE SHOP");
         Check("EMPTY SLOT");
         Check("CAN EQUIP");

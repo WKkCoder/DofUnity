@@ -296,8 +296,9 @@ def check_exp():
     bad = len(re.findall(r"^\s*\[失败\]", text, re.M))
     if ok + bad == 0:
         return [item("exp", "经验与升级", "全库读通", "E-111", 0, 1, sec, "没解析出检查项,见 out/verify-all/exp.txt")]
-    return [item("exp", "经验与升级(升级经验表、技能点表、三张倍率表读通;成长块与各级属性不减;一级的 FromStats 等于 FromChr;1 到 85 级升级循环与满级封顶;击杀经验;全库 .dgn 的经验权重)",
-                 "全库读通", "E-111", ok + bad, bad + (0 if code == 0 else 1), sec,
+    return [item("exp", "经验与升级(升级经验表、技能点表、三张倍率表读通;成长块与各级属性不减;一级的 FromStats 等于 FromChr;1 到 85 级升级循环与满级封顶;击杀经验;全库 .dgn 的经验权重;"
+                 "副本评分系统与评分加成比例读通、门槛与用时档有序、全库副本的标准等级读得到、通关经验的算术)",
+                 "全库读通", "E-111、E-124", ok + bad, bad + (0 if code == 0 else 1), sec,
                  "只含个数;原版数值只在本机 out/verify-all/exp.txt 里,不入库;基础经验表缺 monster_reward_ref 导出时用占位表(输出里有标注)")]
 
 

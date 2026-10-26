@@ -450,6 +450,21 @@ namespace Dnf.Game
             }
         }
 
+        private RankSystem _rankSystem;
+
+        /// <summary>副本评分的数据(etc/ranksysteminfo.etc,证据 E-124);缺文件是空数据(没有评分门槛、没有平均用时)。</summary>
+        public RankSystem RankSystem
+        {
+            get
+            {
+                if (_rankSystem == null)
+                {
+                    _rankSystem = RankSystem.Parse(ReadScript(RankSystem.Path));
+                }
+                return _rankSystem;
+            }
+        }
+
         /// <summary>角色的等级成长(.chr 的 [initial value] 与 [growtype N] 块);<paramref name="chr"/> 为 null 返回没有数据的成长。</summary>
         public CharacterGrowth GetGrowth(CharacterDef chr)
         {

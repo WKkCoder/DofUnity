@@ -654,6 +654,12 @@ namespace Dnf.Play
         public int Hits { get; private set; }
         public int Kills { get; private set; }
 
+        /// <summary>在连击里(连击数已经显示,即至少第 2 击)打死的怪物数(M32:评分的"连击杀"估计用;连击窗口见 <see cref="ComboCounter"/>)。</summary>
+        public int ComboKills { get; private set; }
+
+        /// <summary>这个房间里出现过的最高连击数。</summary>
+        public int MaxCombo { get; private set; }
+
         /// <summary>累计连击数:窗口(<see cref="ComboMs"/>)内每一击加 1,最后一击之后走满窗口清零;屏幕上从第 2 击起才显示(证据 E-108)。</summary>
         public int Combo => _combo.Count;
         public long TotalDamage { get; private set; }
@@ -1607,12 +1613,20 @@ namespace Dnf.Play
             }
             Hits++;
             _combo.Hit(_hudClockMs);
+            if (_combo.Count > MaxCombo)
+            {
+                MaxCombo = _combo.Count;
+            }
             TotalDamage += damage;
             Target = monster;
             _targetMs = 0;
             if (killed)
             {
                 Kills++;
+                if (_combo.Count >= ComboCounter.ShowFrom)
+                {
+                    ComboKills++;
+                }
                 AwardKillExp(monster);
                 SpawnDrops(monster);
                 QuestEvents?.MonsterKilled(QuestDungeonId, QuestDifficulty, monster.Code, monster.IsBoss);

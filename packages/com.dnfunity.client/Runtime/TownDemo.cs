@@ -184,6 +184,7 @@ namespace Dnf.Client
         private int _noteItemsPicked = -1;
         private bool _noteLabelsDrawn;                     // 这一局已经为"画出过地上名牌"写过 DNF_LABEL
         private bool _noteLabelsSelected;                  // 这一局已经为"画出过选中的名牌"写过 DNF_LABEL
+        private bool _noteClear;                           // 这一局已经为"首领清空、结算出评分与通关经验"写过 DNF_CLEAR
         private int _platesSerial = -1;                    // 最近一次画出城镇名牌的阶段序号(日志只记每个阶段第一次)
         private double _playAtSeconds = -1.0;
         private double _afterClearSeconds;
@@ -1770,6 +1771,7 @@ namespace Dnf.Client
             }
             NoteRevive();
             NoteGold();
+            NoteClear();
             if (_progress != null && _flow.Stage != GameStage.Dungeon)
             {
                 _progress.AdvanceCooldowns(deltaMs);     // 副本外(城镇、结算)药水冷却也照墙钟走,城镇底栏上的遮罩才会退;副本里由房间会话推进,不重复算
@@ -1818,6 +1820,7 @@ namespace Dnf.Client
             _noteItemsPicked = -1;
             _noteLabelsDrawn = false;
             _noteLabelsSelected = false;
+            _noteClear = false;
             if (!_flow.LastSwitchStaysInTown)
             {
                 _audio?.StopAll();                   // 城镇换区域时不停:相同的音乐标签接着放,只换环境声(E-097)
@@ -1850,6 +1853,23 @@ namespace Dnf.Client
                 _noteRevives = revive.Revives;
                 Debug.Log("DNF_REVIVE deaths=" + revive.Deaths + " revives=" + revive.Revives + " coins=" + (revive.Coins == null ? 0 : revive.Coins.Count));
             }
+        }
+
+        /// <summary>
+        /// 副本首领清空、结算出评分与通关经验(M32,证据 E-124)的那一刻写一行 DNF_CLEAR(评分字母与帧、评分点、用时分、基础分估计、击杀、最高连击、受击、用时、
+        /// 经验有没有发出去、通关经验总数与评分加成、升了几级;只有数字与字母),无人值守的检查靠它确认通关结算真的发生(每局只写一次)。
+        /// </summary>
+        private void NoteClear()
+        {
+            if (_noteClear || _flow.Stage != GameStage.Dungeon || !(_flow.Run is DungeonSession dungeon) || dungeon.Result == null)
+            {
+                return;
+            }
+            _noteClear = true;
+            DungeonResult r = dungeon.Result;
+            Debug.Log("DNF_CLEAR rank=" + r.Letter + " frame=" + r.Frame + " ranked=" + r.HasRank + " point=" + r.RankPoint + " timebonus=" + r.TimeBonus
+                + " base=" + r.BaseScore + " kills=" + r.Stats.Kills + " maxcombo=" + r.Stats.MaxCombo + " hits=" + r.Stats.HitsTaken + " clearMs=" + r.Stats.ClearMs
+                + " granted=" + r.Granted + " exp=" + r.ExpTotal + " bonus=" + r.ExpRankBonus + " levels=" + r.LevelsGained);
         }
 
         /// <summary>

@@ -221,6 +221,88 @@ internal static class ExpCheck
             + (withWeight > 0 ? "(范围 " + F(minWeight) + " 到 " + F(maxWeight) + ")" : string.Empty));
         Report(unreadable == 0 && minWeight >= 0f, "没有读不动的 .dgn(" + unreadable + " 个),权重没有负数");
 
+        // 8b. 副本评分系统与通关经验(M32,证据 E-124):评分文件读得到、门槛与用时档有序、平均用时记录对得上副本列表、评分加成比例读到;
+        // 标准等级([basis level])读得到;通关经验的算术(对每一级、用占位或导出的基础经验表):总量随击杀数不减、评分加成不为负、没有评分档位时加成为 0
+        RankSystem rank = data.RankSystem;
+        bool thresholdsOrdered = rank.ThresholdsGiven == RankSystem.ThresholdCount && rank.Threshold(RankSystem.ThresholdCount - 1) > 0;
+        for (int i = 1; i < rank.ThresholdsGiven; i++)
+        {
+            thresholdsOrdered &= rank.Threshold(i) < rank.Threshold(i - 1);
+        }
+        bool stepsOrdered = rank.StepCount >= 1;
+        for (int i = 1; i < rank.StepCount; i++)
+        {
+            stepsOrdered &= rank.StepAt(i).Threshold > rank.StepAt(i - 1).Threshold && rank.StepAt(i).Bonus >= rank.StepAt(i - 1).Bonus;
+        }
+        var listed = new List<KeyValuePair<int, string>>(WorldMapDef.ParseList(assets.ReadScript(DungeonRoomPool.DungeonListPath), "dungeon/"));
+        int listedWithAverage = 0, averageBad = 0, withStandardLevel = 0, standardBad = 0, unreadableScripts = 0;
+        foreach (KeyValuePair<int, string> d in listed)
+        {
+            for (int difficultyIndex = 0; difficultyIndex < 4; difficultyIndex++)
+            {
+                if (rank.AverageTime(d.Key, 1, difficultyIndex) < 0)
+                {
+                    averageBad++;
+                }
+            }
+            if (rank.AverageTime(d.Key, 1, 0) > 0)
+            {
+                listedWithAverage++;
+            }
+            ScriptLine[] script;
+            try
+            {
+                script = assets.ReadScript(d.Value);
+            }
+            catch (Exception)
+            {
+                unreadableScripts++;
+                continue;
+            }
+            int standard = GoldDrop.StandardLevel(script);
+            if (standard > 0)
+            {
+                withStandardLevel++;
+            }
+            if (standard < 0 || standard > MobRewardTable.MaxLevel)
+            {
+                standardBad++;
+            }
+        }
+        Console.WriteLine("副本评分系统 " + RankSystem.Path + ":门槛 " + rank.ThresholdsGiven + " 个,用时奖励 " + rank.StepCount + " 档,平均用时记录 " + rank.AverageRecordCount + " 条;"
+            + "副本列表 " + listed.Count + " 座,其中单人普通难度有平均用时的 " + listedWithAverage + " 座,读到标准等级([basis level])的 " + withStandardLevel + " 座");
+        Report(thresholdsOrdered, "评分门槛读到 " + RankSystem.ThresholdCount + " 个,从高到低严格递减,最低一档大于 0");
+        Report(stepsOrdered, "用时奖励至少一档,门槛严格递增、分数不减");
+        Report(rank.AverageRecordCount > 0 && listedWithAverage > 0 && averageBad == 0, "平均用时记录读到,有副本在列表里查得到单人普通难度的平均用时,没有负数(违反 " + averageBad + " 处)");
+        Report(unreadableScripts == 0 && withStandardLevel > 0 && standardBad == 0, "副本脚本都读得动(" + unreadableScripts + " 个读不动),标准等级读得到,没有越界(1 到 " + MobRewardTable.MaxLevel + ",基础经验表的范围;违反 " + standardBad + " 处)");
+
+        bool bonusRead = false, bonusOrdered = true;
+        for (int i = 0; i < ExpRates.RankBonusCount; i++)
+        {
+            float rate = rates.RankBonusRate(i);
+            bonusRead |= rate > 0f;
+            bonusOrdered &= rate >= 0f && (i == 0 || rate >= rates.RankBonusRate(i - 1));
+        }
+        Report(bonusRead && bonusOrdered && rates.RankBonusRate(-1) == 0f && rates.RankBonusRate(ExpRates.RankBonusCount) == 0f,
+            "评分加成比例([clear rank exp bonusrate])读到,档位 0 到 " + (ExpRates.RankBonusCount - 1) + " 不为负、随档位不减,没有档位(−1)与越界的加成为 0");
+
+        int clearBad = 0, boundsBad = 0;
+        for (int level = 1; level < Leveling.MaxLevel; level++)
+        {
+            ClearExp few = ClearReward.Compute(rewards, rates, level, level, 10, 0, 1f, ExpRates.RankBonusCount - 1);
+            ClearExp many = ClearReward.Compute(rewards, rates, level, level, 20, 0, 1f, ExpRates.RankBonusCount - 1);
+            ClearExp none = ClearReward.Compute(rewards, rates, level, level, 10, 0, 1f, -1);
+            if (few.Base == 0 || few.DungeonTotal == 0 || many.DungeonTotal < few.DungeonTotal || many.Base < few.Base || none.RankBonus != 0 || none.Base != few.Base)
+            {
+                clearBad++;
+            }
+            if (few.Total != (long)few.Base + few.RankBonus || ClearReward.Compute(rewards, rates, level, level, 0, 0, 1f, 0).Total != 0)
+            {
+                boundsBad++;
+            }
+        }
+        Report(clearBad == 0 && boundsBad == 0, "通关经验的算术:每级(同级标准等级、10 次击杀)分到的基础经验与总量大于 0,击杀翻倍不减,没有评分档位时加成为 0,没打死怪物时为 0(违反 " + clearBad + " + " + boundsBad + " 处)");
+
         // 9. --level N:这一级的样子
         int shown = Math.Max(1, Math.Min(opts.HeroLevel, Leveling.MaxLevel));
         var progress = new HeroProgress(table, sp, growth, rewards, rates, shown);

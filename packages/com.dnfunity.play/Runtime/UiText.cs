@@ -159,6 +159,12 @@ namespace Dnf.Play
             { "EXP +{0}", "经验 +{0}" },
             { "GOLD +{0}", "金币 +{0}" },
             { "ITEMS {0}", "物品 {0}" },
+
+            // 通关结算(M32;"RANK BONUS" 要排在 "RANK {0}" 前面,句式按字面开头逐条比)
+            { "CLEAR EXP +{0}", "通关经验 +{0}" },
+            { "RANK BONUS +{0}", "评分加成 +{0}" },
+            { "RANK {0}", "评分 {0}" },
+            { "LEVELED UP TO {0}", "升到 {0} 级" },
         };
 
         private static readonly Dictionary<string, string> Exact = BuildExact();

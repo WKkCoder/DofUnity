@@ -57,7 +57,7 @@
 ## 4. 副本经验权重
 
 `STDungeonScript::Clear` 把权重字段(`+0xb0`)清成 `1.0f`;`.dgn` 的 `[experience increasing point]` 读成浮点写进同一字段(整数写法也按浮点读);`CDungeon::get_exp_weight` 取用,作为击杀经验的一个乘数。没有这个标签的副本权重是 1。
-`DungeonMaze.ExpWeight` 解析它,`RoomCombatSession` 把它乘进击杀经验。`.dgn` 里另外的 `[basis level]`、`[monster exp bonusrate]`、`[clear exp bonusrate]` 的用法没读通(通关奖励经验也依赖 `monster_reward_ref`),没做。
+`DungeonMaze.ExpWeight` 解析它,`RoomCombatSession` 把它乘进击杀经验。`.dgn` 里的 `[basis level]` 是副本的标准等级,通关经验用它(M32 读通,见 §11);另外的 `[monster exp bonusrate]`、`[clear exp bonusrate]` 的用法没读通,没做。
 
 ## 5. 主角属性随等级(`.chr` 成长块)
 
@@ -90,9 +90,9 @@
 
 | 层 | 内容 |
 |---|---|
-| `Dnf.Game` | `ExpTable`(门槛、区间)、`SpTable`、`Leveling.Gain`(升级循环,返回等级、经验、升了几级、技能点、觉醒点)、`ExpRates`(三张倍率表)、`MobRewardTable`(基础经验表 + 占位)、`KillExp.ForKill`(击杀经验,`X87` 复现 80 位寄存器与 64 位截断)、`CharacterGrowth`/`StatBlock`(成长块) |
-| `Dnf.Play` | `HeroProgress`(等级、经验、成长属性、技能点、觉醒点、`Version`;`CreateForLocalHero` 从用户数据造)、`MobRewards`(找基础经验表)、`RoomCombatSession`(杀怪给经验、升级时换生命魔法上限与面板、播升级音、升级光效跟随主角)、`DungeonSession`(各房间共用一个进度)、`HudArt`(经验条与满级覆盖层) |
-| 命令行 | `exp-check`(8 项检查,进 `verify-all`)、`--level N`(主角从 N 级开始,1 到 85)、`--no-exp`(杀怪不给经验);`combat-check` 打印每次击杀的经验、升级与最后的汇总 |
+| `Dnf.Game` | `ExpTable`(门槛、区间)、`SpTable`、`Leveling.Gain`(升级循环,返回等级、经验、升了几级、技能点、觉醒点)、`ExpRates`(三张倍率表,M32 起多一张评分加成表)、`RankSystem` 与 `ClearReward`(M32:评分与通关经验,见 §11)、`MobRewardTable`(基础经验表 + 占位)、`KillExp.ForKill`(击杀经验,`X87` 复现 80 位寄存器与 64 位截断)、`CharacterGrowth`/`StatBlock`(成长块) |
+| `Dnf.Play` | `HeroProgress`(等级、经验、成长属性、技能点、觉醒点、`Version`;`CreateForLocalHero` 从用户数据造)、`MobRewards`(找基础经验表)、`RoomCombatSession`(杀怪给经验、升级时换生命魔法上限与面板、播升级音、升级光效跟随主角)、`DungeonSession`(各房间共用一个进度;M32 起首领清空时结算并发通关经验)、`DungeonResult`(评分与通关经验的汇总)、`HudArt`(经验条与满级覆盖层) |
+| 命令行 | `exp-check`(14 项检查,进 `verify-all`;M32 新增 6 项评分与通关经验的检查)、`--level N`(主角从 N 级开始,1 到 85)、`--no-exp`(杀怪不给经验);`combat-check` 打印每次击杀的经验、升级与最后的汇总 |
 | Unity | `-dnflevel N`、`-dnfnoexp`;`DNF_TOWN_DEMO` 日志在 `heroMp` 之后追加 `heroLevel= heroExp= levelUps=` |
 
 取舍:
@@ -103,10 +103,10 @@
 
 ## 9. 没弄清 / 没做
 
-- `monster_reward_ref` 的数值(外部输入,见 §6)与通关奖励经验;
+- `monster_reward_ref` 的数值(外部输入,见 §6);通关经验里位面副本的标准等级、死亡队员惩罚、头像与宠物与活动加成(§11);
 - 升级是否回满生命与魔法(服务端没有恢复代码,客户端是否做没验证);
 - 第二个升级光效、升级光效的逐帧缩放、系统消息的聊天窗口显示;
-- 结算页的经验显示、经验条的悬停提示、疲劳条;
+- 结算页的原版版式(基础文字行 M32 已做)、经验条的悬停提示、疲劳条;
 - 活动与加成叠加、帮助惩罚、技能点的花费与觉醒点的用法、成长类型的选择与觉醒转职。
 
 ## 10. 测试与复现
@@ -114,4 +114,16 @@
 - `ProgressTests`(Game 42 条):经验表取法与区间、技能点表、升级循环(连升、封顶、觉醒点、边界)、倍率表缺失与越界、基础经验表(CSV 格式、占位)、击杀经验的 x87 取整与全部倍率分支、成长块解析与逐级累加。
 - `ExpTests`(Play 23 条)、`HudArtTests` 新增 5 条、`DungeonSessionTests` 新增 1 条、`DungeonTests` 新增 1 条:进度对象、会话里的击杀经验(等级差、权重、首领)、升级换属性与面板、不恢复生命、升级音与光效跟随、副本各房间共用进度、经验条宽度的各种边界与层次。
 - 数据全是合成的(100·(L−1)·L/2 的经验表、每级 L 点的技能点表、整数成长块),不含任何原版数值。
-- 本机命令:`dnf exp-check [--level N]`(真实数据的 8 项检查,输出只在本机看);`dnf combat-check --map <房间> --level N --shots-at <秒> --png <前缀>`;`tools/verify-all.sh --only exp`。
+- 本机命令:`dnf exp-check [--level N]`(真实数据的 14 项检查,输出只在本机看);`dnf combat-check --map <房间> --level N --shots-at <秒> --png <前缀>`;`tools/verify-all.sh --only exp`。
+
+## 11. 通关经验(M32,E-124)
+
+副本通关时服务端 `CParty::clear_reward` 另给一份经验,与逐只击杀的经验(§2)是两码事;用同一张基础经验表与同一套 x87 取整(`ClearReward`):
+
+1. 标准等级 = 副本 `.dgn` 的 `[basis level]`(服务端 `CDungeon::set_dungeon` 把脚本偏移 `0xac` 拷进副本对象偏移 `0x10`,`get_standard_level` 取它);没有这个标签时标准等级为 0、基础经验为 0、没有通关经验。
+2. 队伍总经验 = 截断( 副本权重 × 单精度( 难度倍率 × 单精度( ((整场副本击杀数 × 单精度(基础经验(标准等级))) ÷ 2) × 队伍倍率 ) ) );权重、难度倍率、队伍倍率与击杀经验用的是同三个值(§2、§4)。
+3. 每位队员的一份 = 截断( (1 × 单精度( 等级差倍率(主角等级, 标准等级) × 单精度(总经验) )) ÷ 队员数 ),等级差倍率就是 §3 的那张表。
+4. 评分加成 = 截断( 一份 × 比例 ),比例是 `etc/serverparameter.etc` 里 `[clear rank exp bonusrate]` 的第"评分档位"项(评分的前五个门槛对应档位 4 到 0,不够档是 −1 没有加成);实际给 一份 + 评分加成。
+5. 单人本地主角没有死亡队员惩罚、头像加成、宠物加成与活动加成(服务端那几项这时取 0,推断),没有实现;"位面"类副本改用队伍的标准位面等级,也没有实现。
+
+`DungeonSession` 在首领清空的那一刻算一次(整场击杀数、清空那一刻的主角等级)并发给主角,升级走房间会话的升级处理。基础经验表缺 `monster_reward_ref` 导出时是占位表(§6),通关经验也就是占位量级。评分(决定评分加成档位)见 `docs/flow.md` §18。
