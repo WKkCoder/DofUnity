@@ -10,7 +10,7 @@
 
 用法(由 tools/verify-all.sh 调用;需要先 . tools/env.sh 并已构建 dnf):
   python3 tools/py/verify_all.py [--only 名字,名字] [--skip 名字,名字] [--out out/verify-all.json]
-名字:unit p1 atk act mob damage sq sweep flow dungeons sound exp text oracle(oracle 需要 re/venv 里的 Unicorn 与本机的服务端二进制;dungeons 是全库副本扫描,非门槛项)
+名字:unit p1 atk act mob damage sq sweep flow dungeons sound exp text oracle difficulty(oracle 与 difficulty 的对拍部分需要 re/venv 里的 Unicorn 与本机的服务端二进制;dungeons 是全库副本扫描,非门槛项)
 """
 import argparse
 import json
@@ -333,10 +333,43 @@ def check_oracle():
                  "全库用例加 2 万个随机压力用例;原版函数只在模拟器里跑,不启动服务、不联网")]
 
 
+def check_difficulty():
+    """副本难度(E-125):真数据的结构检查,加上"服务端机器码 vs C# 重算"的压力对拍。"""
+    rows = []
+    code, text, sec = sh(DNF + ["difficulty-check"], "difficulty.txt")
+    ok = len(re.findall(r"^\s*\[通过\]", text, re.M))
+    bad = len(re.findall(r"^\s*\[失败\]", text, re.M))
+    if ok + bad == 0:
+        rows.append(item("difficulty", "副本难度的数据结构", "全库读通", "E-125", 0, 1, sec, "没解析出检查项,见 out/verify-all/difficulty.txt"))
+    else:
+        rows.append(item("difficulty", "副本难度的数据结构(难度加成表五档都有按等级的行、全库副本自带的加成格式对、难度 3 清单里的编号都在 dungeon.lst、"
+                         "同一座副本各难度下每只怪物的最大生命只升不降)", "全库读通", "E-125", ok + bad, bad + (0 if code == 0 else 1), sec,
+                         "只含个数;原版数值只在本机 out/verify-all/difficulty.txt 里,不入库"))
+    if not os.path.exists(VENV_PY):
+        rows.append(item("difficulty-oracle", "副本难度加成 vs 原版机器码(模拟器)", "对拍:原版二进制", "E-125", 0, 1, 0, "缺 re/venv(Unicorn)"))
+        return rows
+    cases_file = os.path.join(WORK, "difficulty_cases.txt")
+    os.makedirs(WORK, exist_ok=True)
+    c1, t1, s1 = sh([VENV_PY, "tools/py/mob_difficulty_oracle.py", "--stress", "20000", "--write-cases", cases_file], "difficulty_oracle.txt")
+    m1 = re.search(r"随机压力对拍:一致 (\d+),不一致 (\d+)", t1)
+    c2, t2, s2 = sh(DNF + ["difficulty-check", "--cases", cases_file], "difficulty_cs.txt")
+    m2 = re.search(r"一致 (\d+),不一致 (\d+)", t2)
+    if not m1 or not m2:
+        rows.append(item("difficulty-oracle", "副本难度加成 vs 原版机器码(模拟器)", "对拍:原版二进制", "E-125", 0, 1, s1 + s2,
+                         "输出格式没解析出个数,见 out/verify-all/difficulty_oracle.txt 与 difficulty_cs.txt"))
+        return rows
+    cases = int(m1.group(1)) + int(m1.group(2))
+    diff = int(m1.group(2)) + int(m2.group(2)) + (0 if c1 == 0 and c2 == 0 else 1)
+    rows.append(item("difficulty-oracle", "副本难度加成(服务端 ELF 里 upgradeAbilityByDifficultyOfDungeon 的三个重载在 Unicorn 里跑原函数 = Python 参考 = C# 重算,逐槽比较)",
+                     "对拍:原版二进制", "E-125", cases, diff, s1 + s2,
+                     "2 万个合成用例(合成的系数表与等级行、随机的副本自带加成);原版函数只在模拟器里跑,不启动服务、不联网;C# 另有 420 条入库金标准单测"))
+    return rows
+
+
 CHECKS = [
     ("unit", check_unit), ("p1", check_p1), ("atk", check_atk), ("act", check_act), ("mob", check_mob),
     ("damage", check_damage), ("sq", check_sq), ("sweep", check_sweep), ("flow", check_flow), ("dungeons", check_dungeons), ("sound", check_sound),
-    ("exp", check_exp), ("text", check_text), ("oracle", check_oracle),
+    ("exp", check_exp), ("text", check_text), ("oracle", check_oracle), ("difficulty", check_difficulty),
 ]
 
 

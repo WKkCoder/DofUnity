@@ -819,7 +819,7 @@ namespace Dnf.Play
         /// <summary>这座副本的经验权重(.dgn 的 [experience increasing point],证据 E-111);没有副本背景时是 1。</summary>
         public float ExpWeight { get; }
 
-        /// <summary>副本难度编号(经验倍率表按它取,0 到 4);目前只有普通难度,恒为 0。</summary>
+        /// <summary>副本难度编号(0 到 4):经验倍率表、掉落与怪物数值的难度加成(<see cref="MonsterDifficultyTable"/>)按它取;直接 new 出来的会话是 0。</summary>
         public int ExpDifficulty { get; }
 
         /// <summary>这个房间里主角一共得到的击杀经验。</summary>
@@ -1078,12 +1078,13 @@ namespace Dnf.Play
 
         /// <summary>
         /// 为房间造出怪物与普攻数据:怪物按地图 [monster] 在出生点摆好(朝左,与原版进图画面一致,证据 E-069),
-        /// 等级取 .mob 的 [level] 第一个数,生命值由 <see cref="MonsterAbility.Compute"/> 算(首领按首领种类);
+        /// 等级取 .mob 的 [level] 第一个数,生命值由 <see cref="MonsterAbility.Compute"/> 算(首领按首领种类,再加副本难度的加成,
+        /// <paramref name="difficulty"/> 为 0 到 4;<paramref name="dungeonBonus"/> 是 .dgn 自带的难度加成,没有就按等级行);
         /// 普攻数据读 swordman 的 .chr [attack info]。缺图或缺脚本的怪物跳过。
         /// <paramref name="heroVitals"/> 为假时主角没有生命值(<see cref="Vitals"/> 为 null):怪物照样走近、出招,但打不到主角,没有血条(自动化检查用)。
         /// </summary>
         public static RoomCombatSession Create(DnfAssets assets, RoomSession room, int seed = 1, bool heroVitals = true, HeroProgress progress = null,
-            float expWeight = 1f)
+            float expWeight = 1f, int difficulty = 0, DungeonDifficultyBonus dungeonBonus = null)
         {
             var data = new GameData(new PvfScriptSource(assets.Pvf));
             var strikes = new List<HeroStrikeInfo>();
@@ -1122,7 +1123,8 @@ namespace Dnf.Play
                 }
                 int level = def.Tags.IntOr("[level]", 1);
                 MonsterKind kind = spawn.IsBoss ? MonsterKind.Boss : MonsterKind.Normal;
-                MonsterStats stats = MonsterAbility.Compute(def, data.MonsterBaseTables, data.GetMonsterOwnTable(def), level, 0, kind);
+                MonsterStats stats = MonsterAbility.Compute(def, data.MonsterBaseTables, data.GetMonsterOwnTable(def), level, 0, kind,
+                    data.MonsterDifficulty, difficulty, dungeonBonus);                  // 难度加成接在 [ability category] 之后(证据 E-125)
                 var actor = new MonsterActor(index++, spawn, model, level, stats.HpMax, WalkSpeed(room.Hero, stats.MoveSpeed > 0 ? stats.MoveSpeed : def.Tags.IntOr("[move speed]", 0)),
                     def.Tags.IntOr("[attack delay]", 0), def.Tags.IntOr("[attack speed]", 0), stats.HitRecovery, stats.Weight);
                 // 出招的攻击信息:[attack info] 与 [attack motion] 同下标(证据 E-086);出哪一招由 [attack kind] 的记录决定(证据 E-100、E-101),
@@ -1171,7 +1173,7 @@ namespace Dnf.Play
             }
             var session = new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, HeroSkills.Create(data, chr, 0), hasWeapon ? weapon.StunMs : 0,
                 hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null, weaponSound, heroPanel,
-                progress, expWeight);
+                progress, expWeight, difficulty);
             session.Character = chr;
             MonsterDrops drops = MonsterDrops.Load(assets);
             if (drops.Available)

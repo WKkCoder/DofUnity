@@ -86,6 +86,7 @@ namespace Dnf.Play
         private readonly List<SoundCue> _soundScratch = new List<SoundCue>();
         private readonly ITownWorld _townWorld;
         private readonly Func<string, int, IRunSession> _dungeon;
+        private readonly Func<string, int, int, IRunSession> _dungeonByDifficulty;
         private readonly Func<string, SplashScene> _dungeonSplash;
         private readonly Func<CharacterSelectScreen> _characterSelect;
         private readonly List<DungeonEntry> _entries;
@@ -106,13 +107,17 @@ namespace Dnf.Play
         /// <paramref name="entries"/> 是副本选择界面上的副本列表;<paramref name="world"/> 不为空时选择界面画原版的世界地图(<see cref="WorldMapArt"/>),
         /// 为空是占位画面;<paramref name="dungeonSplash"/> 按副本路径给进图加载画面的素材(返回 null 或不给就直接进);
         /// <paramref name="characterSelect"/> 每次造一个新的选角界面(不给就没有选角这个阶段,<see cref="EnterCharacterSelect"/> 会报错)。
+        /// <paramref name="dungeonByDifficulty"/>(M33)按(副本路径, 局序号, 难度)造一局副本;给了它就用它造、不再调 <paramref name="dungeon"/>
+        /// (没给就用 <paramref name="dungeon"/>,难度只记在 <see cref="Difficulty"/> 里供宿主读)。
         /// 造好之后还要调 <see cref="EnterCharacterSelect"/>、<see cref="EnterTown"/>、<see cref="EnterSelect"/> 或 <see cref="StartDungeon"/> 开始。
         /// </summary>
         public GameFlow(ITownWorld townWorld, Func<string, int, IRunSession> dungeon, IEnumerable<DungeonEntry> entries, WorldMapScene world = null,
-            Func<string, SplashScene> dungeonSplash = null, Func<CharacterSelectScreen> characterSelect = null)
+            Func<string, SplashScene> dungeonSplash = null, Func<CharacterSelectScreen> characterSelect = null,
+            Func<string, int, int, IRunSession> dungeonByDifficulty = null)
         {
             _townWorld = townWorld ?? throw new ArgumentNullException(nameof(townWorld));
             _dungeon = dungeon ?? throw new ArgumentNullException(nameof(dungeon));
+            _dungeonByDifficulty = dungeonByDifficulty;
             _entries = new List<DungeonEntry>(entries ?? throw new ArgumentNullException(nameof(entries)));
             _world = world;
             _dungeonSplash = dungeonSplash;
@@ -173,6 +178,17 @@ namespace Dnf.Play
 
         /// <summary>正在玩或刚玩过的副本路径;还没进过副本是 null。</summary>
         public string DungeonPath { get; private set; }
+
+        /// <summary>
+        /// 正在玩或刚玩过的那一局的副本难度(0 到 4;M33,证据 E-125);再次挑战沿用它,回到副本选择界面时作为起始难度。还没进过副本是 0。
+        /// </summary>
+        public int Difficulty { get; private set; }
+
+        /// <summary>
+        /// 副本选择界面按副本给出现在能选到的最高难度(0 到 3):宿主接到主角的通关记录上(<see cref="HeroProgress.HighestDifficulty"/>);
+        /// 不设就是每个副本只有难度 0。每次打开选择界面时生效。
+        /// </summary>
+        public Func<DungeonEntry, int> DifficultyLimit { get; set; }
 
         /// <summary>开过多少局副本(含"再次挑战")。</summary>
         public int Runs { get; private set; }
@@ -615,21 +631,26 @@ namespace Dnf.Play
                     }
                 }
             }
-            Switch(GameStage.DungeonSelect, reason, null, new DungeonSelectScreen(_entries, index, _world));
+            Switch(GameStage.DungeonSelect, reason, null, new DungeonSelectScreen(_entries, index, _world, DifficultyLimit, Difficulty));
         }
 
-        /// <summary>开一局新的副本(局序号 = 已开过的局数)。</summary>
-        public void StartDungeon(string dungeonPath, string reason = "start")
+        /// <summary>
+        /// 开一局新的副本(局序号 = 已开过的局数);<paramref name="difficulty"/> 是副本难度(夹在 0 到 <see cref="DungeonSession.DifficultyCount"/> − 1),
+        /// 记在 <see cref="Difficulty"/> 里(再次挑战沿用它)。这里不检查通关记录:选择界面只给出能选的难度,命令行与测试可以直接指定。
+        /// </summary>
+        public void StartDungeon(string dungeonPath, string reason = "start", int difficulty = 0)
         {
             if (string.IsNullOrEmpty(dungeonPath))
             {
                 throw new ArgumentException("需要副本路径", nameof(dungeonPath));
             }
             DungeonPath = dungeonPath;
+            int level = Math.Max(0, Math.Min(difficulty, DungeonSession.DifficultyCount - 1));
+            Difficulty = level;
 
             void Begin()
             {
-                IRunSession run = _dungeon(dungeonPath, Runs);
+                IRunSession run = _dungeonByDifficulty != null ? _dungeonByDifficulty(dungeonPath, Runs, level) : _dungeon(dungeonPath, Runs);
                 Runs++;
                 Switch(GameStage.Dungeon, reason, run, null);
             }
@@ -767,7 +788,7 @@ namespace Dnf.Play
             {
                 case SettlementChoice.Retry:
                     Settlements++;
-                    StartDungeon(DungeonPath, "choice " + choice);
+                    StartDungeon(DungeonPath, "choice " + choice, Difficulty);
                     return true;
                 case SettlementChoice.SelectDungeon:
                     Settlements++;
@@ -788,7 +809,7 @@ namespace Dnf.Play
             {
                 case SelectOutcome.Enter:
                     DungeonEntry entry = Select.Selected;
-                    StartDungeon(entry.Path, "select " + entry.Name);
+                    StartDungeon(entry.Path, "select " + entry.Name, Select.Difficulty);
                     return true;
                 case SelectOutcome.Back:
                     GoTown(_townWorld.Return, Place, "select Back");     // 从世界地图返回:来源是城镇里的入口区域,同一块区域不加载

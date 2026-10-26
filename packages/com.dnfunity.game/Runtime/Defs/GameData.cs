@@ -465,6 +465,36 @@ namespace Dnf.Game
             }
         }
 
+        private MonsterDifficultyTable _monsterDifficulty;
+
+        /// <summary>副本难度对怪物数值的加成表(monster/monsterapcdifficultybonus.tbl,证据 E-125);缺文件是空表(<see cref="MonsterDifficultyTable.Apply"/> 什么也不改)。</summary>
+        public MonsterDifficultyTable MonsterDifficulty
+        {
+            get
+            {
+                if (_monsterDifficulty == null)
+                {
+                    _monsterDifficulty = MonsterDifficultyTable.Parse(ReadScript(MonsterDifficultyTable.Path));
+                }
+                return _monsterDifficulty;
+            }
+        }
+
+        private UltimateDungeonList _ultimateDungeons;
+
+        /// <summary>有"难度 3"的副本清单(etc/ultimatedungeonlist.etc,证据 E-125);缺文件是空清单(没有副本能开放难度 3)。</summary>
+        public UltimateDungeonList UltimateDungeons
+        {
+            get
+            {
+                if (_ultimateDungeons == null)
+                {
+                    _ultimateDungeons = UltimateDungeonList.Parse(ReadScript(UltimateDungeonList.Path));
+                }
+                return _ultimateDungeons;
+            }
+        }
+
         /// <summary>角色的等级成长(.chr 的 [initial value] 与 [growtype N] 块);<paramref name="chr"/> 为 null 返回没有数据的成长。</summary>
         public CharacterGrowth GetGrowth(CharacterDef chr)
         {

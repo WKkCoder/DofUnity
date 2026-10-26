@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Dnf.Game;
 using Dnf.Render;
 
 namespace Dnf.Play
@@ -58,14 +59,18 @@ namespace Dnf.Play
     /// 副本选择界面(基线 S05:世界地图上摆着副本卡片,底栏写着"↑↓ 选择地下城、←→ 选择难度、空格 进入地下城",右下角有"返回城镇")。
     /// 有 <see cref="WorldMapScene"/> 时画原版的世界地图界面(<see cref="WorldMapArt"/>,证据 E-094):底图、入口标记、卡片、横幅与按钮都来自用户自备的图包,
     /// 开场有横幅与卡片淡入(<see cref="AgeMs"/> 从界面打开算起,由宿主用 <see cref="Advance"/> 推进);没有时是一张占位画面(深色底、像素字列表、选中行高亮、底栏提示)。
-    /// 逻辑两种模式一样:上下键换选中的副本(到头不循环),确认进入、返回城镇。地图模式下上下键按入口在地图上的位置(从上到下)走,
-    /// 左右键(选难度)没有做;鼠标点击卡片选中(再点一下进入),点"返回城镇"按钮返回。快速组队要组队系统,点了没反应。
+    /// 逻辑两种模式一样:上下键换选中的副本(到头不循环),左右键换难度(M33,<see cref="MoveDifficulty"/>,能选到哪一档由宿主给的上限决定,
+    /// 没给上限只有难度 0),确认进入、返回城镇。地图模式下上下键按入口在地图上的位置(从上到下)走;
+    /// 鼠标点击卡片选中(再点一下进入),点"返回城镇"按钮返回。快速组队要组队系统,点了没反应。
     /// 占位画面是自带的像素字,不依赖任何原版素材,所以没有数据目录也能画。
     /// </summary>
     public sealed class DungeonSelectScreen : ISceneSource
     {
         public const int ScreenWidth = 800;
         public const int ScreenHeight = 600;
+
+        /// <summary>界面里能选的最高难度编号(= <see cref="DungeonClears.MaxSelectable"/>;给宿主层用,免得它引用 Dnf.Game)。</summary>
+        public const int MaxDifficultyIndex = DungeonClears.MaxSelectable;
 
         private const uint BackgroundColor = 0x14100Cu;
         private const uint SelectionColor = 0x4A3A1Au;
@@ -76,6 +81,8 @@ namespace Dnf.Play
         private readonly WorldMapScene _world;
         private readonly WorldMapArt _worldArt;
         private readonly int[] _navigation;
+        private readonly Func<DungeonEntry, int> _limit;
+        private int _difficulty;
         private double _ageMs;
 
         public IReadOnlyList<DungeonEntry> Entries => _entries;
@@ -91,16 +98,40 @@ namespace Dnf.Play
         /// <summary>画原版世界地图界面时的画面数据;占位画面是 null。</summary>
         public WorldMapScene World => _world;
 
+        /// <summary>
+        /// 选中的难度(0 到 <see cref="MaxDifficulty"/>;M33):左右键改它;换到上限更低的副本时跟着降下来(再换回去不自动升回去)。确认进入时随结果一起交给流程。
+        /// </summary>
+        public int Difficulty => _difficulty;
+
+        /// <summary>选中的副本现在能选到的最高难度(0 到 <see cref="DungeonClears.MaxSelectable"/>;宿主没给上限或没有副本时是 0)。</summary>
+        public int MaxDifficulty => LimitOf(Selected);
+
+        private int LimitOf(DungeonEntry entry)
+        {
+            if (entry == null || _limit == null)
+            {
+                return 0;
+            }
+            return Math.Max(0, Math.Min(_limit(entry), DungeonClears.MaxSelectable));
+        }
+
         /// <summary>界面打开以来的毫秒数(<see cref="Advance"/> 累加),开场动画与横幅轮换按它走。</summary>
         public long AgeMs => (long)_ageMs;
 
-        public DungeonSelectScreen(IEnumerable<DungeonEntry> entries, int index = 0, WorldMapScene world = null)
+        /// <summary>
+        /// <paramref name="difficultyLimit"/> 按副本给出现在能选到的最高难度(0 到 3,通常来自主角的通关记录,<see cref="HeroProgress.HighestDifficulty"/>;不给就只有难度 0),
+        /// <paramref name="difficulty"/> 是起始的难度(夹在选中副本的上限里)。
+        /// </summary>
+        public DungeonSelectScreen(IEnumerable<DungeonEntry> entries, int index = 0, WorldMapScene world = null, Func<DungeonEntry, int> difficultyLimit = null,
+            int difficulty = 0)
         {
             _entries = new List<DungeonEntry>(entries ?? throw new ArgumentNullException(nameof(entries)));
             Index = _entries.Count == 0 ? -1 : Math.Max(0, Math.Min(index, _entries.Count - 1));
             _world = world;
             _worldArt = world == null ? null : WorldMapArt.For(world.Sprites);
             _navigation = BuildNavigation(_entries, world != null);
+            _limit = difficultyLimit;
+            _difficulty = Math.Max(0, Math.Min(difficulty, MaxDifficulty));
         }
 
         /// <summary>
@@ -168,6 +199,22 @@ namespace Dnf.Play
             int position = Array.IndexOf(_navigation, Index);
             position = Math.Max(0, Math.Min(position + delta, _navigation.Length - 1));
             Index = _navigation[position];
+            ClampDifficulty();
+        }
+
+        /// <summary>难度调高(<paramref name="delta"/> 为正)或调低(为负);夹在 0 到 <see cref="MaxDifficulty"/>,不循环。已经有结果之后不再响应。</summary>
+        public void MoveDifficulty(int delta)
+        {
+            if (Outcome != SelectOutcome.None || _entries.Count == 0)
+            {
+                return;
+            }
+            _difficulty = Math.Max(0, Math.Min(_difficulty + delta, MaxDifficulty));
+        }
+
+        private void ClampDifficulty()
+        {
+            _difficulty = Math.Min(_difficulty, MaxDifficulty);
         }
 
         /// <summary>进入选中的副本;没有副本、或已经有结果时不响应。</summary>
@@ -220,6 +267,7 @@ namespace Dnf.Play
             else
             {
                 Index = hit;
+                ClampDifficulty();
             }
             return true;
         }
@@ -230,13 +278,18 @@ namespace Dnf.Play
             int order = 0;
             if (_worldArt != null)
             {
-                _worldArt.Build(sprites, ref order, _art, _world, _entries, Index, AgeMs);
+                _worldArt.Build(sprites, ref order, _art, _world, _entries, Index, AgeMs, _difficulty);
                 return sprites;
             }
             sprites.Add(OverlayArt.Place(_art.Solid(ScreenWidth, ScreenHeight, BackgroundColor), 0, 0, order++, "select-backdrop"));
             SpriteFrame title = _art.Text("SELECT DUNGEON", 3, OverlayArt.Yellow);
             sprites.Add(OverlayArt.Place(title, 40, 30, order++, "select-title"));
 
+            if (Selected != null)
+            {
+                SpriteFrame level = _art.Text("DIFFICULTY " + DifficultyNames.Of(_difficulty), 2, OverlayArt.Orange);
+                sprites.Add(OverlayArt.Place(level, 40, 70, order++, "select-difficulty"));
+            }
             const int rowTop = 110;
             const int rowStep = 40;
             for (int i = 0; i < _entries.Count; i++)
@@ -258,7 +311,7 @@ namespace Dnf.Play
                 sprites.Add(OverlayArt.Place(_art.Text("NO DUNGEON", 3, OverlayArt.Orange), 48, rowTop, order++, "select-empty"));
             }
 
-            SpriteFrame hint = _art.Text("UP DOWN SELECT   ENTER GO   ESC TOWN", 2, HintColor);
+            SpriteFrame hint = _art.Text("UP DOWN SELECT   LEFT RIGHT LEVEL   ENTER GO   ESC TOWN", 2, HintColor);
             sprites.Add(OverlayArt.Place(hint, 40, ScreenHeight - 40, order++, "select-hint"));
             return sprites;
         }

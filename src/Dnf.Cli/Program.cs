@@ -128,6 +128,12 @@ namespace Dnf.Cli
         /// <summary>dungeon-check、flow-check、sound-check --monster-damage-scale N:测试旋钮,怪物打中主角的每一击伤害乘上 N(默认 1;死亡、复活与失败回城的无人值守检查用它让主角几下就死,不是原版规则)。</summary>
         public int MonsterDamageScale { get; set; } = 1;
 
+        /// <summary>dungeon-check、flow-check --difficulty N:副本难度(0 到 4,默认 0;M33,证据 E-125):怪物数值的难度加成、经验、掉落、复活币规则、任务与评分都按它走;命令行直接指定,不检查通关记录。</summary>
+        public int Difficulty { get; set; }
+
+        /// <summary>flow-check --raise-difficulty:流程自动机在副本选择界面把难度调到当前能选的最高一档(每通关一次解锁下一档)。</summary>
+        public bool RaiseDifficulty { get; set; }
+
         public int Seed { get; set; } = 1;
         public bool RandomLayout { get; set; }
 
@@ -316,6 +322,9 @@ namespace Dnf.Cli
             "      combat-check、dungeon-check、flow-check、sound-check 默认带主角的等级进度(杀怪给经验、升级、底栏有经验条):--level N 指定起始等级,--no-exp 关掉(--no-damage 时本来就没有)。\n" +
             "      dungeon-check、flow-check、sound-check 里主角死了会开复活窗口(证据 E-115:躺平后 10 秒失败计时,攻击键用币复活,计时走完副本失败、流程回城):--coins N 指定复活币的起始库存(默认 5,占位),\n" +
             "      --monster-damage-scale N(测试旋钮,不是原版规则)让怪物打中主角的伤害乘上 N,用来无人值守地检查死亡、复活与失败回城。\n" +
+            "  dnf difficulty-check [--dungeon <副本定义>] [--seed N] | --cases <用例文件>\n" +
+            "      副本难度(证据 E-125):读难度加成表、全部副本自带的 [monster difficulty bonus] 与难度 3 清单,检查结构;再把 --dungeon 副本以难度 0 到 4 各造一遍,比较第一个房间里每只怪物的最大生命只升不降\n" +
+            "      (数值来自本机的数据,只打印在终端,不要抄进入库的文件)。--cases 读 mob_difficulty_oracle.py --write-cases 的输出,用 C# 重算并与原版函数在模拟器里的结果逐槽比较(不需要数据目录)。dungeon-check、flow-check 的 --difficulty N(0 到 4,不检查通关记录)让整局按这个难度打;flow-check 的 --raise-difficulty 让自动机在选择界面把难度调到当前能选的最高一档。\n" +
             "  dnf item-check [--level N] [--samples N] [--seed N]\n" +
             "      怪物物品掉落(证据 E-117):整库扫描装备与可叠加物品的脚本头(创建率、稀有度、等级、类型、地上图与图标),建掉落池,按怪物等级 --level 掷 --samples 只怪物\n" +
             "      并汇总各类物品与稀有度的件数(数值与物品名来自本机的数据,只打印在终端,不要抄进入库的文件;通过与否只看结构)。\n" +
@@ -587,6 +596,14 @@ namespace Dnf.Cli
                             ? monsterScaleValue
                             : throw new UserError("--monster-damage-scale 需要 1 到 100000 的整数");
                         break;
+                    case "--difficulty":
+                        opts.Difficulty = int.TryParse(NextValue(args, ref i), out int difficultyValue) && difficultyValue >= 0 && difficultyValue <= 4
+                            ? difficultyValue
+                            : throw new UserError("--difficulty 需要 0 到 4 的整数");
+                        break;
+                    case "--raise-difficulty":
+                        opts.RaiseDifficulty = true;
+                        break;
                     case "--level":
                         opts.HeroLevel = int.TryParse(NextValue(args, ref i), out int levelValue) && levelValue >= 1 && levelValue <= 85
                             ? levelValue
@@ -763,6 +780,10 @@ namespace Dnf.Cli
                     return QuestCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "quest-flow-check":
                     return QuestFlowCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "difficulty-check":
+                    return opts.CasesFile != null
+                        ? DifficultyCheck.RunCases(opts)
+                        : DifficultyCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "damage-check":
                     return opts.CasesFile != null
                         ? DamageCheck.RunCases(opts)

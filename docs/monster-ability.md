@@ -16,12 +16,12 @@ set_monster_ability(怪物脚本, 等级, 种类, 副本参数, …)
  │    选表 → 按等级查行 → 基础数值落进数值块;.mob 的"最小/最大"对按等级线性插值;派生量(回复、浮点加成)
  ├ upgradeAbilityByMonsterParameterCategory 0x088B7F36    ← MonsterAbility.ApplyCategories
  │    按 .mob 的 [ability category] 乘或加(14 个类别)
- ├ upgradeAbilityByDifficultyOfDungeon                    ← 未实现(按副本难度)
+ ├ upgradeAbilityByDifficultyOfDungeon                    ← MonsterDifficultyTable.Apply(M33,第 9 节;三个重载 0x088B8C37、0x088B85CF、0x088B813A)
  ├ 首领特性(服务端里是空函数)/ 精英词缀(common / super champion)  ← 未实现
  └ 队伍人数、死亡塔、血系统等其他层                        ← 未实现
 ```
 
-`MonsterAbility.Compute` 目前覆盖前两步(加首领判定);其余层有各自的服务端函数,按 P5 的需要逐个补。
+`MonsterAbility.Compute` 覆盖前两步(加首领判定);难度层是带难度参数的重载(M33,第 9 节);其余层有各自的服务端函数,按 P5 的需要逐个补。
 
 ## 2. 输入
 
@@ -108,11 +108,40 @@ set_monster_ability(怪物脚本, 等级, 种类, 副本参数, …)
 - 命令:`dnf mob-check`(全库校验、`--dump`、`--json`)与 `dnf mob-check --cases <文件>`(读取合成用例并与期望槽值比对)。
 
 **覆盖的边界**:模拟器验证的是**计算函数**——喂给它们的脚本结构由我们按加载函数 `ImportMonsterScript`(`0x08a12827`)的读法填写,加载函数本身没有在模拟器里跑;`.mob` → 结构偏移这一步依据静态阅读(E-055 的 schema)。
-没有实现的层(副本难度、队伍、精英词缀、死亡塔、血系统)不在上面的数字里。
+没有实现的层(队伍、精英词缀、死亡塔、血系统)不在上面的数字里;副本难度层(M33)的验证在第 9 节。
 
-## 9. 未知与下一步
+## 9. 副本难度层(M33,证据 E-125)
 
-- 其余层的服务端函数:`upgradeAbilityByDifficultyOfDungeon`(三个重载:`0x088b8c37`、`0x088b85cf`、`0x088b813a`)、队伍人数、精英词缀、死亡塔、血系统;
+难度五档(下标 0 到 4,与表文件里 `[easy] [medium] [hard] [ultimate] [hero]` 五节同序;世界地图界面上只找到四张难度图标,所以界面只选 0 到 3)。
+服务端在基础数值与 `[ability category]` 之后、首领与精英特性之前调 `upgradeAbilityByDifficultyOfDungeon`,**按副本难度改写数值块里的九类槽**。
+**观察**(服务端静态读码,Ghidra 无头脚本,非 REA;**没有任何原版数值入库**——表文件与 `.dgn` 的内容只在本机运行时读):
+
+- **数据**:`monster/monsterapcdifficultybonus.tbl` 由 `InitMonsterScript`(`0x08a3b0ad`)读入:开头没有标签的 13 组 × 5 难度的浮点数("全局系数"),
+  然后五节(`[easy]` 到 `[hero]`),每节是一串"等级标记 + 13 个系数"的行,最后还有两块没有标签的数(死亡之塔与血系统的加成,这里没有读);
+  `.dgn` 里可以带自己的 `[monster difficulty bonus]`(`ImportDungeonScript` `0x088e5faa`):同样 13 组 × 5 难度共 65 个浮点数。
+- **三个重载**:`0x088B8C37`(只用全局系数)、`0x088B85CF`(按怪物等级取这个难度这一节的行,行数不够就退到只用全局)、
+  `0x088B813A`(副本带自带加成时系数 = 自带 × 全局,否则转调第二个);`set_monster_ability`(`0x083026da`)调第三个。
+- **系数怎么取**:带系数的两种是 截断(行系数 × float(旧值 × 全局))(乘类),全局算法是 截断(旧值 × 全局);加类是 旧值 + 截断(全局) 或 旧值 + 截断(行系数 × 全局)。
+  x87 的中间结果留在 80 位寄存器,只有存进 float 临时变量才舍入到 24 位——所以乘法的顺序与取整位置都要照原样,换成 double 或 float 朴素算法会不一致。
+- **动的槽**(组号 = 全局块里的行号):组 4 生命值基数(乘);组 3 硬直抗性(加)、组 10 受击恢复(加);组 7 异常状态抗性 17 项(加,按 `getToleranceActiveStatus` `0x08891b2a` 的映射,
+  17 项里跳过第 12、13 项——第 13 项就是硬直抗性本身);组 5 攻击速度(乘)、组 6 移动速度(旧值不为 0 才加);组 8 装备物理与魔法攻击(乘)、组 9 装备物理与魔法防御(乘)。
+
+**实现**:`Dnf.Game/Defs/MonsterDifficulty.cs` 的 `MonsterDifficultyTable`(读表、`Apply`)与 `DungeonDifficultyBonus`(读 `.dgn` 的自带加成);
+`MonsterAbility.Compute(…, difficultyTable, difficulty, dungeonBonus)` 在原有两步之后接上;`RoomCombat`、`DungeonSession.Create(…, difficulty)` 把难度一路带到怪物、经验、掉落、复活币、任务与评分。
+
+**验证**(非 REA,模拟器与单测):
+- `tools/py/mob_difficulty_oracle.py`:把三个重载的原版机器码放进 Unicorn 里跑(数值块 188 个槽逐槽比,没动的槽放哨兵值确认没被碰),与 Python 的精确 x87 参考逐槽比较:
+  随机合成用例 2 万条零不一致(含"行数不够退到全局"与"副本自带加成")。
+- `src/Dnf.Game.Tests/Golden/mob_difficulty_golden.txt`:420 条全合成用例 + 原版函数的输出(可入库),`MonsterDifficultyTests` 逐槽比对;
+  `dnf difficulty-check --cases` 把上面 2 万条用例交给 C# 重算,同样零不一致;`tools/verify-all.sh --only difficulty` 一并跑。
+- `dnf difficulty-check`(真数据,只打印个数):表读得到、全库副本自带的加成格式对、同一座副本各难度下每只怪物的最大生命只升不降。
+
+**推断与没做**:`.dgn` 里 `[designate dungeon difficulty]` 的消费者没有找到(没做);队伍人数层、首领特性与精英词缀、死亡之塔与血系统层没做;
+难度层改出来的攻击速度与硬直抗性槽目前没有被 `MonsterActor` 的行为用上(只有生命、攻防走了伤害管线);第五档(难度 4)的表数据读了,但界面不选。
+
+## 10. 未知与下一步
+
+- 其余层的服务端函数:队伍人数、精英词缀、死亡塔、血系统;难度层里 `[designate dungeon difficulty]` 的消费者;
 - 回复的周期与单位;浮点字段 0x6A 的含义;`[attack kind]`、`[int data]` 的语义;
 - **客户端自己的浮点模式**:客户端同样用 x87(例如 tryHit 的区间比较,见 `docs/hit-pipeline.md`),但它在 Windows 上跑:CRT 默认精度控制是 53 位,而 Direct3D 9 设备创建时若没带 `FPU_PRESERVE` 会把精度降到 24 位;
   客户端算出来的东西(伤害、几何)是否受影响要查设备创建标志(静态可查)。服务端的结果不受影响(Linux,`0x37F`,已对拍)。

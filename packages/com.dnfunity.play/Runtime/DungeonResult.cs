@@ -132,6 +132,17 @@ namespace Dnf.Play
         /// <summary>通关经验是不是已经发给了主角(没有等级进度时不发)。</summary>
         public bool Granted { get; private set; }
 
+        /// <summary>
+        /// 这次通关新开放的难度(M33,证据 E-125):通关记录从无到有或抬高了,是新的记录值(1 到 3,即现在能选到的最高难度);没有改动是 0
+        /// (服务端发给客户端的"某难度开放"通知里的就是这个数)。
+        /// </summary>
+        public int OpenedDifficulty { get; private set; }
+
+        internal void MarkOpened(int opened)
+        {
+            OpenedDifficulty = opened;
+        }
+
         /// <summary>发经验之前、之后的主角等级(没发时都是 0)。</summary>
         public int LevelBefore { get; private set; }
 

@@ -128,6 +128,18 @@ namespace Dnf.Play
 
         public int QuestsCleared => Quests.Cleared.Count;
 
+        /// <summary>各副本的通关记录与难度门槛(M33,证据 E-125):通关时由 <see cref="DungeonSession"/> 记,选择界面按它决定能选到哪个难度,存进存档。</summary>
+        public DungeonClears Clears { get; } = new DungeonClears();
+
+        /// <summary>有通关记录的副本数(宿主层不引用 Dnf.Game,日志用这个数)。</summary>
+        public int DungeonsCleared => Clears.Count;
+
+        /// <summary>这个副本能选到的最高难度(0 到 3):记录值与"有没有难度 3"(<paramref name="hasUltimate"/>)决定;宿主层用基本类型取。</summary>
+        public int HighestDifficulty(int dungeonId, bool hasUltimate)
+        {
+            return Clears.HighestSelectable(dungeonId, hasUltimate);
+        }
+
         /// <summary>背包里一共有多少件、占了多少格(宿主层不引用 Dnf.Game,日志与界面用这两个数)。</summary>
         public int BagItems => Bag.TotalCount;
 
@@ -393,6 +405,10 @@ namespace Dnf.Play
             var cleared = new List<int>(Quests.Cleared);
             cleared.Sort();
             save.ClearedQuests.AddRange(cleared);
+            foreach (KeyValuePair<int, int> clear in Clears.Entries())
+            {
+                save.Clears.Add(new SavedClear(clear.Key, clear.Value));
+            }
             return save;
         }
 
@@ -483,6 +499,11 @@ namespace Dnf.Play
             foreach (int id in save.ClearedQuests)
             {
                 Quests.MarkCleared(id);
+            }
+            Clears.Clear();                        // 副本通关记录:整个换成存档里的
+            foreach (SavedClear saved in save.Clears)
+            {
+                Clears.Set(saved.DungeonId, saved.Opened);
             }
             return new SaveApplyReport(stacks, wornCount, moved, dropped);
         }

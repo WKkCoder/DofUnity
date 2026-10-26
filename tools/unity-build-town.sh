@@ -32,6 +32,8 @@
 #       日志里 DNF_QUEST 各行齐全(只有个数与结果名,没有任务名与编号),进城时记到头顶带标记的 NPC;窗口画过汉字。
 #     副本结算(M32,E-124):整条流程三局副本各有一行 DNF_CLEAR(评分字母与帧一致、评分数据读到、没有等级进度时不发经验);单独一趟带等级进度打通副本,
 #       日志里 DNF_CLEAR 的经验已发给主角(granted=True、exp>0)。日志里只有字母与数字。
+#     副本难度(M33,E-125):带等级进度、自动机从选择界面把难度升到通关记录允许的最高一档(-dnfraisedifficulty),三局的难度依次是 0、1、1,
+#       难度 0 通关写下记录(DNF_CLEAR 的 opened=1),再次挑战沿用难度。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -550,10 +552,10 @@ if [ "$platform" = "macos" ]; then
     fi
     # 副本结算(M32,证据 E-124):三局副本各结算一次(DNF_CLEAR 三行),评分字母与图的帧一致(SSS 0、SS 1、S 2、A 3、B 4、C 5、D 6、E 7、F 8),评分数据读到(ranked=True);
     # 这一趟带 -dnfnodamage(没有等级进度),经验不发(granted=False exp=0 bonus=0)
-    grep -E 'DNF_CLEAR rank=' "$flow_log" | cut -c1-200 || true
-    [ "$(grep -c -E 'DNF_CLEAR rank=' "$flow_log")" -eq 3 ] \
+    grep -E 'DNF_CLEAR difficulty=[0-9]+ opened=[0-9]+ rank=' "$flow_log" | cut -c1-200 || true
+    [ "$(grep -c -E 'DNF_CLEAR difficulty=[0-9]+ opened=[0-9]+ rank=' "$flow_log")" -eq 3 ] \
       || { echo "整条流程三局副本应各有一行 DNF_CLEAR:$flow_log" >&2; exit 1; }
-    [ "$(grep -c -E 'DNF_CLEAR rank=[A-Z]+ frame=[0-8] ranked=True .* kills=[1-9][0-9]* .* granted=False exp=0 bonus=0 levels=0' "$flow_log")" -eq 3 ] \
+    [ "$(grep -c -E 'DNF_CLEAR difficulty=[0-9]+ opened=[0-9]+ rank=[A-Z]+ frame=[0-8] ranked=True .* kills=[1-9][0-9]* .* granted=False exp=0 bonus=0 levels=0' "$flow_log")" -eq 3 ] \
       || { echo "三行 DNF_CLEAR 都应读到评分数据(ranked=True)、打死过怪物、没有等级进度时不发经验(granted=False exp=0 bonus=0):$flow_log" >&2; exit 1; }
     python3 tools/py/check_clear_log.py "$flow_log" 3 \
       || { echo "DNF_CLEAR 的评分字母与帧对不上:$flow_log" >&2; exit 1; }
@@ -611,16 +613,38 @@ if [ "$platform" = "macos" ]; then
     rc=$?
     set -e
     echo "播放器退出码(副本结算与通关经验): $rc"
-    grep -E 'DNF_CLEAR rank=' "$clear_log" | cut -c1-200 || true
+    grep -E 'DNF_CLEAR difficulty=[0-9]+ opened=[0-9]+ rank=' "$clear_log" | cut -c1-200 || true
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$clear_log"; then
       echo "副本结算的日志里有异常:$clear_log" >&2
       exit 1
     fi
-    grep -q -E 'DNF_CLEAR rank=[A-Z]+ frame=[0-8] ranked=True .* kills=[1-9][0-9]* .* granted=True exp=[1-9][0-9]* bonus=[0-9]+ levels=[0-9]+' "$clear_log" \
+    grep -q -E 'DNF_CLEAR difficulty=[0-9]+ opened=[0-9]+ rank=[A-Z]+ frame=[0-8] ranked=True .* kills=[1-9][0-9]* .* granted=True exp=[1-9][0-9]* bonus=[0-9]+ levels=[0-9]+' "$clear_log" \
       || { echo "带等级进度打通副本应结算出评分并发了通关经验(DNF_CLEAR … ranked=True … granted=True exp>0):$clear_log" >&2; exit 1; }
     python3 tools/py/check_clear_log.py "$clear_log" 1 \
       || { echo "DNF_CLEAR 的评分字母与帧对不上:$clear_log" >&2; exit 1; }
+    # 副本难度(M33,证据 E-125):带等级进度(20 级),自动机从副本开局;打通后选"选择其它地下城"回到选择界面,自动机把难度调到通关记录允许的最高一档
+    # (-dnfraisedifficulty)再进;再"再次挑战"沿用难度。三局的难度依次是 0、1、1;第一局(难度 0)通关写下记录,日志里 opened=1;评分字母与帧一致;没有异常
+    difficulty_log="$PWD/re/unity-run-town-difficulty-macos.log"
+    rm -f "$difficulty_log"
+    set +e
+    "$app" -batchmode -logFile "$difficulty_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" -dnflevel 20 -dnfraisedifficulty \
+      -dnfflowchoices select,retry,town -dnftimescale 4 -dnfquitafter 120
+    rc=$?
+    set -e
+    echo "播放器退出码(副本难度): $rc"
+    grep -E 'DNF_CLEAR difficulty=' "$difficulty_log" | cut -c1-120 || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$difficulty_log"; then
+      echo "副本难度的日志里有异常:$difficulty_log" >&2
+      exit 1
+    fi
+    [ "$(grep -E 'DNF_CLEAR difficulty=' "$difficulty_log" | sed -E 's/DNF_CLEAR difficulty=([0-9]+) .*/\1/' | tr '\n' ' ')" = "0 1 1 " ] \
+      || { echo "三局副本的难度应依次是 0、1、1(自动机从选择界面升到记录允许的最高一档,再次挑战沿用):$difficulty_log" >&2; exit 1; }
+    grep -q -E 'DNF_CLEAR difficulty=0 opened=1 ' "$difficulty_log" \
+      || { echo "难度 0 通关应写下通关记录并开放难度 1(DNF_CLEAR difficulty=0 opened=1):$difficulty_log" >&2; exit 1; }
+    python3 tools/py/check_clear_log.py "$difficulty_log" 3 2 \
+      || { echo "难度日志里的 DNF_CLEAR 对不上:$difficulty_log" >&2; exit 1; }
     # Esc 系统菜单:无伤害打副本,阶段开始 3 秒后探针像按 Esc 一样打开菜单(游戏暂停)、再过一秒选第 2 项"放弃回城";
     # 流程应回城镇,算一次放弃(giveups=1),不算结算也不算失败
     menu_log="$PWD/re/unity-run-town-menu-macos.log"
@@ -787,6 +811,9 @@ if [ "$platform" = "macos" ]; then
     grep -q -F 'DNF_SAVE open file=m26-hero.sav found=False' "$save_log1" \
       || { echo "第一趟开始时不应有存档(DNF_SAVE open … found=False):$save_log1" >&2; exit 1; }
     [ -s "$save_file" ] || { echo "第一趟结束后应有存档文件:$save_file" >&2; exit 1; }
+    # 通关记录(M33,证据 E-125):第一趟打通了副本,存档里有通关记录行(dclear 副本编号 值);第二趟读回去以后不用重写(下面"读完不再写"一并覆盖了这一行)
+    grep -q -E '^dclear [0-9]+ [1-4]$' "$save_file" \
+      || { echo "第一趟打通了副本,存档里应有通关记录行(dclear 副本编号 值):$save_file" >&2; exit 1; }
     saved_fields="$(grep -E 'DNF_SAVE saved' "$save_log1" | tail -1 | grep -o -E 'level=[0-9]+ exp=[0-9]+ gold=[0-9]+ bag=[0-9]+ equipped=[0-9]+' || true)"
     case "$saved_fields" in
       *' equipped=1') ;;

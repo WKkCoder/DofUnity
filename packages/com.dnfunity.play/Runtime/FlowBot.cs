@@ -58,6 +58,11 @@ namespace Dnf.Play
         /// <summary>清单里已经用掉几个选择。</summary>
         public int ChoicesMade { get; private set; }
 
+        /// <summary>
+        /// 在副本选择界面确认之前,先把难度调到这座副本现在能选的最高一档(M33):每通关一次就解锁下一档,自动机因此逐局爬高。默认关(难度保持界面的起始值)。
+        /// </summary>
+        public bool RaiseDifficulty { get; set; }
+
         /// <summary>清单用完了(回到了城镇,或者停在没有选择可做的结算菜单上):流程走完,不会再有动作。</summary>
         public bool Done { get; private set; }
 
@@ -104,6 +109,10 @@ namespace Dnf.Play
                     flow.Select.Advance(deltaMs);
                     if (_stageMs >= SelectDwellMs)
                     {
+                        if (RaiseDifficulty)
+                        {
+                            flow.Select.MoveDifficulty(DungeonSelectScreen.MaxDifficultyIndex);
+                        }
                         flow.Select.Confirm();
                     }
                     break;

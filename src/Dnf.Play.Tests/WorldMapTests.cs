@@ -545,4 +545,63 @@ public class WorldMapTests
         Assert.InRange(flow.Select.AgeMs, (long)(t - 1), (long)(t + 1));                 // 界面的时钟跟着自动机走
         Assert.True(flow.Select.AgeMs >= WorldMapArt.BalloonDelayMs + WorldMapArt.BalloonFadeMs);
     }
+
+    // ------------------------------------------------------------------ 难度(M33):难度条上的图标 = 基础帧 + 难度
+
+    private static FakeSprites ArtWithAllIcons()
+    {
+        FakeSprites sprites = FullArt();
+        for (int i = 1; i < WorldMapArt.DifficultyIconCount; i++)
+        {
+            sprites.Frames[(WorldMapArt.PartyImage, WorldMapArt.PartyIconFrame + i)] = Coded(15, 15, (byte)(21 + i));
+        }
+        return sprites;
+    }
+
+    [Theory]
+    [InlineData(0, 21)]
+    [InlineData(1, 22)]
+    [InlineData(2, 23)]
+    [InlineData(3, 24)]
+    [InlineData(4, 24)]              // 难度 4 没有图标:按最后一张画
+    [InlineData(-2, 21)]
+    [InlineData(99, 24)]
+    public void TheDifficultyBarIconIsTheBaseFramePlusTheDifficultyClampedToTheFourIcons(int difficulty, int tag)
+    {
+        FakeSprites sprites = ArtWithAllIcons();
+        var art = new WorldMapArt(sprites);
+        var list = new List<SceneSprite>();
+        int order = 0;
+        art.Build(list, ref order, new OverlayArt(), Scene(sprites), new[] { Entry("a", 1, 300, 200) }, 0, 5000, difficulty);
+        SceneSprite icon = Only(list, "map-party-icon");
+        Assert.Equal(tag, icon.Frame.Rgba[2]);
+        Assert.Equal((745, 479), (icon.ScreenX, icon.ScreenY));        // 位置不随难度变
+    }
+
+    [Fact]
+    public void ADifficultyWhoseIconIsMissingDrawsNoIconInsteadOfFailing()
+    {
+        FakeSprites sprites = FullArt();                               // 只有基础帧
+        var art = new WorldMapArt(sprites);
+        var list = new List<SceneSprite>();
+        int order = 0;
+        art.Build(list, ref order, new OverlayArt(), Scene(sprites), new[] { Entry("a", 1, 300, 200) }, 0, 5000, 2);
+        Assert.DoesNotContain(list, s => s.AnimationPath == "map-party-icon");
+        Assert.Single(list, s => s.AnimationPath == "map-difficulty-bar");
+    }
+
+    [Fact]
+    public void ThePictureScreenDrawsTheIconOfItsSelectedDifficultyAndClickingAnotherCardLowersItToThatCardsLimit()
+    {
+        FakeSprites sprites = ArtWithAllIcons();
+        var entries = new[] { Entry("a", 1, 300, 200), Entry("b", 2, 500, 350) };
+        var screen = new DungeonSelectScreen(entries, 0, Scene(sprites), e => e.Path.EndsWith("/a.dgn") ? 3 : 1);
+        screen.Advance(5000);
+        screen.MoveDifficulty(3);
+        Assert.Equal(24, Only(screen.Build(0), "map-party-icon").Frame.Rgba[2]);
+
+        Assert.True(screen.Click(470, 280));                           // B 的小卡片:选中它,B 最多到难度 1
+        Assert.Equal((1, 1), (screen.Index, screen.Difficulty));
+        Assert.Equal(22, Only(screen.Build(0), "map-party-icon").Frame.Rgba[2]);
+    }
 }

@@ -139,6 +139,12 @@ namespace Dnf.Play
         public const int ButtonDisabledFrame = 69;
         public const int PartyIconFrame = 23;
 
+        /// <summary>
+        /// 难度条上的小图标(15×15)在 party.img 里是从 <see cref="PartyIconFrame"/> 起连续四张(23 到 26,序列到 26 为止):选了难度 d 就画 <see cref="PartyIconFrame"/> + d
+        /// (M33;四张图与四档难度一一对应是推断,没有原版画面核对;难度 4 没有图标,按最后一张画)。
+        /// </summary>
+        public const int DifficultyIconCount = 4;
+
         // ----- 位置(800×600 画布;各帧自带的偏移在摆放时再加上)
         /// <summary>气泡的原点 = 标记原点加这个偏移。</summary>
         public const int BubbleOffsetX = -36;
@@ -384,7 +390,8 @@ namespace Dnf.Play
         /// 把界面的精灵加进 <paramref name="into"/>(按底图、入口标记与气泡、没选中的卡片、选中的卡片、上下边装饰、底部横幅、难度条、按钮、开场横幅的顺序,
         /// <paramref name="order"/> 接着往下编号)。<paramref name="selected"/> 是选中条目的序号(-1 = 没有),<paramref name="ageMs"/> 是界面打开以来的毫秒数。
         /// </summary>
-        public void Build(List<SceneSprite> into, ref int order, OverlayArt font, WorldMapScene scene, IReadOnlyList<DungeonEntry> entries, int selected, long ageMs)
+        public void Build(List<SceneSprite> into, ref int order, OverlayArt font, WorldMapScene scene, IReadOnlyList<DungeonEntry> entries, int selected, long ageMs,
+            int difficulty = 0)
         {
             AddMap(into, ref order, font, scene);
 
@@ -409,7 +416,7 @@ namespace Dnf.Play
             AddFrame(into, ref order, UiImage, KeyGuideBannerFrame, KeyGuideX, BottomBannerY, "map-key-guide", KeyGuideAlpha(ageMs));
             AddFrame(into, ref order, UiImage, ProperChannelBannerFrame, ChannelBannerX, BottomBannerY, "map-channel", ProperChannelAlpha(ageMs));
 
-            AddDifficultyBar(into, ref order, font, scene);
+            AddDifficultyBar(into, ref order, font, scene, difficulty);
             AddButtons(into, ref order, font);
             AddFrame(into, ref order, UiImage, MapSelectBannerFrame, MapSelectBannerX, MapSelectBannerY, "map-intro", MapSelectBannerAlpha(ageMs));
         }
@@ -502,10 +509,11 @@ namespace Dnf.Play
             }
         }
 
-        private void AddDifficultyBar(List<SceneSprite> into, ref int order, OverlayArt font, WorldMapScene scene)
+        private void AddDifficultyBar(List<SceneSprite> into, ref int order, OverlayArt font, WorldMapScene scene, int difficulty)
         {
             AddFrame(into, ref order, UiImage, DifficultyBarFrame, DifficultyBarX, DifficultyBarY, "map-difficulty-bar", 255);
-            if (_sprites.TryGetFrame(PartyImage, PartyIconFrame, out SpriteFrame icon))
+            int iconFrame = PartyIconFrame + Math.Max(0, Math.Min(difficulty, DifficultyIconCount - 1));
+            if (_sprites.TryGetFrame(PartyImage, iconFrame, out SpriteFrame icon))
             {
                 into.Add(PlaceAt(icon, PartyIconX, PartyIconY, order++, "map-party-icon", 255));
             }

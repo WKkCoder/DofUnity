@@ -144,6 +144,12 @@ public class UiTextTests
         Check("RANK BONUS +10");
         Check("RANK SS");
         Check("LEVELED UP TO 5");
+        for (int d = 0; d < DungeonSession.DifficultyCount; d++)       // 副本难度(M33):名字、结算页的两行
+        {
+            Check(DifficultyNames.Of(d));
+            Check("DIFFICULTY " + DifficultyNames.Of(d));
+            Check("NEW LEVEL OPENED " + DifficultyNames.Of(d));
+        }
         Check("SPACE SHOP");
         Check("EMPTY SLOT");
         Check("CAN EQUIP");

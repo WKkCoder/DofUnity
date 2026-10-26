@@ -73,8 +73,11 @@ internal static class FlowCheck
             entries,
             realSelect ? world!.Scene : null,
             opts.LegacyTown ? null : path => SplashCatalog.ForDungeon(assets, path),
-            () => new CharacterSelectScreen(CharacterRoster.Local(), characterScene));
-        var bot = new FlowBot(opts.Explore, choices);
+            () => new CharacterSelectScreen(CharacterRoster.Local(), characterScene),
+            (path, run, difficulty) => DungeonSession.Create(assets, path, opts.Seed + run, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage, progress: progress,
+                coins: coins, monsterDamageScale: opts.MonsterDamageScale, difficulty: difficulty));
+        flow.DifficultyLimit = DifficultyGate.For(() => progress, assets);       // 选择界面能选到哪一档:按主角的通关记录(M33,E-125)
+        var bot = new FlowBot(opts.Explore, choices) { RaiseDifficulty = opts.RaiseDifficulty };
         // 背景音乐(E-097):照播放器的做法把流程发出的声音提示交给调度器,只记音乐通道开始放的那几次(不出声、不读音频文件内容)
         using SoundLibrary soundLibrary = SoundLibrary.Open(loc.DnfDir);
         MusicTrace? music = soundLibrary.HasCatalog ? new MusicTrace(soundLibrary) : null;
@@ -93,7 +96,7 @@ internal static class FlowCheck
                 flow.EnterSelect("start");
                 break;
             case "dungeon":
-                flow.StartDungeon(opts.Dungeon, "start");
+                flow.StartDungeon(opts.Dungeon, "start", opts.Difficulty);
                 break;
             default:
                 flow.EnterTown("start");

@@ -63,6 +63,20 @@ namespace Dnf.Play
         public int[] Remaining { get; }
     }
 
+    /// <summary>存档里一个副本的通关记录(M33):副本编号与记录值(<see cref="Dnf.Game.DungeonClears"/>:值 v 表示难度 1 到 v 已开放)。</summary>
+    public readonly struct SavedClear
+    {
+        public SavedClear(int dungeonId, int opened)
+        {
+            DungeonId = dungeonId;
+            Opened = opened;
+        }
+
+        public int DungeonId { get; }
+
+        public int Opened { get; }
+    }
+
     /// <summary>还原存档时发生了什么(宿主写进日志)。</summary>
     public sealed class SaveApplyReport
     {
@@ -140,6 +154,9 @@ namespace Dnf.Play
         /// <summary>已完成的任务编号(M31 加的键 <c>cleared 编号</c>,从小到大)。</summary>
         public List<int> ClearedQuests { get; } = new List<int>();
 
+        /// <summary>各副本的通关记录(M33 加的键 <c>dclear 副本编号 值</c>,旧存档没有这些行;副本编号从小到大)。</summary>
+        public List<SavedClear> Clears { get; } = new List<SavedClear>();
+
         /// <summary>写成文本(换行用 \n,键的次序固定,所以内容没变文本也不变)。</summary>
         public string ToText()
         {
@@ -179,6 +196,10 @@ namespace Dnf.Play
             foreach (int id in ClearedQuests)
             {
                 sb.Append("cleared ").Append(id.ToString(Inv)).Append('\n');
+            }
+            foreach (SavedClear clear in Clears)
+            {
+                sb.Append("dclear ").Append(clear.DungeonId.ToString(Inv)).Append(' ').Append(clear.Opened.ToString(Inv)).Append('\n');
             }
             return sb.ToString();
         }
@@ -272,6 +293,7 @@ namespace Dnf.Play
                 case "bag":
                 case "worn":
                 case "quick":
+                case "dclear":
                     arity = 3;
                     break;
                 default:
@@ -344,6 +366,13 @@ namespace Dnf.Play
                     if (ok)
                     {
                         r.Bag.Add(new SavedStack((int)a, (int)b));
+                    }
+                    break;
+                case "dclear":
+                    ok = InRange(a, 0, int.MaxValue) && InRange(b, 1, Dnf.Game.DungeonClears.Difficulties - 1);
+                    if (ok)
+                    {
+                        r.Clears.Add(new SavedClear((int)a, (int)b));
                     }
                     break;
                 case "quick":

@@ -130,7 +130,7 @@ namespace Dnf.Play
         /// <summary>任务事件里的副本编号(dungeon/dungeon.lst 的号);没接任务系统或副本不在列表里是 −1。</summary>
         public int QuestDungeonId { get; private set; } = -1;
 
-        /// <summary>任务事件里的副本难度(0 = 普通;这里没有难度选择)。</summary>
+        /// <summary>任务事件里的副本难度(0 = 普通;M33 起是这一局选的难度,<see cref="Difficulty"/>)。</summary>
         public int QuestDifficulty { get; private set; }
 
         /// <summary>
@@ -167,6 +167,9 @@ namespace Dnf.Play
         private int _rankDungeonId = -1;
         private int _standardLevel;
         private int _rankDifficulty;
+        private int _clearMinLevel;
+        private bool _clearHasUltimate;
+        private bool _clearRecording;
 
         /// <summary>
         /// 通关结算的结果(M32,证据 E-124):评分(用时分、基础分估计、字母)与通关经验;首领清空的那一刻算一次并把经验发给主角,没通关时为 null。
@@ -184,6 +187,18 @@ namespace Dnf.Play
             _rankDungeonId = dungeonId;
             _standardLevel = standardLevel;
             _rankDifficulty = difficulty;
+            Difficulty = Math.Max(0, Math.Min(difficulty, DifficultyCount - 1));      // 结算页的"难度"行也读它
+        }
+
+        /// <summary>
+        /// 接上通关记录(M33,证据 E-125):首领清空时按 <see cref="DungeonClears.Record"/> 把这局记进主角的 <see cref="HeroProgress.Clears"/>(没有等级进度或副本编号为负时不记)。
+        /// <paramref name="minLevel"/> 是 .dgn 的 [minimum required level](等级低于它不记),<paramref name="hasUltimate"/> 是这个副本在不在 <see cref="UltimateDungeonList"/> 里。
+        /// </summary>
+        public void UseClearRecord(int minLevel, bool hasUltimate)
+        {
+            _clearMinLevel = minLevel;
+            _clearHasUltimate = hasUltimate;
+            _clearRecording = true;
         }
 
         /// <summary>整座副本里最高的连击数(各房间取最大)。</summary>
@@ -228,6 +243,12 @@ namespace Dnf.Play
                 int before = progress.Level;
                 Current.GainExp((int)Math.Min(int.MaxValue, result.ExpTotal));
                 result.MarkGranted(before, progress.Level);
+            }
+            if (progress != null && _clearRecording && _rankDungeonId >= 0)
+            {
+                // 通关记录在发完经验之后(服务端 clear_reward 末尾的 DungeonPermission,用发完经验后的等级与这一局的评分)
+                result.MarkOpened(progress.Clears.Record(_rankDungeonId, _rankDifficulty, result.Grade, stats.HitsTaken, stats.RevivesUsed, progress.Level, _clearMinLevel,
+                    _clearHasUltimate));
             }
             Result = result;
         }
@@ -459,7 +480,7 @@ namespace Dnf.Play
         /// </summary>
         public static DungeonSession Create(DnfAssets assets, string dungeonPath, int seed = 1, bool randomLayout = false,
             string weaponEqu = DemoHero.StarterWeapon, int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true, HeroProgress progress = null,
-            int heroDamageScale = 1, ReviveCoins coins = null, int monsterDamageScale = 1, IQuestEvents quests = null)
+            int heroDamageScale = 1, ReviveCoins coins = null, int monsterDamageScale = 1, IQuestEvents quests = null, int difficulty = 0)
         {
             Random random = randomLayout ? new Random(seed) : null;
             DungeonMaze maze = DungeonMaze.Read(assets, dungeonPath, random)
@@ -469,19 +490,31 @@ namespace Dnf.Play
             AvatarOutfit outfit = DemoRoom.DefaultOutfit(assets, progress?.WeaponPath ?? weaponEqu);   // 装备栏里穿着武器就用它(证据 E-118)
             // 给了复活币库存就有复活窗口与副本失败(证据 E-115):整座副本一个 HeroRevive,各房间共用;没给就是老行为(死了一直躺着)
             ScriptLine[] dungeonScript = assets.ReadScript(dungeonPath);
-            HeroRevive revive = coins == null ? null : new HeroRevive(DungeonCoinRules.Parse(dungeonScript), coins);
+            difficulty = Math.Max(0, Math.Min(difficulty, DifficultyCount - 1));
+            HeroRevive revive = coins == null ? null : new HeroRevive(DungeonCoinRules.Parse(dungeonScript), coins, difficulty);
+            // 副本难度(M33,E-125):怪物数值的难度加成、经验与掉落的难度档、复活币规则、任务与评分都按它走;.dgn 自带的 [monster difficulty bonus] 优先于按等级的行
+            DungeonDifficultyBonus bonus = DungeonDifficultyBonus.Parse(dungeonScript);
             // 金币掉落按副本的标准等级([basis level],证据 E-116)选概率行
             var session = new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals, progress, maze.ExpWeight, heroDamageScale, revive,
-                monsterDamageScale, GoldDrop.StandardLevel(dungeonScript)), heroObjectId, assets);
+                monsterDamageScale, GoldDrop.StandardLevel(dungeonScript), difficulty, bonus), heroObjectId, assets);
+            session.Difficulty = difficulty;
             int dungeonId = DungeonRoomPool.DungeonIdOf(assets, dungeonPath);
             if (quests != null)
             {
-                session.UseQuests(quests, dungeonId);
+                session.UseQuests(quests, dungeonId, difficulty);
             }
-            // 评分与通关经验(M32,E-124):评分数据读 etc/ranksysteminfo.etc,标准等级是 [basis level];难度只有普通(0)
-            session.UseRanking(RankSystem.Parse(assets.ReadScript(RankSystem.Path)), dungeonId, GoldDrop.StandardLevel(dungeonScript));
+            // 评分与通关经验(M32,E-124):评分数据读 etc/ranksysteminfo.etc,标准等级是 [basis level]
+            session.UseRanking(RankSystem.Parse(assets.ReadScript(RankSystem.Path)), dungeonId, GoldDrop.StandardLevel(dungeonScript), difficulty);
+            // 通关记录(M33,E-125):最低等级读 .dgn,有没有难度 3 看 etc/ultimatedungeonlist.etc
+            session.UseClearRecord(DungeonClears.MinimumLevel(dungeonScript), UltimateDungeonList.Parse(assets.ReadScript(UltimateDungeonList.Path)).Contains(dungeonId));
             return session;
         }
+
+        /// <summary>副本难度的档数(0 到 4;界面只开放前四档,见 <see cref="DungeonSelectScreen"/>)。</summary>
+        public const int DifficultyCount = MonsterDifficultyTable.Difficulties;
+
+        /// <summary>这一局的副本难度(0 到 4,创建时定;怪物数值、经验、掉落、复活币、任务与评分都按它走,证据 E-125)。</summary>
+        public int Difficulty { get; private set; }
 
         /// <summary>
         /// 主角的等级与经验(证据 E-111);所有房间共用同一个对象,创建时没给就是 null(杀怪不给经验)。
@@ -501,7 +534,8 @@ namespace Dnf.Play
         /// </summary>
         public static DungeonRoomFactory CreateAssetFactory(DnfAssets assets, DungeonLayout layout, AvatarOutfit outfit, int seed,
             int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true, HeroProgress progress = null, float expWeight = 1f,
-            int heroDamageScale = 1, HeroRevive revive = null, int monsterDamageScale = 1, int dropLevel = 0)
+            int heroDamageScale = 1, HeroRevive revive = null, int monsterDamageScale = 1, int dropLevel = 0, int difficulty = 0,
+            DungeonDifficultyBonus dungeonBonus = null)
         {
             return (cx, cy) =>
             {
@@ -526,7 +560,8 @@ namespace Dnf.Play
                 {
                     RoomArrival.PlaceAtStart(room, cand.MapId, heroObjectId);
                 }
-                RoomCombatSession combat = RoomCombatSession.Create(assets, room, seed + cy * layout.Maze.Cols + cx, heroVitals, progress, expWeight);
+                RoomCombatSession combat = RoomCombatSession.Create(assets, room, seed + cy * layout.Maze.Cols + cx, heroVitals, progress, expWeight, difficulty,
+                    dungeonBonus);
                 combat.HeroDamageScale = heroDamageScale;
                 combat.Revive = revive;
                 combat.MonsterDamageScale = monsterDamageScale;
@@ -1043,6 +1078,10 @@ namespace Dnf.Play
             long seconds = (long)(_bossClearedAtMs / 1000.0);
             long clearExp = ClearExpGranted;
             lines.Add("CLEAR TIME " + (seconds / 60).ToString("00", inv) + ":" + (seconds % 60).ToString("00", inv));
+            if (Difficulty > 0)
+            {
+                lines.Add("DIFFICULTY " + DifficultyNames.Of(Difficulty));      // 难度 0 不写(M33;名字是占位)
+            }
             lines.Add("KILLS " + Kills.ToString(inv));
             lines.Add("EXP +" + Math.Max(0, ExpEarned - clearExp).ToString(inv));
             if (result != null && result.Granted && result.ExpBase > 0)
@@ -1055,6 +1094,10 @@ namespace Dnf.Play
             }
             lines.Add("GOLD +" + GoldEarned.ToString(inv));
             lines.Add("ITEMS " + ItemsPicked.ToString(inv));
+            if (result != null && result.OpenedDifficulty > 0)
+            {
+                lines.Add("NEW LEVEL OPENED " + DifficultyNames.Of(result.OpenedDifficulty));    // 通关记录抬高了:现在能选到的最高难度(M33,E-125)
+            }
             if (result != null && result.LevelsGained > 0)
             {
                 lines.Add("LEVELED UP TO " + result.LevelAfter.ToString(inv));

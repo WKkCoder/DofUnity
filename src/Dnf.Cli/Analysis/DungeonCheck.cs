@@ -47,7 +47,8 @@ internal static class DungeonCheck
         }
 
         DungeonSession session = DungeonSession.Create(assets, opts.Dungeon, opts.Seed, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage,
-            progress: ExpCheck.ProgressFor(assets, opts), heroDamageScale: opts.DamageScale, coins: new ReviveCoins(opts.Coins), monsterDamageScale: opts.MonsterDamageScale);
+            progress: ExpCheck.ProgressFor(assets, opts), heroDamageScale: opts.DamageScale, coins: new ReviveCoins(opts.Coins), monsterDamageScale: opts.MonsterDamageScale,
+            difficulty: opts.Difficulty);
         var bot = new DungeonBot(opts.Explore);
         CombatScript script = ParsePlay(opts.Play);
         if (!opts.Bot && script.IsEmpty)

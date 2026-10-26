@@ -25,7 +25,7 @@ namespace Dnf.Client
     /// 城镇走城镇图册(<see cref="AtlasTownWorld"/>,证据 E-095):登录落在赛丽亚房间、走进地图边缘的出口换区域、艾尔文防线走到地下城入口区域再走进右边的出口打开世界地图,
     /// 换区域与进图停在加载画面(过场图 + 边条 + 标题);-dnflegacytown 退回只有赛丽亚房间一张图的老行为(城镇里按回车打开副本选择的占位),-dnfnosplash 去掉所有加载画面。
     /// -dnftownarea 城镇/区域(例如 1/0)不带流程,直接看城镇图册里的一块区域(主角在登录落脚点,-dnfhero 可改位置;离屏渲染一帧与命令行 town-shot 对拍)。
-    /// 选择界面上下键选、回车或空格进入、Esc 回城,
+    /// 选择界面上下键选、左右键选难度(M33,能选到哪一档看通关记录)、回车或空格进入、Esc 回城,
     /// 副本(-dnfdungeon,默认洛兰)打完在结算菜单上选再次挑战、选择其它地下城、返回城镇,各去各的阶段。
     /// 再带 -dnfbot(-dnfexplore)时由 <see cref="FlowBot"/> 替你走完全程,结算选择依次按 -dnfflowchoices(默认 retry,select,town,用完就停);
     /// -dnftimescale N(1 到 6)把每帧的时间步放大,无人值守的检查用它缩短墙钟时间。每次阶段切换在日志里留一行 DNF_FLOW。
@@ -39,7 +39,8 @@ namespace Dnf.Client
     /// 命令行:-dnfdir &lt;目录&gt; -dnfmap &lt;PVF 内地图路径&gt; [-dnfshot &lt;输出.png&gt; [-dnftime &lt;毫秒&gt;]] [-dnfquitafter &lt;秒&gt;]
     ///         [-dnfnohero] [-dnfhero x,y,left|right,rest|move,毫秒[,镜头x]] [-dnfautowalk 秒:动作,…]
     ///         [-dnfmonsters | -dnfnomonsters] [-dnfnodamage] [-dnfplayat &lt;秒&gt;] [-dnfnosound | -dnfsound]
-    ///         [-dnfdungeon &lt;副本定义路径&gt; [-dnfbot | -dnfexplore] [-dnfseed &lt;整数&gt;] [-dnfrandomlayout] [-dnfafterclear &lt;秒&gt;]]
+    ///         [-dnfdungeon &lt;副本定义路径&gt; [-dnfbot | -dnfexplore] [-dnfseed &lt;整数&gt;] [-dnfrandomlayout] [-dnfafterclear &lt;秒&gt;] [-dnfdifficulty 0..4]]
+    ///         [-dnfflow … -dnfraisedifficulty](M33:副本难度;流程自动机在选择界面把难度调到当前能选的最高一档)
     /// 带 -dnfshot 时只离屏渲染一帧写成 PNG 就退出(用来和 CPU 合成器逐字节对照,见 tools/unity-build-town.sh);
     /// 这时默认不画主角,带 -dnfhero 才把主角摆到指定的位置、朝向与动作进度(与 dnf render-town --scene --hero 同一写法)。
     /// 带 -dnfquitafter 时实时运行指定秒数后退出,并在日志里留一行 DNF_TOWN_DEMO ran …(用来在无窗口的环境里检查实时循环)。
@@ -190,6 +191,8 @@ namespace Dnf.Client
         private double _afterClearSeconds;
         private SettlementChoice _loggedChoice;
         private string _dungeonPath;
+        private int _difficulty;                           // -dnfdifficulty:副本难度(0 到 4),不检查通关记录(M33)
+        private bool _raiseDifficulty;                     // -dnfraisedifficulty:流程自动机在选择界面把难度调到当前能选的最高一档
         private bool _flowMode;
         private string _flowFrom = "town";
         private string _flowChoices = DefaultFlowChoices;
@@ -351,6 +354,13 @@ namespace Dnf.Client
                         break;
                     case "-dnfdungeon":
                         if (value != null) { _dungeonPath = value; i++; }
+                        break;
+                    case "-dnfraisedifficulty":
+                        _raiseDifficulty = true;
+                        break;
+                    case "-dnfdifficulty":
+                        if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                                System.Globalization.CultureInfo.InvariantCulture, out int diff) && diff >= 0 && diff < DungeonSession.DifficultyCount) { _difficulty = diff; i++; }
                         break;
                     case "-dnfbot":
                         _useBot = true;
@@ -593,7 +603,7 @@ namespace Dnf.Client
         {
             if (!string.IsNullOrEmpty(_dungeonPath))
             {
-                return CreateDungeon(_dungeonPath, _seed);
+                return CreateDungeon(_dungeonPath, _seed, _difficulty);
             }
             if (_townArea.HasValue)
             {
@@ -657,11 +667,11 @@ namespace Dnf.Client
         /// 整座副本:自动机(或 -dnfautowalk 的时间表)在离屏渲染前先按固定 1/60 秒步长确定地打到指定时刻,与命令行 dungeon-check 同一局。
         /// 流程模式下(<see cref="GameFlow"/>)自动机由 <see cref="FlowBot"/> 管,这里不留。
         /// </summary>
-        private DungeonSession CreateDungeon(string path, int seed)
+        private DungeonSession CreateDungeon(string path, int seed, int difficulty)
         {
             bool shot = !string.IsNullOrEmpty(_shotPath);
             DungeonSession dungeon = DungeonSession.Create(_assets, path, seed, _randomLayout, heroVitals: !_noDamage, progress: HeroProgressForRun(),
-                coins: CoinsForRun(), monsterDamageScale: _monsterDamageScale, quests: _flowMode ? QuestBookForRun() : null);
+                coins: CoinsForRun(), monsterDamageScale: _monsterDamageScale, quests: _flowMode ? QuestBookForRun() : null, difficulty: difficulty);
             _heroInput = true;
             if (_useBot && !_flowMode)
             {
@@ -1867,7 +1877,7 @@ namespace Dnf.Client
             }
             _noteClear = true;
             DungeonResult r = dungeon.Result;
-            Debug.Log("DNF_CLEAR rank=" + r.Letter + " frame=" + r.Frame + " ranked=" + r.HasRank + " point=" + r.RankPoint + " timebonus=" + r.TimeBonus
+            Debug.Log("DNF_CLEAR difficulty=" + r.Difficulty + " opened=" + r.OpenedDifficulty + " rank=" + r.Letter + " frame=" + r.Frame + " ranked=" + r.HasRank + " point=" + r.RankPoint + " timebonus=" + r.TimeBonus
                 + " base=" + r.BaseScore + " kills=" + r.Stats.Kills + " maxcombo=" + r.Stats.MaxCombo + " hits=" + r.Stats.HitsTaken + " clearMs=" + r.Stats.ClearMs
                 + " granted=" + r.Granted + " exp=" + r.ExpTotal + " bonus=" + r.ExpRankBonus + " levels=" + r.LevelsGained);
         }
@@ -1940,11 +1950,13 @@ namespace Dnf.Client
             CharacterSelectScene characterScene = CharacterSelectScene.From(_assets);
             _flow = new GameFlow(
                 townWorld,
-                (path, run) => CreateDungeon(path, _seed + run),
+                (path, run) => CreateDungeon(path, _seed + run, _difficulty),
                 realSelect ? (System.Collections.Generic.IEnumerable<DungeonEntry>)world.Entries : new[] { new DungeonEntry(dungeon, null) },
                 realSelect ? world.Scene : null,
                 dungeonSplash,
-                () => new CharacterSelectScreen(CharacterRoster.Local(_progress != null ? _progress.Level : _savedLevel), characterScene));
+                () => new CharacterSelectScreen(CharacterRoster.Local(_progress != null ? _progress.Level : _savedLevel), characterScene),
+                (path, run, difficulty) => CreateDungeon(path, _seed + run, difficulty));
+            _flow.DifficultyLimit = DifficultyGate.For(() => _progress, _assets);   // 选择界面左右键能选到哪一档:按主角的通关记录(M33,E-125)
             _flow.Bag.UseAssets(_assets);            // 背包里穿武器前先问"画面上穿得出来吗"(HeroLook.CanShow)
             _flow.Shop.UseAssets(_assets);           // NPC 商店(E-119):商店目录、物品目录、收购价倍率表都按需从 PVF 读
             _flow.UseShopNpcs(TownShopNpcs.FromAssets(_assets));
@@ -1963,7 +1975,7 @@ namespace Dnf.Client
                     _flow.EnterSelect("start");
                     break;
                 case "dungeon":
-                    _flow.StartDungeon(dungeon, "start");
+                    _flow.StartDungeon(dungeon, "start", _difficulty);
                     break;
                 default:
                     _flow.EnterTown("start");
@@ -1971,7 +1983,7 @@ namespace Dnf.Client
             }
             if (_useBot)
             {
-                _flowBot = new FlowBot(_botExplore, ParseSettlementChoices(_flowChoices));
+                _flowBot = new FlowBot(_botExplore, ParseSettlementChoices(_flowChoices)) { RaiseDifficulty = _raiseDifficulty };
             }
         }
 
@@ -2538,6 +2550,10 @@ namespace Dnf.Client
                         {
                             _flow.CharacterSelect.Move(-1);
                         }
+                        else if (InSelect)
+                        {
+                            _flow.Select.MoveDifficulty(-1);     // 副本难度(M33):←→ 换难度,能选到哪一档看通关记录
+                        }
                         else if ((_paused || _session == null) && !InSelect && !InLoading)
                         {
                             Step(-50.0);
@@ -2547,6 +2563,10 @@ namespace Dnf.Client
                         if (InCharacterSelect)
                         {
                             _flow.CharacterSelect.Move(1);
+                        }
+                        else if (InSelect)
+                        {
+                            _flow.Select.MoveDifficulty(1);
                         }
                         else if ((_paused || _session == null) && !InSelect && !InLoading)
                         {

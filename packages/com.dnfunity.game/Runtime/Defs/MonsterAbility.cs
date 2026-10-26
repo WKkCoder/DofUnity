@@ -461,5 +461,25 @@ namespace Dnf.Game
             ApplyCategories(s, def.AbilityCategories, kind == MonsterKind.Boss);
             return s;
         }
+
+        /// <summary>
+        /// 同上,再接上第三步:副本难度加成(<see cref="MonsterDifficultyTable.Apply"/>,证据 E-125)。
+        /// <paramref name="difficultyTable"/> 为 null 或没载入、难度不在 0 到 4 时与上面那个重载一样。首领特性与精英词缀(服务端的第四步)没有做。
+        /// </summary>
+        public static MonsterStats Compute(
+            MonsterDef def,
+            MonsterBaseTables tables,
+            MonsterBaseTable ownTable,
+            int level,
+            int dungeonParam,
+            MonsterKind kind,
+            MonsterDifficultyTable difficultyTable,
+            int difficulty,
+            DungeonDifficultyBonus dungeonBonus = null)
+        {
+            MonsterStats s = Compute(def, tables, ownTable, level, dungeonParam, kind);
+            difficultyTable?.Apply(s, difficulty, level, dungeonBonus);
+            return s;
+        }
     }
 }
