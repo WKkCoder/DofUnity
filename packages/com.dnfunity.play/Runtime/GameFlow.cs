@@ -131,7 +131,7 @@ namespace Dnf.Play
         /// </summary>
         public string UseQuickSlot(int slot)
         {
-            if (StageSerial == 0 || Stage != GameStage.Dungeon || Menu.Open || Bag.Open || Shop.Open)
+            if (StageSerial == 0 || Stage != GameStage.Dungeon || Menu.Open || Bag.Open || Shop.Open || Quests.Open)
             {
                 return ItemUse.UnavailableName;
             }
@@ -212,7 +212,7 @@ namespace Dnf.Play
                 Bag.Close();
                 return true;
             }
-            return !Menu.Open && !Shop.Open && Bag.Show(Stage);
+            return !Menu.Open && !Shop.Open && !Quests.Open && Bag.Show(Stage);
         }
 
         /// <summary>
@@ -249,7 +249,7 @@ namespace Dnf.Play
         /// </summary>
         public bool OpenShop(int shopIndex)
         {
-            if (StageSerial == 0 || Menu.Open || Bag.Open || Shop.Open)
+            if (StageSerial == 0 || Menu.Open || Bag.Open || Shop.Open || Quests.Open)
             {
                 return false;
             }
@@ -290,6 +290,219 @@ namespace Dnf.Play
             return shop >= 0 && OpenShop(shop);
         }
 
+        /// <summary>
+        /// 任务窗口(M31,本项目自己的占位设计,见 <see cref="QuestWindow"/>,证据 E-123):城镇里走到 NPC 旁按空格(<see cref="TryTalk"/>)打开和这个 NPC 的对话,
+        /// L 键(<see cref="ToggleQuests"/>)在城镇与副本里打开任务日志;开着的时候宿主让游戏暂停(和背包、商店一样,<see cref="Poll"/> 在它开着时不处理各阶段的结果);换阶段时自动关上。
+        /// 宿主要先接上任务系统(<see cref="UseQuests"/>)。
+        /// </summary>
+        public QuestWindow Quests { get; } = new QuestWindow();
+
+        private QuestBook _quests;
+        private Func<int, string> _npcName;
+
+        /// <summary>接上任务系统(宿主用游戏素材造,见 <see cref="QuestBook.FromAssets"/>);没接就没有任务窗口、NPC 头顶没有标记。</summary>
+        public void UseQuests(QuestBook book)
+        {
+            _quests = book ?? throw new ArgumentNullException(nameof(book));
+            Quests.Use(book);
+        }
+
+        /// <summary>接上的任务系统;没接是 null。</summary>
+        public QuestBook QuestBook => _quests;
+
+        /// <summary>接上"NPC 编号 → 对话窗口里显示的名字"(数据文字;没接或返回 null 时窗口标题用占位词)。</summary>
+        public void UseNpcNames(Func<int, string> nameOf)
+        {
+            _npcName = nameOf ?? throw new ArgumentNullException(nameof(nameOf));
+        }
+
+        /// <summary>NPC 头顶该画的任务标记;没接任务系统是 <see cref="QuestMark.None"/>。</summary>
+        public QuestMark QuestMarkOf(int npcId)
+        {
+            return _quests == null ? QuestMark.None : _quests.MarkOf(npcId);
+        }
+
+        /// <summary>主角身边的 NPC 能做什么(<see cref="FindNearbyTalk"/>)。</summary>
+        public enum TalkKind
+        {
+            /// <summary>范围里没有能说话的 NPC。</summary>
+            None = 0,
+
+            /// <summary>最近的是有任务可接、可交或在进行的 NPC(也可能同时开着商店,窗口里有"商店"按钮)。</summary>
+            Quest = 1,
+
+            /// <summary>最近的是只开商店的 NPC。</summary>
+            Shop = 2,
+        }
+
+        /// <summary>
+        /// 城镇里主角身边最近的、能说话的 NPC(有任务标记,或开着商店;范围同 <see cref="TownShopNpcs"/> 的椭圆)。
+        /// 不在城镇、会话没有 NPC 列表或范围里没有时返回 <see cref="TalkKind.None"/>。宿主每帧可以问一次,用来画"空格对话 / 空格商店"的提示。
+        /// </summary>
+        public TalkKind FindNearbyTalk(out TownNpc npc)
+        {
+            npc = default;
+            if (StageSerial == 0 || Stage != GameStage.Town || !(Session is ITownNpcSource source))
+            {
+                return TalkKind.None;
+            }
+            TalkKind found = TalkKind.None;
+            double best = double.MaxValue;
+            IReadOnlyList<TownNpc> npcs = source.Npcs;
+            for (int i = 0; i < npcs.Count; i++)
+            {
+                TownNpc n = npcs[i];
+                double dx = (n.X - source.HeroX) / TownShopNpcs.RangeX, dy = (n.Y - source.HeroY) / TownShopNpcs.RangeY;
+                double d = dx * dx + dy * dy;
+                if (d > 1.0 || d >= best)
+                {
+                    continue;
+                }
+                TalkKind kind = TalkKind.None;
+                if (_quests != null && _quests.MarkOf(n.Id) != QuestMark.None)
+                {
+                    kind = TalkKind.Quest;
+                }
+                else if (_shopNpcs != null && _shopNpcs.ShopOf(n.Id) >= 0)
+                {
+                    kind = TalkKind.Shop;
+                }
+                if (kind == TalkKind.None)
+                {
+                    continue;
+                }
+                best = d;
+                npc = n;
+                found = kind;
+            }
+            return found;
+        }
+
+        /// <summary>
+        /// 空格键:和主角身边最近的能说话的 NPC 说话(<see cref="FindNearbyTalk"/>)。有任务的先算一次"拜访"(<see cref="QuestBook.Talk"/>),再打开任务窗口(这个 NPC 同时开着商店时窗口里有商店按钮);
+        /// 任务窗口没有可显示的任务(例如拜访任务刚完成、窗口里已经没有它的行)就退到它的商店;只开商店的直接开商店。
+        /// 已有窗口开着、没有可说话的 NPC 时什么也不做。返回有没有打开窗口。
+        /// </summary>
+        public bool TryTalk()
+        {
+            if (StageSerial == 0 || Menu.Open || Bag.Open || Shop.Open || Quests.Open)
+            {
+                return false;
+            }
+            TalkKind kind = FindNearbyTalk(out TownNpc npc);
+            switch (kind)
+            {
+                case TalkKind.Quest:
+                    return OpenTalk(npc.Id);
+                case TalkKind.Shop:
+                    return OpenShop(_shopNpcs.ShopOf(npc.Id));
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>和编号为 <paramref name="npcId"/> 的 NPC 说话:算一次拜访,开任务窗口(它的行都没有了就退到它的商店)。</summary>
+        private bool OpenTalk(int npcId)
+        {
+            _quests.Talk(npcId);
+            int shop = _shopNpcs == null ? -1 : _shopNpcs.ShopOf(npcId);
+            if (Quests.ShowNpc(Stage, npcId, _npcName?.Invoke(npcId), shop))
+            {
+                return true;
+            }
+            return shop >= 0 && OpenShop(shop);
+        }
+
+        /// <summary>
+        /// 不看距离,直接打开和编号为 <paramref name="npcId"/> 的 NPC 的任务对话(无人值守探针用;只在城镇阶段、没有别的窗口开着、接了任务系统时成功)。
+        /// </summary>
+        public bool OpenQuestNpc(int npcId)
+        {
+            if (StageSerial == 0 || _quests == null || Stage != GameStage.Town || Menu.Open || Bag.Open || Shop.Open || Quests.Open)
+            {
+                return false;
+            }
+            return OpenTalk(npcId);
+        }
+
+        /// <summary>
+        /// 当前城镇会话里摆着的 NPC 有几个头顶带任务标记(返回值),按可接、可交、进行中分开数;不在城镇、会话没有 NPC 列表或没接任务系统时全是 0。宿主进城时记一行日志用。
+        /// </summary>
+        public int CountQuestMarks(out int available, out int ready, out int inProgress)
+        {
+            available = 0;
+            ready = 0;
+            inProgress = 0;
+            if (StageSerial == 0 || Stage != GameStage.Town || _quests == null || !(Session is ITownNpcSource source))
+            {
+                return 0;
+            }
+            IReadOnlyList<TownNpc> npcs = source.Npcs;
+            for (int i = 0; i < npcs.Count; i++)
+            {
+                switch (_quests.MarkOf(npcs[i].Id))
+                {
+                    case QuestMark.Available:
+                        available++;
+                        break;
+                    case QuestMark.Ready:
+                        ready++;
+                        break;
+                    case QuestMark.InProgress:
+                        inProgress++;
+                        break;
+                }
+            }
+            return available + ready + inProgress;
+        }
+
+        /// <summary>城镇里摆着的 NPC 中第一个头顶是 <paramref name="mark"/> 的编号;没有(或不在城镇)返回 −1。无人值守探针用。</summary>
+        public int FirstNpcWithMark(QuestMark mark)
+        {
+            if (StageSerial == 0 || Stage != GameStage.Town || _quests == null || !(Session is ITownNpcSource source))
+            {
+                return -1;
+            }
+            IReadOnlyList<TownNpc> npcs = source.Npcs;
+            for (int i = 0; i < npcs.Count; i++)
+            {
+                if (_quests.MarkOf(npcs[i].Id) == mark)
+                {
+                    return npcs[i].Id;
+                }
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// L 键:任务日志开着就关上;没开且当前阶段有日志(城镇、副本)、别的窗口也没开就打开。返回有没有处理这次按键(没接任务系统不处理)。
+        /// </summary>
+        public bool ToggleQuests()
+        {
+            if (StageSerial == 0 || _quests == null)
+            {
+                return false;
+            }
+            if (Quests.Open)
+            {
+                Quests.Close();
+                return true;
+            }
+            return !Menu.Open && !Bag.Open && !Shop.Open && Quests.ShowJournal(Stage);
+        }
+
+        /// <summary>任务窗口里按了"商店"(或 Tab):关上任务窗口、打开这个 NPC 的商店;窗口没开或这个 NPC 没有商店返回 false。</summary>
+        public bool QuestsToShop()
+        {
+            if (!Quests.Open || Quests.ShopIndex < 0)
+            {
+                return false;
+            }
+            int shop = Quests.ShopIndex;
+            Quests.Close();
+            return OpenShop(shop);
+        }
+
         /// <summary>系统菜单里选了"退出游戏":宿主看到它就退出(流程自己不退出)。</summary>
         public bool QuitRequested { get; private set; }
 
@@ -306,6 +519,11 @@ namespace Dnf.Play
             if (Shop.Open)
             {
                 Shop.Close();            // 商店开着时 Esc 先关商店(数量框开着时 Esc 只取消数量框,由宿主的输入处理)
+                return true;
+            }
+            if (Quests.Open)
+            {
+                Quests.Close();          // 任务窗口开着时 Esc 先关任务窗口
                 return true;
             }
             if (Bag.Open)
@@ -442,9 +660,9 @@ namespace Dnf.Play
             {
                 return ApplyMenuAction(picked);
             }
-            if (Menu.Open || Bag.Open || Shop.Open)
+            if (Menu.Open || Bag.Open || Shop.Open || Quests.Open)
             {
-                return false;   // 菜单、背包或商店开着:游戏暂停,各阶段的结果(出口、结算)等关上之后再处理
+                return false;   // 菜单、背包、商店或任务窗口开着:游戏暂停,各阶段的结果(出口、结算)等关上之后再处理
             }
             switch (Stage)
             {
@@ -588,6 +806,7 @@ namespace Dnf.Play
             Menu.Close();                        // 换阶段时系统菜单作废(没取走的选择也一起丢)
             Bag.Close();                         // 背包窗口也关上
             Shop.Close();                        // 商店窗口也关上
+            Quests.Close();                      // 任务窗口也关上
             Stage = to;
             Session = session;
             Select = select;

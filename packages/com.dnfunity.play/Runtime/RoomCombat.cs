@@ -544,6 +544,18 @@ namespace Dnf.Play
         /// <summary>掉落率百分比(服务端全局或活动加成,100 = 不变;证据 E-116)。</summary>
         public int DropRate { get; set; } = 100;
 
+        /// <summary>
+        /// 任务事件的接收方(M31,<see cref="QuestBook"/>):主角杀死怪物时通知它;没有任务系统时为 null。
+        /// 副本编号与难度由 <see cref="DungeonSession"/> 填(任务的猎杀目标按"副本 + 难度 + 怪物"匹配,证据 E-123);单个房间的演示是 −1 与 0。
+        /// </summary>
+        public IQuestEvents QuestEvents { get; set; }
+
+        /// <summary>任务事件里的副本编号(dungeon/dungeon.lst 的号);不在副本里是 −1。</summary>
+        public int QuestDungeonId { get; set; } = -1;
+
+        /// <summary>任务事件里的副本难度(0 = 普通)。</summary>
+        public int QuestDifficulty { get; set; }
+
         /// <summary>这个房间里一共掉出过多少堆金币(含已经捡走的)。</summary>
         public int GoldDropped { get; private set; }
 
@@ -1603,6 +1615,7 @@ namespace Dnf.Play
                 Kills++;
                 AwardKillExp(monster);
                 SpawnDrops(monster);
+                QuestEvents?.MonsterKilled(QuestDungeonId, QuestDifficulty, monster.Code, monster.IsBoss);
             }
             AddNumber(damage, DamageNumberFlags.AttackerIsHero | (critical ? DamageNumberFlags.Critical : 0), hit, monster.Y);
         }

@@ -338,6 +338,14 @@ namespace Dnf.Cli
             "      汉字文字系统(证据 E-121):整库读每个种类的 *.kor.str 文字表(GB18030),与 .NET 自带编码加独立写的行解析逐条比对,值里不应有解码失败的字符;" +
             "      物品目录里每件物品的名字、说明、背景故事,商店的页名都要查得到;打印每张表解码后文字的 SHA-256 供 Python 参考实现比对" +
             "      (文字与条数是用户自己的数据,只打印在终端,不要抄进入库的文件;通过与否只看比对结果与查得到与否)。\n" +
+            "  dnf quest-check\n" +
+            "      任务系统(证据 E-123):整库读 n_quest/quest.lst 与每个 .qst 脚本、questparameter.etc,检查分类与类型都认得、这一步支持的任务引用的 NPC、物品、副本、怪物、地图都在各自的列表里、发布任务的 NPC 摆在城镇里;" +
+            "      再对每个支持的任务演习完整的生命周期(挑合格的角色、满足前置、接取、逐个触发击杀与通关与拜访与收集事件、未做完不能交、做完能交、算奖励、完成后的状态)" +
+            "      (数量、编号与分布来自本机的数据,只打印在终端,不要抄进入库的文件;通过与否只看结构与演习的对错)。\n" +
+            "  dnf quest-flow-check [--level N(默认 40)] [--dungeon <副本定义>] [--seed N] [--explore]\n" +
+            "      任务系统在副本里的一整圈(证据 E-123):挑一个目标正好是这座副本第一间房里怪物的猎杀任务与一个通关任务,用任务系统接下,让自动机把整座副本打完;" +
+            "      击杀、通关事件走玩家实际用的那条路(副本会话的任务钩子),核对计数推进、任务达成、交任务领奖励、提示条与追踪取得到内容" +
+            "      (任务与怪物的编号、数量来自本机的数据,只打印在终端,不要抄进入库的文件;通过与否只看这一圈走得通)。\n" +
             "  dnf damage-check [--cases <文件>]\n" +
             "      伤害公式(证据 E-049)。不带 --cases:读 PVF 里的 Etc/EtcParameter.etc 与 Creature/Common/creatureCommon.cre,只报告个数与完整性(不输出原版数值);\n" +
             "      带 --cases:读 tools/py/damage_ref.py --gen 生成的随机用例,用 C# 公式复算并与 Python 参考实现逐项比较。\n" +
@@ -751,6 +759,10 @@ namespace Dnf.Cli
                     return ConsumableCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "text-check":
                     return TextCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "quest-check":
+                    return QuestCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "quest-flow-check":
+                    return QuestFlowCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "damage-check":
                     return opts.CasesFile != null
                         ? DamageCheck.RunCases(opts)

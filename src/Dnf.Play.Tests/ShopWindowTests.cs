@@ -34,7 +34,7 @@ public class ShopWindowTests
     /// 商店 3:第一页 { 1 号装备(价格 100)、2 号消耗品(价格 10)、空格、3 号称号、4 号消耗品(价格 5000) },第二页 { 5 号消耗品(价格 20) };
     /// 商店 4 没有页;商店 5 一页 20 行(只有最后一格有商品)。收购倍率 500 / 0 / 100。
     /// </summary>
-    private static ShopBook Book()
+    internal static ShopBook Book()
     {
         var items = new Dictionary<int, ItemInfo>
         {

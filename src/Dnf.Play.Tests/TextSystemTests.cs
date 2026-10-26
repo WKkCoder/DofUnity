@@ -142,6 +142,30 @@ public class UiTextTests
         Check("UNEQUIPPED");
         Check("BAG FULL");
 
+        // 任务窗口、提示与 NPC 提示条(M31)
+        foreach (QuestActionResult r in Enum.GetValues(typeof(QuestActionResult)))
+        {
+            Check(QuestWindow.MessageOf(r, "QUEST ACCEPTED"));
+            Check(QuestWindow.MessageOf(r, "QUEST COMPLETE"));
+            Check(QuestWindow.MessageOf(r, "QUEST ABANDONED"));
+        }
+        foreach (QuestButton b in Enum.GetValues(typeof(QuestButton)))
+        {
+            Check(QuestWindowArt.ButtonText(b));
+        }
+        foreach (string text in new[]
+        {
+            "QUESTS", "NO QUESTS", "SPACE TALK", "REWARD", "CHOOSE ONE", "PROGRESS 2/5", "EXP 10  GOLD 5", "LV 5", "QUEST", "QUEST READY", "QUEST ITEM", "PRESS ABANDON AGAIN",
+            QuestHudArt.TrackerTitle,
+        })
+        {
+            Check(text);
+        }
+        Check(QuestWindowArt.HintText(QuestWindowMode.Journal, false));
+        Check(QuestWindowArt.HintText(QuestWindowMode.Npc, false));
+        Check(QuestWindowArt.HintText(QuestWindowMode.Npc, true));
+        Check(QuestHudArt.ToastTitle(QuestNoticeKind.Accepted));
+
         Assert.True(missing.Count == 0, "没有中文版的占位文字:" + string.Join(" / ", missing));
     }
 }

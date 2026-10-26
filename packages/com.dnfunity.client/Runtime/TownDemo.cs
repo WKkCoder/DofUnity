@@ -154,6 +154,20 @@ namespace Dnf.Client
         private bool _shopProbeTraded;
         private float _shopProbeClosedAt = -1f;
         private bool _shopProbeDone;
+        private QuestBook _questBook;                      // 任务系统(M31):有等级进度的流程里造,整次运行一个;没有等级进度或读不出任务表时是 null
+        private bool _questTried;
+        private QuestHud _questHud;                        // 任务提示条与追踪(M31):按墙钟推进
+        private bool _questWasOpen;
+        private int _questSeenSerial = -1;                 // 最近一次记过任务标记日志的城镇阶段序号
+        private int _questActionsLogged;                   // 接 + 交 + 放弃的累计次数(变了才写日志)
+        private int _questEventsLogged;                    // 击杀计数 + 任务物品计数(变了才写日志)
+        private int _questToastsLogged;
+        private int _questMarksSerial = -1;                // 最近一次画出 NPC 头顶标记的城镇阶段序号(日志只记每个阶段第一次)
+        private double _questProbeAtSeconds = -1.0;
+        private float _questProbeStepAt = -1f;
+        private int _questProbeStep;
+        private bool _questProbeDone;
+        private int _questProbeNpc = -1;
         private double _potionProbeAtSeconds = -1.0;
         private float _potionProbeStepAt = -1f;
         private int _potionProbeStep;
@@ -317,6 +331,10 @@ namespace Dnf.Client
                     case "-dnfshopat":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
                                 System.Globalization.CultureInfo.InvariantCulture, out double sat) && sat >= 0.0) { _shopProbeAtSeconds = sat; i++; }
+                        break;
+                    case "-dnfquestat":
+                        if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out double qat) && qat >= 0.0) { _questProbeAtSeconds = qat; i++; }
                         break;
                     case "-dnfpotionat":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
@@ -642,7 +660,7 @@ namespace Dnf.Client
         {
             bool shot = !string.IsNullOrEmpty(_shotPath);
             DungeonSession dungeon = DungeonSession.Create(_assets, path, seed, _randomLayout, heroVitals: !_noDamage, progress: HeroProgressForRun(),
-                coins: CoinsForRun(), monsterDamageScale: _monsterDamageScale);
+                coins: CoinsForRun(), monsterDamageScale: _monsterDamageScale, quests: _flowMode ? QuestBookForRun() : null);
             _heroInput = true;
             if (_useBot && !_flowMode)
             {
@@ -679,6 +697,57 @@ namespace Dnf.Client
                 RestoreSave();
             }
             return _progress;
+        }
+
+        /// <summary>
+        /// 任务系统(M31,证据 E-123):整次运行只造一个(存档里进行中的任务与已完成的任务在 <see cref="HeroProgress"/> 上);要有等级进度才有。
+        /// 第一次造要解析任务清单与全部任务脚本建索引,有一会儿(流程模式在进城之前就造好),日志里留一行 DNF_QUEST ready(只有个数与毫秒);
+        /// 读档之后按数据核对进行中的任务(<see cref="QuestBook.Reconcile"/>:找不到的丢掉、计数对不上的重置)。读不出任务表就记一行问题、这次运行没有任务系统。
+        /// </summary>
+        private QuestBook QuestBookForRun()
+        {
+            if (_questBook != null || _questTried)
+            {
+                return _questBook;
+            }
+            _questTried = true;
+            if (_assets == null || HeroProgressForRun() == null)
+            {
+                return null;
+            }
+            try
+            {
+                float start = Time.realtimeSinceStartup;
+                QuestBook book = QuestBook.FromAssets(_assets, _progress, _seed);
+                book.Warm();
+                int fixedCount = book.Reconcile();
+                _questBook = book;
+                _questHud = new QuestHud();
+                Debug.Log("DNF_QUEST ready listed=" + book.ListedCount + " active=" + _progress.QuestsActive + " cleared=" + _progress.QuestsCleared + " fixed=" + fixedCount
+                    + " ms=" + (long)((Time.realtimeSinceStartup - start) * 1000f));
+            }
+            catch (Exception e)
+            {
+                Debug.Log("DNF_QUEST problem " + e.GetType().Name + ": " + e.Message);
+                _questBook = null;
+                _questHud = null;
+            }
+            return _questBook;
+        }
+
+        /// <summary>任务对话窗口标题里的 NPC 名字:装了字体与文字表之后才有(没有就返回 null,窗口用占位词)。</summary>
+        private string NpcDialogName(int npcId)
+        {
+            WorldTexts texts = WorldTexts.Shared;
+            if (texts == null || _assets == null)
+            {
+                return null;
+            }
+            if (_npcNames == null)
+            {
+                _npcNames = NpcNames.Create(_assets, texts);
+            }
+            return _npcNames.DialogNameOf(npcId);
         }
 
         /// <summary>
@@ -946,6 +1015,9 @@ namespace Dnf.Client
             _npcNames = null;
             _townHud = null;
             _townHudTried = false;
+            _questBook = null;
+            _questTried = false;
+            _questHud = null;
         }
 
         private void Update()
@@ -957,6 +1029,7 @@ namespace Dnf.Client
             }
             PumpTouch();
             PumpMenu();
+            PumpQuests();
             _clockMs = NowMs();
             try
             {
@@ -1022,6 +1095,7 @@ namespace Dnf.Client
             bool menuOpen = _flow.Menu.Open;
             bool bagOpen = _flow.Bag.Open;
             bool shopOpen = _flow.Shop.Open;
+            bool questOpen = _flow.Quests.Open;
             if (menuOpen != _menuWasOpen)
             {
                 _menuWasOpen = menuOpen;
@@ -1039,7 +1113,13 @@ namespace Dnf.Client
                 _shopWasOpen = shopOpen;
                 shopEvent = shopOpen ? "open shop=" + _flow.Shop.ShopIndex + " items=" + _flow.Shop.ShopItemCount : "closed";
             }
-            bool open = menuOpen || bagOpen || shopOpen; // 系统菜单、背包窗口与商店窗口开着都暂停游戏
+            string questEvent = null;                    // 任务窗口同理
+            if (questOpen != _questWasOpen)
+            {
+                _questWasOpen = questOpen;
+                questEvent = questOpen ? "open mode=" + _flow.Quests.Mode + " rows=" + _flow.Quests.Rows.Count : "closed";
+            }
+            bool open = menuOpen || bagOpen || shopOpen || questOpen; // 系统菜单、背包、商店与任务窗口开着都暂停游戏
             if (open != _overlayWasOpen)
             {
                 _overlayWasOpen = open;
@@ -1069,6 +1149,16 @@ namespace Dnf.Client
             {
                 Debug.Log("DNF_SHOP " + shopEvent + " paused=" + _paused + " gold=" + (_progress == null ? 0L : _progress.Gold)
                     + " bag=" + (_progress == null ? 0 : _progress.BagItems));
+            }
+            if (questEvent != null)
+            {
+                QuestWindow quests = _flow.Quests;
+                Debug.Log("DNF_QUEST window " + questEvent + " paused=" + _paused + " opens=" + quests.Opens + " accepts=" + quests.Accepts + " turnins=" + quests.TurnIns
+                    + " abandons=" + quests.Abandons + " active=" + (_progress == null ? 0 : _progress.QuestsActive));
+                if (!questOpen)
+                {
+                    FlushSave("quest");                  // 关窗时存一次:接了、交了、放弃了都不等十秒的定时检查
+                }
             }
             if (menuOpen && TryGetCanvasPoint(Input.mousePosition, out int mx, out int my))
             {
@@ -1256,6 +1346,145 @@ namespace Dnf.Client
             }
         }
 
+        /// <summary>
+        /// 任务系统每帧的宿主部分(M31,证据 E-123):背包变了就重新判断收集类任务凑齐没有(<see cref="QuestBook.Update"/>)、推进提示条与追踪(按墙钟,窗口暂停游戏时也照走)、
+        /// 进城时记一行任务标记日志,击杀、任务物品、提示条与接交放弃的次数变了就记一行 DNF_QUEST 日志(只有个数,没有任务名与编号);带 -dnfquestat 时无人值守地走一遍任务窗口。
+        /// </summary>
+        private void PumpQuests()
+        {
+            if (_flow == null || _questBook == null || _questHud == null)
+            {
+                return;
+            }
+            RunQuestProbe();
+            _questBook.Update();
+            _questHud.Advance(Math.Min(Time.unscaledDeltaTime * 1000.0, 100.0), _questBook);
+            NoteTownQuests();
+            int events = _questBook.KillsCounted + _questBook.QuestItemsFound;
+            if (events != _questEventsLogged)
+            {
+                _questEventsLogged = events;
+                Debug.Log("DNF_QUEST event kills=" + _questBook.KillsCounted + " items=" + _questBook.QuestItemsFound + " active=" + _progress.QuestsActive
+                    + " cleared=" + _progress.QuestsCleared);
+            }
+            if (_questHud.ToastsShown != _questToastsLogged)
+            {
+                _questToastsLogged = _questHud.ToastsShown;
+                Debug.Log("DNF_QUEST toast shown=" + _questHud.ToastsShown + " tracked=" + _questHud.Tracked.Count);
+            }
+            int actions = _questBook.Accepted + _questBook.Completed + _questBook.Abandoned;
+            if (actions != _questActionsLogged)
+            {
+                _questActionsLogged = actions;
+                Debug.Log("DNF_QUEST action accepted=" + _questBook.Accepted + " completed=" + _questBook.Completed + " abandoned=" + _questBook.Abandoned
+                    + " active=" + _progress.QuestsActive + " cleared=" + _progress.QuestsCleared + " level=" + _progress.Level + " gold=" + _progress.Gold + " bag=" + _progress.BagItems);
+            }
+        }
+
+        /// <summary>进了一个新的城镇阶段就记一行日志:这座城镇摆着的 NPC 里头顶带任务标记的有几个、各是哪一类(只有个数)。</summary>
+        private void NoteTownQuests()
+        {
+            if (_flow.Stage != GameStage.Town || _flow.StageSerial == _questSeenSerial)
+            {
+                return;
+            }
+            _questSeenSerial = _flow.StageSerial;
+            int marked = _flow.CountQuestMarks(out int available, out int ready, out int inProgress);
+            Debug.Log("DNF_QUEST town serial=" + _flow.StageSerial + " marks=" + marked + " available=" + available + " ready=" + ready + " progress=" + inProgress);
+        }
+
+        /// <summary>
+        /// -dnfquestat 的无人值守探针(任务系统,证据 E-123):城镇阶段开始后过了指定秒数,找第一个头顶有感叹号的 NPC、像走到它身旁按空格一样打开任务对话(不看距离),
+        /// 过一秒按回车接第一个可接的任务,再过一秒按 Esc 的路关上,再过一秒按 L 打开任务日志,再过一秒连按两次删除键放弃选中的任务(第一下预备、第二下执行)、
+        /// 再按 L 关上,再过一秒收尾;日志里留 DNF_QUEST probe 行,只有个数与结果名,没有任务名与编号(各只做一次)。
+        /// </summary>
+        private void RunQuestProbe()
+        {
+            if (_questProbeAtSeconds < 0.0 || _questProbeDone)
+            {
+                return;
+            }
+            float now = Time.realtimeSinceStartup;
+            QuestWindow window = _flow.Quests;
+            switch (_questProbeStep)
+            {
+                case 0:
+                    if (_flow.Stage == GameStage.Town && now - _stageRealStart >= _questProbeAtSeconds)
+                    {
+                        _questProbeNpc = _flow.FirstNpcWithMark(QuestMark.Available);
+                        if (_questProbeNpc >= 0 && _flow.OpenQuestNpc(_questProbeNpc))
+                        {
+                            _questProbeStep = 1;
+                            _questProbeStepAt = now;
+                            Debug.Log("DNF_QUEST probe open rows=" + window.Rows.Count + " selected=" + window.SelectedRow?.State + " buttons=" + window.Buttons.Count
+                                + " shop=" + (window.ShopIndex >= 0) + " title=" + (window.NpcName != null));
+                        }
+                        else
+                        {
+                            _questProbeDone = true;
+                            Debug.Log("DNF_QUEST probe failed npc=" + (_questProbeNpc >= 0));
+                        }
+                    }
+                    break;
+                case 1:
+                    if (now - _questProbeStepAt >= 1f)
+                    {
+                        bool acted = window.Activate();
+                        _questProbeStep = 2;
+                        _questProbeStepAt = now;
+                        Debug.Log("DNF_QUEST probe accept acted=" + acted + " result=" + window.LastResult + " accepted=" + _questBook.Accepted + " active=" + _progress.QuestsActive
+                            + " rows=" + window.Rows.Count + " msg=\"" + window.Message + "\"");
+                    }
+                    break;
+                case 2:
+                    if (now - _questProbeStepAt >= 1f)
+                    {
+                        _flow.ToggleMenu();                  // Esc 的路:开着任务窗口时先关任务窗口
+                        _questProbeStep = 3;
+                        _questProbeStepAt = now;
+                        Debug.Log("DNF_QUEST probe closed open=" + window.Open + " menu=" + _flow.Menu.Open);
+                    }
+                    break;
+                case 3:
+                    if (now - _questProbeStepAt >= 1f)
+                    {
+                        bool opened = _flow.ToggleQuests();  // L 键
+                        _questProbeStep = 4;
+                        _questProbeStepAt = now;
+                        Debug.Log("DNF_QUEST probe journal opened=" + opened + " mode=" + window.Mode + " rows=" + window.Rows.Count + " selected=" + window.SelectedRow?.State);
+                    }
+                    break;
+                case 4:
+                    if (now - _questProbeStepAt >= 1f)
+                    {
+                        bool first = window.Abandon();       // 第一下只是确认,返回 False
+                        bool second = window.Abandon();      // 第二下真的放弃,返回 True
+                        _questProbeStep = 5;
+                        _questProbeStepAt = now;
+                        Debug.Log("DNF_QUEST probe abandon first=" + first + " second=" + second + " result=" + window.LastResult + " abandoned=" + _questBook.Abandoned
+                            + " active=" + _progress.QuestsActive + " rows=" + window.Rows.Count);
+                    }
+                    break;
+                case 5:
+                    if (now - _questProbeStepAt >= 1f)
+                    {
+                        _flow.ToggleQuests();
+                        _questProbeStep = 6;
+                        _questProbeStepAt = now;
+                        Debug.Log("DNF_QUEST probe closed open=" + window.Open);
+                    }
+                    break;
+                default:
+                    if (now - _questProbeStepAt >= 1f)
+                    {
+                        _questProbeDone = true;
+                        Debug.Log("DNF_QUEST probe done accepted=" + _questBook.Accepted + " abandoned=" + _questBook.Abandoned + " active=" + _progress.QuestsActive
+                            + " toasts=" + _questHud.ToastsShown);
+                    }
+                    break;
+            }
+        }
+
         /// <summary>进了一个新的城镇阶段就记一行日志:这座城镇摆着几个 NPC、其中几个开商店(同时把每个 NPC 的商店编号读进缓存,走近时不再卡一下)。</summary>
         private void NoteTownShops()
         {
@@ -1298,6 +1527,44 @@ namespace Dnf.Client
             return plates;
         }
 
+        /// <summary>城镇里挂在 <see cref="TownView.SceneOverlay"/> 上的全部精灵:先是头顶名牌,再是任务标记(标记压在名牌上面);都没有返回 null。</summary>
+        private List<SceneSprite> BuildSceneOverlay(IReadOnlyList<SceneSprite> scene)
+        {
+            List<SceneSprite> plates = BuildPlates(scene);
+            List<SceneSprite> marks = BuildNpcMarks(scene);
+            if (plates == null)
+            {
+                return marks;
+            }
+            if (marks != null && marks.Count > 0)
+            {
+                plates.AddRange(marks);
+            }
+            return plates;
+        }
+
+        /// <summary>
+        /// NPC 头顶的任务标记(M31,证据 E-123;本项目自己的占位设计):黄色感叹号可接、橙色问号可交、灰色问号进行中,上下轻轻浮动;
+        /// 感叹号与问号用点阵字库画,没有汉字字体也看得见。只在城镇阶段、接了任务系统时画,其余返回 null。
+        /// </summary>
+        private List<SceneSprite> BuildNpcMarks(IReadOnlyList<SceneSprite> scene)
+        {
+            var town = _view?.Session as TownSession;
+            if (town == null || _flow == null || _flow.QuestBook == null || _progress == null || _flow.Stage != GameStage.Town)
+            {
+                return null;
+            }
+            var marks = new List<SceneSprite>(8);
+            int order = 0;
+            int added = QuestHudArt.AddNpcMarks(marks, ref order, _menuArt, _flow.QuestMarkOf, scene, town.Npcs, town.Camera.IntX, _clockMs);
+            if (added > 0 && _questMarksSerial != _flow.StageSerial)
+            {
+                _questMarksSerial = _flow.StageSerial;
+                Debug.Log("DNF_QUEST marks drawn serial=" + _flow.StageSerial + " count=" + added);
+            }
+            return marks;
+        }
+
         /// <summary>
         /// 叠在画面上的全部外挂精灵(挂在 <see cref="TownView.Overlay"/> 上):先是城镇底栏(只在城镇阶段、有等级进度时画;副本里的底栏是战斗会话自己画的),
         /// 再是窗口(<see cref="BuildMenuOverlay"/>),窗口压在底栏上面。
@@ -1305,7 +1572,16 @@ namespace Dnf.Client
         private List<SceneSprite> BuildOverlay()
         {
             List<SceneSprite> hud = BuildTownHud();
+            List<SceneSprite> quest = BuildQuestHud();
             List<SceneSprite> menu = BuildMenuOverlay();
+            if (hud == null)
+            {
+                hud = quest;
+            }
+            else if (quest != null)
+            {
+                hud.AddRange(quest);
+            }
             if (hud == null)
             {
                 return menu;
@@ -1315,6 +1591,20 @@ namespace Dnf.Client
                 hud.AddRange(menu);
             }
             return hud;
+        }
+
+        /// <summary>
+        /// 任务提示条(上方居中)与追踪(右上角)(M31):城镇与副本阶段、任务系统在时画;窗口开着时只留提示条(追踪让位)。没有内容或不在这两个阶段返回 null。
+        /// </summary>
+        private List<SceneSprite> BuildQuestHud()
+        {
+            if (_questHud == null || _flow == null || _progress == null || (_flow.Stage != GameStage.Town && _flow.Stage != GameStage.Dungeon))
+            {
+                return null;
+            }
+            bool windows = _flow.Menu.Open || _flow.Bag.Open || _flow.Shop.Open || _flow.Quests.Open;
+            List<SceneSprite> sprites = QuestHudArt.Build(_questHud, _menuArt, !windows);
+            return sprites.Count == 0 ? null : sprites;
         }
 
         /// <summary>城镇底栏(M30);不在城镇、没有等级进度、没有底栏的图时返回 null。</summary>
@@ -1348,7 +1638,7 @@ namespace Dnf.Client
             return sprites;
         }
 
-        /// <summary>当前要叠在画面上的窗口(商店、背包或系统菜单,没开返回 null;城镇里走到商店 NPC 旁时叠一行提示);由 <see cref="BuildOverlay"/> 叠在底栏上面。</summary>
+        /// <summary>当前要叠在画面上的窗口(商店、背包、任务窗口或系统菜单,没开返回 null;城镇里走到能说话的 NPC 旁时叠一行提示);由 <see cref="BuildOverlay"/> 叠在底栏上面。</summary>
         private List<SceneSprite> BuildMenuOverlay()
         {
             if (_flow == null)
@@ -1363,11 +1653,21 @@ namespace Dnf.Client
             {
                 return _progress == null ? null : BagWindowArt.Build(_flow.Bag, _progress, _assets, _menuArt, BagWornStats(), _itemTexts);
             }
+            if (_flow.Quests.Open)
+            {
+                return QuestWindowArt.Build(_flow.Quests, _menuArt);
+            }
             if (!_flow.Menu.Open)
             {
-                if (_progress != null && !_paused && _flow.Stage == GameStage.Town && _flow.FindNearbyShop() >= 0)
+                if (_progress != null && !_paused && _flow.Stage == GameStage.Town)
                 {
-                    return ShopWindowArt.BuildNearHint(_menuArt);
+                    switch (_flow.FindNearbyTalk(out _))
+                    {
+                        case GameFlow.TalkKind.Quest:
+                            return QuestWindowArt.BuildNearHint(_menuArt);   // "空格 对话"
+                        case GameFlow.TalkKind.Shop:
+                            return ShopWindowArt.BuildNearHint(_menuArt);    // "空格 商店"
+                    }
                 }
                 return null;
             }
@@ -1505,7 +1805,7 @@ namespace Dnf.Client
                 Debug.Log("DNF_SAVE look matches=" + HeroLook.Matches(_flow.Session?.Hero, _progress) + " weapon=" + (_progress.WeaponPath != null));
             }
             _view = new TownView(_assets, _flow.Scene, StageBackground);
-            _view.SceneOverlay = BuildPlates;        // 城镇里头顶的名牌(M30):有字体与文字表时才画,压在场景之上、底栏之下
+            _view.SceneOverlay = BuildSceneOverlay;  // 城镇里头顶的名牌(M30:有字体与文字表时才画)与任务标记(M31),压在场景之上、底栏之下
             _view.Overlay = BuildOverlay;            // 城镇底栏(城镇阶段)与窗口(商店、背包、系统菜单)叠在每个阶段的画面之上(没有就不叠)
             _stageRealStart = Time.realtimeSinceStartup;
             previous?.Dispose();
@@ -1628,6 +1928,12 @@ namespace Dnf.Client
             _flow.Bag.UseAssets(_assets);            // 背包里穿武器前先问"画面上穿得出来吗"(HeroLook.CanShow)
             _flow.Shop.UseAssets(_assets);           // NPC 商店(E-119):商店目录、物品目录、收购价倍率表都按需从 PVF 读
             _flow.UseShopNpcs(TownShopNpcs.FromAssets(_assets));
+            QuestBook quests = QuestBookForRun();
+            if (quests != null)
+            {
+                _flow.UseQuests(quests);             // 任务系统(M31):空格对话、L 键日志、NPC 头顶标记、副本里的击杀与清图事件
+                _flow.UseNpcNames(NpcDialogName);
+            }
             switch (_flowFrom)
             {
                 case "char":
@@ -2111,6 +2417,58 @@ namespace Dnf.Client
             }
         }
 
+        /// <summary>
+        /// 任务窗口开着时的输入(开着就独占;键位是本项目自己的占位设计):上下键选任务、左右键选奖励、回车或 X 接受或完成、Delete 或退格放弃(日志里;第一下预备、第二下执行)、
+        /// Tab 去这个 NPC 的商店、Esc 或 L 关上;鼠标点任务行(再点一下已选中的等于回车)、奖励行与按钮。
+        /// </summary>
+        private void HandleQuestInput(Event e)
+        {
+            QuestWindow quests = _flow.Quests;
+            if (e.type == EventType.KeyDown)
+            {
+                switch (e.keyCode)
+                {
+                    case KeyCode.Escape:
+                        _flow.ToggleMenu();          // 菜单的开关键:开着任务窗口时先把它关上
+                        break;
+                    case KeyCode.L:
+                        _flow.ToggleQuests();
+                        break;
+                    case KeyCode.UpArrow:
+                        quests.Move(0, -1);
+                        break;
+                    case KeyCode.DownArrow:
+                        quests.Move(0, 1);
+                        break;
+                    case KeyCode.LeftArrow:
+                        quests.Move(-1, 0);
+                        break;
+                    case KeyCode.RightArrow:
+                        quests.Move(1, 0);
+                        break;
+                    case KeyCode.Tab:
+                        _flow.QuestsToShop();
+                        break;
+                    case KeyCode.Return:
+                    case KeyCode.KeypadEnter:
+                    case KeyCode.X:
+                        quests.Activate();
+                        break;
+                    case KeyCode.Delete:
+                    case KeyCode.Backspace:
+                        quests.Abandon();
+                        break;
+                }
+            }
+            else if (e.type == EventType.MouseDown && e.button == 0 && TryGetCanvasPoint(Input.mousePosition, out int cx, out int cy))
+            {
+                if (quests.Click(cx, cy, out bool wantsShop) && wantsShop)
+                {
+                    _flow.QuestsToShop();
+                }
+            }
+        }
+
         private void HandleRunningInput(Event e)
         {
             if (_flow != null && _flow.Menu.Open)
@@ -2128,6 +2486,11 @@ namespace Dnf.Client
                 HandleBagInput(e);
                 return;
             }
+            if (_flow != null && _flow.Quests.Open)
+            {
+                HandleQuestInput(e);
+                return;
+            }
             if (e.type == EventType.KeyDown)
             {
                 switch (e.keyCode)
@@ -2141,9 +2504,9 @@ namespace Dnf.Client
                         {
                             _flow.CharacterSelect.Confirm();
                         }
-                        else if (!_paused && _flow != null && _flow.Stage == GameStage.Town && HeroProgressForRun() != null && _flow.TryOpenNearbyShop())
+                        else if (!_paused && _flow != null && _flow.Stage == GameStage.Town && HeroProgressForRun() != null && _flow.TryTalk())
                         {
-                            // 城镇里走到商店 NPC 身边按空格:打开商店(本项目自己的占位键位;游戏暂停由 PumpMenu 接着处理)
+                            // 城镇里走到 NPC 身边按空格:有任务的开任务对话窗口,只开商店的直接开商店(本项目自己的占位键位;游戏暂停由 PumpMenu 接着处理)
                         }
                         else
                         {
@@ -2212,6 +2575,12 @@ namespace Dnf.Client
                         if (_flow != null && HeroProgressForRun() != null)
                         {
                             _flow.ToggleBag();           // 背包窗口(城镇与副本里;没有等级进度的运行模式没有背包)
+                        }
+                        break;
+                    case KeyCode.L:
+                        if (_flow != null && HeroProgressForRun() != null)
+                        {
+                            _flow.ToggleQuests();        // 任务日志(城镇与副本里;没有任务系统的运行模式没有)
                         }
                         break;
                     case KeyCode.Escape:

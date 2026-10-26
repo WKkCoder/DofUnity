@@ -251,6 +251,47 @@ namespace Dnf.Game
             return true;
         }
 
+        /// <summary>整个背包的副本(格子重新建、物品信息共用):先在副本上试放,再决定要不要真放。</summary>
+        public Inventory Clone()
+        {
+            var copy = new Inventory(_slotsPerTab);
+            for (int t = 0; t < TabCount; t++)
+            {
+                foreach (ItemStack stack in _tabs[t])
+                {
+                    copy._tabs[t].Add(new ItemStack(stack.Info, stack.Count));
+                }
+            }
+            return copy;
+        }
+
+        /// <summary>
+        /// 先拿走 <paramref name="take"/>(编号与数量,拿不够当作拿光)、再按次序放进 <paramref name="give"/> 里的物品,能不能全部放下:
+        /// 在副本上试,真实的背包不动。任务交付用:收集类先交出材料、再领奖励。
+        /// </summary>
+        public bool CanSwap(IEnumerable<KeyValuePair<int, int>> take, IEnumerable<KeyValuePair<ItemInfo, int>> give)
+        {
+            Inventory scratch = Clone();
+            if (take != null)
+            {
+                foreach (KeyValuePair<int, int> t in take)
+                {
+                    scratch.Remove(t.Key, Math.Min(t.Value, scratch.CountOf(t.Key)));
+                }
+            }
+            if (give != null)
+            {
+                foreach (KeyValuePair<ItemInfo, int> g in give)
+                {
+                    if (g.Key != null && g.Value > 0 && scratch.Add(g.Key, g.Value) != g.Value)
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
         /// <summary>清空整个背包(存档还原用)。</summary>
         public void Clear()
         {

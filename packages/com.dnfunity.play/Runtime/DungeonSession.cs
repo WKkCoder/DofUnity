@@ -125,6 +125,44 @@ namespace Dnf.Play
         /// <summary>首领格的房间已经清空。</summary>
         public bool BossCleared { get; private set; }
 
+        private IQuestEvents _quests;
+
+        /// <summary>任务事件里的副本编号(dungeon/dungeon.lst 的号);没接任务系统或副本不在列表里是 −1。</summary>
+        public int QuestDungeonId { get; private set; } = -1;
+
+        /// <summary>任务事件里的副本难度(0 = 普通;这里没有难度选择)。</summary>
+        public int QuestDifficulty { get; private set; }
+
+        /// <summary>
+        /// 接上任务系统(M31):各房间的击杀、清房、整座副本通关都通知 <paramref name="quests"/>(证据 E-123 的任务按这些事件计数)。
+        /// 已经造出的房间也立刻接上;之后进的新房间进门时接上。<paramref name="quests"/> 为 null 就是取消。
+        /// </summary>
+        public void UseQuests(IQuestEvents quests, int dungeonId, int difficulty = 0)
+        {
+            _quests = quests;
+            QuestDungeonId = dungeonId;
+            QuestDifficulty = difficulty;
+            foreach (CellState cell in _cells)
+            {
+                if (cell.Session != null)
+                {
+                    ApplyQuestContext(cell.Session);
+                }
+            }
+        }
+
+        private void ApplyQuestContext(RoomCombatSession session)
+        {
+            session.QuestEvents = _quests;
+            session.QuestDungeonId = QuestDungeonId;
+            session.QuestDifficulty = QuestDifficulty;
+        }
+
+        private void NoteDungeonCleared()
+        {
+            _quests?.DungeonCleared(QuestDungeonId, QuestDifficulty, (int)Math.Min(int.MaxValue, _clockMs));
+        }
+
         /// <summary>造营地(<see cref="ClearCamp"/>)与结算菜单要用的图包;可以是 null(没有图包时营地是空的,菜单退回像素字的占位面板)。</summary>
         public DnfAssets Assets { get; }
 
@@ -352,7 +390,7 @@ namespace Dnf.Play
         /// </summary>
         public static DungeonSession Create(DnfAssets assets, string dungeonPath, int seed = 1, bool randomLayout = false,
             string weaponEqu = DemoHero.StarterWeapon, int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true, HeroProgress progress = null,
-            int heroDamageScale = 1, ReviveCoins coins = null, int monsterDamageScale = 1)
+            int heroDamageScale = 1, ReviveCoins coins = null, int monsterDamageScale = 1, IQuestEvents quests = null)
         {
             Random random = randomLayout ? new Random(seed) : null;
             DungeonMaze maze = DungeonMaze.Read(assets, dungeonPath, random)
@@ -364,8 +402,13 @@ namespace Dnf.Play
             ScriptLine[] dungeonScript = assets.ReadScript(dungeonPath);
             HeroRevive revive = coins == null ? null : new HeroRevive(DungeonCoinRules.Parse(dungeonScript), coins);
             // 金币掉落按副本的标准等级([basis level],证据 E-116)选概率行
-            return new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals, progress, maze.ExpWeight, heroDamageScale, revive,
+            var session = new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals, progress, maze.ExpWeight, heroDamageScale, revive,
                 monsterDamageScale, GoldDrop.StandardLevel(dungeonScript)), heroObjectId, assets);
+            if (quests != null)
+            {
+                session.UseQuests(quests, DungeonRoomPool.DungeonIdOf(assets, dungeonPath));
+            }
+            return session;
         }
 
         /// <summary>
@@ -534,16 +577,23 @@ namespace Dnf.Play
             cell.Settled = settled;
             cell.ClearedAtMs = _clockMs;
             RoomsCleared++;
+            if (!settled)
+            {
+                // 打空的房间才算"清图"事件;进门时本来就没有怪物的房间(settled)不算(推断:原版的清图记录是怪物打光时记的)
+                _quests?.MapCleared(_layout.RoomAt(cell.X, cell.Y).MapId);
+            }
             if (_layout.IsBossCell(cell.X, cell.Y) && !BossCleared)
             {
                 BossCleared = true;
                 _bossClearedAtMs = _clockMs;
+                NoteDungeonCleared();
             }
             else if (!_layout.HasBoss && !BossCleared && !HasOpenableExit(cell))
             {
                 // 没有首领格、这间房又没有一个出得去的出口(例如整个副本只有一间、左右都是墙):清空它就是通关。通关条件的读码没有找到,这条是推断
                 BossCleared = true;
                 _bossClearedAtMs = _clockMs;
+                NoteDungeonCleared();
             }
         }
 
@@ -653,6 +703,7 @@ namespace Dnf.Play
             if (fresh)
             {
                 cell.Session = _factory(x, y) ?? throw new InvalidOperationException("房间工厂没有造出格 (" + x + "," + y + ")");
+                ApplyQuestContext(cell.Session);
             }
             else
             {

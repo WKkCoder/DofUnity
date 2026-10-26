@@ -30,6 +30,8 @@
     <Compile Include="..\Dnf.Render.Tests\BlockFont.cs" Link="BlockFont.cs" />
     <!-- 手工拼令牌脚本的构造器(金币掉落表的合成数据用) -->
     <Compile Include="..\Dnf.Game.Tests\TokenStreamBuilder.cs" Link="TokenStreamBuilder.cs" />
+    <!-- 合成的脚本文件集合(任务目录的合成数据用) -->
+    <Compile Include="..\Dnf.Game.Tests\Fixtures.cs" Link="Fixtures.cs" />
   </ItemGroup>
 
   <ItemGroup>

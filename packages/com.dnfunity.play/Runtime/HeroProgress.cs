@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Dnf.Game;
 using Dnf.Render;
 using Dnf.Script;
@@ -118,6 +119,14 @@ namespace Dnf.Play
 
         /// <summary>从创建起一共拾到多少件物品(<see cref="Bag"/> 里的东西以后会被用掉、卖掉,这个不减)。</summary>
         public int ItemsGained { get; private set; }
+
+        /// <summary>任务进度(M31):进行中的任务与剩余计数、已完成的任务编号;规则与事件在 <see cref="QuestBook"/>。</summary>
+        public QuestLog Quests { get; } = new QuestLog();
+
+        /// <summary>进行中的任务数、已完成的任务数(宿主层不引用 Dnf.Game,日志与界面用这两个数)。</summary>
+        public int QuestsActive => Quests.Active.Count;
+
+        public int QuestsCleared => Quests.Cleared.Count;
 
         /// <summary>背包里一共有多少件、占了多少格(宿主层不引用 Dnf.Game,日志与界面用这两个数)。</summary>
         public int BagItems => Bag.TotalCount;
@@ -377,6 +386,13 @@ namespace Dnf.Play
                     save.Quick.Add(new SavedQuick(slot, quick.Code));
                 }
             }
+            foreach (ActiveQuest active in Quests.Active)
+            {
+                save.Quests.Add(new SavedQuest(active.Id, (int[])active.Remaining.Clone()));
+            }
+            var cleared = new List<int>(Quests.Cleared);
+            cleared.Sort();
+            save.ClearedQuests.AddRange(cleared);
             return save;
         }
 
@@ -459,6 +475,15 @@ namespace Dnf.Play
                 }
             }
             PlaceBagPotions();
+            Quests.Clear();                        // 任务:进行中的与已完成的整个换成存档里的(编号与计数是否合规由 QuestBook.Reconcile 按数据核对)
+            foreach (SavedQuest saved in save.Quests)
+            {
+                Quests.Add(saved.Id, (int[])saved.Remaining.Clone());
+            }
+            foreach (int id in save.ClearedQuests)
+            {
+                Quests.MarkCleared(id);
+            }
             return new SaveApplyReport(stacks, wornCount, moved, dropped);
         }
 

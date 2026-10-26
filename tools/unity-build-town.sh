@@ -28,6 +28,8 @@
 #     NPC 商店(E-119):城镇里探针打开第一家有商品的店(游戏暂停)、买一件再卖回去、关上(游戏恢复),日志里 DNF_SHOP 各行齐全,进城时记到摆着开商店的 NPC。
 #     消耗品(M28,E-120):副本里探针放一种回血药与一种回蓝药、压低主角的生命魔法,像按键 1、1、2 那样连用(同一种药连用第二次被冷却拒绝),等药效发完,日志里 DNF_POTION 各行齐全。
 #     中文文字(M29,E-121):流程里装系统自带的带汉字字体与原版文字表;背包与商店的窗口画过汉字(日志 DNF_FONT ready 与 DNF_FONT stats glyphs>0,只记字体文件名与个数)。对拍与离屏出图不装字体,画面与 CPU 参照一致。
+#     任务(M31,E-123):城镇里探针找第一个头顶带感叹号的 NPC、打开任务对话(游戏暂停)、接一个任务、关上、按 L 开任务日志、放弃选中的任务、再关上(游戏恢复);
+#       日志里 DNF_QUEST 各行齐全(只有个数与结果名,没有任务名与编号),进城时记到头顶带标记的 NPC;窗口画过汉字。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -667,6 +669,42 @@ if [ "$platform" = "macos" ]; then
       || { echo "有等级进度的城镇里应画过底栏(DNF_HUD town drawn … sprites>0):$shop_log" >&2; exit 1; }
     grep -q -E 'DNF_PLATE town serial=[0-9]+ npcs=[1-9][0-9]* hero=1' "$shop_log" \
       || { echo "城镇里应画过主角名牌与至少一个 NPC 名字(DNF_PLATE town … npcs>0 hero=1):$shop_log" >&2; exit 1; }
+    # 任务系统(M31,证据 E-123,窗口与键位是本项目自己的占位设计):城镇里阶段开始 3 秒后探针找第一个头顶带感叹号的 NPC,像走到它身旁按空格一样打开任务对话(游戏暂停),
+    # 再过一秒按回车接第一个可接的任务,再过一秒按 Esc 的路关上(游戏恢复),再过一秒按 L 打开任务日志,再过一秒连按两次删除键放弃选中的任务,再按 L 关上,再过一秒收尾;
+    # 主角给 40 级好让起始城镇里有 NPC 可接任务;进城时日志里记这座城镇头顶带标记的 NPC 有几个;日志里只有个数与结果名,没有任务名与编号
+    quest_log="$PWD/re/unity-run-town-quest-macos.log"
+    rm -f "$quest_log"
+    set +e
+    "$app" -batchmode -logFile "$quest_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom town -dnflevel 40 \
+      -dnfquestat 3 -dnftimescale 4 -dnfquitafter 25
+    rc=$?
+    set -e
+    echo "播放器退出码(任务系统): $rc"
+    grep -E 'DNF_QUEST' "$quest_log" | cut -c1-260 || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed|DNF_QUEST problem' "$quest_log"; then
+      echo "任务系统的日志里有异常:$quest_log" >&2
+      exit 1
+    fi
+    grep -q -E 'DNF_QUEST ready listed=[1-9][0-9]*' "$quest_log" \
+      || { echo "任务系统应在进城前准备好(DNF_QUEST ready … listed>0):$quest_log" >&2; exit 1; }
+    grep -q -E 'DNF_QUEST town serial=[0-9]+ marks=[1-9][0-9]* available=[1-9][0-9]*' "$quest_log" \
+      || { echo "城镇里应有头顶带可接任务标记的 NPC(DNF_QUEST town … available>0):$quest_log" >&2; exit 1; }
+    grep -q -E 'DNF_QUEST marks drawn serial=[0-9]+ count=[1-9][0-9]*' "$quest_log" \
+      || { echo "头顶标记应画过(DNF_QUEST marks drawn … count>0):$quest_log" >&2; exit 1; }
+    grep -q -E 'DNF_QUEST probe open rows=[1-9][0-9]* ' "$quest_log" \
+      || { echo "探针应打开一个有任务的 NPC 对话(DNF_QUEST probe open … rows>0):$quest_log" >&2; exit 1; }
+    grep -q -E 'DNF_QUEST window open mode=Npc rows=[1-9][0-9]* paused=True' "$quest_log" \
+      || { echo "开任务窗口时游戏应暂停(DNF_QUEST window open mode=Npc … paused=True):$quest_log" >&2; exit 1; }
+    grep -q -E 'DNF_QUEST probe accept acted=True result=Ok accepted=1 active=[1-9]' "$quest_log" \
+      || { echo "探针应接下一个任务(DNF_QUEST probe accept acted=True result=Ok accepted=1):$quest_log" >&2; exit 1; }
+    for pat in 'DNF_QUEST probe closed open=False menu=False' 'DNF_QUEST probe journal opened=True mode=Journal' 'DNF_QUEST probe abandon first=False second=True result=Ok abandoned=1 active=0' 'DNF_QUEST probe closed open=False' 'DNF_QUEST window closed paused=False' 'DNF_QUEST probe done accepted=1 abandoned=1'; do
+      grep -q -F "$pat" "$quest_log" || { echo "任务系统的日志里缺 \"$pat\":$quest_log" >&2; exit 1; }
+    done
+    grep -q -E 'DNF_QUEST toast shown=[1-9][0-9]* ' "$quest_log" \
+      || { echo "接任务与放弃都应出过提示条(DNF_QUEST toast shown>0):$quest_log" >&2; exit 1; }
+    grep -q -E 'DNF_FONT stats glyphs=[1-9][0-9]* sizes=[1-9]' "$quest_log" \
+      || { echo "任务窗口应当画过汉字(DNF_FONT stats glyphs>0):$quest_log" >&2; exit 1; }
     # 消耗品(M28,证据 E-120):副本里阶段开始 3 秒后探针往背包放一种回血药与一种回蓝药(快捷栏自动放进前两格)、把主角的生命压到四成、魔法压到三成,
     # 过一秒像按键 1、1、2 那样连着用(同一种药连用第二次应被冷却拒绝),等药效发完(时间步放大 4 倍),再过一秒再用一次;日志里只有数与结果名,没有物品名与编号
     potion_log="$PWD/re/unity-run-town-potion-macos.log"

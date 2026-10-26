@@ -49,6 +49,20 @@ namespace Dnf.Play
         public int Code { get; }
     }
 
+    /// <summary>存档里一个进行中的任务(M31):任务编号与各项剩余计数(收集类没有计数,是空表)。</summary>
+    public readonly struct SavedQuest
+    {
+        public SavedQuest(int id, int[] remaining)
+        {
+            Id = id;
+            Remaining = remaining ?? new int[0];
+        }
+
+        public int Id { get; }
+
+        public int[] Remaining { get; }
+    }
+
     /// <summary>还原存档时发生了什么(宿主写进日志)。</summary>
     public sealed class SaveApplyReport
     {
@@ -120,6 +134,12 @@ namespace Dnf.Play
         /// <summary>快捷栏放了什么(格号从小到大,只写有物品的格;M28 加的键,旧存档没有这些行)。</summary>
         public List<SavedQuick> Quick { get; } = new List<SavedQuick>();
 
+        /// <summary>进行中的任务(M31 加的键 <c>quest 编号 计数…</c>,旧存档没有这些行;接取次序)。</summary>
+        public List<SavedQuest> Quests { get; } = new List<SavedQuest>();
+
+        /// <summary>已完成的任务编号(M31 加的键 <c>cleared 编号</c>,从小到大)。</summary>
+        public List<int> ClearedQuests { get; } = new List<int>();
+
         /// <summary>写成文本(换行用 \n,键的次序固定,所以内容没变文本也不变)。</summary>
         public string ToText()
         {
@@ -146,6 +166,19 @@ namespace Dnf.Play
             foreach (SavedQuick quick in Quick)
             {
                 sb.Append("quick ").Append(quick.Slot.ToString(Inv)).Append(' ').Append(quick.Code.ToString(Inv)).Append('\n');
+            }
+            foreach (SavedQuest quest in Quests)
+            {
+                sb.Append("quest ").Append(quest.Id.ToString(Inv));
+                foreach (int remaining in quest.Remaining)
+                {
+                    sb.Append(' ').Append(remaining.ToString(Inv));
+                }
+                sb.Append('\n');
+            }
+            foreach (int id in ClearedQuests)
+            {
+                sb.Append("cleared ").Append(id.ToString(Inv)).Append('\n');
             }
             return sb.ToString();
         }
@@ -216,9 +249,14 @@ namespace Dnf.Play
         {
             error = null;
             string key = f[0];
+            if (key == "quest")
+            {
+                return ParseQuest(r, f, no, out error);
+            }
             int arity;
             switch (key)
             {
+                case "cleared":
                 case "job":
                 case "level":
                 case "exp":
@@ -294,6 +332,13 @@ namespace Dnf.Play
                     ok = InRange(a, 0, long.MaxValue);
                     r.GoldGained = a;
                     break;
+                case "cleared":
+                    ok = InRange(a, 1, int.MaxValue);
+                    if (ok)
+                    {
+                        r.ClearedQuests.Add((int)a);
+                    }
+                    break;
                 case "bag":
                     ok = InRange(a, 0, int.MaxValue) && InRange(b, 1, int.MaxValue);
                     if (ok)
@@ -321,6 +366,45 @@ namespace Dnf.Play
                 error = "第 " + no + " 行:" + key + " 的值超出范围";
             }
             return ok;
+        }
+
+        /// <summary>每个任务最多存多少项计数(猎杀目标组数的上限,防写坏的文件占内存)。</summary>
+        public const int MaxQuestCounters = 32;
+
+        private static bool ParseQuest(HeroSave r, string[] f, int no, out string error)
+        {
+            error = null;
+            if (f.Length < 2 || f.Length - 2 > MaxQuestCounters)
+            {
+                error = "第 " + no + " 行:quest 需要任务编号和 0 到 " + MaxQuestCounters + " 项计数";
+                return false;
+            }
+            var values = new long[f.Length - 1];
+            for (int i = 1; i < f.Length; i++)
+            {
+                if (!long.TryParse(f[i], NumberStyles.Integer, Inv, out values[i - 1]))
+                {
+                    error = "第 " + no + " 行:quest 的值不是整数";
+                    return false;
+                }
+            }
+            if (!InRange(values[0], 1, int.MaxValue))
+            {
+                error = "第 " + no + " 行:quest 的值超出范围";
+                return false;
+            }
+            var remaining = new int[values.Length - 1];
+            for (int i = 1; i < values.Length; i++)
+            {
+                if (!InRange(values[i], 0, int.MaxValue))
+                {
+                    error = "第 " + no + " 行:quest 的值超出范围";
+                    return false;
+                }
+                remaining[i - 1] = (int)values[i];
+            }
+            r.Quests.Add(new SavedQuest((int)values[0], remaining));
+            return true;
         }
 
         private static bool InRange(long value, long min, long max)

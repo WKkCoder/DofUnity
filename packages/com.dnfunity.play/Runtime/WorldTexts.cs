@@ -90,6 +90,22 @@ namespace Dnf.Play
             return FirstText(script, "[field name]") ?? FirstText(script, "[name]");
         }
 
+        /// <summary>对话里用的名字:<c>[name]</c> 优先,没有或取不到再用 <c>[field name]</c>(任务对白里的 NPC 引用用它,M31);都没有返回 null。</summary>
+        public string NpcDialogName(IReadOnlyList<ScriptLine> script)
+        {
+            if (script == null)
+            {
+                return null;
+            }
+            return FirstText(script, "[name]") ?? FirstText(script, "[field name]");
+        }
+
+        /// <summary>脚本里 <c>[name]</c> 的文字(AI 角色一类只有 [name] 的脚本用,M31);没有或取不到返回 null。</summary>
+        public string ScriptName(IReadOnlyList<ScriptLine> script)
+        {
+            return script == null ? null : FirstText(script, "[name]");
+        }
+
         private string FirstText(IReadOnlyList<ScriptLine> script, string tag)
         {
             for (int i = 0; i < script.Count; i++)
@@ -124,6 +140,7 @@ namespace Dnf.Play
         private readonly Func<int, ScriptLine[]> _scriptOf;
         private readonly WorldTexts _texts;
         private readonly Dictionary<int, string> _cache = new Dictionary<int, string>();
+        private readonly Dictionary<int, string> _dialogCache = new Dictionary<int, string>();
 
         /// <param name="scriptOf">按 NPC 编号给出它的脚本行;没有这个 NPC 或脚本读不到返回 null。</param>
         public NpcNames(Func<int, ScriptLine[]> scriptOf, WorldTexts texts)
@@ -148,6 +165,18 @@ namespace Dnf.Play
                 }
                 return catalog.TryGetValue(id, out string file) ? assets.ReadScript(PvfPath.ResolveRelativeTo("npc/", file)) : null;
             }, texts);
+        }
+
+        /// <summary>这个 NPC 在对话里用的名字(<see cref="WorldTexts.NpcDialogName"/>,按编号缓存);没有名字返回 null。</summary>
+        public string DialogNameOf(int npcId)
+        {
+            if (_dialogCache.TryGetValue(npcId, out string cached))
+            {
+                return cached;
+            }
+            string name = _texts.NpcDialogName(_scriptOf(npcId));
+            _dialogCache[npcId] = name;
+            return name;
         }
 
         /// <summary>这个 NPC 头顶要画的名字;没有名字返回 null。</summary>

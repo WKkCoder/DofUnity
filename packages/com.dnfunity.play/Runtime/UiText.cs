@@ -77,6 +77,30 @@ namespace Dnf.Play
             { "ARROWS MOVE   ENTER SELL   Q E PAGE   TAB BUY MODE   ESC CLOSE", "方向键 移动   回车 卖出   Q E 翻页   Tab 切到买入   Esc 关闭" },
             { "UP DOWN +1 -1   LEFT RIGHT -10 +10   ENTER OK   ESC CANCEL", "上下 ±1   左右 ±10   回车 确定   Esc 取消" },
 
+            // 任务(M31)
+            { "QUESTS", "任务" },
+            { "NO QUESTS", "没有任务" },
+            { "SPACE TALK", "按空格键 对话" },
+            { "ACCEPT", "接受" },
+            { "COMPLETE", "完成" },
+            { "ABANDON", "放弃" },
+            { "CLOSE", "关闭" },
+            { "REWARD", "奖励" },
+            { "CHOOSE ONE", "选择一件奖励" },
+            { "QUEST ACCEPTED", "任务已接取" },
+            { "QUEST READY", "任务可以交了" },
+            { "QUEST COMPLETE", "任务完成" },
+            { "QUEST ABANDONED", "任务已放弃" },
+            { "QUEST ITEM", "任务物品" },
+            { "NOT AVAILABLE", "现在不能接" },
+            { "NOT DONE YET", "还没完成" },
+            { "CANNOT ABANDON", "这个任务不能放弃" },
+            { "PRESS ABANDON AGAIN", "再按一次放弃" },
+            { "NO SUCH QUEST", "没有这个任务" },
+            { "UP DOWN SELECT   DEL ABANDON   L ESC CLOSE", "上下 选择   Delete 放弃   L Esc 关闭" },
+            { "UP DOWN SELECT   ENTER ACCEPT OR COMPLETE   LEFT RIGHT REWARD   TAB SHOP   ESC CLOSE", "上下 选择   回车 接受或完成   左右 选奖励   Tab 商店   Esc 关闭" },
+            { "UP DOWN SELECT   ENTER ACCEPT OR COMPLETE   LEFT RIGHT REWARD   ESC CLOSE", "上下 选择   回车 接受或完成   左右 选奖励   Esc 关闭" },
+
             // 系统菜单、复活、结算
             { "SYSTEM MENU", "系统菜单" },
             { "RESUME", "继续游戏" },
@@ -111,6 +135,8 @@ namespace Dnf.Play
 
         private static readonly string[,] PatternPairs =
         {
+            { "EXP {0}  GOLD {1}", "经验 {0}  金币 {1}" },
+            { "PROGRESS {0}", "进度 {0}" },
             { "GOLD {0}", "金币 {0}" },
             { "COINS {0}", "复活币 {0}" },
             { "LEVEL {0}", "等级 {0}" },
