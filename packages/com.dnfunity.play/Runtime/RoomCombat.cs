@@ -455,6 +455,12 @@ namespace Dnf.Play
         private ISpriteSource _dropSprites;
         private readonly List<string> _throwSoundScratch = new List<string>();
         private readonly HashSet<MonsterActor> _hitThisSwing = new HashSet<MonsterActor>();
+
+        // 可破坏物件(证据 E-126):房间里能被打的物件与每一击已经打中过的
+        private readonly List<BreakableObject> _breakables = new List<BreakableObject>();
+        private readonly HashSet<BreakableObject> _hitBreakablesThisSwing = new HashSet<BreakableObject>();
+        private ObjectDropSetup _objectDrops;
+        private DropRandom _objectRandom = new DropRandom(3);
         private readonly Random _random;
 
         /// <summary>怪物打主角的伤害种子用的随机数,与主角打怪物的伤害序列分开,免得互相改变对方的序列。</summary>
@@ -576,6 +582,33 @@ namespace Dnf.Play
 
         /// <summary>这个房间里一共掉出过多少件物品(含已经捡走的)。</summary>
         public int ItemsDropped { get; private set; }
+
+        // ------------------------------------------------------------------ 可破坏物件(证据 E-126)
+
+        /// <summary>这个房间里能被打的物件(木桶、箱子、会晃的树……),包括已经打碎的。</summary>
+        public IReadOnlyList<BreakableObject> Breakables => _breakables;
+
+        /// <summary>主角一共打中物件多少次(同一击对同一个物件只算一次)。</summary>
+        public int ObjectsHit { get; private set; }
+
+        /// <summary>打碎了多少个物件。</summary>
+        public int ObjectsDestroyed { get; private set; }
+
+        /// <summary>物件掉出了多少件物品(已计入 <see cref="ItemsDropped"/>)。</summary>
+        public int ObjectItemsDropped { get; private set; }
+
+        /// <summary>执行过多少个物件的 <c>[item]</c> 动作(每个动作掷一次,可能一件也掷不出)。</summary>
+        public int ObjectItemActions { get; private set; }
+
+        /// <summary>
+        /// 装上这座副本里物件掉物品要用的东西(见 <see cref="ObjectDropSetup"/>);不装就是物件被打碎时不掉东西。
+        /// <paramref name="seed"/> 是掷骰用的随机数种子(与怪物的掉落、伤害的随机序列分开)。
+        /// </summary>
+        public void UseObjectDrops(ObjectDropSetup setup, int seed = 1)
+        {
+            _objectDrops = setup;
+            _objectRandom = new DropRandom(unchecked(seed * 17 + 0x1B873593));
+        }
 
         /// <summary>主角在这个房间里捡了多少件物品。</summary>
         public int ItemsPicked { get; private set; }
@@ -874,6 +907,14 @@ namespace Dnf.Play
             _dropSprites = _assets;
             _room = room ?? throw new ArgumentNullException(nameof(room));
             _monsters = new List<MonsterActor>(monsters ?? new List<MonsterActor>());
+            foreach (RoomObject o in room.Content.Objects)
+            {
+                BreakableObject b = BreakableObject.TryCreate(o);
+                if (b != null)
+                {
+                    _breakables.Add(b);
+                }
+            }
             _strikes = new HeroStrikeInfo[strikes == null ? 0 : strikes.Count];
             for (int i = 0; i < _strikes.Length; i++)
             {
@@ -1403,6 +1444,10 @@ namespace Dnf.Play
             {
                 follow.MoveTo(hero.X, hero.Y, hero.Z);   // 升级光效跟着主角走(跟随是推断:客户端把它挂在主角身上)
             }
+            foreach (BreakableObject b in _breakables)
+            {
+                b.Object.Advance(heroDelta);             // 物件的受击动画与命中停顿一起冻结(受击方与攻击方定住同样久,E-077)
+            }
             UpdateDrops(deltaMs, hero);
             _targetMs += deltaMs;
             _hudClockMs += deltaMs;
@@ -1491,6 +1536,7 @@ namespace Dnf.Play
                 _evalSwing = hero.SwingNumber;
                 _evalFrame = -1;
                 _hitThisSwing.Clear();
+                _hitBreakablesThisSwing.Clear();
             }
             int frame = hero.CurrentFrame;
             for (int f = _evalFrame + 1; f <= frame; f++)
@@ -1522,13 +1568,27 @@ namespace Dnf.Play
                     Strike(hero, m, hit);
                 }
             }
+            // 可破坏物件:同一套攻击框与受击框相交判定;打碎了的不再挨打(证据 E-126)
+            for (int i = 0; i < _breakables.Count; i++)
+            {
+                BreakableObject b = _breakables[i];
+                if (b.Destroyed || _hitBreakablesThisSwing.Contains(b))
+                {
+                    continue;
+                }
+                if (TryHit(strike, b.HurtBoxes, out _))
+                {
+                    _hitBreakablesThisSwing.Add(b);
+                    StrikeBreakable(hero, b);
+                }
+            }
         }
 
         /// <summary>
         /// 攻击框与受击框的相交判定:外层攻击框、内层受击框,第一对相交的就是命中,返回它们的相交盒(客户端的"命中信息",证据 E-058);
         /// 伤害数字按它的中心放(证据 E-107)。
         /// </summary>
-        private static bool TryHit(List<Aabb> strike, List<Aabb> hurt, out Aabb hit)
+        private static bool TryHit(List<Aabb> strike, IReadOnlyList<Aabb> hurt, out Aabb hit)
         {
             foreach (Aabb a in strike)
             {
@@ -1556,30 +1616,30 @@ namespace Dnf.Play
             _popups.Add(new HitPopup(value, flags, hit.CenterX + jitterX, victimY, hit.CenterZ + NumberRise + jitterZ));
         }
 
-        private void Strike(TownHero hero, MonsterActor monster, Aabb hit)
+        /// <summary>这一击用的攻击信息:奔跑攻击、空中攻击、技能(有自己攻击信息的)与普攻各取各的,对怪物与对物件都一样。</summary>
+        private HeroStrikeInfo CurrentStrikeInfo(TownHero hero)
         {
-            HeroStrikeInfo info;
             switch (hero.AttackKind)
             {
                 case HeroAttackKind.Dash:
-                    info = _dashStrike;
-                    break;
+                    return _dashStrike;
                 case HeroAttackKind.Jump:
-                    info = _jumpStrike;
-                    break;
+                    return _jumpStrike;
                 case HeroAttackKind.Skill:
                     // 有自己攻击信息与伤害数的技能(鬼斩)用自己的;借普攻动作放的技能(上挑)沿用那一段普攻的攻击信息
                     HeroSkillSlot slot = Skills.SlotOfSkill(hero.SkillId);
                     if (slot != null && slot.Strike.HasValue)
                     {
-                        info = slot.Strike.Value;
-                        break;
+                        return slot.Strike.Value;
                     }
-                    goto default;
-                default:
-                    info = hero.AttackStage < _strikes.Length ? _strikes[hero.AttackStage] : new HeroStrikeInfo(0, 0, false);
                     break;
             }
+            return hero.AttackStage < _strikes.Length ? _strikes[hero.AttackStage] : new HeroStrikeInfo(0, 0, false);
+        }
+
+        private void Strike(TownHero hero, MonsterActor monster, Aabb hit)
+        {
+            HeroStrikeInfo info = CurrentStrikeInfo(hero);
             // 伤害:有攻击面板与公式常量就走原版公式(证据 E-110),打完在怪物身上记下攻击者(下一击不再算额外命中);否则是占位伤害
             int damage;
             bool critical = false;
@@ -1634,6 +1694,58 @@ namespace Dnf.Play
                 QuestEvents?.MonsterKilled(QuestDungeonId, QuestDifficulty, monster.Code, monster.IsBoss);
             }
             AddNumber(damage, DamageNumberFlags.AttackerIsHero | (critical ? DamageNumberFlags.Critical : 0), hit, monster.Y);
+        }
+
+        /// <summary>
+        /// 主角的这一击打中了一个物件(证据 E-126):计一下,放受击声(打碎时再放破坏声),命中停顿只定住主角(物件没有"受击硬直"),
+        /// 打够了就触发它挂的动作(掉物品)。不算连击、不出伤害数字、不进伤害统计——这些怎么对物件结算没有读到,按不算处理(推断)。
+        /// </summary>
+        private void StrikeBreakable(TownHero hero, BreakableObject b)
+        {
+            HeroStrikeInfo info = CurrentStrikeInfo(hero);
+            BreakableOutcome outcome = b.Hit(_assets);
+            ObjectsHit++;
+            _sounds.Add(b.Data.HitSound, SoundCueKind.Effect);
+            if (outcome == BreakableOutcome.Destroyed)
+            {
+                ObjectsDestroyed++;
+                _sounds.Add(b.Data.DestroySound, SoundCueKind.Effect);
+            }
+            int stun = HitStop.StunMs(info.HitValue, info.UseWeaponHitDelayRate, WeaponStunMs);
+            if (stun > _heroPauseMs)
+            {
+                _heroPauseMs = stun;
+            }
+            if (outcome != BreakableOutcome.Reacted)
+            {
+                ReleaseObjectActions(b);
+            }
+        }
+
+        /// <summary>
+        /// 打够的物件触发它挂的动作(证据 E-126):<c>[item]</c> 按副本的掉落项生成物品、从物件脚下抛出;<c>[monster]</c> 与 <c>[trap]</c>、<c>[quest]</c> 这一版不做。
+        /// 没装物件掉落数据(<see cref="UseObjectDrops"/>)时什么也不掉。
+        /// </summary>
+        private void ReleaseObjectActions(BreakableObject b)
+        {
+            SpecialPlacement special = b.Object.Special;
+            if (special == null || _objectDrops == null)
+            {
+                return;
+            }
+            foreach (SpecialAction action in special.Actions)
+            {
+                if (action.Kind != SpecialActionKind.Item)
+                {
+                    continue;
+                }
+                ObjectItemActions++;
+                foreach (ItemInfo item in _objectDrops.Roll(action, _objectRandom))
+                {
+                    SpawnItem(item, b.Object.X, b.Object.Y);
+                    ObjectItemsDropped++;
+                }
+            }
         }
 
         // ------------------------------------------------------------------ 经验与升级(证据 E-111)

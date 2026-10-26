@@ -36,11 +36,14 @@ public class RoomCombatTests
         /// <param name="withSkills">为真时按合成的角色脚本([skill] 初始技能表)排出技能快捷槽(要用带跳跃的 <see cref="AvatarFixture.ActionChrPath"/>)。</param>
         /// <param name="heroPanel">给了(并且给了 <paramref name="damageConstants"/>)就让主角打怪物走原版伤害公式(E-110);都不给是占位伤害。</param>
         /// <param name="defense">每个怪物的防御面板;不给就没有(按零防御、怪物自己的等级算)。</param>
+        /// <param name="objects">房间里摆的物件(可破坏物件的测试用);拿到打开的素材后建出来,不给就是空房间。</param>
+        /// <param name="walkArea">主角可走的区域(不给就没有限制;<paramref name="frozen"/> 优先);测"够不着"的场景用。</param>
         public Arena(IReadOnlyList<(int X, int Y)> monsters, HeroStrikeInfo[] strikes = null, bool facingLeft = false, int hp = 100,
             bool frozen = false, int seed = 1, string chr = null, HeroStrikeInfo dash = default, HeroStrikeInfo jump = default, double monsterSpeed = 222.5,
             bool withSkills = false, int weaponStun = 0, HitStunTable stunTable = null, int monsterRecovery = 0, float weaponDelay = -1f,
             HeroPanel heroPanel = null, DamageConstants damageConstants = null, DefenderPanel defense = null, HeroVitals vitals = null,
-            HeroProgress progress = null, float expWeight = 1f, int monsterLevel = 1, bool monsterBoss = false)
+            HeroProgress progress = null, float expWeight = 1f, int monsterLevel = 1, bool monsterBoss = false,
+            Func<DnfAssets, IReadOnlyList<RoomObject>> objects = null, List<WorldRect> walkArea = null)
         {
             Assets = DnfAssets.Open(_fx.Root);
             var tiles = new List<TileFile>();
@@ -50,10 +53,10 @@ public class RoomCombatTests
             }
             var map = new RoomMap("map/test/arena.map", "[normal]", tiles, 50, 80, 120, new List<RoomBackground>(), new List<MapAnimation>(),
                 new List<int[]> { null, null, null, null }, null);
-            var content = new RoomContent(map, null, null, null, null);
+            var content = new RoomContent(map, null, null, objects?.Invoke(Assets), null);
             AvatarClass cls = AvatarClass.FromChr(Assets, AvatarFixture.ChrPath, AvatarFixture.JobTag);
             AvatarOutfit outfit = AvatarOutfit.CreateDefault(Assets, cls, AvatarFixture.EquipRoot, AvatarFixture.WeaponEqu);
-            var area = frozen ? new List<WorldRect> { new WorldRect(HeroX - 5, HeroY - 5, 10, 10) } : new List<WorldRect>();
+            var area = frozen ? new List<WorldRect> { new WorldRect(HeroX - 5, HeroY - 5, 10, 10) } : walkArea ?? new List<WorldRect>();
             TownHero hero = TownHero.Create(Assets, chr ?? AvatarFixture.ChrPath, outfit, area, HeroX, HeroY, facingLeft, TownHero.DungeonRestTag);
             var room = new RoomSession(Assets, content, hero, new TownCamera(0, map.MaxCameraX, hero.X));
 

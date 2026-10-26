@@ -451,6 +451,49 @@ public class RoomTests
     }
 
     [Fact]
+    public void AWallWhoseSpotIsOnTheOtherHalfOfTheMapIsNotPlacedButARealExitIs()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        // 左墙与右墙都用带碰撞体的 811;左普通出口用 801(没有碰撞体)
+        var set = new PathGateSet(new[] { 801, 802, 811, 804, 805, 811, 807, 808, 809, 810 });
+        RoomMap stale = RoomMap.Read(assets, RoomFixture.StaleGatesMapPath);
+        Assert.Equal(448, stale.Width);
+
+        // 左墙在 x = 300(右半边)、右墙在 x = 100(左半边):都是没用上的占位值,不摆(不然门体的延伸会把房间横切成两半)
+        List<RoomGate> walls = DemoRoom.BuildGates(assets, stale, set, side => side == GateSide.Left || side == GateSide.Right ? GateKind.Wall : GateKind.None);
+        Assert.Empty(walls);
+
+        // 同一个位置上的普通出口照摆:迷宫说有出口,位置就是出口所在
+        List<RoomGate> exits = DemoRoom.BuildGates(assets, stale, set, side => side == GateSide.Left ? GateKind.Normal : GateKind.None);
+        Assert.Single(exits);
+        Assert.Equal((GateSide.Left, 300, 120), (exits[0].Side, exits[0].X, exits[0].Y));
+
+        // 位置在本侧的墙照摆(左墙 x = 16、右墙 x = 440),而且带碰撞体
+        RoomMap normal = ReadMap(assets);
+        List<RoomGate> own = DemoRoom.BuildGates(assets, normal, set, side => side == GateSide.Left || side == GateSide.Right ? GateKind.Wall : GateKind.None);
+        Assert.Equal(2, own.Count);
+        Assert.All(own, g => Assert.NotNull(g.Body));
+    }
+
+    [Fact]
+    public void AWallIsAPlaceholderOnlyWhenItIsStrictlyOnTheOtherHalf()
+    {
+        using var fx = new RoomFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        RoomMap map = ReadMap(assets);   // 宽 448,正中 224
+        Assert.False(DemoRoom.IsStalePlaceholder(map, GateSide.Left, new[] { 224, 100 }));
+        Assert.True(DemoRoom.IsStalePlaceholder(map, GateSide.Left, new[] { 225, 100 }));
+        Assert.False(DemoRoom.IsStalePlaceholder(map, GateSide.Right, new[] { 224, 100 }));
+        Assert.True(DemoRoom.IsStalePlaceholder(map, GateSide.Right, new[] { 223, 100 }));
+        // 上下出口不看左右半边;缺位置、缺地图都不算占位值
+        Assert.False(DemoRoom.IsStalePlaceholder(map, GateSide.Up, new[] { 10, 100 }));
+        Assert.False(DemoRoom.IsStalePlaceholder(map, GateSide.Down, new[] { 440, 100 }));
+        Assert.False(DemoRoom.IsStalePlaceholder(map, GateSide.Left, null));
+        Assert.False(DemoRoom.IsStalePlaceholder(null, GateSide.Left, new[] { 400, 100 }));
+    }
+
+    [Fact]
     public void OnlyObstaclesWithAMotionAreDrawnAndOnlyDoNotPassOnesBlock()
     {
         using var fx = new RoomFixture();

@@ -34,6 +34,8 @@
 #       日志里 DNF_CLEAR 的经验已发给主角(granted=True、exp>0)。日志里只有字母与数字。
 #     副本难度(M33,E-125):带等级进度、自动机从选择界面把难度升到通关记录允许的最高一档(-dnfraisedifficulty),三局的难度依次是 0、1、1,
 #       难度 0 通关写下记录(DNF_CLEAR 的 opened=1),再次挑战沿用难度。
+#     可破坏物件(M34,E-126):自动机带 -dnfsmash,清房、捡完金币之后顺手把房间里的可破坏物件打翻;副本不写死,由 dnf breakable-check --pick 按本机数据挑;
+#       日志里 DNF_OBJECT 只有个数:进过的房间里有物件、挥中过、打翻过、执行过 [item] 动作。
 # 运行演示:
 #   macOS:  open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 的目录>"
 #           (不带参数也行:窗口里有输入框,路径会保存在 PlayerPrefs 里)
@@ -789,6 +791,30 @@ if [ "$platform" = "macos" ]; then
     grep -E 'DNF_LABEL' "$potion_log" | cut -c1-120 || true
     grep -q -E 'DNF_LABEL drawn=[1-9][0-9]* selected=[0-9]+' "$potion_log" \
       || { echo "副本里掉在地上的金币应画过名牌(DNF_LABEL drawn>0):$potion_log" >&2; exit 1; }
+    # 可破坏物件(M34,证据 E-126):自动机带 -dnfsmash,清房、捡完金币之后顺手把房间里的可破坏物件打翻(掉出的东西由同一套逻辑捡起);
+    # 副本不写死具体是哪一座:dnf breakable-check --pick 按本机数据挑第一座格数少、首领格以外几个房间摆着物件的副本;结算选择只留"返回城镇",一局打完流程就走完。
+    # 日志里 DNF_OBJECT 只有个数(进过的房间里有几个物件、挥中、打翻、执行过几次 [item] 动作、因此掉出几件),要求都大于 0
+    smash_dungeon="$(dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll breakable-check --pick 2>/dev/null || true)"
+    if [ -z "$smash_dungeon" ]; then
+      echo "没有挑到适合打物件检查的副本(数据里没有可破坏物件?),跳过这一步"
+    else
+      smash_log="$PWD/re/unity-run-town-smash-macos.log"
+      rm -f "$smash_log"
+      set +e
+      "$app" -batchmode -logFile "$smash_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfsmash -dnfnodamage -dnfdungeon "$smash_dungeon" \
+        -dnfflowchoices town -dnftimescale 4 -dnfquitafter 150
+      rc=$?
+      set -e
+      echo "播放器退出码(打物件): $rc"
+      grep -E 'DNF_OBJECT' "$smash_log" | tail -3 | cut -c1-200 || true
+      [ "$rc" -eq 0 ] || exit "$rc"
+      if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$smash_log"; then
+        echo "打物件的日志里有异常:$smash_log" >&2
+        exit 1
+      fi
+      grep -q -E 'DNF_OBJECT breakables=[1-9][0-9]* hit=[1-9][0-9]* destroyed=[1-9][0-9]* itemactions=[1-9][0-9]* ' "$smash_log" \
+        || { echo "自动机应当打中并打翻过物件、执行过 [item] 动作(DNF_OBJECT breakables/hit/destroyed/itemactions 都大于 0):$smash_log" >&2; exit 1; }
+    fi
     # 角色存档(M26,本项目自己的设计):第一趟无人值守打副本、探针往背包放一件武器并穿上,退出时存档;第二趟读同一个存档进城镇,
     # 日志里读到的等级、经验、金币、背包与装备栏和第一趟最后存下的一模一样,主角的外观已是穿着的那件武器,而且读完不用再写
     save_file="$PWD/out/m26-hero.sav"

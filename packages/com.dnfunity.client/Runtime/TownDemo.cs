@@ -39,7 +39,7 @@ namespace Dnf.Client
     /// 命令行:-dnfdir &lt;目录&gt; -dnfmap &lt;PVF 内地图路径&gt; [-dnfshot &lt;输出.png&gt; [-dnftime &lt;毫秒&gt;]] [-dnfquitafter &lt;秒&gt;]
     ///         [-dnfnohero] [-dnfhero x,y,left|right,rest|move,毫秒[,镜头x]] [-dnfautowalk 秒:动作,…]
     ///         [-dnfmonsters | -dnfnomonsters] [-dnfnodamage] [-dnfplayat &lt;秒&gt;] [-dnfnosound | -dnfsound]
-    ///         [-dnfdungeon &lt;副本定义路径&gt; [-dnfbot | -dnfexplore] [-dnfseed &lt;整数&gt;] [-dnfrandomlayout] [-dnfafterclear &lt;秒&gt;] [-dnfdifficulty 0..4]]
+    ///         [-dnfdungeon &lt;副本定义路径&gt; [-dnfbot | -dnfexplore] [-dnfsmash] [-dnfseed &lt;整数&gt;] [-dnfrandomlayout] [-dnfafterclear &lt;秒&gt;] [-dnfdifficulty 0..4]]
     ///         [-dnfflow … -dnfraisedifficulty](M33:副本难度;流程自动机在选择界面把难度调到当前能选的最高一档)
     /// 带 -dnfshot 时只离屏渲染一帧写成 PNG 就退出(用来和 CPU 合成器逐字节对照,见 tools/unity-build-town.sh);
     /// 这时默认不画主角,带 -dnfhero 才把主角摆到指定的位置、朝向与动作进度(与 dnf render-town --scene --hero 同一写法)。
@@ -183,6 +183,7 @@ namespace Dnf.Client
         private int _noteRevives;
         private int _noteGoldPicked = -1;
         private int _noteItemsPicked = -1;
+        private int _noteObjects = -1;                     // 这一局物件的统计签名(打翻数 + 放出的 [item] 动作数 + 是否挥中过),变了写一行 DNF_OBJECT
         private bool _noteLabelsDrawn;                     // 这一局已经为"画出过地上名牌"写过 DNF_LABEL
         private bool _noteLabelsSelected;                  // 这一局已经为"画出过选中的名牌"写过 DNF_LABEL
         private bool _noteClear;                           // 这一局已经为"首领清空、结算出评分与通关经验"写过 DNF_CLEAR
@@ -208,6 +209,7 @@ namespace Dnf.Client
         private bool _flowDoneNoted;
         private DungeonBot _bot;
         private bool _botExplore;
+        private bool _smash;                               // -dnfsmash:自动机清房、捡完金币之后顺手打翻房间里的可破坏物件(M34,E-126)
         private bool _useBot;
         private int _seed = 1;
         private bool _randomLayout;
@@ -368,6 +370,9 @@ namespace Dnf.Client
                     case "-dnfexplore":
                         _useBot = true;
                         _botExplore = true;
+                        break;
+                    case "-dnfsmash":
+                        _smash = true;
                         break;
                     case "-dnfseed":
                         if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
@@ -675,11 +680,11 @@ namespace Dnf.Client
             _heroInput = true;
             if (_useBot && !_flowMode)
             {
-                _bot = new DungeonBot(_botExplore);
+                _bot = new DungeonBot(_botExplore) { SmashObjects = _smash };
             }
             if (shot && _playAtSeconds >= 0.0)
             {
-                DungeonBot shotBot = _bot ?? (_useBot ? new DungeonBot(_botExplore) : null);
+                DungeonBot shotBot = _bot ?? (_useBot ? new DungeonBot(_botExplore) { SmashObjects = _smash } : null);
                 if (shotBot != null)
                 {
                     shotBot.RunUntil(dungeon, _playAtSeconds * 1000.0, _afterClearSeconds * 1000.0);
@@ -1828,6 +1833,7 @@ namespace Dnf.Client
             _noteRevives = 0;
             _noteGoldPicked = -1;
             _noteItemsPicked = -1;
+            _noteObjects = -1;
             _noteLabelsDrawn = false;
             _noteLabelsSelected = false;
             _noteClear = false;
@@ -1926,6 +1932,18 @@ namespace Dnf.Client
                 Debug.Log("DNF_ITEM dropped=" + dungeon.ItemsDropped + " picked=" + items + " full=" + dungeon.ItemsBagFull
                     + " bag=" + (_progress == null ? 0 : _progress.BagItems) + " slots=" + (_progress == null ? 0 : _progress.BagSlots));
             }
+            // 可破坏物件(M34,E-126):打翻数、放出的 [item] 动作数变了(或第一次挥中)写一行 DNF_OBJECT;只有个数,没有物件与物品的编号、路径
+            int objects = dungeon.ObjectsDestroyed + dungeon.ObjectItemActions + (dungeon.ObjectsHit > 0 ? 1 : 0);
+            if (_noteObjects < 0)
+            {
+                _noteObjects = 0;
+            }
+            if (objects != _noteObjects)
+            {
+                _noteObjects = objects;
+                Debug.Log("DNF_OBJECT breakables=" + dungeon.ObjectsBreakable + " hit=" + dungeon.ObjectsHit + " destroyed=" + dungeon.ObjectsDestroyed
+                    + " itemactions=" + dungeon.ObjectItemActions + " items=" + dungeon.ObjectItemsDropped);
+            }
         }
 
         /// <summary>流程模式的初始化:造 <see cref="GameFlow"/>(城镇、副本两种会话的工厂接上这个演示的数据与参数)并进入起始阶段;带自动机参数时再造流程自动机。</summary>
@@ -1983,7 +2001,7 @@ namespace Dnf.Client
             }
             if (_useBot)
             {
-                _flowBot = new FlowBot(_botExplore, ParseSettlementChoices(_flowChoices)) { RaiseDifficulty = _raiseDifficulty };
+                _flowBot = new FlowBot(_botExplore, ParseSettlementChoices(_flowChoices)) { RaiseDifficulty = _raiseDifficulty, SmashObjects = _smash };
             }
         }
 

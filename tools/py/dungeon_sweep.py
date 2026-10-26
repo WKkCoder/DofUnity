@@ -12,6 +12,7 @@
   python3 tools/py/dungeon_sweep.py --only act1,act2     # 只扫这些目录(dungeon/ 后的第一级)
   python3 tools/py/dungeon_sweep.py --seed 2 --seconds 900 --jobs 4
   python3 tools/py/dungeon_sweep.py --damage             # 主角会被打(1 级主角打高等级副本会死,结果多半是 stuck)
+  python3 tools/py/dungeon_sweep.py --smash              # 自动机清房、捡完金币之后顺手打翻房间里的可破坏物件(M34,E-126);汇总里多一行物件统计(只在本机)
   python3 tools/py/dungeon_sweep.py --dungeon dungeon/act1/mirkwood.dgn   # 只跑一个并打印尾部
 
 输出:out/dungeon-sweep.json(逐副本一条)、out/dungeon-sweep.tsv(同内容的表)和汇总。
@@ -38,6 +39,7 @@ DNF = [os.path.join(ROOT, "src/Dnf.Cli/bin/Release/net10.0/dnf.dll")]
 LAYOUT = re.compile(r"迷宫 (\d+) 列 × (\d+) 行")
 END = re.compile(r"结束:t=([\d.]+)s\s+(\S+)\s+进过 (\d+) 个房间,清空 (\d+) 个")
 HITS = re.compile(r"命中 (\d+) 次,击杀 (\d+) 个")
+OBJECTS = re.compile(r"物件\(E-126\):进过的房间里有 (\d+) 个可破坏物件,挥中 (\d+) 次,打翻 (\d+) 个,放出 \[item\] 动作 (\d+) 次,掉出 (\d+) 件")
 EXC = re.compile(r"(Unhandled exception|未处理的异常|System\.\w+Exception|Exception:|   at Dnf\.)")
 
 
@@ -49,7 +51,7 @@ def list_dungeons():
     return sorted(l.split()[0] for l in out.splitlines() if l.strip().endswith(tuple("0123456789")) and ".dgn" in l)
 
 
-def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=100):
+def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=100, smash=False):
     cmd = ["dotnet"] + DNF + ["dungeon-check", "--dungeon", path, "--bot", "--seed", str(seed), "--seconds", str(seconds)]
     if explore:
         cmd.insert(len(cmd), "--explore")
@@ -57,6 +59,8 @@ def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=100)
         cmd.append("--no-damage")   # 主角不掉血:这里量的是布局/进图/清房/出口通不通,不是 1 级主角打不打得过高等级怪物
     if scale > 1:
         cmd += ["--damage-scale", str(scale)]   # 主角每一击乘上 scale 倍(测试旋钮),同上
+    if smash:
+        cmd.append("--smash")                   # 自动机清房之后顺手打翻物件(M34)
     t0 = time.time()
     rec = {"dungeon": path, "status": "other", "exit": None, "real_s": 0.0}
     try:
@@ -82,6 +86,9 @@ def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=100)
     h = HITS.search(text)
     if h:
         rec["hits"], rec["kills"] = int(h.group(1)), int(h.group(2))
+    o = OBJECTS.search(text)
+    if o:
+        rec["objects"], rec["obj_hit"], rec["obj_destroyed"], rec["obj_item_actions"], rec["obj_items"] = (int(o.group(i)) for i in range(1, 6))
     if EXC.search(text):
         rec["status"] = "crash"
         lines = [l for l in text.splitlines() if l.strip()]
@@ -119,12 +126,13 @@ def main(argv):
     ap.add_argument("--real-timeout", type=float, default=180.0)
     ap.add_argument("--no-explore", action="store_true")
     ap.add_argument("--damage", action="store_true", help="主角会被打(默认不会:无伤害模式,只量布局与流程)")
+    ap.add_argument("--smash", action="store_true", help="自动机清房之后顺手打翻房间里的可破坏物件(M34)")
     ap.add_argument("--scale", type=int, default=100, help="主角每一击伤害的倍数(默认 100,排除一级主角打不动高等级怪物的干扰;1 = 不放大)")
     ap.add_argument("--out", default=os.path.join(ROOT, "out/dungeon-sweep"))
     a = ap.parse_args(argv)
 
     if a.dungeon:
-        r = run_one(a.dungeon, a.seed, a.seconds, a.real_timeout, not a.no_explore, a.damage, a.scale)
+        r = run_one(a.dungeon, a.seed, a.seconds, a.real_timeout, not a.no_explore, a.damage, a.scale, a.smash)
         print(json.dumps(r, ensure_ascii=False, indent=1))
         return 0 if r["status"] == "cleared" else 2
 
@@ -136,7 +144,7 @@ def main(argv):
     results = []
     t0 = time.time()
     with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
-        futs = {ex.submit(run_one, n, a.seed, a.seconds, a.real_timeout, not a.no_explore, a.damage, a.scale): n for n in names}
+        futs = {ex.submit(run_one, n, a.seed, a.seconds, a.real_timeout, not a.no_explore, a.damage, a.scale, a.smash): n for n in names}
         for i, f in enumerate(concurrent.futures.as_completed(futs), 1):
             results.append(f.result())
             if i % 40 == 0:
@@ -146,6 +154,8 @@ def main(argv):
     with open(a.out + ".json", "w", encoding="utf-8") as fh:
         json.dump(results, fh, ensure_ascii=False, indent=1)
     cols = ["dungeon", "status", "exit", "cols", "rows", "rooms_entered", "rooms_cleared", "kills", "sim_s", "real_s", "stuck_map", "error"]
+    if a.smash:
+        cols[10:10] = ["objects", "obj_hit", "obj_destroyed", "obj_item_actions", "obj_items"]
     with open(a.out + ".tsv", "w", encoding="utf-8") as fh:
         fh.write("\t".join(cols) + "\n")
         for r in results:
@@ -165,6 +175,12 @@ def main(argv):
             tot[k] += row.get(k, 0)
         print("  %-18s %s" % (d, " / ".join(str(row.get(k, 0)) for k in order)))
     print("合计 %d:%s" % (len(results), "  ".join("%s %d" % (k, tot[k]) for k in order)))
+    if a.smash:
+        keys = ["objects", "obj_hit", "obj_destroyed", "obj_item_actions", "obj_items"]
+        sums = {k: sum(r.get(k, 0) for r in results) for k in keys}
+        withobj = sum(1 for r in results if r.get("objects", 0) > 0)
+        print("物件(只在本机):有物件的副本 %d 个;可破坏物件 %d 个,挥中 %d 次,打翻 %d 个,[item] 动作 %d 次,掉出 %d 件"
+              % (withobj, sums["objects"], sums["obj_hit"], sums["obj_destroyed"], sums["obj_item_actions"], sums["obj_items"]))
     print("用时 %.0f 秒;明细 %s.json / %s.tsv" % (time.time() - t0, a.out, a.out))
     return 0
 

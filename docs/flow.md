@@ -451,3 +451,44 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --room --map 
 副本种类按标志与维度判断,标志对应哪个 `.dgn` 标签没有查,所以所有副本都按普通种类算;"CDungeon 偏移 0x85c 为 0 才记录"的含义没有查;游戏管理员、锦标赛、冒险副本的免查没有做;"评分不低于 S"用的是估计的基础分。
 
 **没做**:`.dgn` 里 `[designate dungeon difficulty]` 的消费者没找到;队伍人数层、首领特性与精英词缀、死亡之塔与血系统层;难度层改出来的攻击速度与硬直抗性槽对怪物行为的影响(目前只有生命与攻防走了伤害管线);难度 4 的图标与选择;多人队伍(开放难度时对全队员的判断)。
+
+## 20 可破坏物件:地图的特殊物件、打几下才碎、掉物品与自动机打翻(M34,证据 E-126)
+
+**读到了什么**(服务端静态读码:Ghidra 无头脚本,只读本机服务端副本的普通代码;客户端只读普通代码段里物件类的创建处,没碰受保护区;本机整库结构扫描、实现、全库自动机扫描与实机演习,全部非 REA;没有新录像、没有连服务器;`.obj`、`.map`、`.dgn` 里的数值、哪些房间与副本有物件、物件的编号与路径,全是原版数据,只在本机运行时读,不入库、不记):
+
+- **地图的 `[special passive object]`**:每项是 `编号 x y z n` 再加 n 个动作(每个动作 = 一个关键字加 5 个整数),关键字有 `[monster]`、`[trap]`、`[item]`、`[quest]` 四种;文法在 `procSpecialPassiveObject` 0x089e7958,载入在 `ImportMapScript` 0x089dcf54,校验在 0x089e6f62;`[hellparty]` 另有一套文法与结尾标签(没做)。`CMap::set_map` 0x0834e18a 把这些物件放进战场,`insert_item` 0x0834eb94。
+- **`[item]` 动作掉什么**(`CBattle_Field::add_item_curr_map` 0x08302bc6,对每一项依次做三件事):随机物品(`CObjectDrop::generateRandomItem` 0x0853818a,按 `Etc/ItemDropInfo_Object.etc`,格式同怪物掉落表,`loadScript` 0x08538352);指定物品(`generateSpecificItem` 0x08538234:随机数取 2 到 10000,在这一项自带的"物品加权重"里按累计权重挑,没中就不掉);整座副本的通用池一次(`CDungeonDrop::generateSpecificItem` 0x08539c3e:随机数取 1 到 10000,池子是 `.dgn` 的 `[dungeon object drop]`)。
+  两个个数是有符号字节(零与以下不掷);这一项的等级取 `.dgn` 的 `[special passive object item]` 里对应项写的,写 -1 就用副本的标准等级。两个 `.dgn` 标签在 `ImportDungeonScript` 0x088e5faa 里的读取处是 0x088e8117 与 0x088e8206。
+- **打碎当通关条件**:`CBattle_Field::DestroyPassiveObject` 0x082ff3ec 与 `CParty::DestroyPassiveObject` 0x085b6540 是"破坏物件"条件的计数处(没做)。
+- **客户端**:可破坏物件类的种类码 0x421 在 0x00a40260(六个派生类构造共用的基类构造)与 0x00a35000 里写入;`[int data]` 与 `[string data]` 各槽的含义没读到(在虚函数里),按数据推断(见"推断与占位")。
+- **出口的墙体**(同一轮全库扫描里顺带发现的稳定性问题,读的是 E-074 已读过的 0x00a43770):出口的碰撞体盖在 16×12 的格子上,左出口的第 0 列一直向左延到地图边,右出口的第 13 列向右延到地图边;`[pathgate pos]` 里没有出口的左右两侧各放一个"墙"出口物件,个别房间里墙存下来的位置落在地图的另一半(或地图外),延伸就会把整间房切成两半。
+
+**代码**:
+
+- `Dnf.Render`:`SpecialObjects.cs`(`SpecialPlacement.Parse` 读一节、`SpecialAction`、`SpecialActionKind`、`BreakableData` 把 `.obj` 的 `[int data]`、`[string data]`、`[etc motion]` 整理成次数、声音与受击反应)、`RoomMap.SpecialObjects`、`RoomObject`(多了 `Special`、`Destroyed`、受击反应动画;被打碎的物件既不画也不挡路)、`PassiveObjectDef.Breakable`(只有可破坏物件目录下、带 `[int data]` 与受击框的 `.obj` 才有)、`RoomContent.Load`(特殊物件排在普通物件之后,只摆可破坏物件)、`DemoRoom.BuildGates` 与 `IsStalePlaceholder`(跳过位置落在另一半地图的"墙")。
+- `Dnf.Game`:`ObjectItems.cs`(`DungeonObjectItems` 读两个 `.dgn` 标签,`ObjectItemRoll.Roll` 按上面的三段生成;随机数范围、字节符号与等级规则照服务端)。
+- `Dnf.Play`:`BreakableObject`(受击框、命中次数、`Hit` 返回 没打够 / 打碎 / 触发)、`ObjectDropSetup`(整座副本的各房间共用的物件掉落数据)、`RoomCombatSession`(主角的每一击对每个物件各算一次,放受击声与破坏声,命中停顿只定住主角,打够了执行 `[item]` 动作、从物件脚下抛出物品;`Breakables` 与各个统计)、
+  `DungeonSession`(整座副本的物件统计)、`DungeonBot`(`SmashObjects`:清房、捡完金币之后顺着寻路走到物件身边连续普攻,打翻或触发就找下一个,寻路找不到路的、预算用完的与走过去时出了房间的物件都放弃且不再回头;路被物件堵死时自动"清障")、`MonsterDrops`(物件掉落表与物品池,与怪物掉落共用缓存)。
+- `Dnf.Client.TownDemo`:`-dnfsmash`;日志 `DNF_OBJECT`(只有个数)。
+- 命令行与脚本:`dnf breakable-check [--dungeon <副本定义>] [--seed N] [--rooms N] [--pick]`(真实数据的结构核对与实机检查,`--pick` 只打印一座适合做自动机检查的副本路径)、`dnf gate-body-check [--trace]`(出口与墙的碰撞体把可走区域挡成几块、有没有怪物落在进不去的那一块)、`dnf dungeon-check` 与 `dnf flow-check` 的 `--smash`、`dnf dungeon-check --watch 秒`(从某一秒起的 6 秒里每 0.1 秒打印主角位置与自动机的意图,看它卡在哪)、`tools/py/dungeon_sweep.py --smash`、`tools/py/verify_all.py` 的 `breakable` 项。
+
+**怎么玩**:
+
+- 房间里摆的木箱、木桶、罐子这类物件可以用攻击键打:每一击算一下,打够了(次数写在物件自己的数据里)就碎,放受击声与破坏声;碎了以后它挂的 `[item]` 动作按副本的掉落项抛出物品,捡起来与怪物掉的同一套(名牌、选中、攻击键拾取,见 §16)。有的物件(树、石柱这类)打够了不消失、只触发一次。被打碎的物件不再挡路,也不再画。
+- 自动机默认不打物件(原来的流程不受影响);播放器 `-dnfsmash` 与命令行 `--smash` 让它清房、捡完金币之后顺手把房间里的物件打翻再走向出口;路被物件堵死、寻路连着找不到路时,它会自己先打翻最近的一个再走(不用开 `-dnfsmash`)。
+
+**验证**:
+
+- 单元测试新增 65 条(全套 2755 条):`SpecialObjectTests` 18 条(文法、动作种类、坏数据、房间只摆可破坏物件、被打碎的物件不画不挡路)、`ObjectItemsTests` 22 条(两个 `.dgn` 标签的解析、三段生成的次序、随机数范围、有符号字节、等级规则;池与表全是合成的)、
+  `BreakableObjectTests` 14 条(受击框、打几下、受击反应动画、触发一次不消失、命中停顿、声音、物品从脚下抛出、整座副本的统计)、`SmashBotTests` 7 条(默认关、两侧物件逐个打翻、只触发的物件不再回头、寻路绕墙走到物件跟前、物件在可走区域之外时不往边上乱顶并很快放弃、没有路就放弃并把后面交还给走向出口、出了房间不再回头)、
+  `RoomTests` 与 `DungeonSessionTests` 共新增 4 条(位置落在另一半地图的"墙"不摆而真出口照摆、自动机去出口的路上顶住墙后几步之内改走寻路并从缺口绕过、隔着障碍的远处怪物不再原地空挥)。自动机与房间的新测试都做过变异检查:去掉对应的修复就会失败。
+- `dnf breakable-check` 在真实数据上全过(只有通过与否,数值只在本机终端):物件掉落表读得到并建出池、全部地图的 `[special passive object]` 读得通且关键字合法、可破坏物件的分类与受击框、用播放器同一条路径造房间会话打一遍(打中、打碎、触发、掉出物品);`dnf gate-body-check` 能跑完。
+- `tools/verify-all.sh` 全部通过,新增 `breakable` 一项;全库副本扫描(600 模拟秒、关伤害)通关 300/346(M33 是 297),带 `--smash` 的全库扫描(1800 模拟秒)通关 301/346,没有崩溃、没有比不带 `--smash` 多出来的卡住。扫描里的"卡住"常常只是慢,所以拿通关用时与 M33 的结果逐个比对,才分出真正退步的几个:位置落在另一半地图的墙(改成不摆,见上)、自动机顶出口时靠运气的上下乱晃、隔着障碍对远处怪物原地空挥、打物件时直线走把主角顶进刚进来的那个出口而来回换房间(改成寻路),都已修复。
+- EditMode:57 通过、10 条 GPU 对拍跳过。
+- `unity-build-town.sh macos` 退出码 0:离屏对拍 45 帧仍然不同 0;新增一趟 `-dnfsmash` 的实机运行(副本由 `dnf breakable-check --pick` 按本机数据挑),日志里 `DNF_OBJECT` 只有个数,要求进过的房间里有可破坏物件、挥中过、打翻过、执行过 `[item]` 动作,四项都大于 0。
+
+**推断与占位(非 REA)**:打几下才碎——服务端对物件掉落的资料里没有物件生命值;次数取自 `.obj` 的 `[int data]` 第一个数,"打够后是否消失"取自第二个数(为 0 就留在原地、只触发一次),受击声与破坏声取自 `[string data]` 的两个槽,受击反应取自 `[etc motion]`,这些槽的含义是按数据推断的,没有原版画面核对;
+能被打 = 在可破坏物件目录下、带 `[int data]`、基础动画有受击框(类型 14),受击框取第一个带受击框的帧(物件不随动画换框);一击算一下、不看伤害数值,不算连击、不出伤害数字、不进伤害统计,命中停顿只定住主角;特殊项里只摆可破坏物件(陷阱、仙子、任务物件、带血量的障碍这类没有对应机制,摆进去只会画出怪东西或把路堵死);
+位置落在另一半地图的"墙"被跳过是推断(原版是否也存着这种过期位置、客户端有没有另外的处理没查,`gate-body-check` 只核对"跳过之后没有怪物进不去");物品落点取物件脚下,抛出的样子沿用 M24 的占位;自动机的打物件与清障是测试工具,不代表原版的规则。
+
+**没做**:`[monster]`、`[trap]`、`[quest]` 三类动作与 `[hellparty]`;不可破坏的特殊物件(陷阱、仙子、任务物件、带血量的障碍)的机制;"破坏物件"通关条件(`DestroyPassiveObject`);物件的粒子与特效(`.ptl`,下一步的粒子系统);武器对物件的命中声与伤害、技能打物件;读出客户端各槽的虚函数以核对推断;自动机在首领清空之后不再去打物件。

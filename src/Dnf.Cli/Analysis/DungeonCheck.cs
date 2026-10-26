@@ -19,6 +19,9 @@ internal static class DungeonCheck
     /// <summary>不给 --seconds 时最长模拟多少秒(够逛遍并打完一座副本)。</summary>
     private const double DefaultSeconds = 900;
 
+    /// <summary>--watch 从给定的那一秒起往后打印多少秒。</summary>
+    private const double WatchSeconds = 6;
+
     public static int Run(DnfLocation loc, Options opts)
     {
         var shotTimes = new List<double>();
@@ -49,7 +52,7 @@ internal static class DungeonCheck
         DungeonSession session = DungeonSession.Create(assets, opts.Dungeon, opts.Seed, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage,
             progress: ExpCheck.ProgressFor(assets, opts), heroDamageScale: opts.DamageScale, coins: new ReviveCoins(opts.Coins), monsterDamageScale: opts.MonsterDamageScale,
             difficulty: opts.Difficulty);
-        var bot = new DungeonBot(opts.Explore);
+        var bot = new DungeonBot(opts.Explore) { SmashObjects = opts.Smash };
         CombatScript script = ParsePlay(opts.Play);
         if (!opts.Bot && script.IsEmpty)
         {
@@ -154,6 +157,11 @@ internal static class DungeonCheck
                 LogEnter(t, session, (fromX, fromY, fromHeroY));
                 lastCell = cell;
             }
+            if (opts.Watch.HasValue && t >= opts.Watch.Value * 1000.0 && t <= (opts.Watch.Value + WatchSeconds) * 1000.0 && (long)(t / 100.0) != (long)((t - frameMs) / 100.0))
+            {
+                Console.WriteLine("  [细跟踪 " + Sec(t) + "s] 格 (" + session.CellX + "," + session.CellY + ") 主角 (" + F(session.Hero.X) + "," + F(session.Hero.Y) + ") " + session.Hero.Motion
+                    + (opts.Bot ? " 意图 " + bot.Intent : string.Empty) + (session.InTransition ? " 转场" : string.Empty));
+            }
             if (opts.Trace && (long)(t / 1000.0) != (long)((t - frameMs) / 1000.0))
             {
                 MonsterActor? nearest = null;
@@ -201,6 +209,29 @@ internal static class DungeonCheck
                     + (session.Progress != null ? ",背包 " + session.Progress.Bag.TotalCount + " 件占 " + session.Progress.Bag.StackCount + " 格" : string.Empty)
                     + (session.ItemsBagFull > 0 ? ",背包满了留在地上 " + session.ItemsBagFull + " 件" : string.Empty)
                 : "没有物品池(读不到装备或物品列表)"));
+        }
+        if (session.ObjectsBreakable > 0 || opts.Smash)
+        {
+            Console.WriteLine("物件(E-126):进过的房间里有 " + session.ObjectsBreakable + " 个可破坏物件,挥中 " + session.ObjectsHit + " 次,打翻 " + session.ObjectsDestroyed
+                + " 个,放出 [item] 动作 " + session.ObjectItemActions + " 次,掉出 " + session.ObjectItemsDropped + " 件" + (opts.Smash ? string.Empty : "(没带 --smash,自动机不会去打物件)"));
+            if (opts.Smash)
+            {
+                // 诊断:每个物件的位置、受击与状态(只打印在终端,原版数值不入库)
+                for (int cy = 0; cy < maze.Rows; cy++)
+                {
+                    for (int cx = 0; cx < maze.Cols; cx++)
+                    {
+                        RoomCombatSession room = session.SessionAt(cx, cy);
+                        for (int bi = 0; room != null && bi < room.Breakables.Count; bi++)
+                        {
+                            BreakableObject b = room.Breakables[bi];
+                            Console.WriteLine("  格 (" + cx + "," + cy + ") 物件 #" + bi + " 位置 (" + b.Object.X + "," + b.Object.Y + ") 受击框 x " + b.HurtBoxes[0].MinX + ".." + b.HurtBoxes[0].MaxX
+                                + " 要打 " + b.Data.HitsNeeded + " 下,挨了 " + b.HitsTaken + " 下," + (b.Destroyed ? "已打翻" : b.Triggered ? "已触发" : "没打完")
+                                + (b.Object.Special != null && b.Object.Special.Has(SpecialActionKind.Item) ? ",带 [item] 动作" : string.Empty));
+                        }
+                    }
+                }
+            }
         }
         if (drops.Available)
         {
@@ -283,6 +314,7 @@ internal static class DungeonCheck
         }
         Console.WriteLine("  主角动作 " + hero.Motion + ",朝" + (hero.FacingLeft ? "左" : "右") + (session.InTransition ? ";正在转场" : string.Empty));
         Console.WriteLine("  主角身边一像素:" + Probe(hero, -1, 0, "左") + " " + Probe(hero, 1, 0, "右") + " " + Probe(hero, 0, -1, "上") + " " + Probe(hero, 0, 1, "下"));
+        PrintWalkMap(room, hero);
         foreach (RoomGate gate in room.Room.Content.Gates)
         {
             Console.WriteLine("  出口 " + gate.Side + " 位置 (" + gate.X + "," + gate.Y + ") 状态 " + gate.State + (gate.Body == null ? " 无门体" : " 有门体")
@@ -302,6 +334,55 @@ internal static class DungeonCheck
             }
             Console.WriteLine("  怪物 #" + m.Index + " 编号 " + m.Code + (m.IsBoss ? "(首领)" : string.Empty) + " 位置 (" + F(m.X) + "," + F(m.Y) + "," + F(m.Z) + ") 生命 " + m.Hp + "/" + m.HpMax
                 + " 阶段 " + m.Phase + " 动画 " + m.CurrentAnimationPath);
+        }
+    }
+
+    /// <summary>
+    /// 房间的粗略平面图(每格 <c>StepX</c> × <c>StepY</c> 像素):. 可走,# 走不了(可走区域之外),b 被可破坏物件挡,o 被别的障碍物挡,G 被出口的门体挡,H 主角,M 活着的怪物。
+    /// 没打完时帮着看主角被什么围住了。
+    /// </summary>
+    private static void PrintWalkMap(RoomCombatSession room, TownHero hero)
+    {
+        const int stepX = 24, stepY = 16;
+        RoomMap map = room.Room.Map;
+        int cols = (map.Width + stepX - 1) / stepX, rows = (map.HeightPixels + stepY - 1) / stepY;
+        Console.WriteLine("  平面图(每格 " + stepX + "×" + stepY + " 像素;. 可走 # 走不了 b 可破坏物件 o 障碍物 G 门体 H 主角 M 怪物):");
+        for (int r = 0; r < rows; r++)
+        {
+            var line = new System.Text.StringBuilder();
+            double y = r * stepY + stepY * 0.5;
+            bool any = false;
+            for (int c = 0; c < cols; c++)
+            {
+                double x = c * stepX + stepX * 0.5;
+                char ch;
+                if (hero.Walk != null && !hero.Walk.Contains(x, y))
+                {
+                    ch = '#';
+                }
+                else
+                {
+                    object? by = hero.Blocker?.BlockedBy(x, y);
+                    ch = by == null ? '.' : by is RoomObject ro ? (ro.Def.Breakable != null ? 'b' : 'o') : by is RoomGate ? 'G' : 'o';
+                }
+                if (Math.Abs(hero.X - x) < stepX * 0.5 && Math.Abs(hero.Y - y) < stepY * 0.5)
+                {
+                    ch = 'H';
+                }
+                foreach (MonsterActor m in room.Monsters)
+                {
+                    if (m.IsAlive && Math.Abs(m.X - x) < stepX * 0.5 && Math.Abs(m.Y - y) < stepY * 0.5)
+                    {
+                        ch = 'M';
+                    }
+                }
+                any |= ch != '#';
+                line.Append(ch);
+            }
+            if (any)
+            {
+                Console.WriteLine("  " + r.ToString("D2") + " " + line);
+            }
         }
     }
 

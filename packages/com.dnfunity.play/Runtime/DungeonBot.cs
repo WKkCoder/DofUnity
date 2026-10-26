@@ -35,11 +35,26 @@ namespace Dnf.Play
         /// <summary>想上下挪却连续这么多步没挪动,就认为怪物在主角够不着的一条线上,横向够得着时照样挥击。</summary>
         public const int YBlockedSteps = 20;
 
+        /// <summary>
+        /// 想上下挪却一直挪不动(<see cref="YBlockedSteps"/>)时,怪物与主角的纵向差不超过它(像素)还肯原地横向挥击:怪物站在可走带边缘外一点、够得着的那种。
+        /// 再远就是隔着障碍物(房间里的可破坏物件也挡路),该绕路过去,不能在原地空挥(挥击的动作会一直打断绕路的脚步,成了死循环)。
+        /// </summary>
+        public const double YBlockedReachY = 40;
+
+        /// <summary>寻路连着这么多步找不到路,就认为真的够不着,回到原地挥击的老办法(<see cref="YBlockedReachY"/> 之外也挥)。</summary>
+        public const int PathFailedSteps = 30;
+
         /// <summary>连续按攻击键的间隔(步)。</summary>
         public const int AttackEvery = 6;
 
         /// <summary>离目标的距离连续这么多步没有变近,就改用寻路走向这个目标(直线走不通:隔着障碍、悬崖或另一层的可走带)。</summary>
         public const int StallSteps = 60;
+
+        /// <summary>
+        /// 走向出口时想动却连着这么多步没挪动,就不等 <see cref="StallSteps"/>,马上改用寻路。出口前面的口袋(主角落在出口门体的缺口里)直线走不出去,
+        /// 摆脱卡住的上下乱晃又恰好把主角顶出刚进来的出口,来回换房间走不完(这种死循环与房间里新摆的物件无关,是把自动机运气好的那一局打破了)。
+        /// </summary>
+        public const int ExitStuckSteps = 12;
 
         /// <summary>寻路时连着这么多步没挪动,就朝路点两个方向都推一下(见 <see cref="SteerByPath"/>)。</summary>
         public const int NudgeAfter = 4;
@@ -80,6 +95,21 @@ namespace Dnf.Play
         /// <summary>捡金币时进深方向走到离它这么近(像素)就停,小于拾取范围 <see cref="FieldDrop.PickupHalfDepth"/>。</summary>
         public const double GoldStopY = 5;
 
+        /// <summary>每个房间里打物件最多花多少个心跳(够不着、被挡住的物件不能拖住自动机;见 <see cref="SmashObjects"/>)。</summary>
+        public const int SmashSteps = 3600;
+
+        /// <summary>同一个物件最多按多少次攻击键(只触发一次动作的、打不烂的物件不能一直打)。</summary>
+        public const int SmashPresses = 12;
+
+        /// <summary>打同一个物件最多花多少个心跳(走不到、打不着的物件不能一直占着房间的预算)。</summary>
+        public const int SmashTargetSteps = 360;
+
+        /// <summary>
+        /// 寻路找不到路连着这么多步,就当作被物件挡住了(M34,证据 E-126):不管 <see cref="SmashObjects"/> 开没开,先把最近的可破坏物件打翻一个再重新找路
+        /// (原版里挡路的物件靠玩家自己打碎;加载物件之前房间里没有这些障碍,自动机也没有这个动作)。
+        /// </summary>
+        public const int BreakoutAfter = 60;
+
         private readonly bool _explore;
         private double _debtMs;
         private int _steps;
@@ -95,6 +125,53 @@ namespace Dnf.Play
 
         /// <summary>这一步在捡金币(给 <see cref="Intent"/> 看)。</summary>
         private bool _collecting;
+
+        /// <summary>
+        /// 为真时,房间清空、金币捡完之后顺手把房间里的可破坏物件打翻(M34,证据 E-126):走到最近的、还没打翻也没触发过的物件跟前连续普攻,
+        /// 打翻(或按了 <see cref="SmashPresses"/> 次攻击键还没动静)再找下一个,房间里最多花 <see cref="SmashSteps"/> 个心跳;物件里掉出的东西由同一套捡拾逻辑捡起。
+        /// 默认关:现有的整座副本检查、扫描与对拍都不带它,路线不变;它只是测试工具(原版里是玩家自己去打物件),不代表原版的 AI。
+        /// </summary>
+        public bool SmashObjects { get; set; }
+
+        /// <summary>这个房间里已经花在打物件上的心跳数(换房间清零)。</summary>
+        private int _smashSteps;
+
+        /// <summary>当前这个物件已经按了几次攻击键。</summary>
+        private int _smashPresses;
+
+        private BreakableObject _smashTarget;
+        /// <summary>已经处理过(打翻了、触发了、挥够了次数、够不着)的物件;不随换房间清掉:离开房间又回来时不再回头去打同一个够不着的物件。</summary>
+        private readonly HashSet<BreakableObject> _smashDone = new HashSet<BreakableObject>();
+
+        /// <summary>各个房间已经花在打物件上的心跳数(<see cref="SmashSteps"/> 是每个房间一共的预算,进出房间不重新计)。</summary>
+        private readonly Dictionary<RoomCombatSession, int> _smashUsed = new Dictionary<RoomCombatSession, int>();
+
+        /// <summary>打物件的状态(预算、目标)现在属于哪一间房间(见 <see cref="EnterSmashRoom"/>)。</summary>
+        private RoomCombatSession _smashRoom;
+
+        /// <summary>寻路连着找不到通向当前物件的路的步数(到 <see cref="PathFailedSteps"/> 就放弃这个物件)。</summary>
+        private int _smashPathFails;
+
+        /// <summary>这一步在打物件(给 <see cref="Intent"/> 看)。</summary>
+        private bool _smashing;
+
+        /// <summary>当前这个物件已经花了几个心跳。</summary>
+        private int _smashTargetSteps;
+
+        /// <summary>这一步寻路找不到路(<see cref="SteerByPath"/> 里记,<see cref="Next"/> 里清)。</summary>
+        private bool _pathFailed;
+
+        /// <summary>寻路连着找不到路的步数。</summary>
+        private int _blockedSteps;
+
+        /// <summary>正在清障:被物件挡住了,先打翻最近的物件(见 <see cref="BreakoutAfter"/>)。</summary>
+        private bool _breakout;
+
+        /// <summary>开始清障时房间里已经打翻了几个物件;多于它说明挡路的东西被清掉了一个。</summary>
+        private int _breakDestroyed;
+
+        /// <summary>寻路的格子表按房间里已打翻 N 个物件时建的。</summary>
+        private int _seenDestroyed;
 
         // 寻路:每间房间一张格子表;目标走不近时(见 StallSteps)对这个目标改走寻路,直到换目标或换房间
         private RoomCombatSession _pathRoom;
@@ -245,6 +322,10 @@ namespace Dnf.Play
             if (!ReferenceEquals(fight, _pathRoom))
             {
                 _goldSteps = 0;
+                EnterSmashRoom(fight);
+                _blockedSteps = 0;
+                _breakout = false;
+                _seenDestroyed = fight.ObjectsDestroyed;
                 _wiggle = 0;
                 _stuck = 0;
                 _lastX = double.NaN;
@@ -257,9 +338,40 @@ namespace Dnf.Play
                 _watchKey = null;
                 _latchedKey = null;
             }
+            if (fight.ObjectsDestroyed != _seenDestroyed)
+            {
+                // 房间里有物件被打翻(可能是挡路的):寻路的格子表是按打翻之前的障碍物建的,重建
+                _seenDestroyed = fight.ObjectsDestroyed;
+                _finder = null;
+                _field = null;
+                _fieldKey = null;
+                _arrivedKey = null;
+                _watchKey = null;
+                _latchedKey = null;
+            }
+            _pathFailed = false;
+            _collecting = false;
+            _smashing = false;
+            if (!_breakout && _blockedSteps >= BreakoutAfter)
+            {
+                _blockedSteps = 0;
+                _breakout = _smashSteps < SmashSteps && NearestBreakable(fight, hero) != null;
+                _breakDestroyed = fight.ObjectsDestroyed;
+            }
+            if (_breakout)
+            {
+                if (fight.ObjectsDestroyed == _breakDestroyed && Smash(fight, hero, out dirX, out dirY, out bool breakAttack, true))
+                {
+                    Unstick(hero, ref dirX, ref dirY);
+                    Intent = "清障 打物件 方向 (" + dirX + "," + dirY + ")" + (breakAttack ? " 出手" : string.Empty);
+                    return breakAttack;
+                }
+                _breakout = false;       // 挡路的东西清掉了一个(或没有可打的了):回到平常的打法
+                dirX = 0;
+                dirY = 0;
+            }
             MonsterActor target = Nearest(fight, hero);
             bool attack = false;
-            _collecting = false;
             if (target != null)
             {
                 double dx = target.X - hero.X;
@@ -279,7 +391,8 @@ namespace Dnf.Play
                 bool yMoved = double.IsNaN(_prevY) || Math.Abs(hero.Y - _prevY) > 0.2;
                 _yBlocked = dirY != 0 && !yMoved ? _yBlocked + 1 : 0;
                 _prevY = hero.Y;
-                bool inLine = Math.Abs(dx) <= ReachX && (Math.Abs(dy) <= ReachY || _yBlocked >= YBlockedSteps);
+                bool lineBlocked = _yBlocked >= YBlockedSteps && (Math.Abs(dy) <= YBlockedReachY || _blockedSteps >= PathFailedSteps);
+                bool inLine = Math.Abs(dx) <= ReachX && (Math.Abs(dy) <= ReachY || lineBlocked);
                 bool facing = dx == 0 || (dx < 0) == hero.FacingLeft;
                 if (inLine && facing && _steps % AttackEvery == 0)
                 {
@@ -299,19 +412,27 @@ namespace Dnf.Play
                 _yBlocked = 0;
                 if (fight.AliveCount == 0 && AllGone(fight))
                 {
-                    // 先把地上的金币捡完(限时),再去出口
+                    // 先把地上的金币捡完(限时),带 SmashObjects 时再把房间里的物件打翻(掉出的东西下一步又归捡拾管),最后去出口
                     if (!Collect(fight, hero, out dirX, out dirY))
                     {
-                        Navigate(session, fight, hero, out dirX, out dirY);
+                        if (Smash(fight, hero, out dirX, out dirY, out bool smashAttack))
+                        {
+                            attack = smashAttack;
+                        }
+                        else
+                        {
+                            Navigate(session, fight, hero, out dirX, out dirY);
+                        }
                     }
                 }
             }
             Unstick(hero, ref dirX, ref dirY);
+            _blockedSteps = _pathFailed ? _blockedSteps + 1 : 0;
             if (fight.SelectedDrop != null)
             {
                 attack = true;      // 够得着物品:攻击键就是拾取键,先把它捡了(证据 E-122)
             }
-            Intent = (target != null ? "打怪 #" + target.Index : _collecting ? "捡金币" : "出口") + (_wiggle > 0 ? " 摆脱卡住" : string.Empty) + (_arrivedKey != null ? " 到达" + _arrivedKey : string.Empty)
+            Intent = (target != null ? "打怪 #" + target.Index : _collecting ? "捡金币" : _smashing ? "打物件" : "出口") + (_wiggle > 0 ? " 摆脱卡住" : string.Empty) + (_arrivedKey != null ? " 到达" + _arrivedKey : string.Empty)
                 + (_latchedKey != null ? " 寻路接管" + _latchedKey : string.Empty) + " 方向 (" + dirX + "," + dirY + ")" + (attack ? " 出手" : string.Empty);
             return attack;
         }
@@ -354,6 +475,145 @@ namespace Dnf.Play
             dirX = Math.Abs(dx) > GoldStopX ? Math.Sign(dx) : 0;
             dirY = Math.Abs(dy) > GoldStopY ? Math.Sign(dy) : 0;
             return true;
+        }
+
+        /// <summary>
+        /// 打开 <see cref="SmashObjects"/> 时,房间清空、金币捡完之后朝最近的一个还没打翻也没触发过的可破坏物件走去、站到够得着的地方连续普攻;
+        /// 物件打翻了(或者按了 <see cref="SmashPresses"/> 次攻击键还没有动静、或者它已经触发过)就记下来,不再回头。返回 false 表示这一步没有可做的(没打开、没有物件、预算用完),
+        /// 由调用方去走出口。走位与怪物一样按物件受击框中心的横向距离与它所在线的纵向距离(<see cref="ReachX"/>、<see cref="ReachY"/>),够不着的物件靠每个房间的预算 <see cref="SmashSteps"/> 兜底。
+        /// </summary>
+        public bool Smash(RoomCombatSession fight, TownHero hero, out int dirX, out int dirY, out bool attack, bool force = false)
+        {
+            dirX = 0;
+            dirY = 0;
+            attack = false;
+            EnterSmashRoom(fight);
+            if ((!SmashObjects && !force) || _smashSteps >= SmashSteps)
+            {
+                return false;
+            }
+            if (_smashTarget != null && (_smashTarget.Destroyed || _smashTarget.Triggered || _smashPresses >= SmashPresses || _smashTargetSteps >= SmashTargetSteps))
+            {
+                _smashDone.Add(_smashTarget);
+                _smashTarget = null;
+            }
+            if (_smashTarget == null)
+            {
+                _smashTarget = NearestBreakable(fight, hero);
+                _smashPresses = 0;
+                _smashTargetSteps = 0;
+                _smashPathFails = 0;
+                if (_smashTarget == null)
+                {
+                    return false;
+                }
+            }
+            _smashSteps++;
+            _smashTargetSteps++;
+            _smashing = true;
+            var box = _smashTarget.HurtBoxes[0];
+            double dx = box.CenterX - hero.X;
+            double dy = _smashTarget.Object.Y - hero.Y;
+            if (Math.Abs(dx) > ReachX || Math.Abs(dy) > ReachY)
+            {
+                // 够不着:顺着寻路走到物件身边(直线走会顶在可走带的边缘上,主角恰好落在出口前面时一顶就换了房间,换回来又顶,走不完)
+                string key = "b" + IndexOfBreakable(fight, _smashTarget);
+                double gx0 = box.CenterX - ReachX * 0.95, gx1 = box.CenterX + ReachX * 0.95;
+                double gy0 = _smashTarget.Object.Y - ReachY * 0.5, gy1 = _smashTarget.Object.Y + ReachY * 0.5;
+                if (SteerByPath(fight, hero, key, (x, y) => x >= gx0 && x <= gx1 && y >= gy0 && y <= gy1, box.CenterX, _smashTarget.Object.Y, ref dirX, ref dirY))
+                {
+                    _smashPathFails = 0;
+                    return true;
+                }
+                if (_pathFailed)
+                {
+                    // 找不到路:原地不动(别往可走带的边缘乱顶),几步之后换下一个物件
+                    dirX = 0;
+                    dirY = 0;
+                    if (++_smashPathFails >= PathFailedSteps)
+                    {
+                        _smashDone.Add(_smashTarget);
+                        _smashTarget = null;
+                        _smashPathFails = 0;
+                    }
+                    return true;
+                }
+            }
+            dirY = Math.Abs(dy) > ReachY * 0.5 ? Math.Sign(dy) : 0;
+            if (Math.Abs(dx) > ReachX)
+            {
+                dirX = Math.Sign(dx);
+            }
+            else if (dx != 0 && (dx < 0) != hero.FacingLeft)
+            {
+                dirX = Math.Abs(dx) < TurnGap ? -Math.Sign(dx) : Math.Sign(dx);      // 背对着物件:与打怪物一样先转身
+            }
+            bool inLine = Math.Abs(dx) <= ReachX && Math.Abs(dy) <= ReachY;
+            bool facing = dx == 0 || (dx < 0) == hero.FacingLeft;
+            if (inLine && facing && _smashSteps % AttackEvery == 0)
+            {
+                attack = true;
+                _smashPresses++;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 打物件的状态跟着房间走:换了房间就把上一间的步数预算记下来(进出房间不重新计,否则够不着的物件会让主角在两间房之间来回晃一辈子),
+        /// 手里还没打到的物件当作在那间房里够不着、以后不再回头(走过去的路上就出了房间,说明路过出口),再取新房间已经花掉的预算,换一个空的目标。
+        /// </summary>
+        private void EnterSmashRoom(RoomCombatSession fight)
+        {
+            if (ReferenceEquals(fight, _smashRoom))
+            {
+                return;
+            }
+            if (_smashRoom != null)
+            {
+                _smashUsed[_smashRoom] = _smashSteps;
+            }
+            if (_smashTarget != null)
+            {
+                _smashDone.Add(_smashTarget);
+            }
+            _smashRoom = fight;
+            _smashSteps = _smashUsed.TryGetValue(fight, out int used) ? used : 0;
+            _smashPresses = 0;
+            _smashTarget = null;
+            _smashTargetSteps = 0;
+            _smashPathFails = 0;
+        }
+
+        private static int IndexOfBreakable(RoomCombatSession fight, BreakableObject target)
+        {
+            for (int i = 0; i < fight.Breakables.Count; i++)
+            {
+                if (ReferenceEquals(fight.Breakables[i], target))
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        private BreakableObject NearestBreakable(RoomCombatSession fight, TownHero hero)
+        {
+            BreakableObject best = null;
+            double bestD = double.MaxValue;
+            foreach (BreakableObject b in fight.Breakables)
+            {
+                if (b.Destroyed || b.Triggered || b.HurtBoxes.Count == 0 || _smashDone.Contains(b))
+                {
+                    continue;
+                }
+                double d = Math.Abs(b.HurtBoxes[0].CenterX - hero.X) + 4 * Math.Abs(b.Object.Y - hero.Y);
+                if (d < bestD)
+                {
+                    bestD = d;
+                    best = b;
+                }
+            }
+            return best;
         }
 
         private static bool AllGone(RoomCombatSession fight)
@@ -423,7 +683,7 @@ namespace Dnf.Play
             }
             // 出口走不近(隔着障碍、悬崖或另一层的可走带):改走寻路,走到出口前面那一带;最后几步仍由下面的"顶着出口走"完成
             string pathKey = "g" + (int)side;
-            if (UsePath(pathKey, Math.Abs(tx - hero.X) + Math.Abs(ty - hero.Y)))
+            if (UsePath(pathKey, Math.Abs(tx - hero.X) + Math.Abs(ty - hero.Y), latchWhenStuck: true))
             {
                 int pathX = 0, pathY = 0;
                 if (SteerByPath(fight, hero, pathKey, GateGoal(fight, hero, side, g), 0, 0, ref pathX, ref pathY))
@@ -462,10 +722,16 @@ namespace Dnf.Play
         /// 对 <paramref name="key"/> 这个目标,<paramref name="dist"/>(离目标的距离)连续 <see cref="StallSteps"/> 步没有变近就返回 true,
         /// 此后对同一个目标一直返回 true(直到换目标或换房间)。距离在变近时返回 false:照旧直线走。
         /// </summary>
-        private bool UsePath(string key, double dist)
+        private bool UsePath(string key, double dist, bool latchWhenStuck = false)
         {
             if (_latchedKey == key)
             {
+                return true;
+            }
+            if (latchWhenStuck && _stuck >= ExitStuckSteps)
+            {
+                _latchedKey = key;
+                PathEngaged++;
                 return true;
             }
             if (_watchKey != key)
@@ -523,6 +789,7 @@ namespace Dnf.Play
             if (!_finder.TryWaypoint(_field, hero.X, hero.Y, PathLookahead, out double wx, out double wy, out int cost))
             {
                 PathBlockedSteps++;
+                _pathFailed = true;
                 return false;
             }
             PathReport = "所在格代价 " + cost + ",路点 (" + wx + "," + wy + ")";

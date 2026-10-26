@@ -10,7 +10,7 @@
 
 用法(由 tools/verify-all.sh 调用;需要先 . tools/env.sh 并已构建 dnf):
   python3 tools/py/verify_all.py [--only 名字,名字] [--skip 名字,名字] [--out out/verify-all.json]
-名字:unit p1 atk act mob damage sq sweep flow dungeons sound exp text oracle difficulty(oracle 与 difficulty 的对拍部分需要 re/venv 里的 Unicorn 与本机的服务端二进制;dungeons 是全库副本扫描,非门槛项)
+名字:unit p1 atk act mob damage sq sweep flow dungeons sound exp text oracle difficulty breakable(oracle 与 difficulty 的对拍部分需要 re/venv 里的 Unicorn 与本机的服务端二进制;dungeons 是全库副本扫描,非门槛项)
 """
 import argparse
 import json
@@ -366,10 +366,23 @@ def check_difficulty():
     return rows
 
 
+def check_breakable():
+    """可破坏物件与物件掉物品(E-126):真数据的结构检查(物件掉落表读得到、[special passive object] 文法、[item] 动作的掉落项下标),
+    加上实机房间里把物件一个个打碎、触发 [item] 动作掉出物品。"""
+    code, text, sec = sh(DNF + ["breakable-check"], "breakable.txt")
+    ok = len(re.findall(r"^\s*\[通过\]", text, re.M))
+    bad = len(re.findall(r"^\s*\[失败\]", text, re.M))
+    if ok + bad == 0:
+        return [item("breakable", "可破坏物件与物件掉物品", "全库读通", "E-126", 0, 1, sec, "没解析出检查项,见 out/verify-all/breakable.txt")]
+    return [item("breakable", "可破坏物件与物件掉物品(物件掉落表读得到并建出池、全部地图的 [special passive object] 文法与 RoomMap 一致、每个 [item] 动作的掉落项下标在所属副本范围内、"
+                 "真数据按 [item] 动作能掷出物品、实机房间里的物件能被打中、打碎或触发并掉出物品)", "全库读通", "E-126", ok + bad, bad + (0 if code == 0 else 1), sec,
+                 "只含个数;原版数值只在本机 out/verify-all/breakable.txt 里,不入库")]
+
+
 CHECKS = [
     ("unit", check_unit), ("p1", check_p1), ("atk", check_atk), ("act", check_act), ("mob", check_mob),
     ("damage", check_damage), ("sq", check_sq), ("sweep", check_sweep), ("flow", check_flow), ("dungeons", check_dungeons), ("sound", check_sound),
-    ("exp", check_exp), ("text", check_text), ("oracle", check_oracle), ("difficulty", check_difficulty),
+    ("exp", check_exp), ("text", check_text), ("oracle", check_oracle), ("difficulty", check_difficulty), ("breakable", check_breakable),
 ]
 
 

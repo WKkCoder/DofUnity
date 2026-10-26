@@ -252,9 +252,10 @@ namespace Dnf.Render
             PassiveObjectCatalog catalog = PassiveObjectCatalog.Read(assets);
             foreach (GateSide side in new[] { GateSide.Left, GateSide.Right, GateSide.Up, GateSide.Down })
             {
-                int id = set.IdFor(side, kindOf(side));
+                GateKind kind = kindOf(side);
+                int id = set.IdFor(side, kind);
                 int[] pos = map.Gates[(int)side];
-                if (id < 0 || pos == null)
+                if (id < 0 || pos == null || (kind == GateKind.Wall && IsStalePlaceholder(map, side, pos)))
                 {
                     continue;
                 }
@@ -265,6 +266,21 @@ namespace Dnf.Render
                 }
             }
             return gates;
+        }
+
+        /// <summary>
+        /// 墙(没有出口的左右两侧用来封洞的物件)的位置是不是一个没用上的占位值:左墙落在地图的右半边、右墙落在左半边的,封不住任何洞(<b>推断</b>,非原版规则)。
+        /// 客户端的门体碰撞会把左出口的通行表第 0 列、右出口的第 13 列沿用到地图边缘(证据 E-074),真把这样的墙摆上去,
+        /// 一道横穿整张地图的实心带会把房间切成两半(全库扫描里只有两张房间这样,<c>dnf gate-body-check</c> 能复现;不摆就都连通);原版里这样的房间照样能玩,
+        /// 所以这样的墙不摆。出口(普通与首领)不受这条影响:它们的位置就是出口所在,迷宫说有就有。
+        /// </summary>
+        public static bool IsStalePlaceholder(RoomMap map, GateSide side, int[] pos)
+        {
+            if (map == null || pos == null || pos.Length < 2)
+            {
+                return false;
+            }
+            return side == GateSide.Left ? pos[0] * 2 > map.Width : side == GateSide.Right && pos[0] * 2 < map.Width;
         }
 
         /// <summary>演示用主角的默认外观(默认鬼剑士 + 武器)。</summary>

@@ -63,6 +63,9 @@ namespace Dnf.Play
         /// </summary>
         public bool RaiseDifficulty { get; set; }
 
+        /// <summary>副本里的自动机清房之后顺手打翻房间里的可破坏物件(M34,<see cref="DungeonBot.SmashObjects"/>)。默认关。</summary>
+        public bool SmashObjects { get; set; }
+
         /// <summary>清单用完了(回到了城镇,或者停在没有选择可做的结算菜单上):流程走完,不会再有动作。</summary>
         public bool Done { get; private set; }
 
@@ -163,7 +166,7 @@ namespace Dnf.Play
             }
             if (!dungeon.Finished)
             {
-                _bot = _bot ?? new DungeonBot(_explore);
+                _bot = _bot ?? new DungeonBot(_explore) { SmashObjects = SmashObjects };
                 _bot.Advance(dungeon, deltaMs);
                 return;
             }

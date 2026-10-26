@@ -12,6 +12,8 @@ namespace Dnf.Play
     /// 与 <c>Etc/ItemDropInfo_Common.etc</c>(按怪物等级的基础金额)。两个都读到才算有数据;缺一个或读错时 <see cref="Table"/>、<see cref="Gold"/> 为 null,
     /// 杀怪不掉金币(旧行为),原因写在 <see cref="Error"/>。同一个 <see cref="DnfAssets"/> 只读一次(一座副本每个房间各建一个战斗会话)。
     /// 物品掉落池(<see cref="Pool"/>,证据 E-117)要整库扫描装备与可叠加物品的脚本头,第一次用到时才建(同样每份素材只建一次)。
+    /// 物件掉物品(M34,证据 E-126)另用 <c>Etc/ItemDropInfo_Object.etc</c>(<see cref="ObjectTable"/>、<see cref="ObjectPool"/>,格式同怪物掉落表),
+    /// 与怪物的池共用同一次整库扫描;这张表读不到不影响怪物掉落,只是物件没有随机物品。
     /// </summary>
     public sealed class MonsterDrops
     {
@@ -21,27 +23,46 @@ namespace Dnf.Play
         /// <summary>基础金额表的脚本路径。</summary>
         public const string CommonPath = "Etc/ItemDropInfo_Common.etc";
 
+        /// <summary>物件掉落概率表的脚本路径(服务端 <c>CObjectDrop::loadScript</c> 读它,证据 E-126)。</summary>
+        public const string ObjectPath = "Etc/ItemDropInfo_Object.etc";
+
         private static readonly ConditionalWeakTable<DnfAssets, MonsterDrops> Cache = new ConditionalWeakTable<DnfAssets, MonsterDrops>();
 
         private readonly Func<ItemPool> _poolFactory;
         private ItemPool _pool;
         private bool _poolReady;
+        private readonly Func<ItemPool> _objectPoolFactory;
+        private ItemPool _objectPool;
+        private bool _objectPoolReady;
+        private readonly Func<int, ItemInfo> _resolver;
 
         /// <param name="pool">物品掉落池;测试里直接给一个合成的,不给就没有物品掉落。</param>
-        public MonsterDrops(MonsterDropTable table, GoldGenTable gold, string error, ItemPool pool = null)
+        /// <param name="objectTable">物件掉落表(没有就没有物件的随机物品)。</param>
+        /// <param name="objectPool">按物件掉落表建的物品池。</param>
+        /// <param name="resolver">按物品编号取物品(物件的"指定物品"用);不给就取不到。</param>
+        public MonsterDrops(MonsterDropTable table, GoldGenTable gold, string error, ItemPool pool = null, MonsterDropTable objectTable = null, ItemPool objectPool = null,
+            Func<int, ItemInfo> resolver = null)
         {
             Table = table;
             Gold = gold;
             Error = error;
             _pool = pool;
             _poolReady = true;
+            ObjectTable = objectTable;
+            _objectPool = objectPool;
+            _objectPoolReady = true;
+            _resolver = resolver;
         }
 
-        private MonsterDrops(MonsterDropTable table, GoldGenTable gold, Func<ItemPool> poolFactory)
+        private MonsterDrops(MonsterDropTable table, GoldGenTable gold, Func<ItemPool> poolFactory, MonsterDropTable objectTable, Func<ItemPool> objectPoolFactory,
+            Func<int, ItemInfo> resolver)
         {
             Table = table;
             Gold = gold;
             _poolFactory = poolFactory;
+            ObjectTable = objectTable;
+            _objectPoolFactory = objectPoolFactory;
+            _resolver = resolver;
         }
 
         public MonsterDropTable Table { get; }
@@ -50,6 +71,29 @@ namespace Dnf.Play
 
         /// <summary>读不到数据的原因;读到了是 null。</summary>
         public string Error { get; }
+
+        /// <summary>物件掉落概率表(<see cref="ObjectPath"/>);读不到是 null。</summary>
+        public MonsterDropTable ObjectTable { get; }
+
+        /// <summary>按物件掉落表建的物品池(与 <see cref="Pool"/> 同一次整库扫描,第一次读时才建);没有表或没有可掉的物品是 null。</summary>
+        public ItemPool ObjectPool
+        {
+            get
+            {
+                if (!_objectPoolReady)
+                {
+                    _objectPoolReady = true;
+                    _objectPool = _objectPoolFactory?.Invoke();
+                }
+                return _objectPool;
+            }
+        }
+
+        /// <summary>按物品编号取物品(物件的"指定物品");找不到或没有取法是 null。</summary>
+        public ItemInfo ItemById(int id)
+        {
+            return _resolver?.Invoke(id);
+        }
 
         /// <summary>两张表都读到了。</summary>
         public bool Available => Table != null && Gold != null;
@@ -103,14 +147,22 @@ namespace Dnf.Play
             {
                 return new MonsterDrops(null, null, CommonPath + ": " + error);
             }
-            return new MonsterDrops(table, gold, () => BuildPool(assets, table));
+            // 物件掉落表读不到就只是没有物件的随机物品(证据 E-126),不影响怪物掉落
+            MonsterDropTable objectTable = null;
+            ScriptCursor objectCursor = Open(assets, ObjectPath, out string objectError);
+            if (objectCursor != null)
+            {
+                objectTable = MonsterDropTable.Load(objectCursor, out objectError);
+            }
+            var catalog = new Lazy<ItemCatalog>(() => new ItemCatalog(new GameData(new PvfScriptSource(assets.Pvf))));
+            var droppable = new Lazy<System.Collections.Generic.IReadOnlyList<ItemInfo>>(() => catalog.Value.Droppable());
+            return new MonsterDrops(table, gold, () => BuildPool(droppable.Value, table), objectTable,
+                objectTable == null ? null : (Func<ItemPool>)(() => BuildPool(droppable.Value, objectTable)), id => catalog.Value.Get(id));
         }
 
-        private static ItemPool BuildPool(DnfAssets assets, MonsterDropTable table)
+        private static ItemPool BuildPool(System.Collections.Generic.IReadOnlyList<ItemInfo> items, MonsterDropTable table)
         {
-            var catalog = new ItemCatalog(new GameData(new PvfScriptSource(assets.Pvf)));
-            System.Collections.Generic.IReadOnlyList<ItemInfo> items = catalog.Droppable();
-            return items.Count == 0 ? null : new ItemPool(items, table);
+            return items == null || items.Count == 0 ? null : new ItemPool(items, table);
         }
 
         private static ScriptCursor Open(DnfAssets assets, string path, out string error)

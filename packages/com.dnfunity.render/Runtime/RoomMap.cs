@@ -251,6 +251,12 @@ namespace Dnf.Render
         /// <summary>[passive object] 的摆放(编号、x、y、z);粒子光源与障碍物都在这里,按编号查 <see cref="PassiveObjectCatalog"/>。</summary>
         public IReadOnlyList<PassivePlacement> PassiveObjects { get; }
 
+        /// <summary>
+        /// [special passive object] 的摆放(证据 E-126):和 [passive object] 一样是编号加坐标,但每一项还挂着被破坏时触发的动作(出怪、掉物品……)。
+        /// 没有这个标签是空列表。
+        /// </summary>
+        public IReadOnlyList<SpecialPlacement> SpecialObjects { get; }
+
         /// <summary>[monster] 的摆放(进房间时的怪物与位置,证据 E-069)。</summary>
         public IReadOnlyList<RoomMonsterSpawn> Monsters { get; }
 
@@ -268,8 +274,10 @@ namespace Dnf.Render
         public RoomMap(string mapPath, string type, IReadOnlyList<TileFile> tiles, int farScroll, int middleScroll, int nearScroll,
             IReadOnlyList<RoomBackground> backgrounds, IReadOnlyList<MapAnimation> animations, IReadOnlyList<int[]> gates, WorldRect? startArea,
             IReadOnlyList<PassivePlacement> passiveObjects = null, IReadOnlyList<RoomMonsterSpawn> monsters = null,
-            IReadOnlyList<int[]> gateRanges = null, IReadOnlyList<string> sounds = null, IReadOnlyList<TileFile> extendedTiles = null)
+            IReadOnlyList<int[]> gateRanges = null, IReadOnlyList<string> sounds = null, IReadOnlyList<TileFile> extendedTiles = null,
+            IReadOnlyList<SpecialPlacement> specialObjects = null)
         {
+            SpecialObjects = specialObjects ?? new List<SpecialPlacement>();
             Sounds = sounds ?? new List<string>();
             GateRanges = gateRanges ?? new List<int[]> { null, null, null, null };
             MapPath = mapPath;
@@ -336,6 +344,7 @@ namespace Dnf.Render
             var ranges = new List<int[]> { null, null, null, null };
             WorldRect? start = null;
             var passive = new List<PassivePlacement>();
+            var special = new List<SpecialPlacement>();
             var monsters = new List<RoomMonsterSpawn>();
             var sounds = new List<string>();
 
@@ -445,6 +454,15 @@ namespace Dnf.Render
                         passive.Add(new PassivePlacement(n[i], n[i + 1], n[i + 2], n[i + 3]));
                     }
                 }
+                else if (line.TagIs("[special passive object]"))
+                {
+                    int items = 0;
+                    foreach (SpecialPlacement s in special)
+                    {
+                        items += s.ItemIndex >= 0 ? 1 : 0;
+                    }
+                    special.AddRange(SpecialPlacement.Parse(line.Values, special.Count, items));
+                }
                 else if (line.TagIs("[monster]"))
                 {
                     ReadMonsters(line.Values, monsters);
@@ -454,7 +472,8 @@ namespace Dnf.Render
                     AddSounds(line, sounds);
                 }
             }
-            return new RoomMap(mapPath, type, tiles, far, middle, near, backgrounds, MapScript.ReadAnimations(assets, mapPath), gates, start, passive, monsters, ranges, sounds, extended);
+            return new RoomMap(mapPath, type, tiles, far, middle, near, backgrounds, MapScript.ReadAnimations(assets, mapPath), gates, start, passive, monsters, ranges, sounds, extended,
+                special);
         }
 
         /// <summary>

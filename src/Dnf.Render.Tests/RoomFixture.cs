@@ -36,6 +36,18 @@ internal sealed class RoomFixture : IDisposable
     public const int TreeId = 700;
     public const int ParticleId = 5;
 
+    /// <summary>
+    /// 可破坏物件(证据 E-126)的编号 710:放在 breakableobject 目录下的木箱,[int data] 是 1 2 1 0 0 30 1(打 2 下、打够消失),
+    /// 一个受击动画(帧偏移 (3,4),与基础动画的 (0,0) 区分)与一个空槽,字符串槽 4、5 是受击声与破坏声。
+    /// 711 是同目录下的草丛([int data] 只有两个数,不会消失)。<see cref="SpecialMapPath"/> 是只有 [special passive object] 的地图。
+    /// </summary>
+    public const int CrateId = 710;
+    public const int GrassId = 711;
+    public const string SpecialMapPath = "map/test/room/special.map";
+
+    /// <summary>左出口的位置落在地图右半边、右出口的位置落在左半边的地图(没用上的占位值,证据 E-126 附带发现):两块瓦片宽 448,左 (300, 120)、右 (100, 130)。</summary>
+    public const string StaleGatesMapPath = "map/test/room/stalegates.map";
+
     /// <summary>副本定义里十个出口物件的编号:801 左普通、802 左首领、803 左墙、804 右普通、805 右首领、806 右墙、807 上普通、808 上首领、809 下普通、810 下首领。</summary>
     public const int LeftNormalId = 801;
     public const int RightWallId = 806;
@@ -188,6 +200,22 @@ internal sealed class RoomFixture : IDisposable
                 .Tag("[monster]").Int(77).Int(1, 0, 1, 300, 200, 0, 1, 0).Str("[fixed]", "[normal]")
                 .Int(2, 1, 0, 420, 210, 5, 2, 1).Str("[fixed]", "[boss]").Int(3, 0, 0)
                 .Build()),
+            // 特殊物件(证据 E-126):四项——木箱带 [item] 与 [monster] 两个动作、没有动作的木箱、树带 [quest]、木箱带 [item](第二个有物品动作的物件)
+            (SpecialMapPath, NewScript()
+                .Tag("[type]").Str("[normal]")
+                .Tag("[tile]").Str("tile/t0.til", "tile/t1.til")
+                .Tag("[special passive object]")
+                .Int(CrateId, 100, 60, 0, 2).Str("[item]").Int(0, 3, 1, 0, 0).Str("[monster]").Int(5, 20, 50, 100, 0)
+                .Int(CrateId, 300, 60, 0, 0)
+                .Int(TreeId, 200, 100, 0, 1).Str("[quest]").Int(1, 2, 3, 4, 5)
+                .Int(GrassId, 350, 70, 0, 1).Str("[item]").Int(1, 0, 2, 0, 0)
+                .Tag("[/special passive object]")
+                .Build()),
+            (StaleGatesMapPath, NewScript()
+                .Tag("[type]").Str("[normal]")
+                .Tag("[tile]").Str("tile/t0.til", "tile/t1.til")
+                .Tag("[pathgate pos]").Int(300, 120, 100, 130, 220, 60, 220, 190)
+                .Build()),
             // 高地图:两块基础瓦片 + 五个扩展瓦片(e4 的文件不存在)
             (TallMapPath, NewScript()
                 .Tag("[type]").Str("[normal]")
@@ -229,7 +257,26 @@ internal sealed class RoomFixture : IDisposable
                 .Int(TreeId).Str("MapObject/Obstacle/Tree.obj")
                 .Int(ParticleId).Str("MapObject/ParticleFactory/RayGround.obj")
                 .Int(LeftNormalId).Str("MapObject/PathGate/Test/LeftNormal.obj")
+                .Int(CrateId).Str("MapObject/BreakableObject/Crate.obj")
+                .Int(GrassId).Str("MapObject/BreakableObject/Grass.obj")
                 .Int(DoorBodyId).Str("MapObject/PathGate/Test/RightDoor.obj").Build()),
+            ("passiveobject/mapobject/breakableobject/crate.obj", NewScript()
+                .Tag("[width]").Int(30, 20)
+                .Tag("[layer]").Str("[normal]")
+                .Tag("[pass type]").Str("[do not pass]")
+                .Tag("[basic motion]").Str("animation/crate.ani")
+                .Tag("[etc motion]").Str("animation/crate-hit.ani", "").Tag("[/etc motion]")
+                .Tag("[int data]").Int(1, 2, 1, 0, 0, 30, 1).Tag("[/int data]")
+                .Tag("[string data]").Str("", "", "Particle/Crate.ptl", "", "CRATE_HIT", "CRATE_CRASH").Tag("[/string data]").Build()),
+            ("passiveobject/mapobject/breakableobject/grass.obj", NewScript()
+                .Tag("[width]").Int(10, 10)
+                .Tag("[layer]").Str("[normal]")
+                .Tag("[pass type]").Str("[pass all]")
+                .Tag("[basic motion]").Str("animation/grass.ani")
+                .Tag("[int data]").Int(42, 1).Tag("[/int data]").Build()),
+            ("passiveobject/mapobject/breakableobject/animation/crate.ani", BuildAni("Map/Test/Tree.img", 0, 0, 0)),
+            ("passiveobject/mapobject/breakableobject/animation/crate-hit.ani", BuildAni("Map/Test/Tree.img", 0, 3, 4, loops: false)),
+            ("passiveobject/mapobject/breakableobject/animation/grass.ani", BuildAni("Map/Test/Tree.img", 0, 0, 0)),
             ("passiveobject/mapobject/obstacle/tree.obj", NewScript()
                 .Tag("[width]").Int(40, 20)
                 .Tag("[floating height]").Int(0)
@@ -312,11 +359,11 @@ internal sealed class RoomFixture : IDisposable
     /// <summary>
     /// 一帧的 .ani(循环、每帧 100 毫秒),图片名模板、IMG 帧号与帧偏移 (x, y) 可调。
     /// </summary>
-    private static byte[] BuildAni(string imageName, int frameIndex, int x, int y)
+    private static byte[] BuildAni(string imageName, int frameIndex, int x, int y, bool loops = true)
     {
         var f = new TestData.AniFrameSpec { ImageIndex = 0, FrameIndex = frameIndex, X = x, Y = y };
         f.Props.Add((12, TestData.LE32(100)));
-        return TestData.BuildAni(new[] { imageName }, new (ushort, byte[])[] { (0, new byte[] { 1 }) }, new[] { f });
+        return TestData.BuildAni(new[] { imageName }, new (ushort, byte[])[] { (0, new byte[] { (byte)(loops ? 1 : 0) }) }, new[] { f });
     }
 
     /// <summary>

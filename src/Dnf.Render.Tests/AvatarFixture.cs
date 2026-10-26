@@ -206,6 +206,25 @@ internal sealed class AvatarFixture : IDisposable
     public const string BlobAnimationDir = "monster/blob/animation_blob";
     public const string BlobImage = "sprite/monster/blob/blob.img";
 
+    /// <summary>
+    /// 可破坏物件(M34,证据 E-126):全放在 breakableobject 目录下,基础动画是一帧带受击框(<see cref="BlobHurtBox"/>)的循环动画。
+    /// 木箱 <see cref="CrateObjectId"/>:[int data] 的第 1、2、3 个数是 1 2 1(打 2 下、打够消失),有一个两帧(各 80 毫秒)的受击动画与一个空槽,
+    /// 受击声 <see cref="CrateHitSound"/>、破坏声 <see cref="CrateCrashSound"/>;木桶 <see cref="BarrelObjectId"/>:打 1 下就消失,没有受击动画;
+    /// 石柱 <see cref="PillarObjectId"/>:打 2 下、不消失(只触发一次),有受击动画,受击声 <see cref="PillarHitSound"/>;
+    /// 草丛 <see cref="GrassObjectId"/>:[int data] 只有两个数,打不坏;无框箱 <see cref="GhostObjectId"/>:基础动画没有受击框,战斗里创建不出来;
+    /// 石头 <see cref="RockObjectId"/>:有 [int data] 与受击框,但不在 breakableobject 目录里,不算可破坏物件。
+    /// </summary>
+    public const int CrateObjectId = 9101;
+    public const int BarrelObjectId = 9102;
+    public const int PillarObjectId = 9103;
+    public const int GrassObjectId = 9104;
+    public const int GhostObjectId = 9105;
+    public const int RockObjectId = 9106;
+    public const string CrateHitSound = "CRATE_HIT";
+    public const string CrateCrashSound = "CRATE_CRASH";
+    public const string PillarHitSound = "PILLAR_HIT";
+    public const string BreakableDir = "passiveobject/mapobject/breakableobject";
+
     /// <summary>受击框(类型 14):x 从 −10 起宽 40(故意不对称,朝向才看得出镜像),y 从 −6 起深 12,z 从 0 起高 60。</summary>
     public static readonly (ushort Type, int[] Values) BlobHurtBox = ((ushort)14, new[] { -10, -6, 0, 40, 12, 60 });
 
@@ -242,9 +261,12 @@ internal sealed class AvatarFixture : IDisposable
             return this;
         }
 
-        public Script Str(string text)
+        public Script Str(params string[] texts)
         {
-            _tokens.Add((StrType, _owner.Intern(text)));
+            foreach (string text in texts)
+            {
+                _tokens.Add((StrType, _owner.Intern(text)));
+            }
             return this;
         }
 
@@ -501,7 +523,47 @@ internal sealed class AvatarFixture : IDisposable
                 .Str("[attack number]").Int(1)
                 .Str("[throw sound]").Str(ShotThrowSound)
                 .Tag("[/throw attack]").Build()),
-            ("passiveobject/passiveobject.lst", NewScript().Int(ShotObjectId).Str("blob/shot.obj").Build()),
+            ("passiveobject/passiveobject.lst", NewScript()
+                .Int(ShotObjectId).Str("blob/shot.obj")
+                .Int(CrateObjectId).Str("MapObject/BreakableObject/Crate.obj")
+                .Int(BarrelObjectId).Str("MapObject/BreakableObject/Barrel.obj")
+                .Int(PillarObjectId).Str("MapObject/BreakableObject/Pillar.obj")
+                .Int(GrassObjectId).Str("MapObject/BreakableObject/Grass.obj")
+                .Int(GhostObjectId).Str("MapObject/BreakableObject/Ghost.obj")
+                .Int(RockObjectId).Str("MapObject/Obstacle/Rock.obj").Build()),
+            (BreakableDir + "/crate.obj", NewScript()
+                .Tag("[width]").Int(30, 20).Tag("[layer]").Str("[normal]").Tag("[pass type]").Str("[do not pass]")
+                .Tag("[basic motion]").Str("animation/stand.ani")
+                .Tag("[etc motion]").Str("animation/hit.ani", "").Tag("[/etc motion]")
+                .Tag("[int data]").Int(1, 2, 1, 0, 0, 30, 1).Tag("[/int data]")
+                .Tag("[string data]").Str("", "", "Particle/Crate.ptl", "", CrateHitSound, CrateCrashSound).Tag("[/string data]").Build()),
+            (BreakableDir + "/barrel.obj", NewScript()
+                .Tag("[width]").Int(20, 20).Tag("[layer]").Str("[normal]").Tag("[pass type]").Str("[do not pass]")
+                .Tag("[basic motion]").Str("animation/stand.ani")
+                .Tag("[int data]").Int(1, 1, 1, 0, 0, 30, 1).Tag("[/int data]")
+                .Tag("[string data]").Str("", "", "", "", CrateHitSound, CrateCrashSound).Tag("[/string data]").Build()),
+            (BreakableDir + "/pillar.obj", NewScript()
+                .Tag("[width]").Int(20, 20).Tag("[layer]").Str("[normal]").Tag("[pass type]").Str("[do not pass]")
+                .Tag("[basic motion]").Str("animation/stand.ani")
+                .Tag("[etc motion]").Str("animation/hit.ani").Tag("[/etc motion]")
+                .Tag("[int data]").Int(1, 2, 0, 0, 0, 75, 1).Tag("[/int data]")
+                .Tag("[string data]").Str("", "", "", "", PillarHitSound, "").Tag("[/string data]").Build()),
+            (BreakableDir + "/grass.obj", NewScript()
+                .Tag("[width]").Int(10, 10).Tag("[layer]").Str("[normal]").Tag("[pass type]").Str("[pass all]")
+                .Tag("[basic motion]").Str("animation/stand.ani")
+                .Tag("[int data]").Int(42, 1).Tag("[/int data]").Build()),
+            (BreakableDir + "/ghost.obj", NewScript()
+                .Tag("[width]").Int(20, 20).Tag("[layer]").Str("[normal]")
+                .Tag("[basic motion]").Str("animation/boxless.ani")
+                .Tag("[int data]").Int(1, 1, 1, 0, 0, 30, 1).Tag("[/int data]").Build()),
+            ("passiveobject/mapobject/obstacle/rock.obj", NewScript()
+                .Tag("[width]").Int(20, 20).Tag("[layer]").Str("[normal]").Tag("[pass type]").Str("[do not pass]")
+                .Tag("[basic motion]").Str("animation/stand.ani")
+                .Tag("[int data]").Int(1, 1, 1, 0, 0, 30, 1).Tag("[/int data]").Build()),
+            (BreakableDir + "/animation/stand.ani", BuildBlobBoxesAni(true, (0, 100, new[] { BlobHurtBox }))),
+            ("passiveobject/mapobject/obstacle/animation/stand.ani", BuildBlobBoxesAni(true, (0, 100, new[] { BlobHurtBox }))),
+            (BreakableDir + "/animation/hit.ani", BuildBlobBoxesAni(false, (1, 80, new[] { BlobHurtBox }), (2, 80, new[] { BlobHurtBox }))),
+            (BreakableDir + "/animation/boxless.ani", BuildBlobBoxesAni(true, (0, 100, new (ushort Type, int[] Values)[0]))),
             (ShotObj, NewScript().Tag("[basic motion]").Str("animation/shot.ani").Tag("[attack info]").Str("attackinfo/shot.atk").Build()),
             (ShotAtk, NewScript().Tag("[damage bonus]").Int(ShotDamageBonus).Tag("[damage reaction]").Tag("[damage]").Build()),
             (ShotParticle, NewScript()

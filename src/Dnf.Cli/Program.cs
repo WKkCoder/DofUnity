@@ -100,6 +100,9 @@ namespace Dnf.Cli
         public bool SecondsGiven { get; set; }
         public string? ShotsAt { get; set; }
 
+        /// <summary>dungeon-check --watch 秒:从这一秒起的 6 秒里每 0.1 秒打印一行主角位置、动作与自动机的意图(诊断自动机卡在哪里)。</summary>
+        public double? Watch { get; set; }
+
         /// <summary>combat-check --trace:每 0.25 秒打印一次主角与怪物的位置、阶段与血量。</summary>
         public bool Trace { get; set; }
 
@@ -133,6 +136,9 @@ namespace Dnf.Cli
 
         /// <summary>flow-check --raise-difficulty:流程自动机在副本选择界面把难度调到当前能选的最高一档(每通关一次解锁下一档)。</summary>
         public bool RaiseDifficulty { get; set; }
+
+        /// <summary>dungeon-check、flow-check --smash:自动机清房、捡完金币之后顺手把房间里的可破坏物件打翻(M34,证据 E-126;默认关)。</summary>
+        public bool Smash { get; set; }
 
         public int Seed { get; set; } = 1;
         public bool RandomLayout { get; set; }
@@ -233,6 +239,12 @@ namespace Dnf.Cli
         public int RangeY { get; set; } = 250;
         public int Samples { get; set; } = 2000;
 
+        /// <summary>breakable-check:实机部分最多造几个有可破坏物件的房间。</summary>
+        public int Rooms { get; set; } = 3;
+
+        /// <summary>breakable-check --pick:只打印第一座适合"自动机清房后打翻物件"检查的副本路径(给链路检查脚本用,不做别的检查)。</summary>
+        public bool Pick { get; set; }
+
         // fit-sprite(在截图里搜索某张 IMG 帧的位置)
         public string? Img { get; set; }
         public int Frame { get; set; }
@@ -277,9 +289,9 @@ namespace Dnf.Cli
             "      对地图 [animation] 里每个动画的每一帧,在截图里搜索不透明像素在容差内一致最多的位置,并与位置模型的预测比较(证据 E-030)。\n" +
             "  dnf combat-check --map <房间地图> [--start x,y,left|right] [--play 秒:动作,…] [--seconds N] [--shots-at 秒,…] [--png 前缀] [--no-damage]\n" +
             "      (副本房间里的战斗模拟:按时间表按键,打印命中与怪物状态,可在指定时刻输出 800×600 画面;证据 E-069。怪物会还手(E-086),--no-damage 让主角没有生命值、打不到,回到还手功能加入之前的行为)\n" +
-            "  dnf dungeon-check [--dungeon <副本定义>] [--seed N] [--random-layout] [--bot [--explore] | --play 秒:动作,…] [--seconds N(默认 900)] [--frame-ms 毫秒] [--jitter 比例] [--shots-at 秒,…] [--png 前缀] [--layout-only] [--no-damage] [--damage-scale N] [--after-clear 秒]\n" +
-            "      (整座副本:读迷宫、选每格的房间、打印布局;--bot 让自动机从起点打到首领清空,逐个房间打印进出与清房时刻;--after-clear 清空之后再空转几秒(看结算画面);--shots-at 在指定时刻输出画面;--frame-ms、--jitter 改每帧的毫秒数与抖动,模拟帧率不固定的实时运行(自动机按固定心跳补步,不受影响;时间表按帧长取样);证据 E-070、E-072)\n" +
-            "  dnf flow-check [--dungeon <副本定义>] [--from char|town|select|dungeon] [--town N] [--legacy-town] [--worldmap <世界地图定义>|none] [--choices retry,select,town] [--explore] [--seed N] [--no-damage] [--seconds N(默认 1800)] [--frame-ms 毫秒] [--shots-at 秒,… --png 前缀]\n" +
+            "  dnf dungeon-check [--dungeon <副本定义>] [--seed N] [--random-layout] [--bot [--explore] | --play 秒:动作,…] [--seconds N(默认 900)] [--frame-ms 毫秒] [--jitter 比例] [--shots-at 秒,…] [--png 前缀] [--layout-only] [--no-damage] [--damage-scale N] [--after-clear 秒] [--smash] [--watch 秒]\n" +
+            "      (整座副本:读迷宫、选每格的房间、打印布局;--bot 让自动机从起点打到首领清空,逐个房间打印进出与清房时刻;--after-clear 清空之后再空转几秒(看结算画面);--smash 清房、捡完金币之后顺手打翻房间里的可破坏物件(M34,证据 E-126);--watch 从这一秒起的 6 秒里每 0.1 秒打印一行主角位置与自动机的意图(诊断自动机卡在哪);--shots-at 在指定时刻输出画面;--frame-ms、--jitter 改每帧的毫秒数与抖动,模拟帧率不固定的实时运行(自动机按固定心跳补步,不受影响;时间表按帧长取样);证据 E-070、E-072)\n" +
+            "  dnf flow-check [--dungeon <副本定义>] [--from char|town|select|dungeon] [--town N] [--legacy-town] [--worldmap <世界地图定义>|none] [--choices retry,select,town] [--explore] [--smash] [--seed N] [--no-damage] [--seconds N(默认 1800)] [--frame-ms 毫秒] [--shots-at 秒,… --png 前缀]\n" +
             "      (整条流程的无人值守检查:城镇(默认从城镇图册的登录区域出发,自动机沿出口走到地下城入口,换区域与进图有加载画面;--legacy-town 退回只有赛丽亚房间一张图、阶段瞬间切换的老行为;--town 指定起始城镇) → 副本选择 → 副本 → 结算 → 按 --choices 清单依次选再次挑战(retry)、选择其它地下城(select)、返回城镇(town),打印每次阶段切换与每局的战绩;清单用完或到时间为止;默认清单 retry,select,town;--shots-at 在指定时刻输出当时阶段的画面;证据 E-093)\n" +
             "  dnf town-shot --area <城镇>/<区域> --png <输出.png> [--time <毫秒>] [--hero x,y,left|right,rest|move,毫秒[,镜头x]] [--hud [--level N]]\n" +
             "      (城镇图册里一块区域的 800×600 画面:主角在登录落脚点,房间式合成,证据 E-095;Unity 的 -dnftownarea 离屏渲染以它为 CPU 参照)\n" +
@@ -325,6 +337,11 @@ namespace Dnf.Cli
             "  dnf difficulty-check [--dungeon <副本定义>] [--seed N] | --cases <用例文件>\n" +
             "      副本难度(证据 E-125):读难度加成表、全部副本自带的 [monster difficulty bonus] 与难度 3 清单,检查结构;再把 --dungeon 副本以难度 0 到 4 各造一遍,比较第一个房间里每只怪物的最大生命只升不降\n" +
             "      (数值来自本机的数据,只打印在终端,不要抄进入库的文件)。--cases 读 mob_difficulty_oracle.py --write-cases 的输出,用 C# 重算并与原版函数在模拟器里的结果逐槽比较(不需要数据目录)。dungeon-check、flow-check 的 --difficulty N(0 到 4,不检查通关记录)让整局按这个难度打;flow-check 的 --raise-difficulty 让自动机在选择界面把难度调到当前能选的最高一档。\n" +
+            "  dnf breakable-check [--dungeon <副本定义>] [--seed N] [--rooms N] [--pick]\n" +
+            "  dnf gate-body-check [--trace]   各副本房间的出口与墙的碰撞体挡掉了多少可走区域(只打聚合;--trace 列出被挡大块的房间)\n" +
+            "      可破坏物件与物件掉物品(M34,证据 E-126):读物件掉落表(Etc/ItemDropInfo_Object.etc)并建池;全部地图的 [special passive object] 文法(与 RoomMap 读出的项数一致、没读完的值只停在关键字上)\n" +
+            "      以及每座副本里 [item] 动作的掉落项下标是否都在 .dgn 的 [special passive object item] 范围内;再在 --dungeon(没有就依次换别的副本)的布局里挑 --rooms 个有可破坏物件的房间,\n" +
+            "      用播放器同一条路径造房间会话,把主角摆到每个物件左边挥刀,看打中、打碎、触发与掉出的物品(数值来自本机的数据,只打印在终端,不要抄进入库的文件)。--pick 不做检查,只打印第一座适合\"自动机清房后打翻物件\"的无人值守检查的副本路径(链路检查脚本用)。\n" +
             "  dnf item-check [--level N] [--samples N] [--seed N]\n" +
             "      怪物物品掉落(证据 E-117):整库扫描装备与可叠加物品的脚本头(创建率、稀有度、等级、类型、地上图与图标),建掉落池,按怪物等级 --level 掷 --samples 只怪物\n" +
             "      并汇总各类物品与稀有度的件数(数值与物品名来自本机的数据,只打印在终端,不要抄进入库的文件;通过与否只看结构)。\n" +
@@ -499,6 +516,10 @@ namespace Dnf.Cli
                     case "--trace":
                         opts.Trace = true;
                         break;
+                    case "--watch":
+                        opts.Watch = double.TryParse(NextValue(args, ref i), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double watchAt) && watchAt >= 0
+                            ? watchAt : throw new UserError("--watch 需要非负的秒数");
+                        break;
                     case "--dungeon":
                         opts.Dungeon = NextValue(args, ref i);
                         break;
@@ -604,6 +625,12 @@ namespace Dnf.Cli
                     case "--raise-difficulty":
                         opts.RaiseDifficulty = true;
                         break;
+                    case "--smash":
+                        opts.Smash = true;
+                        break;
+                    case "--pick":
+                        opts.Pick = true;
+                        break;
                     case "--level":
                         opts.HeroLevel = int.TryParse(NextValue(args, ref i), out int levelValue) && levelValue >= 1 && levelValue <= 85
                             ? levelValue
@@ -677,6 +704,9 @@ namespace Dnf.Cli
                         break;
                     case "--samples":
                         opts.Samples = int.TryParse(NextValue(args, ref i), out int sm) && sm >= 100 && sm <= 100000 ? sm : throw new UserError("--samples 需要 100 到 100000 的整数");
+                        break;
+                    case "--rooms":
+                        opts.Rooms = int.TryParse(NextValue(args, ref i), out int rooms) && rooms >= 1 && rooms <= 200 ? rooms : throw new UserError("--rooms 需要 1 到 200 的整数");
                         break;
                     case "--img":
                         opts.Img = NextValue(args, ref i);
@@ -780,6 +810,10 @@ namespace Dnf.Cli
                     return QuestCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "quest-flow-check":
                     return QuestFlowCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "breakable-check":
+                    return BreakableCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "gate-body-check":
+                    return GateBodyCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "difficulty-check":
                     return opts.CasesFile != null
                         ? DifficultyCheck.RunCases(opts)

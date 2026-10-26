@@ -994,6 +994,101 @@ public class DungeonSessionTests
         Assert.True(maxY >= 300, "没有从缺口走过去:" + maxY);
     }
 
+    /// <summary>瓦片 2(x ∈ [448, 672))最左六列(x ∈ [448, 544))从上到下挡到第 24 行(y &lt; 300)、只在下面留缺口的墙(同上一条测试)。</summary>
+    private static byte[] WallWithAGapBelow(int cx, int cy, int tile)
+    {
+        if (tile != 2)
+        {
+            return null;
+        }
+        var pass = new byte[14 * 30];
+        for (int r = 0; r < 25; r++)
+        {
+            for (int c = 0; c < 6; c++)
+            {
+                pass[r * 14 + c] = 2;
+            }
+        }
+        return pass;
+    }
+
+    [Fact]
+    public void TheBotSwitchesToPathfindingWithinAFewStepsOfBeingStuckOnTheWayToAnExitAndGetsThroughTheGap()
+    {
+        // 起点格没有怪物,自动机直奔右出口;直线走会顶在 x ≈ 422 的墙上。顶住之后寻路得马上接管(ExitStuckSteps 步),不能等 StallSteps 步,
+        // 也不能先靠"摆脱卡住"的上下乱晃(那会把主角顶进别的出口,或者在出口门洞的口袋里打转)
+        using var d = new Dungeon(RingLayout(), (cx, cy) => None(), passOf: WallWithAGapBelow);
+        DungeonSession s = d.Session;
+        var bot = new DungeonBot(false);
+        int stuckFrom = -1, engagedAt = -1;
+        double lastX = double.NaN;
+        int sameX = 0;
+        for (int step = 0; step < 60 * 90 && s.CellX == 0 && s.CellY == 0; step++)
+        {
+            bool attack = bot.Next(s, out int dx, out int dy);
+            s.Update(CombatScript.StepMs, dx, dy, attack);
+            sameX = !double.IsNaN(lastX) && s.Hero.X == lastX && dx != 0 ? sameX + 1 : 0;
+            lastX = s.Hero.X;
+            if (stuckFrom < 0 && sameX >= 3)
+            {
+                stuckFrom = step;
+            }
+            if (engagedAt < 0 && bot.PathEngaged >= 1)
+            {
+                engagedAt = step;
+            }
+        }
+        Assert.True(stuckFrom >= 0, "没有顶在墙上");
+        Assert.True(engagedAt >= 0 && engagedAt - stuckFrom <= DungeonBot.ExitStuckSteps + 10, "寻路接管得太晚:顶住 " + stuckFrom + " 步,接管 " + engagedAt + " 步");
+        Assert.True(DungeonBot.ExitStuckSteps + 10 < DungeonBot.StallSteps);
+        Assert.Equal((1, 0), (s.CellX, s.CellY));   // 从缺口绕过去,走出右出口进了隔壁格
+    }
+
+    [Fact]
+    public void TheBotDoesNotSwingInPlaceAtAMonsterFarAcrossAnObstacleItCannotStepAround()
+    {
+        // 瓦片 1(x ∈ [224, 448))从第 12 行到第 20 行(y 144 到 252)挡满一整条横带,怪物在带的另一侧(y = 330),横向离主角不到 ReachX。
+        // 主角想往下挪却被带挡住,YBlockedSteps 步之后老办法是"横向够得着就原地挥击"——离得这么远永远打不到,挥击的动作还一直打断绕路的脚步
+        byte[] Band(int cx, int cy, int tile)
+        {
+            if (tile != 1)
+            {
+                return null;
+            }
+            var pass = new byte[14 * 30];
+            for (int r = 12; r <= 20; r++)
+            {
+                for (int c = 0; c < 14; c++)
+                {
+                    pass[r * 14 + c] = 2;
+                }
+            }
+            return pass;
+        }
+
+        using var d = new Dungeon(RingLayout(), (cx, cy) => cx == 0 && cy == 0 ? new[] { (330, 330) } : None(), passOf: Band);
+        DungeonSession s = d.Session;
+        var bot = new DungeonBot(false);
+        int farSwings = 0;
+        for (int step = 0; step < 60 * 60 && !s.IsCleared(0, 0); step++)
+        {
+            bool attack = bot.Next(s, out int dx, out int dy);
+            if (attack)
+            {
+                foreach (MonsterActor m in s.Current.Monsters)
+                {
+                    if (m.IsAlive && Math.Abs(m.Y - s.Hero.Y) > DungeonBot.YBlockedReachY && Math.Abs(m.X - s.Hero.X) <= DungeonBot.ReachX)
+                    {
+                        farSwings++;
+                    }
+                }
+            }
+            s.Update(CombatScript.StepMs, dx, dy, attack);
+        }
+        Assert.Equal(0, farSwings);
+        Assert.True(s.IsCleared(0, 0), "绕不过横带");
+    }
+
     [Fact]
     public void ASingleRoomDungeonWithNoBossAndNoWayOutIsDoneAsSoonAsItsMonstersAreGone()
     {

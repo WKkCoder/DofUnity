@@ -77,7 +77,7 @@ internal static class FlowCheck
             (path, run, difficulty) => DungeonSession.Create(assets, path, opts.Seed + run, opts.RandomLayout, opts.HeroWeapon, heroVitals: !opts.NoDamage, progress: progress,
                 coins: coins, monsterDamageScale: opts.MonsterDamageScale, difficulty: difficulty));
         flow.DifficultyLimit = DifficultyGate.For(() => progress, assets);       // 选择界面能选到哪一档:按主角的通关记录(M33,E-125)
-        var bot = new FlowBot(opts.Explore, choices) { RaiseDifficulty = opts.RaiseDifficulty };
+        var bot = new FlowBot(opts.Explore, choices) { RaiseDifficulty = opts.RaiseDifficulty, SmashObjects = opts.Smash };
         // 背景音乐(E-097):照播放器的做法把流程发出的声音提示交给调度器,只记音乐通道开始放的那几次(不出声、不读音频文件内容)
         using SoundLibrary soundLibrary = SoundLibrary.Open(loc.DnfDir);
         MusicTrace? music = soundLibrary.HasCatalog ? new MusicTrace(soundLibrary) : null;
@@ -149,6 +149,10 @@ internal static class FlowCheck
             + (progress != null ? ",身上 " + progress.Gold : string.Empty));
         Console.WriteLine("  物品(E-117):各局掉出 " + stats.Sum(s => s.ItemsDropped) + " 件,捡起 " + stats.Sum(s => s.ItemsPicked) + " 件"
             + (progress != null ? ",背包 " + progress.Bag.TotalCount + " 件占 " + progress.Bag.StackCount + " 格" : string.Empty));
+        if (opts.Smash)
+        {
+            Console.WriteLine("  物件(E-126):各局挥中 " + stats.Sum(s => s.ObjectsHit) + " 次,打翻 " + stats.Sum(s => s.ObjectsDestroyed) + " 个,物件掉出 " + stats.Sum(s => s.ObjectItemsDropped) + " 件");
+        }
         bool musicOk = true;
         if (music == null)
         {
@@ -261,6 +265,9 @@ internal static class FlowCheck
         public long GoldEarned { get; private set; }
         public int ItemsDropped { get; private set; }
         public int ItemsPicked { get; private set; }
+        public int ObjectsHit { get; private set; }
+        public int ObjectsDestroyed { get; private set; }
+        public int ObjectItemsDropped { get; private set; }
 
         public static RunStats Of(DungeonSession s, int run)
         {
@@ -275,6 +282,9 @@ internal static class FlowCheck
                 GoldEarned = s.GoldEarned,
                 ItemsDropped = s.ItemsDropped,
                 ItemsPicked = s.ItemsPicked,
+                ObjectsHit = s.ObjectsHit,
+                ObjectsDestroyed = s.ObjectsDestroyed,
+                ObjectItemsDropped = s.ObjectItemsDropped,
                 BossCleared = s.BossCleared,
                 Kills = s.Kills,
                 Hits = s.Hits,

@@ -350,6 +350,17 @@ namespace Dnf.Play
         public int ItemsPicked => Sum(s => s.ItemsPicked);
         public int ItemsBagFull => Sum(s => s.ItemsBagFull);
 
+        /// <summary>
+        /// 整座副本里可破坏物件的统计(各房间之和,M34,证据 E-126):进过的房间里一共有几个、被主角挥中过几次、打翻了几个、放出过几次 [item] 动作、因此掉出了几件物品
+        /// (掉出的物品并进 <see cref="ItemsDropped"/>,这里单独数是为了把物件与怪物的掉落分开看)。
+        /// </summary>
+        public int ObjectsBreakable => Sum(s => s.Breakables.Count);
+
+        public int ObjectsHit => Sum(s => s.ObjectsHit);
+        public int ObjectsDestroyed => Sum(s => s.ObjectsDestroyed);
+        public int ObjectItemActions => Sum(s => s.ObjectItemActions);
+        public int ObjectItemsDropped => Sum(s => s.ObjectItemsDropped);
+
         /// <summary>整座副本里画出过多少块地上名牌(各房间之和;没有字体或文字表时是 0)。</summary>
         public int DropLabelsDrawn => Sum(s => s.DropLabelsDrawn);
 
@@ -383,6 +394,12 @@ namespace Dnf.Play
                 }
             }
             return n;
+        }
+
+        /// <summary>某一格的房间会话(进去过才有,没进去过或越界是 null;诊断与统计用)。</summary>
+        public RoomCombatSession SessionAt(int x, int y)
+        {
+            return Maze.InBounds(x, y) ? _cells[y * Maze.Cols + x].Session : null;
         }
 
         /// <summary>某一格是否进去过。</summary>
@@ -495,8 +512,10 @@ namespace Dnf.Play
             // 副本难度(M33,E-125):怪物数值的难度加成、经验与掉落的难度档、复活币规则、任务与评分都按它走;.dgn 自带的 [monster difficulty bonus] 优先于按等级的行
             DungeonDifficultyBonus bonus = DungeonDifficultyBonus.Parse(dungeonScript);
             // 金币掉落按副本的标准等级([basis level],证据 E-116)选概率行
+            // 物件掉物品(M34,E-126):.dgn 的掉落项与通用池、标准等级与难度,加上物件掉落表(与怪物掉落同一份素材缓存)
+            var objectDrops = new ObjectDropSetup(DungeonObjectItems.Parse(dungeonScript), GoldDrop.StandardLevel(dungeonScript), difficulty, MonsterDrops.Load(assets));
             var session = new DungeonSession(layout, CreateAssetFactory(assets, layout, outfit, seed, heroObjectId, heroVitals, progress, maze.ExpWeight, heroDamageScale, revive,
-                monsterDamageScale, GoldDrop.StandardLevel(dungeonScript), difficulty, bonus), heroObjectId, assets);
+                monsterDamageScale, GoldDrop.StandardLevel(dungeonScript), difficulty, bonus, objectDrops), heroObjectId, assets);
             session.Difficulty = difficulty;
             int dungeonId = DungeonRoomPool.DungeonIdOf(assets, dungeonPath);
             if (quests != null)
@@ -535,7 +554,7 @@ namespace Dnf.Play
         public static DungeonRoomFactory CreateAssetFactory(DnfAssets assets, DungeonLayout layout, AvatarOutfit outfit, int seed,
             int heroObjectId = GateArrival.DefaultHeroObjectId, bool heroVitals = true, HeroProgress progress = null, float expWeight = 1f,
             int heroDamageScale = 1, HeroRevive revive = null, int monsterDamageScale = 1, int dropLevel = 0, int difficulty = 0,
-            DungeonDifficultyBonus dungeonBonus = null)
+            DungeonDifficultyBonus dungeonBonus = null, ObjectDropSetup objectDrops = null)
         {
             return (cx, cy) =>
             {
@@ -566,6 +585,10 @@ namespace Dnf.Play
                 combat.Revive = revive;
                 combat.MonsterDamageScale = monsterDamageScale;
                 combat.DropDungeonLevel = dropLevel;
+                if (objectDrops != null)
+                {
+                    combat.UseObjectDrops(objectDrops, seed + cy * layout.Maze.Cols + cx);
+                }
                 return combat;
             };
         }

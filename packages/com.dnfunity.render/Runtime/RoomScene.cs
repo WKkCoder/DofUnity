@@ -30,18 +30,22 @@ namespace Dnf.Render
         public static RoomContent Load(DnfAssets assets, RoomMap map, IReadOnlyList<RoomGate> gates = null)
         {
             var objects = new List<RoomObject>();
-            if (map.PassiveObjects.Count > 0)
+            if (map.PassiveObjects.Count > 0 || map.SpecialObjects.Count > 0)
             {
                 PassiveObjectCatalog catalog = PassiveObjectCatalog.Read(assets);
                 var defs = new Dictionary<int, PassiveObjectDef>();
                 foreach (PassivePlacement p in map.PassiveObjects)
                 {
-                    if (!defs.TryGetValue(p.Id, out PassiveObjectDef def))
+                    RoomObject o = CreateObject(assets, catalog, defs, p, null);
+                    if (o != null)
                     {
-                        def = PassiveObjectDef.Read(assets, catalog, p.Id);
-                        defs[p.Id] = def;
+                        objects.Add(o);
                     }
-                    RoomObject o = def == null ? null : RoomObject.Create(assets, def, p);
+                }
+                // [special passive object](证据 E-126):同样是摆在房间里的物件,只是还挂着破坏时触发的动作;画在普通物件之后
+                foreach (SpecialPlacement s in map.SpecialObjects)
+                {
+                    RoomObject o = CreateObject(assets, catalog, defs, new PassivePlacement(s.Id, s.X, s.Y, s.Z), s);
                     if (o != null)
                     {
                         objects.Add(o);
@@ -49,6 +53,23 @@ namespace Dnf.Render
                 }
             }
             return new RoomContent(map, RoomScene.ResolveBackgrounds(assets, map), RoomScene.ResolveLayers(assets, map), objects, gates);
+        }
+
+        private static RoomObject CreateObject(DnfAssets assets, PassiveObjectCatalog catalog, Dictionary<int, PassiveObjectDef> defs, PassivePlacement placement,
+            SpecialPlacement special)
+        {
+            if (!defs.TryGetValue(placement.Id, out PassiveObjectDef def))
+            {
+                def = PassiveObjectDef.Read(assets, catalog, placement.Id);
+                defs[placement.Id] = def;
+            }
+            // [special passive object] 里只摆可破坏物件(证据 E-126):陷阱、仙子、任务物件和带血量的障碍物(ActionObject 一类)的机制这一版没做,
+            // 摆进去只会画出怪东西、或者把路堵死(原版里要靠对应的机制才打得开),所以这些特殊项暂时不进房间
+            if (def == null || (special != null && def.Breakable == null))
+            {
+                return null;
+            }
+            return RoomObject.Create(assets, def, placement, special);
         }
     }
 
