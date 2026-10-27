@@ -140,6 +140,9 @@ namespace Dnf.Cli
         /// <summary>dungeon-check、flow-check --smash:自动机清房、捡完金币之后顺手把房间里的可破坏物件打翻(M34,证据 E-126;默认关)。</summary>
         public bool Smash { get; set; }
 
+        /// <summary>dungeon-check、flow-check、combat-check --learn:开局先让主角按自动机策略(<see cref="SkillPlanner"/>)把技能点与觉醒点花光(M35,证据 E-127;默认关)。</summary>
+        public bool LearnSkills { get; set; }
+
         public int Seed { get; set; } = 1;
         public bool RandomLayout { get; set; }
 
@@ -289,9 +292,9 @@ namespace Dnf.Cli
             "      对地图 [animation] 里每个动画的每一帧,在截图里搜索不透明像素在容差内一致最多的位置,并与位置模型的预测比较(证据 E-030)。\n" +
             "  dnf combat-check --map <房间地图> [--start x,y,left|right] [--play 秒:动作,…] [--seconds N] [--shots-at 秒,…] [--png 前缀] [--no-damage]\n" +
             "      (副本房间里的战斗模拟:按时间表按键,打印命中与怪物状态,可在指定时刻输出 800×600 画面;证据 E-069。怪物会还手(E-086),--no-damage 让主角没有生命值、打不到,回到还手功能加入之前的行为)\n" +
-            "  dnf dungeon-check [--dungeon <副本定义>] [--seed N] [--random-layout] [--bot [--explore] | --play 秒:动作,…] [--seconds N(默认 900)] [--frame-ms 毫秒] [--jitter 比例] [--shots-at 秒,…] [--png 前缀] [--layout-only] [--no-damage] [--damage-scale N] [--after-clear 秒] [--smash] [--watch 秒]\n" +
-            "      (整座副本:读迷宫、选每格的房间、打印布局;--bot 让自动机从起点打到首领清空,逐个房间打印进出与清房时刻;--after-clear 清空之后再空转几秒(看结算画面);--smash 清房、捡完金币之后顺手打翻房间里的可破坏物件(M34,证据 E-126);--watch 从这一秒起的 6 秒里每 0.1 秒打印一行主角位置与自动机的意图(诊断自动机卡在哪);--shots-at 在指定时刻输出画面;--frame-ms、--jitter 改每帧的毫秒数与抖动,模拟帧率不固定的实时运行(自动机按固定心跳补步,不受影响;时间表按帧长取样);证据 E-070、E-072)\n" +
-            "  dnf flow-check [--dungeon <副本定义>] [--from char|town|select|dungeon] [--town N] [--legacy-town] [--worldmap <世界地图定义>|none] [--choices retry,select,town] [--explore] [--smash] [--seed N] [--no-damage] [--seconds N(默认 1800)] [--frame-ms 毫秒] [--shots-at 秒,… --png 前缀]\n" +
+            "  dnf dungeon-check [--dungeon <副本定义>] [--seed N] [--random-layout] [--bot [--explore] | --play 秒:动作,…] [--seconds N(默认 900)] [--frame-ms 毫秒] [--jitter 比例] [--shots-at 秒,…] [--png 前缀] [--layout-only] [--no-damage] [--damage-scale N] [--after-clear 秒] [--smash] [--learn] [--watch 秒]\n" +
+            "      (整座副本:读迷宫、选每格的房间、打印布局;--bot 让自动机从起点打到首领清空,逐个房间打印进出与清房时刻;--after-clear 清空之后再空转几秒(看结算画面);--smash 清房、捡完金币之后顺手打翻房间里的可破坏物件(M34,证据 E-126);--learn 开局先让主角把技能点花光(M35,证据 E-127,自动机策略 SkillPlanner,快捷栏随之排满);--watch 从这一秒起的 6 秒里每 0.1 秒打印一行主角位置与自动机的意图(诊断自动机卡在哪);--shots-at 在指定时刻输出画面;--frame-ms、--jitter 改每帧的毫秒数与抖动,模拟帧率不固定的实时运行(自动机按固定心跳补步,不受影响;时间表按帧长取样);证据 E-070、E-072)\n" +
+            "  dnf flow-check [--dungeon <副本定义>] [--from char|town|select|dungeon] [--town N] [--legacy-town] [--worldmap <世界地图定义>|none] [--choices retry,select,town] [--explore] [--smash] [--learn] [--seed N] [--no-damage] [--seconds N(默认 1800)] [--frame-ms 毫秒] [--shots-at 秒,… --png 前缀]\n" +
             "      (整条流程的无人值守检查:城镇(默认从城镇图册的登录区域出发,自动机沿出口走到地下城入口,换区域与进图有加载画面;--legacy-town 退回只有赛丽亚房间一张图、阶段瞬间切换的老行为;--town 指定起始城镇) → 副本选择 → 副本 → 结算 → 按 --choices 清单依次选再次挑战(retry)、选择其它地下城(select)、返回城镇(town),打印每次阶段切换与每局的战绩;清单用完或到时间为止;默认清单 retry,select,town;--shots-at 在指定时刻输出当时阶段的画面;证据 E-093)\n" +
             "  dnf town-shot --area <城镇>/<区域> --png <输出.png> [--time <毫秒>] [--hero x,y,left|right,rest|move,毫秒[,镜头x]] [--hud [--level N]]\n" +
             "      (城镇图册里一块区域的 800×600 画面:主角在登录落脚点,房间式合成,证据 E-095;Unity 的 -dnftownarea 离屏渲染以它为 CPU 参照)\n" +
@@ -338,6 +341,9 @@ namespace Dnf.Cli
             "      副本难度(证据 E-125):读难度加成表、全部副本自带的 [monster difficulty bonus] 与难度 3 清单,检查结构;再把 --dungeon 副本以难度 0 到 4 各造一遍,比较第一个房间里每只怪物的最大生命只升不降\n" +
             "      (数值来自本机的数据,只打印在终端,不要抄进入库的文件)。--cases 读 mob_difficulty_oracle.py --write-cases 的输出,用 C# 重算并与原版函数在模拟器里的结果逐槽比较(不需要数据目录)。dungeon-check、flow-check 的 --difficulty N(0 到 4,不检查通关记录)让整局按这个难度打;flow-check 的 --raise-difficulty 让自动机在选择界面把难度调到当前能选的最高一档。\n" +
             "  dnf breakable-check [--dungeon <副本定义>] [--seed N] [--rooms N] [--pick]\n" +
+            "  dnf skill-check [--level N]\n" +
+            "      学技能(M35,证据 E-127):读主角职业的技能目录与六个成长类型的白送技能,检查每个技能到最高级都有花费(补齐规则)、前置技能都在且没有环;再对每个成长类型给无限点数从白送状态学到当前等级的上限,\n" +
+            "      核对点数守恒、全部退回白送等级后点数完全还回、重置后与新建的一致;再检查本地主角的进度(点数是该级总额、快捷栏与旧的初始技能表排法一致、存档往返不变);最后让自动机策略(SkillPlanner)把点数花光,核对花费守恒、停下时再没有能学的、再跑一遍不再加、快捷栏排满。--level N 指定主角等级(默认 85;数字来自本机的数据,只打印在终端,不要抄进入库的文件)。\n" +
             "  dnf gate-body-check [--trace]   各副本房间的出口与墙的碰撞体挡掉了多少可走区域(只打聚合;--trace 列出被挡大块的房间)\n" +
             "      可破坏物件与物件掉物品(M34,证据 E-126):读物件掉落表(Etc/ItemDropInfo_Object.etc)并建池;全部地图的 [special passive object] 文法(与 RoomMap 读出的项数一致、没读完的值只停在关键字上)\n" +
             "      以及每座副本里 [item] 动作的掉落项下标是否都在 .dgn 的 [special passive object item] 范围内;再在 --dungeon(没有就依次换别的副本)的布局里挑 --rooms 个有可破坏物件的房间,\n" +
@@ -628,6 +634,9 @@ namespace Dnf.Cli
                     case "--smash":
                         opts.Smash = true;
                         break;
+                    case "--learn":
+                        opts.LearnSkills = true;
+                        break;
                     case "--pick":
                         opts.Pick = true;
                         break;
@@ -812,6 +821,8 @@ namespace Dnf.Cli
                     return QuestFlowCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "breakable-check":
                     return BreakableCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "skill-check":
+                    return SkillCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "gate-body-check":
                     return GateBodyCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "difficulty-check":

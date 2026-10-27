@@ -1212,7 +1212,9 @@ namespace Dnf.Play
                 EquipmentStats worn = HeroPanel.WornEquipment(assets, room.Hero, progress);
                 heroPanel = progress != null ? HeroPanel.FromStats(progress.Level, progress.Stats, worn) : HeroPanel.FromChr(chr, vitals.Level, worn);
             }
-            var session = new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, HeroSkills.Create(data, chr, 0), hasWeapon ? weapon.StunMs : 0,
+            // 技能快捷槽:有等级进度并接上了技能数据时按它的技能簿排(学会的技能、等级、快捷栏,M35);否则按角色的初始技能表(老行为)
+            HeroSkills heroSkills = progress != null && progress.HasSkillData ? HeroSkills.Create(data, chr, 0, progress.Skills) : HeroSkills.Create(data, chr, 0);
+            var session = new RoomCombatSession(assets, room, actors, strikes, seed, dash, jump, heroSkills, hasWeapon ? weapon.StunMs : 0,
                 hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null, weaponSound, heroPanel,
                 progress, expWeight, difficulty);
             session.Character = chr;
@@ -2562,7 +2564,7 @@ namespace Dnf.Play
             {
                 HeroSkillSlot s = Skills.Slots[i];
                 bool castable = free && v.Mp >= s.ConsumeMp;
-                states.Add(new HudSkillState(i, s.Def, s.Ready && castable, s.CooldownFraction, s.Level, !castable));
+                states.Add(new HudSkillState(s.Position, s.Def, s.Ready && castable, s.CooldownFraction, s.Level, !castable));
             }
             return states;
         }

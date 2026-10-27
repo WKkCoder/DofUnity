@@ -762,6 +762,54 @@ if [ "$platform" = "macos" ]; then
       || { echo "接任务与放弃都应出过提示条(DNF_QUEST toast shown>0):$quest_log" >&2; exit 1; }
     grep -q -E 'DNF_FONT stats glyphs=[1-9][0-9]* sizes=[1-9]' "$quest_log" \
       || { echo "任务窗口应当画过汉字(DNF_FONT stats glyphs>0):$quest_log" >&2; exit 1; }
+    # 技能系统(M35,证据 E-127,窗口与键位是本项目自己的占位设计):城镇里阶段开始 3 秒后探针像按 K 一样打开技能窗口(游戏暂停),过一秒在四个分页里找第一个能学的技能、选中、学一级,
+    # 再过一秒退一级,再过一秒把第一个学会的主动技能放进快捷栏最后一格,再过一秒连按两次重置(第一下只预备、第二下才执行),再过一秒按 K 关上,再过一秒收尾;
+    # 主角给 40 级好让四个分页都有技能可学;日志里只有个数、点数与结果名,没有技能名与编号
+    skill_win_log="$PWD/re/unity-run-town-skillwin-macos.log"
+    rm -f "$skill_win_log"
+    set +e
+    "$app" -batchmode -logFile "$skill_win_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom town -dnflevel 40 \
+      -dnfskillat 3 -dnftimescale 4 -dnfquitafter 25
+    rc=$?
+    set -e
+    echo "播放器退出码(技能窗口): $rc"
+    grep -E 'DNF_SKILL' "$skill_win_log" | cut -c1-260 || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed|DNF_SKILL probe failed' "$skill_win_log"; then
+      echo "技能窗口的日志里有异常或探针开不了窗口:$skill_win_log" >&2
+      exit 1
+    fi
+    grep -q -E 'DNF_SKILL probe open page=[0-3] rows=[0-9]+ sp=[1-9][0-9]* ap=[0-9]+ learned=[1-9][0-9]* level=40' "$skill_win_log" \
+      || { echo "探针应打开技能窗口(DNF_SKILL probe open … sp>0 learned>0 level=40):$skill_win_log" >&2; exit 1; }
+    grep -q -E 'DNF_SKILL window open page=[0-3] rows=[0-9]+ paused=True' "$skill_win_log" \
+      || { echo "开技能窗口时游戏应暂停(DNF_SKILL window open … paused=True):$skill_win_log" >&2; exit 1; }
+    grep -q -E 'DNF_SKILL probe learn found=True pages=[0-9]+/[0-9]+/[0-9]+/[0-9]+ learned=True result=Ok ' "$skill_win_log" \
+      || { echo "探针应学成一个技能(DNF_SKILL probe learn found=True … learned=True result=Ok):$skill_win_log" >&2; exit 1; }
+    grep -q -E 'DNF_SKILL probe refund refunded=True result=Ok ' "$skill_win_log" \
+      || { echo "探针应退成一级(DNF_SKILL probe refund refunded=True result=Ok):$skill_win_log" >&2; exit 1; }
+    for pat in 'DNF_SKILL probe assign ok=True' 'DNF_SKILL probe reset first=False second=True resets=1' 'DNF_SKILL probe closed open=False' 'DNF_SKILL probe done learns=1 refunds=1 resets=1 assigns=1'; do
+      grep -q -F "$pat" "$skill_win_log" || { echo "技能窗口的日志里缺 \"$pat\":$skill_win_log" >&2; exit 1; }
+    done
+    grep -q -E 'DNF_FONT stats glyphs=[1-9][0-9]* sizes=[1-9]' "$skill_win_log" \
+      || { echo "技能窗口应当画过汉字(DNF_FONT stats glyphs>0):$skill_win_log" >&2; exit 1; }
+    # 技能系统(M35)· 自动机学技能:-dnflearn 在进副本前先让主角按自动机策略把技能点与觉醒点花光(快捷栏随之排满六格),自动机再照常打副本;
+    # 看点:学满技能后的快捷栏建槽、副本里的底栏与放技能路径都没有出异常,自动机照样清房到结算
+    skill_learn_log="$PWD/re/unity-run-town-skilllearn-macos.log"
+    rm -f "$skill_learn_log"
+    set +e
+    "$app" -batchmode -logFile "$skill_learn_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" -dnflevel 40 -dnflearn \
+      -dnftimescale 4 -dnfquitafter 40
+    rc=$?
+    set -e
+    echo "播放器退出码(自动机学技能): $rc"
+    grep -E 'DNF_SKILL|DNF_FLOW' "$skill_learn_log" | cut -c1-200 || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$skill_learn_log"; then
+      echo "自动机学技能的日志里有异常:$skill_learn_log" >&2
+      exit 1
+    fi
+    grep -q -E 'DNF_SKILL planner levels=[1-9][0-9]* sp=[1-9][0-9]*>[0-9]+ ap=[0-9]+>[0-9]+ learnedCount=[1-9][0-9]*' "$skill_learn_log" \
+      || { echo "自动机策略应花掉技能点(DNF_SKILL planner levels>0):$skill_learn_log" >&2; exit 1; }
     # 消耗品(M28,证据 E-120):副本里阶段开始 3 秒后探针往背包放一种回血药与一种回蓝药(快捷栏自动放进前两格)、把主角的生命压到四成、魔法压到三成,
     # 过一秒像按键 1、1、2 那样连着用(同一种药连用第二次应被冷却拒绝),等药效发完(时间步放大 4 倍),再过一秒再用一次;日志里只有数与结果名,没有物品名与编号
     potion_log="$PWD/re/unity-run-town-potion-macos.log"

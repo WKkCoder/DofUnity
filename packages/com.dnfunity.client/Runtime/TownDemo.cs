@@ -169,6 +169,12 @@ namespace Dnf.Client
         private int _questProbeStep;
         private bool _questProbeDone;
         private int _questProbeNpc = -1;
+        private bool _skillWasOpen;
+        private double _skillProbeAtSeconds = -1.0;
+        private float _skillProbeStepAt = -1f;
+        private int _skillProbeStep;
+        private bool _skillProbeDone;
+        private int _skillOpsLogged;                       // 技能窗口里学 + 退 + 重置 + 摆快捷栏的累计次数(变了才写日志)
         private double _potionProbeAtSeconds = -1.0;
         private float _potionProbeStepAt = -1f;
         private int _potionProbeStep;
@@ -209,6 +215,7 @@ namespace Dnf.Client
         private bool _flowDoneNoted;
         private DungeonBot _bot;
         private bool _botExplore;
+        private bool _learnSkills;                         // -dnflearn:开局先让主角按自动机策略把技能点花光(M35,E-127;快捷栏随之排满)
         private bool _smash;                               // -dnfsmash:自动机清房、捡完金币之后顺手打翻房间里的可破坏物件(M34,E-126)
         private bool _useBot;
         private int _seed = 1;
@@ -242,7 +249,7 @@ namespace Dnf.Client
             Screen.sleepTimeout = SleepTimeout.NeverSleep;
             if (Application.isMobilePlatform)
             {
-                _hud = false;                  // 手机上没有 H 键切换文字层,默认不让调试文字盖住画面
+                _hud = false;                  // 手机上没有 F1 键切换文字层,默认不让调试文字盖住画面
             }
             // 黑边相机:先把整个窗口清成黑色,舞台相机只在中间的 800×600(的整数倍)视口里画
             var go = new GameObject("DnfBars") { hideFlags = HideFlags.HideAndDontSave };
@@ -341,6 +348,13 @@ namespace Dnf.Client
                     case "-dnfquestat":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
                                 System.Globalization.CultureInfo.InvariantCulture, out double qat) && qat >= 0.0) { _questProbeAtSeconds = qat; i++; }
+                        break;
+                    case "-dnflearn":
+                        _learnSkills = true;
+                        break;
+                    case "-dnfskillat":
+                        if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out double kat) && kat >= 0.0) { _skillProbeAtSeconds = kat; i++; }
                         break;
                     case "-dnfpotionat":
                         if (value != null && double.TryParse(value, System.Globalization.NumberStyles.Float,
@@ -1112,6 +1126,8 @@ namespace Dnf.Client
             bool bagOpen = _flow.Bag.Open;
             bool shopOpen = _flow.Shop.Open;
             bool questOpen = _flow.Quests.Open;
+            bool skillOpen = _flow.Skills.Open;
+            RunSkillProbe();
             if (menuOpen != _menuWasOpen)
             {
                 _menuWasOpen = menuOpen;
@@ -1135,7 +1151,13 @@ namespace Dnf.Client
                 _questWasOpen = questOpen;
                 questEvent = questOpen ? "open mode=" + _flow.Quests.Mode + " rows=" + _flow.Quests.Rows.Count : "closed";
             }
-            bool open = menuOpen || bagOpen || shopOpen || questOpen; // 系统菜单、背包、商店与任务窗口开着都暂停游戏
+            string skillEvent = null;                    // 技能窗口同理
+            if (skillOpen != _skillWasOpen)
+            {
+                _skillWasOpen = skillOpen;
+                skillEvent = skillOpen ? "open page=" + _flow.Skills.Page + " rows=" + _flow.Skills.Rows.Count : "closed";
+            }
+            bool open = menuOpen || bagOpen || shopOpen || questOpen || skillOpen; // 系统菜单、背包、商店、任务窗口与技能窗口开着都暂停游戏
             if (open != _overlayWasOpen)
             {
                 _overlayWasOpen = open;
@@ -1174,6 +1196,16 @@ namespace Dnf.Client
                 if (!questOpen)
                 {
                     FlushSave("quest");                  // 关窗时存一次:接了、交了、放弃了都不等十秒的定时检查
+                }
+            }
+            if (skillEvent != null && _progress != null)
+            {
+                SkillWindow skills = _flow.Skills;
+                Debug.Log("DNF_SKILL window " + skillEvent + " paused=" + _paused + " opens=" + skills.Opens + " sp=" + _progress.SkillPoints + " ap=" + _progress.AwakeningPoints
+                    + " learned=" + _progress.SkillsLearned + " level=" + _progress.Level);
+                if (!skillOpen)
+                {
+                    FlushSave("skill");                  // 关窗时存一次:学了、退了、重置了、摆了快捷栏都不等十秒的定时检查
                 }
             }
             if (menuOpen && TryGetCanvasPoint(Input.mousePosition, out int mx, out int my))
@@ -1618,7 +1650,7 @@ namespace Dnf.Client
             {
                 return null;
             }
-            bool windows = _flow.Menu.Open || _flow.Bag.Open || _flow.Shop.Open || _flow.Quests.Open;
+            bool windows = _flow.Menu.Open || _flow.Bag.Open || _flow.Shop.Open || _flow.Quests.Open || _flow.Skills.Open;
             List<SceneSprite> sprites = QuestHudArt.Build(_questHud, _menuArt, !windows);
             return sprites.Count == 0 ? null : sprites;
         }
@@ -1672,6 +1704,10 @@ namespace Dnf.Client
             if (_flow.Quests.Open)
             {
                 return QuestWindowArt.Build(_flow.Quests, _menuArt);
+            }
+            if (_flow.Skills.Open)
+            {
+                return SkillWindowArt.Build(_flow.Skills, _assets, _menuArt);
             }
             if (!_flow.Menu.Open)
             {
@@ -1984,6 +2020,19 @@ namespace Dnf.Client
                 _flow.UseQuests(quests);             // 任务系统(M31):空格对话、L 键日志、NPC 头顶标记、副本里的击杀与清图事件
                 _flow.UseNpcNames(NpcDialogName);
             }
+            HeroProgress skillHero = HeroProgressForRun();
+            if (skillHero != null)
+            {
+                _flow.Skills.Use(skillHero);         // 技能窗口(M35):K 键,城镇里学技能、退技能、重置、摆快捷栏
+                if (_learnSkills)
+                {
+                    int sp = skillHero.SkillPoints;
+                    int ap = skillHero.AwakeningPoints;
+                    int levels = SkillPlanner.SpendAll(skillHero);
+                    Debug.Log("DNF_SKILL planner levels=" + levels + " sp=" + sp + ">" + skillHero.SkillPoints + " ap=" + ap + ">" + skillHero.AwakeningPoints
+                        + " learnedCount=" + skillHero.SkillsLearned);
+                }
+            }
             switch (_flowFrom)
             {
                 case "char":
@@ -2061,7 +2110,7 @@ namespace Dnf.Client
         /// <summary>
         /// 方向键(或 -dnfautowalk 的时间表)当前的状态:-1/0/1;返回这一帧有没有"刚按下攻击键"(X 键,或时间表里到点的 attack),
         /// <paramref name="jump"/> 是这一帧有没有"刚按下跳跃键"(C 键,或时间表里到点的 jump)。
-        /// 按原版的默认键位(clientonly/hotkeysystem.co,证据 E-072):X 普通攻击、C 跳跃、A S D 是前三个技能快捷槽(鬼斩、上挑、后跳,证据 E-076);
+        /// 按原版的默认键位(clientonly/hotkeysystem.co,证据 E-072):X 普通攻击、C 跳跃、A S D F G H 是六个技能快捷槽(新建的剑士前三个是鬼斩、上挑、后跳,证据 E-076;槽里放什么由技能簿定,M35);
         /// Z 与空格也是技能槽,但原版里它们绑什么技能没有确认,所以不响应(空格在本演示里是暂停)。
         /// </summary>
         private bool ReadHeroInput(out int dirX, out int dirY, out bool jump, out SkillKeys skills)
@@ -2082,6 +2131,9 @@ namespace Dnf.Client
             if (Input.GetKeyDown(KeyCode.A)) { skills |= SkillKeys.A; }
             if (Input.GetKeyDown(KeyCode.S)) { skills |= SkillKeys.S; }
             if (Input.GetKeyDown(KeyCode.D)) { skills |= SkillKeys.D; }
+            if (Input.GetKeyDown(KeyCode.F)) { skills |= SkillKeys.F; }
+            if (Input.GetKeyDown(KeyCode.G)) { skills |= SkillKeys.G; }
+            if (Input.GetKeyDown(KeyCode.H)) { skills |= SkillKeys.H; }
             bool attack = Input.GetKeyDown(KeyCode.X);
             if (TouchActive)
             {
@@ -2519,6 +2571,238 @@ namespace Dnf.Client
             }
         }
 
+        /// <summary>
+        /// -dnfskillat 的无人值守探针(技能系统,证据 E-127):城镇阶段开始后过了指定秒数像按 K 一样打开技能窗口,过一秒在四个分页里找第一个能学的技能、选中、学一级,
+        /// 再过一秒退一级,再过一秒把第一个学会的主动技能放进快捷栏最后一格,再过一秒连按两次重置(第一下预备、第二下执行),再过一秒按 K 关上,再过一秒收尾;
+        /// 日志里留 DNF_SKILL probe 行,只有个数、点数与结果名,没有技能名与编号(各只做一次)。
+        /// </summary>
+        private void RunSkillProbe()
+        {
+            if (_skillProbeAtSeconds < 0.0 || _skillProbeDone || _progress == null)
+            {
+                return;
+            }
+            float now = Time.realtimeSinceStartup;
+            SkillWindow w = _flow.Skills;
+            switch (_skillProbeStep)
+            {
+                case 0:
+                    if (_flow.Stage == GameStage.Town && now - _stageRealStart >= _skillProbeAtSeconds)
+                    {
+                        if (_flow.ToggleSkills())            // K 键
+                        {
+                            _skillProbeStep = 1;
+                            _skillProbeStepAt = now;
+                            Debug.Log("DNF_SKILL probe open page=" + w.Page + " rows=" + w.Rows.Count + " sp=" + _progress.SkillPoints + " ap=" + _progress.AwakeningPoints
+                                + " learned=" + _progress.SkillsLearned + " level=" + _progress.Level);
+                        }
+                        else
+                        {
+                            _skillProbeDone = true;
+                            Debug.Log("DNF_SKILL probe failed data=" + _progress.HasSkillData + " open=" + w.Open);
+                        }
+                    }
+                    break;
+                case 1:
+                    if (now - _skillProbeStepAt >= 1f)
+                    {
+                        // 四个分页各有几行;第一个能学的技能(状态是 Learnable 的行)选中
+                        var pages = new int[SkillWindow.PageCount];
+                        int foundPage = -1;
+                        int foundRow = -1;
+                        for (int page = 0; page < SkillWindow.PageCount; page++)
+                        {
+                            w.SetPage(page);
+                            pages[page] = w.Rows.Count;
+                            for (int i = 0; foundRow < 0 && i < w.Rows.Count; i++)
+                            {
+                                if (w.Rows[i].State == SkillRowState.Learnable)
+                                {
+                                    foundRow = i;
+                                    foundPage = page;
+                                }
+                            }
+                        }
+                        bool learned = false;
+                        int levelBefore = 0;
+                        int levelAfter = 0;
+                        bool special = false;
+                        int sp = _progress.SkillPoints;
+                        int ap = _progress.AwakeningPoints;
+                        if (foundRow >= 0)
+                        {
+                            w.SetPage(foundPage);
+                            w.Select(foundRow);
+                            levelBefore = w.SelectedRow.Level;
+                            special = w.SelectedRow.Special;
+                            learned = w.Learn();
+                            levelAfter = w.SelectedRow.Level;
+                        }
+                        _skillProbeStep = 2;
+                        _skillProbeStepAt = now;
+                        Debug.Log("DNF_SKILL probe learn found=" + (foundRow >= 0) + " pages=" + pages[0] + "/" + pages[1] + "/" + pages[2] + "/" + pages[3] + " learned=" + learned
+                            + " result=" + w.LastResultName + " special=" + special + " level=" + levelBefore + ">" + levelAfter
+                            + " sp=" + sp + ">" + _progress.SkillPoints + " ap=" + ap + ">" + _progress.AwakeningPoints + " learnedCount=" + _progress.SkillsLearned);
+                    }
+                    break;
+                case 2:
+                    if (now - _skillProbeStepAt >= 1f)
+                    {
+                        int sp = _progress.SkillPoints;
+                        int ap = _progress.AwakeningPoints;
+                        bool refunded = w.SelectedRow != null && w.Refund();
+                        _skillProbeStep = 3;
+                        _skillProbeStepAt = now;
+                        Debug.Log("DNF_SKILL probe refund refunded=" + refunded + " result=" + w.LastResultName + " sp=" + sp + ">" + _progress.SkillPoints
+                            + " ap=" + ap + ">" + _progress.AwakeningPoints + " learnedCount=" + _progress.SkillsLearned);
+                    }
+                    break;
+                case 3:
+                    if (now - _skillProbeStepAt >= 1f)
+                    {
+                        // 在四个分页里找第一个学会了的主动技能(白送的也算),放进快捷栏最后一格
+                        bool assigned = false;
+                        for (int page = 0; page < SkillWindow.PageCount && !assigned; page++)
+                        {
+                            w.SetPage(page);
+                            for (int i = 0; i < w.Rows.Count && !assigned; i++)
+                            {
+                                if (w.Rows[i].Level > 0 && w.Rows[i].Active)
+                                {
+                                    w.Select(i);
+                                    assigned = w.Assign(SkillWindow.QuickSlotCount - 1);
+                                }
+                            }
+                        }
+                        _skillProbeStep = 4;
+                        _skillProbeStepAt = now;
+                        Debug.Log("DNF_SKILL probe assign ok=" + assigned + " slot=" + (SkillWindow.QuickSlotCount - 1) + " filled=" + (w.QuickAt(SkillWindow.QuickSlotCount - 1) > 0)
+                            + " assigns=" + w.Assigns + " msg=\"" + w.Message + "\"");
+                    }
+                    break;
+                case 4:
+                    if (now - _skillProbeStepAt >= 1f)
+                    {
+                        bool first = w.Reset();              // 第一下只是预备,返回 False
+                        bool second = w.Reset();             // 第二下真的重置,返回 True
+                        _skillProbeStep = 5;
+                        _skillProbeStepAt = now;
+                        Debug.Log("DNF_SKILL probe reset first=" + first + " second=" + second + " resets=" + w.Resets + " sp=" + _progress.SkillPoints + " ap=" + _progress.AwakeningPoints
+                            + " learnedCount=" + _progress.SkillsLearned);
+                    }
+                    break;
+                case 5:
+                    if (now - _skillProbeStepAt >= 1f)
+                    {
+                        _flow.ToggleSkills();                // K 键
+                        _skillProbeStep = 6;
+                        _skillProbeStepAt = now;
+                        Debug.Log("DNF_SKILL probe closed open=" + w.Open);
+                    }
+                    break;
+                default:
+                    if (now - _skillProbeStepAt >= 1f)
+                    {
+                        _skillProbeDone = true;
+                        Debug.Log("DNF_SKILL probe done learns=" + w.Learns + " refunds=" + w.Refunds + " resets=" + w.Resets + " assigns=" + w.Assigns
+                            + " sp=" + _progress.SkillPoints + " learnedCount=" + _progress.SkillsLearned);
+                    }
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// 技能窗口开着时的输入(开着就独占;键位是本项目自己的占位设计):上下键选技能、左右键或 Q / E 或 Tab 换分页、回车或 X 或 + 学一级、退格或 - 退一级、
+        /// R 重置(第一下预备、第二下执行)、A S D F G H 把选中的主动技能放进对应的快捷栏格、Delete 把它从快捷栏拿掉、K 或 Esc 关上;鼠标点分页、技能行(再点一下已选中的学一级)、按钮与快捷栏格。
+        /// </summary>
+        private void HandleSkillInput(Event e)
+        {
+            SkillWindow skills = _flow.Skills;
+            if (e.type == EventType.KeyDown)
+            {
+                switch (e.keyCode)
+                {
+                    case KeyCode.Escape:
+                        _flow.ToggleMenu();          // 菜单的开关键:开着技能窗口时先把它关上
+                        break;
+                    case KeyCode.K:
+                        _flow.ToggleSkills();
+                        break;
+                    case KeyCode.UpArrow:
+                        skills.Move(0, -1);
+                        break;
+                    case KeyCode.DownArrow:
+                        skills.Move(0, 1);
+                        break;
+                    case KeyCode.LeftArrow:
+                    case KeyCode.Q:
+                        skills.Move(-1, 0);
+                        break;
+                    case KeyCode.RightArrow:
+                    case KeyCode.E:
+                    case KeyCode.Tab:
+                        skills.Move(1, 0);
+                        break;
+                    case KeyCode.Return:
+                    case KeyCode.KeypadEnter:
+                    case KeyCode.X:
+                    case KeyCode.Plus:
+                    case KeyCode.Equals:
+                    case KeyCode.KeypadPlus:
+                        skills.Learn();
+                        break;
+                    case KeyCode.Backspace:
+                    case KeyCode.Minus:
+                    case KeyCode.KeypadMinus:
+                        skills.Refund();
+                        break;
+                    case KeyCode.R:
+                        skills.Reset();
+                        break;
+                    case KeyCode.A:
+                        skills.Assign(0);
+                        break;
+                    case KeyCode.S:
+                        skills.Assign(1);
+                        break;
+                    case KeyCode.D:
+                        skills.Assign(2);
+                        break;
+                    case KeyCode.F:
+                        skills.Assign(3);
+                        break;
+                    case KeyCode.G:
+                        skills.Assign(4);
+                        break;
+                    case KeyCode.H:
+                        skills.Assign(5);
+                        break;
+                    case KeyCode.Delete:
+                        skills.ClearSlot();
+                        break;
+                }
+            }
+            else if (e.type == EventType.MouseDown && e.button == 0 && TryGetCanvasPoint(Input.mousePosition, out int cx, out int cy))
+            {
+                skills.Click(cx, cy);
+            }
+            NoteSkillOps();
+        }
+
+        /// <summary>技能窗口里学、退、重置、摆快捷栏的累计次数变了就记一行 DNF_SKILL 日志(只有个数与结果名,没有技能名与编号)。</summary>
+        private void NoteSkillOps()
+        {
+            SkillWindow skills = _flow.Skills;
+            int ops = skills.Learns + skills.Refunds + skills.Resets + skills.Assigns;
+            if (ops == _skillOpsLogged || _progress == null)
+            {
+                return;
+            }
+            _skillOpsLogged = ops;
+            Debug.Log("DNF_SKILL changed learns=" + skills.Learns + " refunds=" + skills.Refunds + " resets=" + skills.Resets + " assigns=" + skills.Assigns
+                + " sp=" + _progress.SkillPoints + " ap=" + _progress.AwakeningPoints + " learned=" + _progress.SkillsLearned + " msg=\"" + skills.Message + "\"");
+        }
+
         private void HandleRunningInput(Event e)
         {
             if (_flow != null && _flow.Menu.Open)
@@ -2539,6 +2823,11 @@ namespace Dnf.Client
             if (_flow != null && _flow.Quests.Open)
             {
                 HandleQuestInput(e);
+                return;
+            }
+            if (_flow != null && _flow.Skills.Open)
+            {
+                HandleSkillInput(e);
                 return;
             }
             if (e.type == EventType.KeyDown)
@@ -2626,8 +2915,8 @@ namespace Dnf.Client
                             _flow.EnterSelect("key");   // 占位(-dnflegacytown):老式城镇只有赛丽亚房间一张图,没有出口;城镇图册里的城镇走到地下城入口区域的出口就是了
                         }
                         break;
-                    case KeyCode.H:
-                        _hud = !_hud;
+                    case KeyCode.F1:
+                        _hud = !_hud;               // 文字层开关(原版键位里 H 是第六个技能槽,所以挪到 F1)
                         break;
                     case KeyCode.I:
                         if (_flow != null && HeroProgressForRun() != null)
@@ -2639,6 +2928,12 @@ namespace Dnf.Client
                         if (_flow != null && HeroProgressForRun() != null)
                         {
                             _flow.ToggleQuests();        // 任务日志(城镇与副本里;没有任务系统的运行模式没有)
+                        }
+                        break;
+                    case KeyCode.K:
+                        if (_flow != null && HeroProgressForRun() != null)
+                        {
+                            _flow.ToggleSkills();        // 技能窗口(只在城镇里;没有等级进度的运行模式没有)
                         }
                         break;
                     case KeyCode.Escape:
@@ -2877,18 +3172,18 @@ namespace Dnf.Client
                 if (_session is DungeonSession)
                 {
                     help = (_bot != null ? "Auto-play bot is driving (bot input only)   " : "Arrow keys: walk (double-tap Left/Right: run)   X: attack (again to chain; while running: dash attack)   C: jump (X in the air: jump attack)   A: Hard Attack   S: Upper Slash   D: Back Step   ")
-                        + "Space: pause   H: hide text   " + (_flow != null ? "Esc: menu" : "Esc: quit") + "   (clear a room to open its gates, then walk into a gate; placeholder damage; skills cost MP; monsters hit back unless -dnfnodamage; Z not bound; X on the death screen uses a revive coin)";
+                        + "Space: pause   F1: hide text   " + (_flow != null ? "Esc: menu" : "Esc: quit") + "   (clear a room to open its gates, then walk into a gate; placeholder damage; skills cost MP; monsters hit back unless -dnfnodamage; Z not bound; X on the death screen uses a revive coin)";
                 }
                 else
                 {
                     help = _session is RoomCombatSession
-                        ? "Arrow keys: walk (double-tap Left/Right: run)   X: attack (again to chain; while running: dash attack)   C: jump (X in the air: jump attack)   A: Hard Attack   S: Upper Slash   D: Back Step   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (placeholder damage; skills cost MP; monsters hit back unless -dnfnodamage)"
-                        : "Arrow keys: walk   Space: pause (then Left/Right step 50 ms)   H: hide text   Esc: quit   (no UI, no combat)";
+                        ? "Arrow keys: walk (double-tap Left/Right: run)   X: attack (again to chain; while running: dash attack)   C: jump (X in the air: jump attack)   A: Hard Attack   S: Upper Slash   D: Back Step   Space: pause (then Left/Right step 50 ms)   F1: hide text   Esc: quit   (placeholder damage; skills cost MP; monsters hit back unless -dnfnodamage)"
+                        : "Arrow keys: walk   Space: pause (then Left/Right step 50 ms)   F1: hide text   Esc: quit   (no UI, no combat)";
                 }
             }
             else
             {
-                help = "Space: pause   Left/Right: step 50 ms   H: hide text   Esc: quit   (no player character on this map)";
+                help = "Space: pause   Left/Right: step 50 ms   F1: hide text   Esc: quit   (no player character on this map)";
             }
             if (_flow != null)
             {
@@ -2896,23 +3191,23 @@ namespace Dnf.Client
                     + (_flowBot != null ? "  (autopilot" + (_flowBot.Done ? ", done)" : ")") : string.Empty) + "\n" + hero;
                 if (InSelect)
                 {
-                    help = "Up/Down: choose a dungeon   Enter or Space: go in   Esc: back to town   Mouse: click a card (again to enter) or the town button   H: hide text"
+                    help = "Up/Down: choose a dungeon   Enter or Space: go in   Esc: back to town   Mouse: click a card (again to enter) or the town button   F1: hide text"
                         + (_flow.Select.World == null ? "   (placeholder screen)" : string.Empty);
                 }
                 else if (InCharacterSelect)
                 {
-                    help = "Arrow keys: choose a character   Enter or Space: start   Esc: quit   Mouse: click a character slot, Start or Exit   H: hide text"
+                    help = "Arrow keys: choose a character   Enter or Space: start   Esc: quit   Mouse: click a character slot, Start or Exit   F1: hide text"
                         + (_flow.CharacterSelect.Scene == null ? "   (placeholder screen)" : string.Empty);
                 }
                 else if (_flow.Stage == GameStage.Loading)
                 {
-                    help = "Loading screen (the flow moves on by itself)   H: hide text   Esc: quit";
+                    help = "Loading screen (the flow moves on by itself)   F1: hide text   Esc: quit";
                 }
                 else if (_flow.Stage == GameStage.Town)
                 {
                     help = _flow.TownWorld is LegacyTownWorld
-                        ? "Arrow keys: walk   Enter: open the dungeon map (placeholder: this legacy town has no exits)   Space: pause   H: hide text   Esc: menu"
-                        : "Arrow keys: walk (push into a map edge exit to change area; the last area's right-hand exit opens the dungeon map)   Space: pause   H: hide text   Esc: menu";
+                        ? "Arrow keys: walk   Enter: open the dungeon map (placeholder: this legacy town has no exits)   Space: pause   F1: hide text   Esc: menu"
+                        : "Arrow keys: walk (push into a map edge exit to change area; the last area's right-hand exit opens the dungeon map)   Space: pause   F1: hide text   Esc: menu";
                 }
             }
             string shownMap = _session != null ? _session.MapPath : InSelect ? "(dungeon select)" : InCharacterSelect ? "(character select)" : mapPath;

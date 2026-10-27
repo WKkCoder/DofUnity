@@ -356,7 +356,8 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[weight]").Int(WeightStat)
                 .Tag("[jump speed]").Int(JumpSpeedStat)
                 .Tag("[width]").Int(BodyWidthStat, BodyDepthStat)
-                // 初始技能表("编号 等级"成对):181 与 174 是被动,5、46、169 是带出招指令的主动技能,顺序与原版新建剑士一样
+                // 初始技能表("编号 等级"成对,在 [initial value] 块里,与原版一样):181 与 174 是被动,5、46、169 是带出招指令的主动技能,顺序与原版新建剑士一样
+                .Tag("[initial value]")
                 .Tag("[skill]").Int(181, 2, HardAttackSkill, 1, UpperSlashSkill, UpperSlashLevel, BackStepSkill, 1, 174, 1)
                 // 技能动作与攻击信息(两个表的下标不对应:护身动作没有攻击信息,鬼斩在动作表里是第 1 项、在攻击信息表里是第 0 项)
                 .Tag("[etc motion]").Str("Animation/Guard.ani").Str("Animation/HardAttack.ani")

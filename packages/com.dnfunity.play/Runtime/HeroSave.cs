@@ -77,6 +77,34 @@ namespace Dnf.Play
         public int Opened { get; }
     }
 
+    /// <summary>存档里学会的一个技能(M35):技能编号与等级(等级不小于 1)。</summary>
+    public readonly struct SavedSkill
+    {
+        public SavedSkill(int id, int level)
+        {
+            Id = id;
+            Level = level;
+        }
+
+        public int Id { get; }
+
+        public int Level { get; }
+    }
+
+    /// <summary>存档里技能快捷栏的一格(M35):格号(0 到 5,键 A S D F G H)与技能编号。</summary>
+    public readonly struct SavedSkillSlot
+    {
+        public SavedSkillSlot(int slot, int skillId)
+        {
+            Slot = slot;
+            SkillId = skillId;
+        }
+
+        public int Slot { get; }
+
+        public int SkillId { get; }
+    }
+
     /// <summary>还原存档时发生了什么(宿主写进日志)。</summary>
     public sealed class SaveApplyReport
     {
@@ -125,9 +153,14 @@ namespace Dnf.Play
         /// <summary>累计经验(<see cref="HeroProgress.Exp"/>)。</summary>
         public int Exp { get; set; }
 
+        /// <summary>剩下的技能点(M35 起是花掉以后的余额;更早的存档没有花过,余额就是累计值)。</summary>
         public int SkillPoints { get; set; }
 
+        /// <summary>剩下的觉醒点(特殊技能花它)。</summary>
         public int AwakeningPoints { get; set; }
+
+        /// <summary>成长类型(M35 加的键 <c>growtype 下标</c>,0 或没有这一行是转职前)。</summary>
+        public int Growtype { get; set; }
 
         public int LevelUps { get; set; }
 
@@ -157,12 +190,22 @@ namespace Dnf.Play
         /// <summary>各副本的通关记录(M33 加的键 <c>dclear 副本编号 值</c>,旧存档没有这些行;副本编号从小到大)。</summary>
         public List<SavedClear> Clears { get; } = new List<SavedClear>();
 
+        /// <summary>学会的技能(M35 加的键 <c>skill 编号 等级</c>,旧存档没有这些行;编号从小到大)。</summary>
+        public List<SavedSkill> Skills { get; } = new List<SavedSkill>();
+
+        /// <summary>技能快捷栏放了什么(M35 加的键 <c>skquick 格号 编号</c>,格号从小到大,只写有技能的格)。</summary>
+        public List<SavedSkillSlot> SkillQuick { get; } = new List<SavedSkillSlot>();
+
         /// <summary>写成文本(换行用 \n,键的次序固定,所以内容没变文本也不变)。</summary>
         public string ToText()
         {
             var sb = new StringBuilder();
             sb.Append(Magic).Append(' ').Append(Version.ToString(Inv)).Append('\n');
             Line(sb, "job", Job);
+            if (Growtype != 0)
+            {
+                Line(sb, "growtype", Growtype);
+            }
             Line(sb, "level", Level);
             Line(sb, "exp", Exp);
             Line(sb, "sp", SkillPoints);
@@ -200,6 +243,14 @@ namespace Dnf.Play
             foreach (SavedClear clear in Clears)
             {
                 sb.Append("dclear ").Append(clear.DungeonId.ToString(Inv)).Append(' ').Append(clear.Opened.ToString(Inv)).Append('\n');
+            }
+            foreach (SavedSkill skill in Skills)
+            {
+                sb.Append("skill ").Append(skill.Id.ToString(Inv)).Append(' ').Append(skill.Level.ToString(Inv)).Append('\n');
+            }
+            foreach (SavedSkillSlot slot in SkillQuick)
+            {
+                sb.Append("skquick ").Append(slot.Slot.ToString(Inv)).Append(' ').Append(slot.SkillId.ToString(Inv)).Append('\n');
             }
             return sb.ToString();
         }
@@ -278,6 +329,7 @@ namespace Dnf.Play
             switch (key)
             {
                 case "cleared":
+                case "growtype":
                 case "job":
                 case "level":
                 case "exp":
@@ -294,6 +346,8 @@ namespace Dnf.Play
                 case "worn":
                 case "quick":
                 case "dclear":
+                case "skill":
+                case "skquick":
                     arity = 3;
                     break;
                 default:
@@ -375,6 +429,24 @@ namespace Dnf.Play
                         r.Clears.Add(new SavedClear((int)a, (int)b));
                     }
                     break;
+                case "growtype":
+                    ok = InRange(a, 0, Dnf.Game.SkillRules.GrowtypeCount - 1);
+                    r.Growtype = (int)a;
+                    break;
+                case "skill":
+                    ok = InRange(a, 1, int.MaxValue) && InRange(b, 1, MaxSkillLevel);
+                    if (ok)
+                    {
+                        r.Skills.Add(new SavedSkill((int)a, (int)b));
+                    }
+                    break;
+                case "skquick":
+                    ok = InRange(a, 0, Dnf.Game.SkillBook.QuickSlots - 1) && InRange(b, 1, int.MaxValue);
+                    if (ok)
+                    {
+                        r.SkillQuick.Add(new SavedSkillSlot((int)a, (int)b));
+                    }
+                    break;
                 case "quick":
                     ok = InRange(a, 0, Dnf.Game.QuickSlots.Count - 1) && InRange(b, 1, int.MaxValue);
                     if (ok)
@@ -396,6 +468,9 @@ namespace Dnf.Play
             }
             return ok;
         }
+
+        /// <summary>存档里一个技能的等级上限(防写坏的文件;原版技能最高一百级出头)。</summary>
+        public const int MaxSkillLevel = 1000;
 
         /// <summary>每个任务最多存多少项计数(猎杀目标组数的上限,防写坏的文件占内存)。</summary>
         public const int MaxQuestCounters = 32;

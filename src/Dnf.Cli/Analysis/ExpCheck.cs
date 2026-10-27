@@ -27,7 +27,17 @@ internal static class ExpCheck
         {
             return null;
         }
-        return HeroProgress.CreateForLocalHero(assets, opts.HeroLevel);
+        HeroProgress? progress = HeroProgress.CreateForLocalHero(assets, opts.HeroLevel);
+        if (progress != null && opts.LearnSkills)
+        {
+            // --learn:开局先按自动机策略把点数花光(M35,证据 E-127);数字只打印在终端
+            int sp = progress.SkillPoints;
+            int ap = progress.AwakeningPoints;
+            int levels = SkillPlanner.SpendAll(progress);
+            Console.WriteLine("  学技能:自动机策略加了 " + levels + " 级(技能点 " + sp + " → " + progress.SkillPoints + ",觉醒点 " + ap + " → " + progress.AwakeningPoints
+                + "),现在学会 " + progress.SkillsLearned + " 个技能");
+        }
+        return progress;
     }
 
     /// <summary>一行经验小结:起止等级、升了几级、累计经验、本级进度、点数、基础经验表的来源。</summary>

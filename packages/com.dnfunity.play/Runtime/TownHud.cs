@@ -47,7 +47,7 @@ namespace Dnf.Play
             for (int i = 0; i < skills.Slots.Count; i++)
             {
                 HeroSkillSlot s = skills.Slots[i];
-                states.Add(new HudSkillState(i, s.Def, true, 0.0, s.Level, false));
+                states.Add(new HudSkillState(s.Position, s.Def, true, 0.0, s.Level, false));
             }
             return states;
         }
@@ -56,24 +56,51 @@ namespace Dnf.Play
     /// <summary>
     /// 城镇里的原版底栏(M30):和副本里同一条(<see cref="HudArt"/>),只是状态是"站在城镇里"的——血球魔法球是满的、技能槽亮着、没有冷却;
     /// 等级、经验条、SP 与物品快捷槽取自等级进度(<see cref="HeroProgress"/>),所以在副本里打到的经验、买的药水回城后就看得见。
-    /// 技能槽里的图标与等级取角色脚本 [initial value] 里的初始技能表(同 <see cref="HeroSkills.Create"/>),整个会话只读一次。
+    /// 技能槽里的图标与等级:等级进度接了技能数据时取它的技能簿(M35,学会的技能、等级与六格快捷栏,技能簿一变就重排);否则取角色脚本 [initial value] 里的初始技能表(同 <see cref="HeroSkills.Create(GameData, CharacterDef, int)"/>)。
     /// 画的位置在屏幕最下面 91 行,盖住城镇画面底部那条没有地图的暗带。取不到底栏的图包时 <see cref="TryCreate"/> 返回 null,城镇照旧不画底栏。
     /// </summary>
     public sealed class TownHud
     {
         private readonly HudArt _hud;
-        private readonly HeroSkills _skills;
+        private readonly GameData _data;
+        private readonly CharacterDef _chr;
+        private HeroSkills _skills;
+        private SkillBook _builtFor;
+        private int _builtVersion = -1;
         private int _vitalsLevel = -1;
         private HeroVitals _vitals;
 
         public TownHud(HudArt hud, HeroSkills skills)
+            : this(hud, skills, null, null)
+        {
+        }
+
+        /// <summary>给了 <paramref name="data"/> 与 <paramref name="chr"/> 时,<see cref="Build"/> 会按等级进度的技能簿重排技能槽。</summary>
+        public TownHud(HudArt hud, HeroSkills skills, GameData data, CharacterDef chr)
         {
             _hud = hud ?? throw new System.ArgumentNullException(nameof(hud));
             _skills = skills ?? new HeroSkills(new HeroSkillSlot[0]);
+            _data = data;
+            _chr = chr;
         }
 
         /// <summary>技能表(槽的个数与等级;日志与测试用)。</summary>
         public HeroSkills Skills => _skills;
+
+        /// <summary>技能簿变了就按它重排技能槽(没有数据或进度没接技能数据时不动)。</summary>
+        private void SyncSkills(HeroProgress progress)
+        {
+            if (_data == null || _chr == null || progress == null || !progress.HasSkillData)
+            {
+                return;
+            }
+            if (!ReferenceEquals(_builtFor, progress.Skills) || _builtVersion != progress.SkillsVersion)
+            {
+                _skills = HeroSkills.Create(_data, _chr, _chr.Job, progress.Skills);
+                _builtFor = progress.Skills;
+                _builtVersion = progress.SkillsVersion;
+            }
+        }
 
         /// <summary>
         /// 从数据目录造一个:底栏图取自图包,技能槽按角色 0 的初始技能表排。读不到底栏的图时返回 null;读不到角色或技能时底栏照画,只是技能槽是空的。
@@ -90,7 +117,8 @@ namespace Dnf.Play
                 return null;
             }
             var data = new GameData(new PvfScriptSource(assets.Pvf));
-            return new TownHud(hud, HeroSkills.Create(data, data.GetCharacter(0), 0));
+            CharacterDef chr = data.GetCharacter(0);
+            return new TownHud(hud, HeroSkills.Create(data, chr, 0), data, chr);
         }
 
         /// <summary>
@@ -102,6 +130,7 @@ namespace Dnf.Play
             {
                 return false;
             }
+            SyncSkills(progress);
             if (_vitals == null || _vitalsLevel != progress.Level)
             {
                 _vitals = HeroVitals.FromStats(progress.Level, progress.Stats);

@@ -2364,8 +2364,8 @@ namespace Dnf.Render
     }
 
     /// <summary>
-    /// 技能快捷键(原版默认键位里 A、S、D 是前三个技能快捷槽,证据 E-072、E-076):一次更新里"刚按下"的键。
-    /// 槽里放什么技能由角色的初始技能表决定(<c>HeroSkills</c>)。
+    /// 技能快捷键(原版默认键位里 A、S、D、F、G、H 是六个技能快捷槽,证据 E-072、E-076;底栏画面六个槽的键名一致):一次更新里"刚按下"的键。
+    /// 槽里放什么技能由角色的技能簿决定(<c>HeroSkills</c>;M35 之前只有 A、S、D 三个槽,取自初始技能表)。
     /// </summary>
     [Flags]
     public enum SkillKeys
@@ -2374,6 +2374,9 @@ namespace Dnf.Render
         A = 1,
         S = 2,
         D = 4,
+        F = 8,
+        G = 16,
+        H = 32,
     }
 
     /// <summary>带技能快捷键的场景游戏(副本房间里的战斗):同 <see cref="IActionSession"/>,每帧多一组"刚按下"的技能键。</summary>

@@ -136,7 +136,7 @@ namespace Dnf.Play
         /// </summary>
         public string UseQuickSlot(int slot)
         {
-            if (StageSerial == 0 || Stage != GameStage.Dungeon || Menu.Open || Bag.Open || Shop.Open || Quests.Open)
+            if (StageSerial == 0 || Stage != GameStage.Dungeon || Menu.Open || Bag.Open || Shop.Open || Quests.Open || Skills.Open)
             {
                 return ItemUse.UnavailableName;
             }
@@ -228,7 +228,7 @@ namespace Dnf.Play
                 Bag.Close();
                 return true;
             }
-            return !Menu.Open && !Shop.Open && !Quests.Open && Bag.Show(Stage);
+            return !Menu.Open && !Shop.Open && !Quests.Open && !Skills.Open && Bag.Show(Stage);
         }
 
         /// <summary>
@@ -265,7 +265,7 @@ namespace Dnf.Play
         /// </summary>
         public bool OpenShop(int shopIndex)
         {
-            if (StageSerial == 0 || Menu.Open || Bag.Open || Shop.Open || Quests.Open)
+            if (StageSerial == 0 || Menu.Open || Bag.Open || Shop.Open || Quests.Open || Skills.Open)
             {
                 return false;
             }
@@ -401,7 +401,7 @@ namespace Dnf.Play
         /// </summary>
         public bool TryTalk()
         {
-            if (StageSerial == 0 || Menu.Open || Bag.Open || Shop.Open || Quests.Open)
+            if (StageSerial == 0 || Menu.Open || Bag.Open || Shop.Open || Quests.Open || Skills.Open)
             {
                 return false;
             }
@@ -434,7 +434,7 @@ namespace Dnf.Play
         /// </summary>
         public bool OpenQuestNpc(int npcId)
         {
-            if (StageSerial == 0 || _quests == null || Stage != GameStage.Town || Menu.Open || Bag.Open || Shop.Open || Quests.Open)
+            if (StageSerial == 0 || _quests == null || Stage != GameStage.Town || Menu.Open || Bag.Open || Shop.Open || Quests.Open || Skills.Open)
             {
                 return false;
             }
@@ -504,7 +504,30 @@ namespace Dnf.Play
                 Quests.Close();
                 return true;
             }
-            return !Menu.Open && !Bag.Open && !Shop.Open && Quests.ShowJournal(Stage);
+            return !Menu.Open && !Bag.Open && !Shop.Open && !Skills.Open && Quests.ShowJournal(Stage);
+        }
+
+        /// <summary>
+        /// 技能窗口(M35,本项目自己的占位设计,见 <see cref="SkillWindow"/>,证据 E-127):K 键(<see cref="ToggleSkills"/>)在城镇里打开;开着的时候宿主让游戏暂停
+        /// (和背包、商店一样,<see cref="Poll"/> 在它开着时不处理各阶段的结果);换阶段时自动关上。宿主要先接上主角的进度(<see cref="SkillWindow.Use"/>)。
+        /// </summary>
+        public SkillWindow Skills { get; } = new SkillWindow();
+
+        /// <summary>
+        /// K 键:技能窗口开着就关上;没开且当前是城镇、别的窗口也没开、主角进度带着技能数据就打开。返回有没有处理这次按键(没接主角进度不处理)。
+        /// </summary>
+        public bool ToggleSkills()
+        {
+            if (StageSerial == 0 || Skills.Hero == null)
+            {
+                return false;
+            }
+            if (Skills.Open)
+            {
+                Skills.Close();
+                return true;
+            }
+            return !Menu.Open && !Bag.Open && !Shop.Open && !Quests.Open && Skills.Show(Stage);
         }
 
         /// <summary>任务窗口里按了"商店"(或 Tab):关上任务窗口、打开这个 NPC 的商店;窗口没开或这个 NPC 没有商店返回 false。</summary>
@@ -535,6 +558,11 @@ namespace Dnf.Play
             if (Shop.Open)
             {
                 Shop.Close();            // 商店开着时 Esc 先关商店(数量框开着时 Esc 只取消数量框,由宿主的输入处理)
+                return true;
+            }
+            if (Skills.Open)
+            {
+                Skills.Close();          // 技能窗口开着时 Esc 先关技能窗口
                 return true;
             }
             if (Quests.Open)
@@ -681,7 +709,7 @@ namespace Dnf.Play
             {
                 return ApplyMenuAction(picked);
             }
-            if (Menu.Open || Bag.Open || Shop.Open || Quests.Open)
+            if (Menu.Open || Bag.Open || Shop.Open || Quests.Open || Skills.Open)
             {
                 return false;   // 菜单、背包、商店或任务窗口开着:游戏暂停,各阶段的结果(出口、结算)等关上之后再处理
             }
@@ -828,6 +856,7 @@ namespace Dnf.Play
             Bag.Close();                         // 背包窗口也关上
             Shop.Close();                        // 商店窗口也关上
             Quests.Close();                      // 任务窗口也关上
+            Skills.Close();                      // 技能窗口也关上
             Stage = to;
             Session = session;
             Select = select;

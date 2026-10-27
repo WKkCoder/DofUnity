@@ -183,6 +183,25 @@ namespace Dnf.Game
             return def;
         }
 
+        /// <summary>某职业技能列表里所有的技能编号(经 skill/skilllist.lst 找到该职业的列表),从小到大;找不到列表返回空数组。</summary>
+        public int[] GetSkillIds(int job)
+        {
+            Dictionary<int, string> perJob = ReadList(SkillListPath);
+            if (perJob == null || !perJob.TryGetValue(job, out string listFile))
+            {
+                return Array.Empty<int>();
+            }
+            Dictionary<int, string> skills = ReadList(PvfPath.ResolveRelativeTo(SkillListPath, listFile));
+            if (skills == null)
+            {
+                return Array.Empty<int>();
+            }
+            var ids = new int[skills.Count];
+            skills.Keys.CopyTo(ids, 0);
+            Array.Sort(ids);
+            return ids;
+        }
+
         /// <summary>读一个 .atk 攻击信息(规范化路径或相对路径均可,调用方应先解析成完整路径);找不到返回 null。</summary>
         public AttackInfoDef GetAttackInfo(string path)
         {

@@ -8,7 +8,7 @@ namespace Dnf.Play
     /// <summary>
     /// 按时间表替主角按键(无人值守地验证走动、挥击与命中,也用来让命令行与 Unity 播放器跑出完全相同的战斗画面)。
     /// 时间表是逗号分隔的 "秒:动作":动作是 none、left、right、up、down(可用 + 组合),再加上 attack、jump 表示在那一刻按一下攻击键或跳跃键(只按一次的边沿),
-    /// a、s、d 表示按一下技能快捷键 A、S、D(例如 "1:a" 在第 1 秒放 A 槽的技能);
+    /// a、s、d、f、g、h 表示按一下技能快捷键 A S D F G H(例如 "1:a" 在第 1 秒放 A 槽的技能);
     /// 方向保持到下一项改变为止,例如 "0.5:left,2:left+attack,3:none"。
     /// 双击方向键奔跑就写成"按、松、按":"0:right,0.1:none,0.2:right"(两次按下相隔 0.2 秒)。
     /// 两种用法:<see cref="Poll"/> 按任意时刻读取按键状态(实时运行);<see cref="Step"/> 以固定的 1/60 秒步长推进一个会话(逐帧确定的模拟,
@@ -71,6 +71,9 @@ namespace Dnf.Play
                         case "a": key.Skills |= SkillKeys.A; break;
                         case "s": key.Skills |= SkillKeys.S; break;
                         case "d": key.Skills |= SkillKeys.D; break;
+                        case "f": key.Skills |= SkillKeys.F; break;
+                        case "g": key.Skills |= SkillKeys.G; break;
+                        case "h": key.Skills |= SkillKeys.H; break;
                         case "none": break;
                         default: throw new FormatException("时间表里不认识的动作 " + word);
                     }
@@ -99,7 +102,7 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 同上,另外给出自上次读取以来新到点的技能键(<paramref name="skills"/>:时间表里的 a、s、d 对应 A、S、D 三个快捷键,每一项只会给出一次)。
+        /// 同上,另外给出自上次读取以来新到点的技能键(<paramref name="skills"/>:时间表里的 a、s、d、f、g、h 对应 A S D F G H 六个快捷键,每一项只会给出一次)。
         /// </summary>
         public bool Poll(double timeMs, out int dirX, out int dirY, out bool jump, out SkillKeys skills)
         {

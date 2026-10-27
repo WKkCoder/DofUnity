@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Dnf.Data;
 using Dnf.Game;
 using Dnf.Render;
 using Dnf.Script;
@@ -12,8 +13,8 @@ namespace Dnf.Play
     /// 变的只有等级、累计经验与升级得到的点数。<see cref="Gain"/> 走服务端的升级循环(<see cref="Leveling"/>),
     /// <see cref="Stats"/> 给出这个等级的属性(<see cref="CharacterGrowth"/>:初始值加上每升一级的增量;单位是十分之一)。
     /// 一个对象跟着主角走完整个流程:副本里每个房间的战斗会话共用同一个(房间换了、副本换了,等级与经验都留着)。
-    /// 没做:觉醒转职(<see cref="Awakening"/> 恒为 0,50 级以后用成长类型本身的块)、成长类型的选择(恒为第 0 类,新角色的缺省)、
-    /// 属性点与装备对属性的其余加成、技能点的花费(<see cref="SkillPoints"/> 只累计)。
+    /// 技能(M35,证据 E-127):<see cref="Skills"/> 是学会的技能、技能点余额与快捷栏;升级给的点数进它的余额,学技能花、退技能还。
+    /// 没做:觉醒转职(<see cref="Awakening"/> 恒为 0,50 级以后用成长类型本身的块)、属性点与装备对属性的其余加成、任务与道具另给的技能点。
     /// </summary>
     public sealed class HeroProgress
     {
@@ -26,7 +27,8 @@ namespace Dnf.Play
         public MobRewardTable Rewards { get; }
         public ExpRates Rates { get; }
 
-        public int Growtype { get; }
+        /// <summary>成长类型(下标 0 到 5,0 是转职前;<see cref="ChangeGrowtype"/> 转职时改)。</summary>
+        public int Growtype { get; private set; }
 
         /// <summary>觉醒下标(0 = 没觉醒;1、2 对应 [awakening 1]、[awakening 2] 块)。</summary>
         public int Awakening { get; }
@@ -42,11 +44,26 @@ namespace Dnf.Play
         /// <summary>从创建起一共涨过几级。</summary>
         public int LevelUps { get; private set; }
 
-        /// <summary>升级得到的技能点累计(没有花费)。</summary>
-        public int SkillPoints { get; private set; }
+        /// <summary>剩下的技能点(升级得到,学技能花掉,退技能还回;<see cref="Skills"/> 的余额)。</summary>
+        public int SkillPoints => Skills.Sp;
 
-        /// <summary>升级得到的觉醒点累计(新等级 ≥ 50 的每一级一点)。</summary>
-        public int AwakeningPoints { get; private set; }
+        /// <summary>剩下的觉醒点(新等级 ≥ 50 的每一级一点;特殊技能花它)。</summary>
+        public int AwakeningPoints => Skills.Sfp;
+
+        /// <summary>
+        /// 学会的技能、点数余额与技能快捷栏(M35)。没接技能数据时(<see cref="AttachSkills"/> 之前)是个空目录的簿子:只记点数。
+        /// 技能目录与成长类型在读档、转职时会换簿子里的内容,但对象本身在 <see cref="AttachSkills"/> 之后保持不变。
+        /// </summary>
+        public SkillBook Skills { get; private set; } = new SkillBook(SkillCatalog.Empty);
+
+        /// <summary>技能簿的变化次数的转手(宿主层不引用 Dnf.Game):学、退、重置、点数、快捷栏变动都会加一。</summary>
+        public int SkillsVersion => Skills.Version;
+
+        /// <summary>学会了几个技能(含白送的;宿主层只认基本类型,不引用技能簿的类型)。</summary>
+        public int SkillsLearned => Skills.LearnedCount;
+
+        /// <summary>白送技能的来源(.chr 的脚本行);<see cref="AttachSkills"/> 给。</summary>
+        private ScriptLine[] _chrLines;
 
         /// <summary>等级与经验的变化次数:各个房间的战斗会话据此发现"别的房间里升了级",把自己的生命上限与攻击面板换成新等级的。</summary>
         public int Version { get; private set; }
@@ -190,8 +207,7 @@ namespace Dnf.Play
             Level = r.Level;
             Exp = r.Exp;
             LevelUps += r.LevelsGained;
-            SkillPoints += r.SkillPoints;
-            AwakeningPoints += r.AwakeningPoints;
+            Skills.AddPoints(r.SkillPoints, r.AwakeningPoints);
             return r;
         }
 
@@ -356,6 +372,95 @@ namespace Dnf.Play
             Version++;
         }
 
+        // ---------------- 技能(M35,证据 E-127) ----------------
+
+        /// <summary>
+        /// 接上这个角色的技能:<paramref name="catalog"/> 是职业的技能目录,<paramref name="chrLines"/> 是 .chr 的脚本行(白送技能的来源,<see cref="SkillGrants"/>)。
+        /// 换一个新的 <see cref="Skills"/>:按现在的成长类型放进白送的技能;点数余额沿用,<paramref name="grantTotalPoints"/> 为真时改成"到现在等级为止应有的总点数"
+        /// (新建一个直接从某级开始的角色时用:它还一点都没花)。
+        /// </summary>
+        public void AttachSkills(SkillCatalog catalog, ScriptLine[] chrLines, bool grantTotalPoints)
+        {
+            int sp = Skills.Sp;
+            int sfp = Skills.Sfp;
+            _chrLines = chrLines;
+            Skills = new SkillBook(catalog ?? SkillCatalog.Empty);
+            Skills.SetGiven(SkillGrants.Read(_chrLines, Growtype));
+            if (grantTotalPoints)
+            {
+                sp = SkillRules.TotalSp(Sp, Level);
+                sfp = SkillRules.TotalSfp(Level);
+            }
+            Skills.SetPoints(sp, sfp);
+        }
+
+        /// <summary>接上了技能数据(目录里有技能)。</summary>
+        public bool HasSkillData => Skills.Catalog.Count > 0;
+
+        /// <summary>
+        /// 把技能 <paramref name="skillId"/> 学高 <paramref name="delta"/> 级(用主角现在的等级与成长类型,规则见 <see cref="SkillBook.Learn"/>);
+        /// <paramref name="spent"/> 是花掉的点数。
+        /// </summary>
+        public SkillOpResult LearnSkill(int skillId, int delta, out int spent)
+        {
+            return Skills.Learn(skillId, Level, Growtype, delta, out spent);
+        }
+
+        /// <summary>把技能 <paramref name="skillId"/> 退掉 <paramref name="delta"/> 级(规则见 <see cref="SkillBook.Refund"/>);<paramref name="refunded"/> 是还回的点数。</summary>
+        public SkillOpResult RefundSkill(int skillId, int delta, out int refunded)
+        {
+            return Skills.Refund(skillId, delta, out refunded);
+        }
+
+        /// <summary>
+        /// 重置技能(服务端 SkillInit):所有技能清回白送的那几个,快捷栏重排,点数回到"到现在等级为止应有的总点数"(<see cref="SkillRules.TotalSp"/>)。
+        /// </summary>
+        public void ResetSkills()
+        {
+            Skills.Reset(SkillGrants.Read(_chrLines, Growtype), SkillRules.TotalSp(Sp, Level), SkillRules.TotalSfp(Level));
+        }
+
+        /// <summary>
+        /// 转职:换成长类型(服务端 set_grow_type 对"从转职前转出去"的处理):技能清空后重新给开局的与新成长类型白送的技能,点数回到总额;
+        /// 属性按新成长类型的增量重算(<see cref="Version"/> 加一,战斗会话据此换面板)。<paramref name="growtype"/> 越界或没变返回 false。
+        /// </summary>
+        public bool ChangeGrowtype(int growtype)
+        {
+            if (growtype < 0 || growtype >= SkillRules.GrowtypeCount || growtype == Growtype)
+            {
+                return false;
+            }
+            Growtype = growtype;
+            ResetSkills();
+            Version++;
+            return true;
+        }
+
+        /// <summary>读档时还原技能:旧存档(没有技能行)只留白送的技能,余额就是存档里的点数;新存档整个换成存档里的。</summary>
+        private void RestoreSkills(HeroSave save)
+        {
+            List<SkillGrant> given = SkillGrants.Read(_chrLines, Growtype);
+            int sp = Math.Max(0, save.SkillPoints);
+            int sfp = Math.Max(0, save.AwakeningPoints);
+            Skills.SetGiven(given);
+            if (save.Skills.Count == 0 && save.SkillQuick.Count == 0)
+            {
+                Skills.Reset(given, sp, sfp);
+                return;
+            }
+            var levels = new List<KeyValuePair<int, int>>();
+            foreach (SavedSkill skill in save.Skills)
+            {
+                levels.Add(new KeyValuePair<int, int>(skill.Id, skill.Level));
+            }
+            var quick = new List<KeyValuePair<int, int>>();
+            foreach (SavedSkillSlot slot in save.SkillQuick)
+            {
+                quick.Add(new KeyValuePair<int, int>(slot.Slot, slot.SkillId));
+            }
+            Skills.Restore(levels, quick, sp, sfp);
+        }
+
         /// <summary>
         /// 现在的进度拍成存档快照(M26,<see cref="HeroSave"/>):等级、经验、点数、金币、背包每一格(物品编号与数量)、装备栏每一件。
         /// 只有数字与物品编号,不含物品本身的任何内容。
@@ -367,6 +472,7 @@ namespace Dnf.Play
                 Job = Job,
                 Level = Level,
                 Exp = Exp,
+                Growtype = Growtype,
                 SkillPoints = SkillPoints,
                 AwakeningPoints = AwakeningPoints,
                 LevelUps = LevelUps,
@@ -409,6 +515,18 @@ namespace Dnf.Play
             {
                 save.Clears.Add(new SavedClear(clear.Key, clear.Value));
             }
+            foreach (KeyValuePair<int, int> skill in Skills.Learned)
+            {
+                save.Skills.Add(new SavedSkill(skill.Key, skill.Value));
+            }
+            for (int slot = 0; slot < SkillBook.QuickSlots; slot++)
+            {
+                int skillId = Skills.QuickAt(slot);
+                if (skillId != 0)
+                {
+                    save.SkillQuick.Add(new SavedSkillSlot(slot, skillId));
+                }
+            }
             return save;
         }
 
@@ -431,8 +549,8 @@ namespace Dnf.Play
             Level = Math.Max(1, Math.Min(save.Level, Leveling.MaxLevel));
             int floor = Table.LevelExp(Level);
             Exp = save.Exp > floor ? save.Exp : floor;
-            SkillPoints = Math.Max(0, save.SkillPoints);
-            AwakeningPoints = Math.Max(0, save.AwakeningPoints);
+            Growtype = Math.Max(0, Math.Min(save.Growtype, SkillRules.GrowtypeCount - 1));
+            RestoreSkills(save);
             LevelUps = Math.Max(0, save.LevelUps);
             TotalGained = Math.Max(0L, save.TotalGained);
             Gold = Math.Max(0L, save.Gold);
@@ -530,7 +648,9 @@ namespace Dnf.Play
                 throw new ArgumentNullException(nameof(data));
             }
             ExpTable table = data.ExpTable;
-            return new HeroProgress(table, data.SpTable, data.GetGrowth(chr), rewards ?? MobRewardTable.Placeholder(table), data.ExpRates, level, exp);
+            var progress = new HeroProgress(table, data.SpTable, data.GetGrowth(chr), rewards ?? MobRewardTable.Placeholder(table), data.ExpRates, level, exp);
+            progress.AttachSkills(SkillCatalog.Load(data, chr.Job), chr.Tags.Lines, grantTotalPoints: true);
+            return progress;
         }
 
         /// <summary>

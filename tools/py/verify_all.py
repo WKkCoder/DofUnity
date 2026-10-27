@@ -10,7 +10,7 @@
 
 用法(由 tools/verify-all.sh 调用;需要先 . tools/env.sh 并已构建 dnf):
   python3 tools/py/verify_all.py [--only 名字,名字] [--skip 名字,名字] [--out out/verify-all.json]
-名字:unit p1 atk act mob damage sq sweep flow dungeons sound exp text oracle difficulty breakable(oracle 与 difficulty 的对拍部分需要 re/venv 里的 Unicorn 与本机的服务端二进制;dungeons 是全库副本扫描,非门槛项)
+名字:unit p1 atk act mob damage sq sweep flow dungeons sound exp text oracle difficulty breakable skill(oracle 与 difficulty 的对拍部分需要 re/venv 里的 Unicorn 与本机的服务端二进制;dungeons 是全库副本扫描,非门槛项)
 """
 import argparse
 import json
@@ -379,10 +379,22 @@ def check_breakable():
                  "只含个数;原版数值只在本机 out/verify-all/breakable.txt 里,不入库")]
 
 
+def check_skill():
+    """技能学习(E-127):真数据的结构检查(技能列表与目录对得上、花费补齐后每个技能到各成长类型的最高级都有花费、前置技能都在目录里且无环、六个成长类型的白送技能、
+    每个成长类型学满/退光/重置的点数守恒、本地主角的技能点与觉醒点是该级总额、存档往返不变、自动机策略把点数花光且守恒)。"""
+    code, text, sec = sh(DNF + ["skill-check"], "skill.txt")
+    ok = len(re.findall(r"^\s*\[通过\]", text, re.M))
+    bad = len(re.findall(r"^\s*\[失败\]", text, re.M))
+    if ok + bad == 0:
+        return [item("skill", "技能学习", "全库读通", "E-127", 0, 1, sec, "没解析出检查项,见 out/verify-all/skill.txt")]
+    return [item("skill", "技能学习(技能目录读通、花费补齐、前置技能无环、六个成长类型的白送技能、学满/退光/重置的点数守恒、存档往返、自动机加点策略)", "全库读通", "E-127", ok + bad,
+                 bad + (0 if code == 0 else 1), sec, "只含个数;技能数据与数值只在本机 out/verify-all/skill.txt 里,不入库")]
+
+
 CHECKS = [
     ("unit", check_unit), ("p1", check_p1), ("atk", check_atk), ("act", check_act), ("mob", check_mob),
     ("damage", check_damage), ("sq", check_sq), ("sweep", check_sweep), ("flow", check_flow), ("dungeons", check_dungeons), ("sound", check_sound),
-    ("exp", check_exp), ("text", check_text), ("oracle", check_oracle), ("difficulty", check_difficulty), ("breakable", check_breakable),
+    ("exp", check_exp), ("text", check_text), ("oracle", check_oracle), ("difficulty", check_difficulty), ("breakable", check_breakable), ("skill", check_skill),
 ]
 
 

@@ -45,6 +45,10 @@ namespace Dnf.Play
     public sealed class HeroSkillSlot
     {
         public SkillKeys Key { get; }
+
+        /// <summary>快捷栏里的位置(0 到 5,对应键 A S D F G H;底栏上从左数第几个槽)。</summary>
+        public int Position { get; }
+
         public int SkillId { get; }
         public int Level { get; }
         public SkillDef Def { get; }
@@ -81,6 +85,12 @@ namespace Dnf.Play
         public HeroSkillSlot(SkillKeys key, int skillId, int level, SkillDef def)
         {
             Key = key;
+            int position = 0;
+            for (int bits = (int)key; bits > 1; bits >>= 1)
+            {
+                position++;
+            }
+            Position = position;
             SkillId = skillId;
             Level = level < 1 ? 1 : level;
             Def = def;
@@ -91,7 +101,8 @@ namespace Dnf.Play
 
     /// <summary>
     /// 主角的技能快捷槽与冷却(证据 E-076)。
-    /// 槽位:取角色脚本 [initial value] 里的 [skill](初始技能表,"编号 等级"成对)里按出现顺序的主动技能(有 [type] "[active]" 与 [command]),
+    /// 槽位:给了技能簿(<see cref="SkillBook"/>,M35)就按它的六格快捷栏排——第 n 格是第 n 个键(A S D F G H),槽里的等级是学到的等级;
+    /// 没给时取角色脚本 [initial value] 里的 [skill](初始技能表,"编号 等级"成对)里按出现顺序的主动技能(有 [type] "[active]" 与 [command]),
     /// 依次放进 A、S、D 三个快捷键——新建的剑士得到鬼斩、上挑、后跳,与原版基线 HUD 里三个快捷槽的图标一致。
     /// 放法:鬼斩 = 原地播自己的动作动画(<see cref="TownHero.BeginSkillMotion"/>),命中用自己的攻击信息与 .skl 的伤害数(<see cref="HeroSkillSlot.Strike"/>);
     /// 上挑 = 连招第三段的动画与攻击信息整段打一遍(<see cref="TownHero.BeginSkillStrike"/>);后跳 = 跳跃状态的特殊参数(<see cref="TownHero.BeginBackStep"/>)。
@@ -102,12 +113,12 @@ namespace Dnf.Play
     /// </summary>
     public sealed class HeroSkills
     {
-        /// <summary>快捷槽的个数(A、S、D)。</summary>
-        public const int SlotCount = 3;
+        /// <summary>快捷槽的个数(A S D F G H)。</summary>
+        public const int SlotCount = SkillBook.QuickSlots;
 
         private readonly List<HeroSkillSlot> _slots;
 
-        /// <summary>按 A、S、D 的顺序;不足三个技能时后面的键没有绑定。</summary>
+        /// <summary>按快捷栏位置从小到大;只含放了技能的格(空格没有槽,键没有绑定)。旧的初始技能表创建方式(没给技能簿)只会有 A、S、D 三个。</summary>
         public IReadOnlyList<HeroSkillSlot> Slots => _slots;
 
         public HeroSkills(IEnumerable<HeroSkillSlot> slots)
@@ -132,31 +143,64 @@ namespace Dnf.Play
                 return new HeroSkills(slots);
             }
             int[] initial = chr.Tags.Ints("[skill]");
-            for (int i = 0; i + 1 < initial.Length && slots.Count < SlotCount; i += 2)
+            for (int i = 0; i + 1 < initial.Length && slots.Count < 3; i += 2)
             {
                 SkillDef def = data.GetSkill(job, initial[i]);
                 if (def == null || def.Type != "[active]" || !def.HasCommand)
                 {
                     continue;
                 }
-                var slot = new HeroSkillSlot((SkillKeys)(1 << slots.Count), def.Id, initial[i + 1], def);
-                if (def.Id == SkillIds.HardAttack)
-                {
-                    // 鬼斩有自己的攻击信息(角色 [etc attack info] 里的 hardattack.atk,按名字找)与伤害数(.skl [level info] 当前等级的第 0、1 列)
-                    int atk = chr.EtcAttackInfoIndexOf(HardAttackInfoFile);
-                    slot.Strike = HeroStrikeInfo.Read(data, atk < 0 ? null : chr.CustomAttackInfoPath(atk))
-                        .WithSkillDamage(def.GetLevel(slot.Level, 0, false), def.GetLevel(slot.Level, 1, false));
-                    // 斩击光影:角色目录下 effect/animation/ 里的 hardattack1.ani(普通混合)、hardattack2.ani(加法混合,由帧属性决定)
-                    slot.EffectPaths = new[]
-                    {
-                        PvfPath.ResolveRelativeTo(chr.Path, HardAttackEffectDir + "hardattack1.ani"),
-                        PvfPath.ResolveRelativeTo(chr.Path, HardAttackEffectDir + "hardattack2.ani"),
-                    };
-                    slot.EffectForwardX = HardAttackEffectForwardX;
-                }
-                slots.Add(slot);
+                slots.Add(MakeSlot(data, chr, (SkillKeys)(1 << slots.Count), def, initial[i + 1]));
             }
             return new HeroSkills(slots);
+        }
+
+        /// <summary>
+        /// 按技能簿(M35)的快捷栏排出快捷槽:第 n 格放的技能进第 n 个键(A S D F G H),等级取技能簿里学到的;空格没有槽。
+        /// 读不到角色脚本或技能定义的格跳过(技能簿的目录里有定义就先用它)。
+        /// </summary>
+        public static HeroSkills Create(GameData data, CharacterDef chr, int job, SkillBook book)
+        {
+            var slots = new List<HeroSkillSlot>();
+            if (data == null || chr == null || book == null)
+            {
+                return new HeroSkills(slots);
+            }
+            for (int position = 0; position < SkillBook.QuickSlots; position++)
+            {
+                int skillId = book.QuickAt(position);
+                if (skillId == 0)
+                {
+                    continue;
+                }
+                SkillDef def = book.Catalog.Find(skillId) ?? data.GetSkill(job, skillId);
+                if (def == null)
+                {
+                    continue;
+                }
+                slots.Add(MakeSlot(data, chr, (SkillKeys)(1 << position), def, book.LevelOf(skillId)));
+            }
+            return new HeroSkills(slots);
+        }
+
+        private static HeroSkillSlot MakeSlot(GameData data, CharacterDef chr, SkillKeys key, SkillDef def, int level)
+        {
+            var slot = new HeroSkillSlot(key, def.Id, level, def);
+            if (def.Id == SkillIds.HardAttack)
+            {
+                // 鬼斩有自己的攻击信息(角色 [etc attack info] 里的 hardattack.atk,按名字找)与伤害数(.skl [level info] 当前等级的第 0、1 列)
+                int atk = chr.EtcAttackInfoIndexOf(HardAttackInfoFile);
+                slot.Strike = HeroStrikeInfo.Read(data, atk < 0 ? null : chr.CustomAttackInfoPath(atk))
+                    .WithSkillDamage(def.GetLevel(slot.Level, 0, false), def.GetLevel(slot.Level, 1, false));
+                // 斩击光影:角色目录下 effect/animation/ 里的 hardattack1.ani(普通混合)、hardattack2.ani(加法混合,由帧属性决定)
+                slot.EffectPaths = new[]
+                {
+                    PvfPath.ResolveRelativeTo(chr.Path, HardAttackEffectDir + "hardattack1.ani"),
+                    PvfPath.ResolveRelativeTo(chr.Path, HardAttackEffectDir + "hardattack2.ani"),
+                };
+                slot.EffectForwardX = HardAttackEffectForwardX;
+            }
+            return slot;
         }
 
         /// <summary>鬼斩的动作文件名(角色 [etc motion] 里)与攻击信息文件名(角色 [etc attack info] 里)。两个表的下标不同,按名字找。</summary>
