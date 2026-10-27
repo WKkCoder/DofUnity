@@ -693,9 +693,9 @@ namespace Dnf.Play
         {
             foreach (MonsterActor m in session.Monsters)
             {
-                if (!m.IsGone)
+                if (!m.IsGone && m.CanEverBeHit)
                 {
-                    return false;
+                    return false;      // 没有任何受击框的怪物主角永远打不到,不等它(推断,E-128)
                 }
             }
             return true;

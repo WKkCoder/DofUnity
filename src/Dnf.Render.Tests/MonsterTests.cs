@@ -77,6 +77,75 @@ public class MonsterTests
     }
 
     [Fact]
+    public void AScriptedMonsterTakesItsAnimationsFromTheBaseAniOfEachActionScript()
+    {
+        // 脚本怪物只写 [waiting action] 等指向 .act 的标签(全库约六成怪物,证据 E-128):取 .act 里 [BASE ANI] 的动画,路径相对 .act 所在目录
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterModel model = MonsterModel.Read(assets, AvatarFixture.BlobScriptedMobPath);
+        Assert.NotNull(model);
+        Assert.Equal(Stay, model.PathOf(model.Waiting));
+        Assert.Equal(Move, model.PathOf(model.Move));
+        Assert.Equal(Damage1, model.PathOf(model.Damage1));
+        Assert.Equal(Damage2, model.PathOf(model.Damage2));
+        Assert.Equal(Down, model.PathOf(model.Down));
+        Assert.Null(model.Overturn);
+        Assert.Equal(new[]
+        {
+            AvatarFixture.BlobActionDir + "/stay.act", AvatarFixture.BlobActionDir + "/move.act", AvatarFixture.BlobActionDir + "/damage1.act",
+            AvatarFixture.BlobActionDir + "/damage2.act", AvatarFixture.BlobActionDir + "/down.act", null,
+        }, model.ActionPaths.ToArray());
+
+        // 攻击列表:三项里只有第一项有动画;另两项(.act 不存在、.act 没有主动画)是 null,但路径都记着,下标保持脚本里的顺序
+        Assert.Equal(3, model.Attacks.Count);
+        Assert.Equal(AvatarFixture.BlobStrikeAni, model.PathOf(model.Attacks[0]));
+        Assert.Null(model.Attacks[1]);
+        Assert.Null(model.Attacks[2]);
+        Assert.Equal(new[]
+        {
+            AvatarFixture.BlobActionDir + "/attack.act", AvatarFixture.BlobActionDir + "/missing.act", AvatarFixture.BlobActionDir + "/nobase.act",
+        }, model.AttackActionPaths.ToArray());
+        Assert.Equal(new[] { "monster/blob/attackinfo/striker.atk", string.Empty }, model.AttackInfoPaths.ToArray());
+    }
+
+    [Fact]
+    public void ALegacyMotionTagWinsOverTheActionTagAndAnActionListFillsTheAttackList()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterModel model = MonsterModel.Read(assets, AvatarFixture.BlobMixedMobPath);
+        Assert.Equal(Stay, model.PathOf(model.Waiting));                   // [waiting motion] 与 [waiting action] 都写了:旧式的优先
+        Assert.Null(model.ActionPaths[0]);                                 // 动画不是取自 .act
+        Assert.Equal(Move, model.PathOf(model.Move));                      // 只有 [move action]
+        Assert.Equal(AvatarFixture.BlobActionDir + "/move.act", model.ActionPaths[1]);
+        // [action list] 与 [attack action] 一样当攻击列表
+        Assert.Equal(new[] { AvatarFixture.BlobStrikeAni, AvatarFixture.BlobStrikeAni }, model.Attacks.Select(a => model.PathOf(a)).ToArray());
+        Assert.Equal(2, model.AttackActionPaths.Count);
+
+        // 旧式怪物:攻击动画来自 [attack motion],没有 .act 路径
+        MonsterModel legacy = MonsterModel.Read(assets, AvatarFixture.BlobMobPath);
+        Assert.Equal(new string[] { null }, legacy.AttackActionPaths.ToArray());
+        Assert.All(legacy.ActionPaths, p => Assert.Null(p));
+    }
+
+    [Fact]
+    public void AModelWithoutAnyHurtBoxInAnyAnimationCanNeverBeHit()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterModel normal = MonsterModel.Read(assets, AvatarFixture.BlobMobPath);
+        Assert.True(normal.HasAnyDamageBox);
+        Assert.True(MonsterModel.HasDamageBox(normal.Waiting));
+        MonsterModel ghost = MonsterModel.Read(assets, AvatarFixture.BlobGhostMobPath);
+        Assert.NotNull(ghost.Waiting);
+        Assert.False(ghost.HasAnyDamageBox);
+        Assert.False(MonsterModel.HasDamageBox(ghost.Waiting));
+        Assert.False(MonsterModel.HasDamageBox(null));
+        // 倒地动画里没有受击框的一帧不算:只要有任何一帧带框就行(正常怪物的倒地动画有的帧没框)
+        Assert.True(MonsterModel.HasDamageBox(normal.Down));
+    }
+
+    [Fact]
     public void TheMonsterArtFacesRightSoFacingLeftMirrorsItAboutTheWorldX()
     {
         using var fx = new AvatarFixture();

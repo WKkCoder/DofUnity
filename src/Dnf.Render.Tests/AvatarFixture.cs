@@ -160,6 +160,19 @@ internal sealed class AvatarFixture : IDisposable
     public const string BlobShortDownMobPath = "monster/blob/short.mob";
 
     /// <summary>
+    /// 脚本怪物(M36,证据 E-128):不写 [waiting motion] 这类旧式标签,而写指向 .act 的 [waiting action] 等;[attack action] 三项依次是
+    /// 正常的 Attack.act、不存在的 .act、没有 [BASE ANI] 的 .act;[attack info] 两项。.act 在 <see cref="BlobActionDir"/>,[BASE ANI] 写 "../Animation_Blob/…"。
+    /// </summary>
+    public const string BlobScriptedMobPath = "monster/blob/scripted.mob";
+    public const string BlobActionDir = "monster/blob/action";
+
+    /// <summary>旧式与 action 标签并存的怪物:待机两种标签都有(旧式优先)、行走只有 [move action]、攻击列表写成 [action list]。</summary>
+    public const string BlobMixedMobPath = "monster/blob/mixed.mob";
+
+    /// <summary>所有动画都没有受击框的怪物(占位、机关一类;主角永远打不到它,M36,证据 E-128):待机、行走各一段、没有别的动作。</summary>
+    public const string BlobGhostMobPath = "monster/blob/ghost.mob";
+
+    /// <summary>
     /// 有两个攻击动作的迷你怪物([attack motion] 依次是 Attack1.ani、<see cref="BlobStrikeAni"/>,[attack info] 依次是一个不存在的脚本与 <see cref="BlobStrikerAtk"/>):
     /// 测"决策挑了第几招就放第几招的动画与攻击信息"。其余动作与 <see cref="BlobMobPath"/> 相同。
     /// </summary>
@@ -309,6 +322,12 @@ internal sealed class AvatarFixture : IDisposable
     private Script NewScript()
     {
         return new Script(this);
+    }
+
+    /// <summary>只有一个 [MOTION]、里面一个 [BASE ANI] 的 .act(脚本怪物的待机、行走等动作最常见的写法)。</summary>
+    private byte[] ActMotion(string baseAni)
+    {
+        return NewScript().Tag("[MOTION]").Tag("[BASE ANI]").Str(baseAni).Tag("[/MOTION]").Build();
     }
 
     public AvatarFixture()
@@ -602,6 +621,34 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[attack info]").Str("AttackInfo/Missing.atk").Str("AttackInfo/Striker.atk").Build()),
             ("monster/blob/big.mob", NewScript()
                 .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani").Build()),
+            // 脚本怪物:全部动作都是 .act(证据 E-128)
+            (BlobScriptedMobPath, NewScript()
+                .Tag("[waiting action]").Str("Action/Stay.act")
+                .Tag("[move action]").Str("Action/Move.act")
+                .Tag("[damage action 1]").Str("Action/Damage1.act")
+                .Tag("[damage action 2]").Str("Action/Damage2.act")
+                .Tag("[down action]").Str("Action/Down.act")
+                .Tag("[attack action]").Str("Action/Attack.act").Str("Action/Missing.act").Str("Action/NoBase.act")
+                .Tag("[/attack action]")
+                .Tag("[attack info]").Str("AttackInfo/Striker.atk").Str("")
+                .Tag("[/attack info]").Build()),
+            (BlobActionDir + "/stay.act", ActMotion("../Animation_Blob/Stay.ani")),
+            (BlobActionDir + "/move.act", ActMotion("../Animation_Blob/Move.ani")),
+            (BlobActionDir + "/damage1.act", ActMotion("../Animation_Blob/Damage1.ani")),
+            (BlobActionDir + "/damage2.act", ActMotion("../Animation_Blob/Damage2.ani")),
+            (BlobActionDir + "/down.act", ActMotion("../Animation_Blob/Down.ani")),
+            (BlobActionDir + "/attack.act", ActMotion("../Animation_Blob/Strike.ani")),
+            (BlobActionDir + "/nobase.act", NewScript().Tag("[MOTION]").Tag("[/MOTION]").Build()),
+            (BlobGhostMobPath, NewScript()
+                .Tag("[waiting motion]").Str("Animation_Blob/Ghost.ani")
+                .Tag("[move motion]").Str("Animation_Blob/Ghost.ani").Build()),
+            (BlobAnimationDir + "/ghost.ani", BuildBlobAni(true, (0, 100, default), (1, 100, default))),
+            (BlobMixedMobPath, NewScript()
+                .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
+                .Tag("[waiting action]").Str("Action/Move.act")
+                .Tag("[move action]").Str("Action/Move.act")
+                .Tag("[action list]").Str("Action/Attack.act").Str("Action/Attack.act")
+                .Tag("[/action list]").Build()),
             // 受击动画只有一帧、停留 10000 毫秒(原版的受击动画就是这样:停多久由游戏逻辑决定);倒地动画的中间两帧同理
             (BlobAnimationDir + "/stay.ani", BuildBlobAni(true, (0, 100, BlobHurtBox), (1, 100, BlobHurtBox))),
             (BlobAnimationDir + "/move.ani", BuildBlobAni(true, (2, 100, BlobHurtBox), (3, 100, BlobHurtBox))),

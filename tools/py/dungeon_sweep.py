@@ -51,7 +51,7 @@ def list_dungeons():
     return sorted(l.split()[0] for l in out.splitlines() if l.strip().endswith(tuple("0123456789")) and ".dgn" in l)
 
 
-def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=100, smash=False):
+def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=5000, smash=False):
     cmd = ["dotnet"] + DNF + ["dungeon-check", "--dungeon", path, "--bot", "--seed", str(seed), "--seconds", str(seconds)]
     if explore:
         cmd.insert(len(cmd), "--explore")
@@ -127,7 +127,7 @@ def main(argv):
     ap.add_argument("--no-explore", action="store_true")
     ap.add_argument("--damage", action="store_true", help="主角会被打(默认不会:无伤害模式,只量布局与流程)")
     ap.add_argument("--smash", action="store_true", help="自动机清房之后顺手打翻房间里的可破坏物件(M34)")
-    ap.add_argument("--scale", type=int, default=100, help="主角每一击伤害的倍数(默认 100,排除一级主角打不动高等级怪物的干扰;1 = 不放大)")
+    ap.add_argument("--scale", type=int, default=5000, help="主角每一击伤害的倍数(默认 5000,排除一级主角打不动高等级怪物的干扰;脚本怪物(M36)出场后高等级首领的血量上百万,100 倍在 600 秒里打不完;1 = 不放大)")
     ap.add_argument("--out", default=os.path.join(ROOT, "out/dungeon-sweep"))
     a = ap.parse_args(argv)
 

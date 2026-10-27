@@ -155,6 +155,32 @@ public sealed class MonsterTests
         Assert.Equal(new[] { "a1.act" }, def.AttackActions);
     }
 
+    [Fact]
+    public void TheMoveListCooldownsAndAiTermsAreReadFromTheirTags()
+    {
+        // 招式列表有两种写法:[attack action] 或 [action list];[cooltime] 与招式同下标;没有这些标签时都是空/0
+        MonsterDef byAction = Def(
+            6,
+            Line("[attack action]", "a1.act", "a2.act"),
+            Line("[/attack action]"),
+            Line("[cooltime]", 1000, 0),
+            Line("[cooltime]", 2500),
+            Line("[/cooltime]"),
+            Line("[destination change term]", 300),
+            Line("[keep distance with target]", 140));
+        Assert.Equal(new[] { "a1.act", "a2.act" }, byAction.AttackList);
+        Assert.Empty(byAction.ActionList);
+        Assert.Equal(new[] { 1000, 0, 2500 }, byAction.Cooltimes);
+        Assert.Equal(300, byAction.DestinationChangeTerm);
+        Assert.Equal(140, byAction.KeepDistanceWithTarget);
+
+        MonsterDef byList = Def(7, Line("[action list]", "x.act"), Line("[/action list]"));
+        Assert.Equal(new[] { "x.act" }, byList.AttackList);
+        Assert.Empty(byList.AttackActions);
+        Assert.Empty(byList.Cooltimes);
+        Assert.Equal((0, 0), (byList.DestinationChangeTerm, byList.KeepDistanceWithTarget));
+    }
+
     // ---------------- 基础属性表 ----------------
 
     [Fact]

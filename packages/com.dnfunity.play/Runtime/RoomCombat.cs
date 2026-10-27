@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Dnf.Data;
 using Dnf.Game;
+using Dnf.Game.Ai;
 using Dnf.Render;
 using Dnf.Script;
 
@@ -723,6 +724,40 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>房间里由 .ai 脚本驱动的怪物个数(M36;没有 [ai pattern] 的旧式怪物不算),状态日志与实机检查用。</summary>
+        public int ScriptedCount
+        {
+            get
+            {
+                int n = 0;
+                foreach (MonsterActor m in _monsters)
+                {
+                    if (m.Script != null)
+                    {
+                        n++;
+                    }
+                }
+                return n;
+            }
+        }
+
+        /// <summary>脚本驱动的怪物里已经发现主角的个数。</summary>
+        public int AwareCount
+        {
+            get
+            {
+                int n = 0;
+                foreach (MonsterActor m in _monsters)
+                {
+                    if (m.Script != null && m.IsAware)
+                    {
+                        n++;
+                    }
+                }
+                return n;
+            }
+        }
+
         /// <summary>A、S、D 三个技能快捷槽与冷却(证据 E-076);构造时没给就是空的(按技能键没有反应)。</summary>
         public HeroSkills Skills { get; }
 
@@ -1183,6 +1218,9 @@ namespace Dnf.Play
                 // 默认 AI 的走位:游荡、发现主角、按节拍朝主角走(证据 E-114);没有 [melee combat]/[range combat]/[stay] 类别的怪物仍走占位
                 actor.SetDefaultAi(MonsterBrain.For(def, room.Map.Width, unchecked((uint)seed * 2246822519u + (uint)actor.Index * 3266489917u + 374761393u)));
                 actor.SetThrows(MonsterThrows.Load(assets, data, def.Path, ThrowAttackRecord.Parse(def.Tags)));   // [throw attack]:出招动画到发射帧时扔东西(证据 E-103)
+                // .ai 脚本驱动(证据 E-128):带 [ai pattern] 的怪物出招、走位交给四个 .ai 脚本;读不到脚本的仍走上面的默认 AI 与占位
+                uint aiState = unchecked((uint)seed * 3266489917u + (uint)actor.Index * 668265263u + 2246822519u);
+                actor.SetScript(MonsterScript.Create(data, def, model, difficulty, () => ClientRandom.Next(ref aiState)));
                 if (heroWidth != null && heroWidth.Length >= 2)
                 {
                     actor.TargetWidth = heroWidth[0];
@@ -1218,6 +1256,14 @@ namespace Dnf.Play
                 hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null, weaponSound, heroPanel,
                 progress, expWeight, difficulty);
             session.Character = chr;
+            foreach (MonsterActor a in actors)
+            {
+                MonsterActor self = a;
+                if (self.Script != null)
+                {
+                    self.Script.Counter = (x0, x1, y0, y1, team, type, id) => session.CountForMonster(self, x0, x1, y0, y1, team, type, id);
+                }
+            }
             MonsterDrops drops = MonsterDrops.Load(assets);
             if (drops.Available)
             {
@@ -1412,9 +1458,11 @@ namespace Dnf.Play
             {
                 p.Update(deltaMs);
             }
+            int heroAiState = HeroAiState(hero);
             foreach (MonsterActor m in _monsters)
             {
                 m.Blocker = hero.Blocker;                      // 关着的出口门体怪物也走不进去(E-114)
+                m.TargetAiState = heroAiState;
                 m.Update(deltaMs, hero.X, hero.Y, heroAlive, hero.Walk, heroBoxes);
             }
             CollectThrown();
@@ -1459,6 +1507,62 @@ namespace Dnf.Play
             {
                 Target = null;
             }
+        }
+
+        /// <summary>主角此刻的状态号(.ai 里的 [target state],OperatingValue.lst 的写法):死亡 5、倒地 4、受击 3、跳 6、空中攻击 7、出招与技能 8、冲刺 11、冲刺攻击 12,其余站着 0(证据 E-128)。</summary>
+        private int HeroAiState(TownHero hero)
+        {
+            if (HeroDead)
+            {
+                return _heroDown.Active ? 4 : 5;
+            }
+            if (_heroDown.Active)
+            {
+                return 4;
+            }
+            switch (hero.Motion)
+            {
+                case HeroMotion.Hurt:
+                    return 3;
+                case HeroMotion.Jump:
+                    return 6;
+                case HeroMotion.JumpAttack:
+                    return 7;
+                case HeroMotion.Attack:
+                case HeroMotion.Skill:
+                    return 8;
+                case HeroMotion.Dash:
+                    return 11;
+                case HeroMotion.DashAttack:
+                    return 12;
+                default:
+                    return 0;
+            }
+        }
+
+        /// <summary>
+        /// 给 .ai 的区域计数函数用:数 <paramref name="self"/> 眼里闭区间内的活对象。敌对(队伍 -1)与不限(100)里算上主角(种类 4 或不限),
+        /// 友方(1)与不限里算上别的怪物(种类 2 或不限);召唤物、被动物件、中立这几类还没有对象,数为 0。<paramref name="id"/> 不是 -1 时只数怪物编号相同的(主角没有编号,不算)。
+        /// </summary>
+        public int CountForMonster(MonsterActor self, float xMin, float xMax, float yMin, float yMax, int team, int type, int id)
+        {
+            int count = 0;
+            if ((team == -1 || team == 100) && (type == AiObjectKind.Character || type == AiObjectKind.All) && id == -1 && !HeroDead
+                && AiArea.Contains(xMin, xMax, yMin, yMax, (float)_room.Hero.X, (float)_room.Hero.Y))
+            {
+                count++;
+            }
+            if ((team == 1 || team == 100) && (type == AiObjectKind.Monster || type == AiObjectKind.All))
+            {
+                foreach (MonsterActor m in _monsters)
+                {
+                    if (!ReferenceEquals(m, self) && m.IsAlive && (id == -1 || m.Code == id) && AiArea.Contains(xMin, xMax, yMin, yMax, (float)m.X, (float)m.Y))
+                    {
+                        count++;
+                    }
+                }
+            }
+            return count;
         }
 
         /// <summary>

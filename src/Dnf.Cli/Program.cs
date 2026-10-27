@@ -318,6 +318,8 @@ namespace Dnf.Cli
             "      用 Dnf.Game 的语法树解析器读全库 .act(证据 E-050),统计节点、块、多余与笔误闭合;--json 写出\"父标签 → 子标签 → 次数\"表,可与 tools/py/act_tree.py 逐项对拍。\n" +
             "  dnf ai-check [--dump <文件>] [--json <文件>]\n" +
             "      用 Dnf.Game 的 .ai 解析器读全库 .ai(证据 E-052):能否读完、错误、剩余标记、关键字与运算符直方图,以及 [void] 函数真假两路的返回形状(用来判断真假方向);名表运行时从数据包的 AICharacter/OperatingValue.lst 读。\n" +
+            "  dnf ai-eval [--json <文件>]\n" +
+            "      从怪物出发看 .ai(证据 E-128):按 [ai pattern] 找到各难度用到的脚本并沿 [import ai] 追到底,统计每种条件写法被多少个怪物用到(按事件、选目的地、动作、移动分开),只输出个数与标签名。\n" +
             "  dnf mob-check [--dump <文件>] [--json <文件>]\n" +
             "      用 Dnf.Game 的怪物定义读 monster/monster.lst 列出的全部 .mob(证据 E-062):成对标签规整度、[ability category] 类别与运算符、基础属性表命中、引用的 .act/.ani/.atk/.ai 路径是否存在;\n" +
             "      --dump 写出每个怪物在最小/中间/最大等级、普通/首领种类下算出的完整数值块,可与 tools/py/mob_ability_ref.py --dump 逐行对拍(输出含原版派生数值,放 out/,不入库)。\n" +
@@ -789,6 +791,8 @@ namespace Dnf.Cli
                     return ActCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "ai-check":
                     return AiCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "ai-eval":
+                    return AiEval.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "mob-check":
                     return opts.CasesFile != null
                         ? MobCheck.RunCases(Locator.Resolve(opts.DnfDir, opts.OutDir), opts)

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Dnf.Data;
 using Dnf.Game;
+using Dnf.Game.Ai;
 using Dnf.Render;
 
 namespace Dnf.Play
@@ -145,6 +146,15 @@ namespace Dnf.Play
         private HeroStrikeInfo _strike;
         private HeroStrikeInfo[] _strikes;
         private Func<int, bool> _reachTest;
+
+        // .ai 脚本驱动(证据 E-128):脚本怪物的出招、走位都由 MonsterScript 的四个脚本决定;没装时走上面的默认 AI 或占位
+        private MonsterScript _script;
+        private readonly MonsterAiView _aiView = new MonsterAiView();
+        private bool _aware;
+        private bool _hasDestination;
+        private double _destinationX;
+        private double _destinationY;
+        private int _moveMode;
 
         // 投掷(证据 E-103):.mob 的 [throw attack] 记录与它们的投射物模板;发射出来的投射物与声音先存在这里,由房间会话取走
         private MonsterThrows _throws;
@@ -300,6 +310,48 @@ namespace Dnf.Play
 
         /// <summary>出招决策器;没有装 [attack kind] 记录时为 null(旧的占位逻辑)。</summary>
         public MonsterAttackChooser AttackChooser => _chooser;
+
+        /// <summary>
+        /// 装上 .ai 脚本驱动(证据 E-128):装了之后站着与行走时的决策完全由它决定(动作脚本选招、选目的地脚本选方向、移动方式脚本定走不走),
+        /// 不再用 [attack kind] 的出招决策器、走位大脑与占位逻辑。传 null 回到原来的行为。
+        /// </summary>
+        public void SetScript(MonsterScript script)
+        {
+            _script = script;
+            _aware = false;
+            _hasDestination = false;
+        }
+
+        /// <summary>.ai 脚本驱动;没装时为 null。</summary>
+        public MonsterScript Script => _script;
+
+        /// <summary>目标(主角)现在的状态号(OperatingValue.lst 的写法:0 站、3 受击、4 倒地、5 死亡、6 跳、8 出招、11 冲刺……),脚本里的 [target state] 读它;房间会话每帧给。</summary>
+        public int TargetAiState { get; set; }
+
+        /// <summary>怪物自己的状态号(同上):站着与行走是 0,出招 8,受击 3,倒地 4,死亡 5。</summary>
+        public int AiState
+        {
+            get
+            {
+                switch (Phase)
+                {
+                    case MonsterPhase.Attack:
+                        return 8;
+                    case MonsterPhase.Hurt:
+                        return IsKnockedDown ? 4 : 3;
+                    case MonsterPhase.Dying:
+                    case MonsterPhase.Gone:
+                        return 5;
+                    default:
+                        return 0;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 装上 .ai 脚本驱动(证据 E-128)的怪物是否已经发现了主角(进过视野,之后一直盯着,主角不在了才重置)。
+        /// </summary>
+        public bool IsAware => _aware;
 
         /// <summary>
         /// 装上默认 AI 的走位(<see cref="MonsterBrain"/>,证据 E-114):游荡、发现主角、按节拍朝主角走。装了之后 <see cref="Think"/> 不再用固定视野框与每帧直线追击的占位;
@@ -473,6 +525,7 @@ namespace Dnf.Play
             }
             _phaseMs += deltaMs;
             _aiClockMs += deltaMs;
+            _script?.Advance(deltaMs);
             if (Hp <= 0)
             {
                 _deathMs += deltaMs;
@@ -508,6 +561,7 @@ namespace Dnf.Play
                     if (_phaseMs * AttackRate >= Duration(CurrentAni))
                     {
                         _cooldownMs = AttackDelayMs;
+                        _script?.AttackFinished();
                         EnterPhase(MonsterPhase.Wait);
                     }
                     break;
@@ -693,6 +747,11 @@ namespace Dnf.Play
         /// </summary>
         private void Think(double deltaMs, double heroX, double heroY, bool heroPresent, IWalkArea walk, IReadOnlyList<Aabb> heroBoxes)
         {
+            if (_script != null)
+            {
+                ThinkScripted(deltaMs, heroX, heroY, heroPresent, walk);
+                return;
+            }
             if (_brain != null)
             {
                 ThinkWithBrain(deltaMs, heroX, heroY, heroPresent, walk, heroBoxes);
@@ -767,6 +826,132 @@ namespace Dnf.Play
                 stepY = Math.Sign(dy) * Math.Min(SpeedY * seconds, Math.Abs(dy));
             }
             TryMove(stepX, stepY, walk);
+        }
+
+        /// <summary>
+        /// 装了 .ai 脚本驱动(<see cref="MonsterScript"/>)时待机与行走的决策(证据 E-128):
+        /// 主角进了视野才有反应(发现之后一直盯着);每个思考节拍先问动作脚本"出哪一招"(冷却、有没有动画由驱动判断),出了就面朝主角开始出招;
+        /// 没出招再按重选间隔问选目的地脚本"往哪走",并问移动方式脚本"走不走";两次思考之间朝上一次选的目的地走(走到 <see cref="MonsterTuning.MinSeparationX"/> 内就站住),
+        /// 站着时面朝主角。移动与朝向的细节(方案 1 以外的各种选点、移动方式的快慢)是占位。
+        /// </summary>
+        private void ThinkScripted(double deltaMs, double heroX, double heroY, bool heroPresent, IWalkArea walk)
+        {
+            MonsterScript script = _script;
+            double dx = heroX - X;
+            double dy = heroY - Y;
+            if (!heroPresent)
+            {
+                _aware = false;
+                _hasDestination = false;
+                if (Phase != MonsterPhase.Wait)
+                {
+                    EnterPhase(MonsterPhase.Wait);
+                }
+                return;
+            }
+            if (!_aware && script.Notices(dx))
+            {
+                _aware = true;
+            }
+            if (!_aware)
+            {
+                if (Phase != MonsterPhase.Wait)
+                {
+                    EnterPhase(MonsterPhase.Wait);
+                }
+                return;
+            }
+            if (script.TakeThinkTurn())
+            {
+                FillAiView(heroX, heroY);
+                int attack = script.DecideAttack(_aiView);
+                if (attack >= 0)
+                {
+                    if (Math.Abs(dx) > 1.0)
+                    {
+                        FacingLeft = dx < 0;
+                    }
+                    script.AttackStarted(attack);
+                    _attackIndex = attack;
+                    _hasDestination = false;
+                    EnterPhase(MonsterPhase.Attack);
+                    return;
+                }
+                if (script.TakeDestinationTurn())
+                {
+                    AiDestination destination = script.DecideDestination(_aiView);
+                    switch (destination.Kind)
+                    {
+                        case AiDestinationKind.MoveTo:
+                            _hasDestination = true;
+                            _destinationX = destination.X;
+                            _destinationY = destination.Y;
+                            break;
+                        case AiDestinationKind.Hold:
+                            _hasDestination = false;
+                            break;
+                    }
+                }
+                _moveMode = script.DecideMove(_aiView);
+            }
+            bool moving = false;
+            if (_hasDestination && _moveMode >= 0)
+            {
+                double mx = _destinationX - X;
+                double my = _destinationY - Y;
+                double seconds = deltaMs / 1000.0;
+                double stepX = 0, stepY = 0;
+                if (Math.Abs(mx) > MonsterTuning.MinSeparationX)
+                {
+                    stepX = Math.Sign(mx) * Math.Min(SpeedX * seconds, Math.Abs(mx));
+                }
+                if (Math.Abs(my) > 3.0)
+                {
+                    stepY = Math.Sign(my) * Math.Min(SpeedY * seconds, Math.Abs(my));
+                }
+                moving = stepX != 0 || stepY != 0;
+                if (moving)
+                {
+                    if (stepX != 0)
+                    {
+                        FacingLeft = stepX < 0;
+                    }
+                    TryMove(stepX, stepY, walk);
+                }
+            }
+            if (moving)
+            {
+                if (Phase != MonsterPhase.Walk)
+                {
+                    EnterPhase(MonsterPhase.Walk);
+                }
+                return;
+            }
+            if (Phase != MonsterPhase.Wait)
+            {
+                EnterPhase(MonsterPhase.Wait);
+            }
+            if (Math.Abs(dx) > 1.0)
+            {
+                FacingLeft = dx < 0;                              // 站着(含走到了目的地)面朝主角
+            }
+        }
+
+        private void FillAiView(double heroX, double heroY)
+        {
+            MonsterAiView v = _aiView;
+            v.X = X;
+            v.Y = Y;
+            v.FacingLeft = FacingLeft;
+            v.Hp = Hp;
+            v.HpMax = HpMax;
+            v.Level = Level;
+            v.State = AiState;
+            v.Free = Phase == MonsterPhase.Wait || Phase == MonsterPhase.Walk;
+            v.HasTarget = true;
+            v.TargetX = heroX;
+            v.TargetY = heroY;
+            v.TargetState = TargetAiState;
         }
 
         /// <summary>
@@ -858,23 +1043,28 @@ namespace Dnf.Play
         /// </summary>
         public IHeroBlocker Blocker { get; set; }
 
-        private bool CanStandAt(double x, double y, IWalkArea walk, bool ignoreBlocker)
+        private bool CanStandAt(double x, double y, IWalkArea walk, bool ignoreBlocker, bool ignoreWalk)
         {
-            if (walk != null && !walk.IsUnrestricted && !walk.Contains(x, y))
+            if (!ignoreWalk && walk != null && !walk.IsUnrestricted && !walk.Contains(x, y))
             {
                 return false;
             }
             return ignoreBlocker || Blocker == null || Blocker.BlockedBy(x, y) == null;
         }
 
+        /// <summary>
+        /// 走一步。脚本驱动的怪物(M36)已经站在可走区之外时(出生点落在墙里,常见于首领从屏幕外登场)不受可走区限制,走到区里为止,
+        /// 否则它哪一步都迈不出去,房间永远清不掉(推断,E-128;与上面对障碍物的处理一致)。旧式怪物保持原样:出生在区外就原地不动。
+        /// </summary>
         private void TryMove(double stepX, double stepY, IWalkArea walk)
         {
             bool ignoreBlocker = Blocker != null && Blocker.BlockedBy(X, Y) != null;
-            if (stepX != 0 && CanStandAt(X + stepX, Y, walk, ignoreBlocker))
+            bool ignoreWalk = _script != null && walk != null && !walk.IsUnrestricted && !walk.Contains(X, Y);
+            if (stepX != 0 && CanStandAt(X + stepX, Y, walk, ignoreBlocker, ignoreWalk))
             {
                 X += stepX;
             }
-            if (stepY != 0 && CanStandAt(X, Y + stepY, walk, ignoreBlocker))
+            if (stepY != 0 && CanStandAt(X, Y + stepY, walk, ignoreBlocker, ignoreWalk))
             {
                 Y += stepY;
             }
@@ -1123,6 +1313,38 @@ namespace Dnf.Play
                 }
             }
             return result;
+        }
+
+        /// <summary>
+        /// 这只怪物的任何一个动画里有没有受击框。没有的话主角永远打不到它(占位、机关或要靠别的脚本才会现身的东西):
+        /// 房间清空的判定不等它(推断:原版的清图条件没有读到,打不到的东西不可能被要求打死,E-128),自动机也不当它是目标。
+        /// </summary>
+        public bool CanEverBeHit => _model.HasAnyDamageBox;
+
+        /// <summary>当前帧有没有受击框(没有就是打不到:藏着、变身中或别的脚本控制的无敌状态)。不分配内存,自动机每步都要问。</summary>
+        public bool HasDamageBox
+        {
+            get
+            {
+                if (!IsAlive || Phase == MonsterPhase.Gone || Phase == MonsterPhase.Dying)
+                {
+                    return false;
+                }
+                AniFile ani = CurrentAni;
+                int frame = CurrentFrame;
+                if (ani == null || (uint)frame >= (uint)ani.Frames.Length)
+                {
+                    return false;
+                }
+                foreach (AniBox box in ani.Frames[frame].Boxes)
+                {
+                    if (box.Type == AniBoxType.Damage)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
         }
 
         /// <summary>头顶的世界高度:受击框的最高点(没有受击框时用站立动画第 0 帧的);用来摆伤害数字。</summary>

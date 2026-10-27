@@ -971,7 +971,8 @@ namespace Dnf.Client
                     ? " dungeon=" + _dungeonPath + " cell=(" + d.CellX + "," + d.CellY + ") map=" + d.MapPath + " entered=" + d.RoomsEntered + " cleared=" + d.RoomsCleared
                         + " transitions=" + d.Transitions + " bossCleared=" + d.BossCleared + " exitReached=" + d.ExitReached
                         + " settlement=" + d.SettlementActive + " camp=" + (d.Camp != null ? d.Camp.FireLayers + "/" + d.Camp.NpcCount : "none") + " choice=" + d.Choice
-                        + " monsters=" + d.Current.AliveCount + "/" + d.Current.Monsters.Count + " hits=" + d.Hits + " kills=" + d.Kills + " damage=" + d.TotalDamage
+                        + " monsters=" + d.Current.AliveCount + "/" + d.Current.Monsters.Count + " scripted=" + d.Current.ScriptedCount + " aware=" + d.Current.AwareCount
+                        + " hits=" + d.Hits + " kills=" + d.Kills + " damage=" + d.TotalDamage
                         + (d.Vitals != null ? " heroHits=" + d.HeroHits + " heroHp=" + d.Vitals.Hp + "/" + d.Vitals.HpMax + " heroMp=" + d.Vitals.Mp + "/" + d.Vitals.MpMax : string.Empty)
                         + (d.Progress != null ? " heroLevel=" + d.Progress.Level + " heroExp=" + d.Progress.Exp + " levelUps=" + d.Progress.LevelUps : string.Empty)
                     : string.Empty);

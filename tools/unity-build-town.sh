@@ -377,6 +377,8 @@ if [ "$platform" = "macos" ]; then
     # 10.2 秒(黑幕淡入到一半)、21.0 秒(已来回换过房间)、48.0 秒(刚进首领房)、59.7 秒(首领房清空:CLEAR 横幅与完整小地图);
     # 直奔首领的最短路线:14.0 秒(刚进首领房,黑幕淡入快结束)、14.6 秒(首领房的第一帧清晰画面)。
     # 这些时刻跟着出门的节奏走(证据 E-072:淡出 250 毫秒、全黑 130 毫秒、淡入 250 毫秒);节奏改了要重选时刻。
+    # (怪物与自动机的行为每改一次,各帧实际落在哪个阶段就会漂一点,上面写的画面是最初选时刻时的样子;对拍要求的是命令行与播放器在同一时刻逐字节相同,这一点不受漂移影响。
+    # 但路线必须是"逛遍六个房间再打首领"、全程不早于这些时刻结束:太早通关命令行就写不出那一时刻的帧。)
     # 按时刻对拍的这几帧带 -dnfnodamage(命令行 --no-damage):怪物还手会让清房的时刻后移,选好的时刻就不再对应原来的画面;
     # 下面实时跑的一整局是带伤害的,检查主角活到了最后(生命随人带进每个房间)。
     dungeon=dungeon/act1/lorien.dgn
@@ -424,6 +426,10 @@ if [ "$platform" = "macos" ]; then
       || { echo "实时打副本没有走完(应进过 6 个房间、清空 6 个、首领清空):$dungeon_log" >&2; exit 1; }
     grep -q -E 'DNF_TOWN_DEMO ran .* dungeon=.* heroHits=[0-9]+ heroHp=[1-9][0-9]*/[0-9]+' "$dungeon_log" \
       || { echo "实时打副本结束时主角应还活着(heroHp 不为 0,日志里要有 heroHits 与 heroHp):$dungeon_log" >&2; exit 1; }
+    # 脚本怪物(M36,证据 E-128):状态日志带着房间里由 .ai 脚本驱动的怪物个数与已发现主角的个数(scripted=、aware=;个数取决于这座副本,可以是 0),
+    # 脚本怪物的行为本身由命令行全库扫描与单元测试查,这里只确认播放器里这条路径编过、日志字段在
+    grep -q -E 'DNF_TOWN_DEMO ran .* monsters=[0-9]+/[0-9]+ scripted=[0-9]+ aware=[0-9]+ hits=' "$dungeon_log" \
+      || { echo "实时打副本的状态日志里应有 scripted= 与 aware= 字段:$dungeon_log" >&2; exit 1; }
     # 首领清空 3 秒后进结算:营火生起(camp=层数/NPC 数,至少一层火),没有人选菜单所以 choice=None(证据 E-091)
     grep -q -E 'DNF_TOWN_DEMO ran .* settlement=True camp=[1-9][0-9]*/[0-9]+ choice=None' "$dungeon_log" \
       || { echo "实时打副本没有进到结算(应有 settlement=True、营火至少一层、choice=None):$dungeon_log" >&2; exit 1; }

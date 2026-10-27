@@ -92,6 +92,8 @@ namespace Dnf.Game
             BaseTablePaths = Tags.Strings("[base table]");
             CategoryNames = BlockStrings("[category]", "[/category]");
             AttackActions = BlockStrings("[attack action]", "[/attack action]");
+            ActionList = BlockStrings("[action list]", "[/action list]");
+            Cooltimes = BlockInts("[cooltime]", "[/cooltime]");
             AttackMotions = BlockStrings("[attack motion]", "[/attack motion]");
             AttackInfos = BlockStrings("[attack info]", "[/attack info]");
             AiPatterns = ParseAiPatterns(lines);
@@ -188,6 +190,18 @@ namespace Dnf.Game
         /// <summary>[attack action] 块里的 .act 路径(原样,相对 .mob 目录)。</summary>
         public string[] AttackActions { get; }
 
+        /// <summary>[action list] 块里的 .act 路径(原样):与 [attack action] 二选一的另一种写法,脚本怪物里 214 个用它(证据 E-128)。</summary>
+        public string[] ActionList { get; }
+
+        /// <summary>
+        /// 脚本怪物的招式列表:[attack action] 与 [action list] 二选一(两个标签不会同时出现),.ai 的动作脚本返回的就是这个列表的下标;
+        /// [attack info]、[cooltime] 与它同下标(证据 E-128)。
+        /// </summary>
+        public string[] AttackList => AttackActions.Length > 0 ? AttackActions : ActionList;
+
+        /// <summary>[cooltime] 块里的整数(毫秒,与招式列表同下标;0 表示没有冷却);没有该块时为空数组。</summary>
+        public int[] Cooltimes { get; }
+
         /// <summary>[attack motion] 块里的 .ani 路径(原样)。</summary>
         public string[] AttackMotions { get; }
 
@@ -211,6 +225,12 @@ namespace Dnf.Game
 
         /// <summary>[think term]:没有则 0(毫秒,推断)。</summary>
         public int ThinkTerm => Tags.IntOr("[think term]", 0);
+
+        /// <summary>[destination change term]:重选目的地的最短间隔(毫秒);没有则 0(证据 E-128,控制器里是 [destination change term] 门控)。</summary>
+        public int DestinationChangeTerm => Tags.IntOr("[destination change term]", 0);
+
+        /// <summary>[keep distance with target]:选目的地方案 1 里与目标保持的水平距离(像素,推断);没有则 0。</summary>
+        public int KeepDistanceWithTarget => Tags.IntOr("[keep distance with target]", 0);
 
         /// <summary>[floating height]:离地高度,没有则 0。</summary>
         public int FloatingHeight => Tags.IntOr("[floating height]", 0);
@@ -347,6 +367,33 @@ namespace Dnf.Game
                     if (v.Kind == ScriptValueKind.String && v.Text != null)
                     {
                         list.Add(v.Text);
+                    }
+                }
+            }
+            return list.ToArray();
+        }
+
+        /// <summary>取"开标签"到"闭标签"之间每一行里的所有整数值;没有开标签时返回空数组。</summary>
+        private int[] BlockInts(string open, string close)
+        {
+            var list = new List<int>();
+            ScriptLine[] lines = Tags.Lines;
+            int i = 0;
+            while (i < lines.Length && !lines[i].TagIs(open))
+            {
+                i++;
+            }
+            if (i == lines.Length)
+            {
+                return Array.Empty<int>();
+            }
+            for (; i < lines.Length && !lines[i].TagIs(close); i++)
+            {
+                foreach (ScriptValue v in lines[i].Values)
+                {
+                    if (v.IsNumber)
+                    {
+                        list.Add(v.Int);
                     }
                 }
             }

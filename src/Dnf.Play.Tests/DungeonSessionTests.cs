@@ -120,6 +120,7 @@ public class DungeonSessionTests
         private readonly HeroProgress _progress;
         private readonly Func<int, int, int, byte[]> _passOf;
         private readonly Action<RoomCombatSession> _setup;
+        private readonly Func<int, int, int, string> _mobPathOf;
 
         public DnfAssets Assets { get; }
         public DungeonLayout Layout { get; }
@@ -134,8 +135,9 @@ public class DungeonSessionTests
         /// </summary>
         public Dungeon(DungeonLayout layout, Func<int, int, (int X, int Y)[]> monstersOf, int hp = 10, bool bodies = false, int heroObjectId = TestHeroId,
             Func<HeroVitals> vitalsOf = null, Func<int, int, string[]> soundsOf = null, HeroProgress progress = null, Func<int, int, int, byte[]> passOf = null,
-            Action<RoomCombatSession> setup = null)
+            Action<RoomCombatSession> setup = null, Func<int, int, int, string> mobPathOf = null)
         {
+            _mobPathOf = mobPathOf;
             Assets = DnfAssets.Open(_fx.Root);
             Layout = layout;
             _monstersOf = monstersOf;
@@ -199,11 +201,11 @@ public class DungeonSessionTests
             hero.Blocker = new GateBodies(gates);
             var room = new RoomSession(Assets, content, hero, new TownCamera(0, map.MaxCameraX, hero.X));
 
-            MonsterModel model = MonsterModel.Read(Assets, AvatarFixture.BlobMobPath);
             var actors = new List<MonsterActor>();
             (int X, int Y)[] at = _monstersOf(cx, cy);
             for (int i = 0; i < at.Length; i++)
             {
+                MonsterModel model = MonsterModel.Read(Assets, _mobPathOf?.Invoke(cx, cy, i) ?? AvatarFixture.BlobMobPath);
                 var spawn = new RoomMonsterSpawn(1, 0, 0, at[i].X, at[i].Y, 0, 1, 0, "[fixed]", "[normal]");
                 actors.Add(new MonsterActor(i, spawn, model, 1, _hp, 222.5, 1500, 0));
             }
@@ -1042,6 +1044,47 @@ public class DungeonSessionTests
         Assert.True(engagedAt >= 0 && engagedAt - stuckFrom <= DungeonBot.ExitStuckSteps + 10, "寻路接管得太晚:顶住 " + stuckFrom + " 步,接管 " + engagedAt + " 步");
         Assert.True(DungeonBot.ExitStuckSteps + 10 < DungeonBot.StallSteps);
         Assert.Equal((1, 0), (s.CellX, s.CellY));   // 从缺口绕过去,走出右出口进了隔壁格
+    }
+
+    [Fact]
+    public void AHeroLockedInAnAttackAnimationIsNotCountedAsStuckSoTheBotNeverWigglesIntoAnotherExit()
+    {
+        // 起点格没有怪物,自动机直奔右出口;每一步都把主角按在原地、挥击动作里(命中停顿或长动画把人锁住的样子)。
+        // 想动却动不了是动画锁的,不是被障碍物卡住:不能触发"摆脱卡住"的上下乱晃(乱晃会把站在可走带边缘的主角顶进别的出口,逛房间的路线就跳进了首领格)
+        using var d = new Dungeon(RingLayout(), (cx, cy) => None());
+        DungeonSession s = d.Session;
+        var bot = new DungeonBot(false);
+        double x = s.Hero.X, y = s.Hero.Y;
+        bool wiggled = false;
+        for (int step = 0; step < 200; step++)
+        {
+            s.Hero.Place(x, y, false, HeroMotion.Attack, 0);
+            Assert.True(s.Hero.IsAttacking, "夹具里的主角没有挥击动作,这条测试没法造出动画锁");
+            bool attack = bot.Next(s, out int dx, out int dy);
+            wiggled |= bot.Intent.Contains("摆脱卡住");
+            Assert.True(dx != 0 || dy != 0, "自动机应当想往出口走:" + bot.Intent);
+            s.Update(CombatScript.StepMs, dx, dy, attack);
+        }
+        Assert.False(wiggled, "动画锁住的主角被算成了卡住");
+    }
+
+    [Fact]
+    public void AHeroThatReallyCannotMoveIsStillCountedAsStuckAndWiggles()
+    {
+        // 对照:没有动画锁、只是原地被按住(几十步都动不了)就是卡住,得触发摆脱卡住
+        using var d = new Dungeon(RingLayout(), (cx, cy) => None());
+        DungeonSession s = d.Session;
+        var bot = new DungeonBot(false);
+        double x = s.Hero.X, y = s.Hero.Y;
+        bool wiggled = false;
+        for (int step = 0; step < 200; step++)
+        {
+            s.Hero.Place(x, y, false, HeroMotion.Rest, 0);
+            bool attack = bot.Next(s, out int dx, out int dy);
+            wiggled |= bot.Intent.Contains("摆脱卡住");
+            s.Update(CombatScript.StepMs, dx, dy, attack);
+        }
+        Assert.True(wiggled, "原地被按住的主角没有触发摆脱卡住");
     }
 
     [Fact]

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Dnf.Data;
+using Dnf.Game.Ai;
 using Dnf.Script;
 
 // 证据:脚本与数据文件(.chr、.skl、.atk、.ani、.lst)之间的契约见 E-036;.atk 的读法见 E-047。
@@ -351,6 +352,66 @@ namespace Dnf.Game
             }
             _monsters[id] = def;
             return def;
+        }
+
+        // ------------------------------------------------------------------ .ai 决策树脚本(证据 E-052、E-128)
+
+        private AiConstants _aiConstants;
+        private bool _aiConstantsTried;
+        private readonly Dictionary<string, AiScript> _aiScripts = new Dictionary<string, AiScript>(StringComparer.Ordinal);
+
+        /// <summary>AICharacter/OperatingValue.lst 里的"名字 → 数值"名表;读不到时为 null(这时脚本里的名字参数不查表)。</summary>
+        public AiConstants AiConstants
+        {
+            get
+            {
+                if (!_aiConstantsTried)
+                {
+                    _aiConstantsTried = true;
+                    PvfStringTable strings = Strings;
+                    if (strings != null && _source.TryRead(AiConstants.ListPath, out byte[] data))
+                    {
+                        try
+                        {
+                            _aiConstants = AiConstants.Parse(data, strings);
+                        }
+                        catch (DnfFormatException)
+                        {
+                            _aiConstants = null;
+                        }
+                    }
+                }
+                return _aiConstants;
+            }
+        }
+
+        /// <summary>读并解析一份 .ai 决策树;文件不存在、不是标记流或没有字符串表时返回 null。结果会缓存。</summary>
+        public AiScript GetAiScript(string path)
+        {
+            if (path == null)
+            {
+                return null;
+            }
+            string key = PvfPath.Normalize(path);
+            if (_aiScripts.TryGetValue(key, out AiScript cached))
+            {
+                return cached;
+            }
+            AiScript script = null;
+            PvfStringTable strings = Strings;
+            if (strings != null && _source.TryRead(key, out byte[] data) && TokenScript.IsTokenScript(data))
+            {
+                try
+                {
+                    script = AiParser.Parse(data, strings, AiConstants);
+                }
+                catch (DnfFormatException)
+                {
+                    script = null;
+                }
+            }
+            _aiScripts[key] = script;
+            return script;
         }
 
         private MonsterBaseTables _monsterBaseTables;

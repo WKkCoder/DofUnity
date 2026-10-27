@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Dnf.Data;
 using Dnf.Game;
 using Dnf.Play;
 using Dnf.Render;
@@ -333,8 +334,41 @@ internal static class DungeonCheck
                 break;
             }
             Console.WriteLine("  怪物 #" + m.Index + " 编号 " + m.Code + (m.IsBoss ? "(首领)" : string.Empty) + " 位置 (" + F(m.X) + "," + F(m.Y) + "," + F(m.Z) + ") 生命 " + m.Hp + "/" + m.HpMax
-                + " 阶段 " + m.Phase + " 动画 " + m.CurrentAnimationPath);
+                + " 阶段 " + m.Phase + " 动画 " + m.CurrentAnimationPath + " 受击框 " + m.DamageBoxes().Count + "(动画 " + FramesWithDamageBox(m.CurrentAni) + "/" + (m.CurrentAni?.Frames.Length ?? 0) + " 帧有" + (m.CanEverBeHit ? string.Empty : ",整个模型都没有") + ")"
+                + (m.Script != null ? " 脚本驱动" + (m.IsAware ? "(已发现主角)" : "(未发现主角)") + " 招式冷却 " + CoolingList(m.Script) : string.Empty));
         }
+    }
+
+    private static int FramesWithDamageBox(AniFile? ani)
+    {
+        int n = 0;
+        if (ani == null)
+        {
+            return 0;
+        }
+        foreach (AniFrame f in ani.Frames)
+        {
+            foreach (AniBox b in f.Boxes)
+            {
+                if (b.Type == AniBoxType.Damage)
+                {
+                    n++;
+                    break;
+                }
+            }
+        }
+        return n;
+    }
+
+    /// <summary>脚本怪物各招还剩的冷却毫秒数(取整,逗号分隔),诊断用。</summary>
+    private static string CoolingList(MonsterScript script)
+    {
+        var parts = new List<string>();
+        for (int i = 0; i < script.AttackCount; i++)
+        {
+            parts.Add(((int)script.CoolingMs(i)).ToString());
+        }
+        return string.Join(",", parts);
     }
 
     /// <summary>

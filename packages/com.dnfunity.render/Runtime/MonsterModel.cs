@@ -53,6 +53,9 @@ namespace Dnf.Render
     /// 一种怪物的外观:.mob 里的动作脚本(待机、行走、受击两种、倒地、翻倒、攻击)解析成动画文件。
     /// 路径相对 .mob 所在的目录(证据 E-069:monster/goblin/goblin.mob 的 "Animation_Goblin2/Stay.ani" → monster/goblin/animation_goblin2/stay.ani)。
     /// 缺少的动作为 null;攻击动作与攻击信息列表保持脚本里的顺序(攻击信息可以是空串)。
+    /// 带 [ai pattern] 的脚本怪物(全库约六成)不写 [waiting motion] 这类旧式标签,而是写 [waiting action] 这类指向 .act 的标签:
+    /// 每一项没有旧式标签时,取 .act 里第一个 [BASE ANI] 当这个动作的主动画(证据 E-128;叠加层 [SUB ANI] 与触发器另行处理)。
+    /// 攻击列表同理:没有 [attack motion] 时依次取 [attack action]、[action list] 里各个 .act 的主动画。
     /// </summary>
     public sealed class MonsterModel
     {
@@ -65,6 +68,15 @@ namespace Dnf.Render
         public AniFile Overturn { get; }
         public IReadOnlyList<AniFile> Attacks { get; }
 
+        /// <summary>
+        /// 与 <see cref="Attacks"/> 同下标的 .act 路径(规范化);攻击动画来自旧式 [attack motion] 时全是 null。
+        /// 没有对应动画的项也记路径(.act 存在但没有主动画时动画是 null)。
+        /// </summary>
+        public IReadOnlyList<string> AttackActionPaths { get; }
+
+        /// <summary>待机、行走、受击、倒地、翻倒各自来自哪个 .act(旧式标签或没有该动作时为 null),按 Waiting、Move、Damage1、Damage2、Down、Overturn 的顺序。</summary>
+        public IReadOnlyList<string> ActionPaths { get; }
+
         /// <summary>每个动画的 PVF 路径(用来在绘制列表里标记动画)。</summary>
         public IReadOnlyDictionary<AniFile, string> Paths { get; }
 
@@ -72,7 +84,8 @@ namespace Dnf.Render
         public IReadOnlyList<string> AttackInfoPaths { get; }
 
         private MonsterModel(string mobPath, AniFile waiting, AniFile move, AniFile damage1, AniFile damage2, AniFile down, AniFile overturn,
-            IReadOnlyList<AniFile> attacks, IReadOnlyList<string> attackInfos, Dictionary<AniFile, string> paths)
+            IReadOnlyList<AniFile> attacks, IReadOnlyList<string> attackInfos, Dictionary<AniFile, string> paths,
+            IReadOnlyList<string> attackActions, IReadOnlyList<string> actions)
         {
             MobPath = mobPath;
             Waiting = waiting;
@@ -84,11 +97,57 @@ namespace Dnf.Render
             Attacks = attacks;
             AttackInfoPaths = attackInfos;
             Paths = paths;
+            AttackActionPaths = attackActions;
+            ActionPaths = actions;
         }
 
         public string PathOf(AniFile ani)
         {
             return ani != null && Paths.TryGetValue(ani, out string p) ? p : null;
+        }
+
+        private int _anyDamageBox = -1;
+
+        /// <summary>
+        /// 读到的全部动画(待机、行走、受击、倒地、翻倒、各招)里有没有哪一帧带受击框。一个都没有的怪物主角怎么也打不到
+        /// (全库里这类怪物很少,多是占位或被别的脚本控制的东西;受击框只来自 .ani 的帧,.mob 里没有别的标签给它)。
+        /// </summary>
+        public bool HasAnyDamageBox
+        {
+            get
+            {
+                if (_anyDamageBox < 0)
+                {
+                    bool any = HasDamageBox(Waiting) || HasDamageBox(Move) || HasDamageBox(Damage1) || HasDamageBox(Damage2)
+                        || HasDamageBox(Down) || HasDamageBox(Overturn);
+                    for (int i = 0; !any && i < Attacks.Count; i++)
+                    {
+                        any = HasDamageBox(Attacks[i]);
+                    }
+                    _anyDamageBox = any ? 1 : 0;
+                }
+                return _anyDamageBox == 1;
+            }
+        }
+
+        /// <summary>动画里有没有哪一帧带受击框。</summary>
+        public static bool HasDamageBox(AniFile ani)
+        {
+            if (ani == null)
+            {
+                return false;
+            }
+            foreach (AniFrame frame in ani.Frames)
+            {
+                foreach (AniBox box in frame.Boxes)
+                {
+                    if (box.Type == AniBoxType.Damage)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         /// <summary>读一个 .mob 的动作脚本;PVF 里没有时返回 null。</summary>
@@ -101,7 +160,9 @@ namespace Dnf.Render
             }
             var paths = new Dictionary<AniFile, string>();
             string waiting = null, move = null, damage1 = null, damage2 = null, down = null, overturn = null;
+            string waitingAct = null, moveAct = null, damage1Act = null, damage2Act = null, downAct = null, overturnAct = null;
             var attackRel = new List<string>();
+            var attackActRel = new List<string>();
             var infoRel = new List<string>();
             foreach (ScriptLine line in doc)
             {
@@ -133,24 +194,109 @@ namespace Dnf.Render
                 {
                     AddStrings(line, attackRel);
                 }
+                else if (waitingAct == null && line.TagIs("[waiting action]"))
+                {
+                    waitingAct = line.FirstString();
+                }
+                else if (moveAct == null && line.TagIs("[move action]"))
+                {
+                    moveAct = line.FirstString();
+                }
+                else if (damage1Act == null && line.TagIs("[damage action 1]"))
+                {
+                    damage1Act = line.FirstString();
+                }
+                else if (damage2Act == null && line.TagIs("[damage action 2]"))
+                {
+                    damage2Act = line.FirstString();
+                }
+                else if (downAct == null && line.TagIs("[down action]"))
+                {
+                    downAct = line.FirstString();
+                }
+                else if (overturnAct == null && line.TagIs("[overturn action]"))
+                {
+                    overturnAct = line.FirstString();
+                }
+                else if (attackActRel.Count == 0 && (line.TagIs("[attack action]") || line.TagIs("[action list]")))
+                {
+                    AddStrings(line, attackActRel);                 // 两个标签在全库里不同时出现:脚本怪物的攻击列表写成其中之一
+                }
                 else if (infoRel.Count == 0 && line.TagIs("[attack info]"))
                 {
                     AddStrings(line, infoRel);
                 }
             }
             var attacks = new List<AniFile>();
-            foreach (string rel in attackRel)
+            var attackActs = new List<string>();
+            if (attackRel.Count > 0)
             {
-                attacks.Add(Load(assets, mobPath, rel, paths));
+                foreach (string rel in attackRel)
+                {
+                    attacks.Add(Load(assets, mobPath, rel, paths));
+                    attackActs.Add(null);
+                }
+            }
+            else
+            {
+                foreach (string rel in attackActRel)
+                {
+                    attacks.Add(LoadAction(assets, mobPath, rel, paths, out string actPath));
+                    attackActs.Add(actPath);
+                }
             }
             var infos = new List<string>();
             foreach (string rel in infoRel)
             {
                 infos.Add(string.IsNullOrEmpty(rel) ? string.Empty : PvfPath.ResolveRelativeTo(mobPath, rel));
             }
-            return new MonsterModel(mobPath, Load(assets, mobPath, waiting, paths), Load(assets, mobPath, move, paths),
-                Load(assets, mobPath, damage1, paths), Load(assets, mobPath, damage2, paths), Load(assets, mobPath, down, paths),
-                Load(assets, mobPath, overturn, paths), attacks, infos, paths);
+            // 单项动作:旧式 motion 标签优先;没有它(或读不出动画)才取 action 标签指的 .act
+            var actions = new string[6];
+            AniFile wait = LoadMotionOrAction(assets, mobPath, waiting, waitingAct, paths, out actions[0]);
+            AniFile mv = LoadMotionOrAction(assets, mobPath, move, moveAct, paths, out actions[1]);
+            AniFile d1 = LoadMotionOrAction(assets, mobPath, damage1, damage1Act, paths, out actions[2]);
+            AniFile d2 = LoadMotionOrAction(assets, mobPath, damage2, damage2Act, paths, out actions[3]);
+            AniFile dn = LoadMotionOrAction(assets, mobPath, down, downAct, paths, out actions[4]);
+            AniFile ov = LoadMotionOrAction(assets, mobPath, overturn, overturnAct, paths, out actions[5]);
+            return new MonsterModel(mobPath, wait, mv, d1, d2, dn, ov, attacks, infos, paths, attackActs, actions);
+        }
+
+        private static AniFile LoadMotionOrAction(DnfAssets assets, string mobPath, string motionRel, string actionRel,
+            Dictionary<AniFile, string> paths, out string actionPath)
+        {
+            actionPath = null;
+            AniFile ani = Load(assets, mobPath, motionRel, paths);
+            if (ani != null)
+            {
+                return ani;
+            }
+            ani = LoadAction(assets, mobPath, actionRel, paths, out string path);
+            actionPath = ani != null ? path : null;
+            return ani;
+        }
+
+        /// <summary>读 .mob 里一个 action 标签指的 .act:第一个 [BASE ANI] 是这个动作的主动画(路径相对 .act 所在目录)。</summary>
+        private static AniFile LoadAction(DnfAssets assets, string mobPath, string actionRel, Dictionary<AniFile, string> paths, out string actionPath)
+        {
+            actionPath = null;
+            if (string.IsNullOrEmpty(actionRel))
+            {
+                return null;
+            }
+            actionPath = PvfPath.ResolveRelativeTo(mobPath, actionRel);
+            ScriptLine[] doc = assets.ReadScript(actionPath);
+            if (doc == null)
+            {
+                return null;
+            }
+            foreach (ScriptLine line in doc)
+            {
+                if (line.TagIs("[BASE ANI]"))
+                {
+                    return Load(assets, actionPath, line.FirstString(), paths);
+                }
+            }
+            return null;
         }
 
         private static void AddStrings(ScriptLine line, List<string> into)

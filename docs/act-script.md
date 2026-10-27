@@ -98,3 +98,8 @@
 - 触发器 0x24 字节里 `+0x00..+0x0b`(记录向量)与 `+0x0c..+0x13`、`+0x1e..+0x23` 的含义;
 - 受保护区域里的几个调用(行为 `0x6e`、`0xee`、`0xdf`、`0x8d` 的一部分,以及评估函数的两处),按约定当黑盒;
 - 值表达式 `valueOf` 的完整语法、延迟队列的取消语义、`[SET ACTION]` 的完整"关键字 → 族码 → 内置状态号"表(`docs/act-semantics.tsv` 的 `open` 列逐条列出)。
+
+### 现状:动画层已接,运行期没做(M36,E-128)
+
+怪物 `.mob` 里的 `[waiting action]`、`[move action]`、`[damage action]`、`[down action]`、`[overturn action]`、`[attack action]`、`[action list]` 指向的 `.act` 现在会被读:取 `[MOTION]` 里的 `[BASE ANI]` 当作该动作的动画(`MonsterModel`),`[TRIGGER]` 的 `[ENABLE]` 初值给 `.ai` 的 `is attack action enable()` 用;旧的 `[waiting motion]` 一类写法优先于新写法。**触发器运行期**(上面 10 个运行器、`[SET ACTION]` 动作链、`[CREATE PASSIVEOBJECT]`、`[SET SPEED]`、触发器的运行期开关)、`[SUB ANI]` 叠加层与 `[SOUND]` 声音事件都没做;脚本怪物出场之后全库副本扫描里新增的未通关副本(放大 5000 倍时约 8 到 9 座)卡在这里(变身循环、隐藏与出现状态、阶段分身、走路动画没有受击框的首领)。
+

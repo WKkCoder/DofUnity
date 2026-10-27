@@ -159,6 +159,11 @@ namespace Dnf.Play
         private int _smashTargetSteps;
 
         /// <summary>这一步寻路找不到路(<see cref="SteerByPath"/> 里记,<see cref="Next"/> 里清)。</summary>
+        /// <summary>现任目标(换目标要有明显更近的理由,见 <see cref="Nearest"/>)。</summary>
+        private MonsterActor _target;
+        private const double TargetKeepRatio = 1.5;
+        private const double TargetKeepSlack = 24.0;
+
         private bool _pathFailed;
 
         /// <summary>寻路连着找不到路的步数。</summary>
@@ -410,7 +415,7 @@ namespace Dnf.Play
             else
             {
                 _yBlocked = 0;
-                if (fight.AliveCount == 0 && AllGone(fight))
+                if (AllGone(fight))
                 {
                     // 先把地上的金币捡完(限时),带 SmashObjects 时再把房间里的物件打翻(掉出的东西下一步又归捡拾管),最后去出口
                     if (!Collect(fight, hero, out dirX, out dirY))
@@ -616,11 +621,12 @@ namespace Dnf.Play
             return best;
         }
 
+        /// <summary>房间里该打的怪物都没了(没有任何受击框、永远打不到的不算,与 <see cref="DungeonSession"/> 的清房判定一致)。</summary>
         private static bool AllGone(RoomCombatSession fight)
         {
             foreach (MonsterActor m in fight.Monsters)
             {
-                if (!m.IsGone)
+                if (!m.IsGone && m.CanEverBeHit)
                 {
                     return false;
                 }
@@ -628,24 +634,46 @@ namespace Dnf.Play
             return true;
         }
 
-        private static MonsterActor Nearest(RoomCombatSession fight, TownHero hero)
+        /// <summary>
+        /// 最近的活怪物。当前帧没有受击框的怪物(藏起来的、变身中的、只能等脚本放它出来的)打不到,
+        /// 先挑打得到的;全都打不到时才退而求其次靠近最近的那只等它现身,免得自动机对着一个打不中的怪物挥一辈子。
+        /// </summary>
+        private MonsterActor Nearest(RoomCombatSession fight, TownHero hero)
         {
-            MonsterActor best = null;
-            double bestD = double.MaxValue;
+            MonsterActor best = null, bestAny = null;
+            double bestD = double.MaxValue, bestAnyD = double.MaxValue;
+            double keptD = double.MaxValue;
             foreach (MonsterActor m in fight.Monsters)
             {
-                if (!m.IsAlive)
+                if (!m.IsAlive || !m.CanEverBeHit)
                 {
                     continue;
                 }
                 double d = Math.Abs(m.X - hero.X) + 4 * Math.Abs(m.Y - hero.Y);
-                if (d < bestD)
+                if (d < bestAnyD)
+                {
+                    bestAnyD = d;
+                    bestAny = m;
+                }
+                bool hittable = m.HasDamageBox;
+                if (d < bestD && hittable)
                 {
                     bestD = d;
                     best = m;
                 }
+                if (m == _target && hittable)
+                {
+                    keptD = d;
+                }
             }
-            return best;
+            // 现任目标还活着、打得到、也没远到哪里去:接着打它。多只怪物叠在同一点时"最近"每一步都在换人,
+            // 寻路按目标记的状态(路线、到达)每次都清零,自动机在原地来回晃一辈子
+            if (_target != null && keptD < double.MaxValue && keptD <= bestD * TargetKeepRatio + TargetKeepSlack)
+            {
+                return _target;
+            }
+            _target = best ?? bestAny;
+            return _target;
         }
 
         private void Navigate(DungeonSession session, RoomCombatSession fight, TownHero hero, out int dirX, out int dirY)
@@ -1035,7 +1063,11 @@ namespace Dnf.Play
             return !notStart; // 没有首领格:目标就是起点格(单格副本),走它迷宫外的出口
         }
 
-        /// <summary>想动却几乎没动(被障碍物卡住)超过一小会儿,就垂直方向挪一阵再试。</summary>
+        /// <summary>
+        /// 想动却几乎没动(被障碍物卡住)超过一小会儿,就垂直方向挪一阵再试。
+        /// 挥击、命中停顿、受击、倒地的动画锁着人时本来就动不了,不算"卡住"(否则最后一击之后的那一小会儿被算成卡住,摆脱卡住的上下乱晃正好把站在下边缘的主角顶进下出口,
+        /// 逛房间的路线就跳进了首领格)。
+        /// </summary>
         private void Unstick(TownHero hero, ref int dirX, ref int dirY)
         {
             bool moved = double.IsNaN(_lastX) || Math.Abs(hero.X - _lastX) > 0.2 || Math.Abs(hero.Y - _lastY) > 0.2;
@@ -1043,7 +1075,10 @@ namespace Dnf.Play
             _lastY = hero.Y;
             if ((dirX != 0 || dirY != 0) && !moved)
             {
-                _stuck++;
+                if (!hero.IsAttacking && !hero.IsHurt && !hero.IsDown)
+                {
+                    _stuck++;
+                }
             }
             else
             {
