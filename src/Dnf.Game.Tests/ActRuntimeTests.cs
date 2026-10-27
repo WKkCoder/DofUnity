@@ -59,6 +59,8 @@ public sealed class ActRuntimeTests
         public IActEntity Target { get; set; }
         public IActEntity Master { get; set; }
         public int MotionVersion { get; set; }
+        public int Hp { get; set; }
+        public int HpMax { get; set; }
         public List<string> Log { get; } = new();
 
         private static string F(float v) => v.ToString("0.##", CultureInfo.InvariantCulture);
@@ -101,6 +103,7 @@ public sealed class ActRuntimeTests
     private sealed class Host : IActHost
     {
         public Queue<int> Randoms { get; } = new();
+        public long NowMs { get; set; }
         public List<(IActEntity owner, int index, int level, float x, float y, float z, bool left)> Spawns { get; } = new();
         public Dictionary<ActSelector, List<IActEntity>> Sets { get; } = new();
 
@@ -849,5 +852,349 @@ public sealed class ActRuntimeTests
         runner.OnDamage(e);
         runner.OnSetAction();
         Assert.Empty(e.Log);
+    }
+
+    // ------------------------------------------------------------------ 变量、条件、延迟与生命条件(M39,E-132)
+
+    [Fact]
+    public void ADimAssignsFromTheClockAndALaterIfComparesItAgainstTheClock()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[FRAME]", 0, 0), L("[DO BEHAVIOR]"), L("[ME]", 0)),
+            Trigger(L("[LIMIT]", 1), L("[IF]", "t"), L("[+]", 500), L("[<=]"), L("[GET TIME]"), L("[/IF]"), L("[DO BEHAVIOR]"), L("[ME]", 1)),
+            Behavior(L("[DIM]", "t"), L("[=]"), L("[GET TIME]"), L("[/DIM]")),
+            Behavior(Speed(9))));
+
+        Assert.True(p.Triggers[0].Supported);
+        Assert.True(p.Triggers[1].Supported);
+        Assert.Equal(ActRecordKind.If, p.Triggers[1].Records.Single(r => r.Kind == ActRecordKind.If).Kind);
+        Assert.Equal(ActBehaviorKind.SetVariable, p.Behaviors[0].Items[0].Kind);
+
+        var e = new Entity();
+        var host = new Host { NowMs = 1000 };
+        var runner = new ActRunner(p, e, host);
+        runner.Update(0, 0.016f);
+        Assert.True(runner.TryGetVariable("t", out int t));
+        Assert.Equal(1000, t);
+
+        host.NowMs = 1400;
+        runner.Update(1, 0.016f);
+        host.NowMs = 1499;
+        runner.Update(1, 0.016f);
+        Assert.Empty(e.Log);
+        host.NowMs = 1500;
+        runner.Update(1, 0.016f);
+        Assert.Equal(new[] { "speed:9,-,-" }, e.Log.ToArray());
+        host.NowMs = 1600;
+        runner.Update(1, 0.016f);
+        Assert.Single(e.Log);     // [LIMIT] 1
+    }
+
+    [Fact]
+    public void ExpressionsAddSubtractAndReadVariablesAndAnUnassignedVariableReadsZero()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[FRAME]", 0, 0), L("[DO BEHAVIOR]"), L("[ME]", 0)),
+            Behavior(
+                L("[DIM]", "a"), L("[=]", 5), L("[/DIM]"),
+                L("[DIM]", "b"), L("[=]", "a"), L("[+]", 3), L("[/DIM]"),
+                L("[DIM]", "c"), L("[=]", 10), L("[-]", "a"), L("[/DIM]"),
+                L("[DIM]", "d"), L("[=]", "c"), L("[-]", "b"), L("[/DIM]"),
+                L("[DIM]", "e"), L("[=]", "never assigned"), L("[+]", 2), L("[/DIM]"),
+                L("[DIM]", "a"), L("[=]", "a"), L("[+]", "a"), L("[/DIM]"))));
+
+        var runner = new ActRunner(p, new Entity(), new Host());
+        runner.Update(0, 0.016f);
+
+        int Var(string name)
+        {
+            Assert.True(runner.TryGetVariable(name, out int v), name);
+            return v;
+        }
+
+        Assert.Equal(10, Var("a"));     // 最后一条 [DIM] 把 a 改成了 5 + 5
+        Assert.Equal(8, Var("b"));
+        Assert.Equal(5, Var("c"));
+        Assert.Equal(-3, Var("d"));
+        Assert.Equal(2, Var("e"));
+        Assert.False(runner.TryGetVariable("zzz", out _));
+    }
+
+    [Fact]
+    public void ClockComparisonsSurviveTheThirtyTwoBitWrapAround()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[FRAME]", 0, 0), L("[DO BEHAVIOR]"), L("[ME]", 0)),
+            Trigger(L("[IF]", "t"), L("[+]", 30), L("[<=]"), L("[GET TIME]"), L("[/IF]"), L("[DO BEHAVIOR]"), L("[ME]", 1)),
+            Behavior(L("[DIM]", "t"), L("[=]"), L("[GET TIME]"), L("[/DIM]")),
+            Behavior(Speed(1))));
+        var e = new Entity();
+        var host = new Host { NowMs = 0xFFFFFFF0L };      // 低 32 位是 -16
+        var runner = new ActRunner(p, e, host);
+        runner.Update(0, 0.016f);
+        Assert.Empty(e.Log);
+        host.NowMs = 0x100000010L;                          // 低 32 位是 16:过了 32 毫秒
+        runner.Update(1, 0.016f);
+        Assert.Single(e.Log);
+    }
+
+    [Fact]
+    public void AnIfWithoutAComparatorOrAnOperandStaysUnsupportedAndNeverFires()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[FRAME]", 0, 0), L("[IF]", "x"), L("[=]"), L("[/IF]"), L("[DO BEHAVIOR]"), L("[ME]", 0)),
+            Trigger(L("[FRAME]", 0, 0), L("[IF]"), L("[=]", 3), L("[/IF]"), L("[DO BEHAVIOR]"), L("[ME]", 0)),
+            Trigger(L("[FRAME]", 0, 0), L("[IF]", "x"), L("[=]", 0), L("[/IF]"), L("[DO BEHAVIOR]"), L("[ME]", 0)),
+            Behavior(Speed(3))));
+
+        Assert.False(p.Triggers[0].Supported);
+        Assert.False(p.Triggers[1].Supported);
+        Assert.True(p.Triggers[2].Supported);
+        var e = new Entity();
+        new ActRunner(p, e, new Host()).Update(0, 0.016f);
+        Assert.Single(e.Log);       // 只有第三条(没赋过值的变量读 0,0 == 0)触发
+    }
+
+    [Fact]
+    public void AnIfGatesTheWholeTriggerAndLeavesTheWorkingSetAlone()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[FRAME]", 0, 0), L("[WHICH]"), L("[ALL ENEMY]"), L("[IF]", 1), L("[=<]", 2), L("[/IF]"), L("[DO BEHAVIOR]"), L("[CHECKUP OBJECT]", 0)),
+            Trigger(L("[FRAME]", 0, 0), L("[WHICH]"), L("[ALL ENEMY]"), L("[IF]", 3), L("[=>]", 4), L("[/IF]"), L("[DO BEHAVIOR]"), L("[CHECKUP OBJECT]", 1)),
+            Behavior(Speed(1)),
+            Behavior(Speed(2))));
+        var owner = new Entity();
+        var a = new Entity { Kind = ActEntityKind.Character };
+        var b = new Entity { Kind = ActEntityKind.Character };
+        var host = new Host();
+        host.Sets[ActSelector.AllEnemy] = new List<IActEntity> { a, b };
+        new ActRunner(p, owner, host).Update(0, 0.016f);
+
+        Assert.Equal(new[] { "speed:1,-,-" }, a.Log.ToArray());      // 1 <= 2 成立:两个目标都被作用
+        Assert.Equal(new[] { "speed:1,-,-" }, b.Log.ToArray());      // 3 >= 4 不成立:第二条什么也没做
+    }
+
+    [Fact]
+    public void ADelayedBehaviorRunsOnceItsDelayHasPassedAndOnlyThenCountsAsDone()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[FRAME]", 0, 0), L("[DELAY DO BEHAVIOR]"), L("[ME]", 0, 300)),
+            Behavior(Speed(5))));
+        Assert.True(p.Triggers[0].Supported);
+        var e = new Entity();
+        var host = new Host { NowMs = 1000 };
+        var runner = new ActRunner(p, e, host);
+
+        runner.Update(0, 0.016f);
+        Assert.Equal(1, runner.PendingDelayed);
+        Assert.Equal(1, runner.TotalFired);
+        Assert.Empty(e.Log);
+        host.NowMs = 1299;
+        runner.Update(1, 0.016f);
+        Assert.Empty(e.Log);
+        host.NowMs = 1300;
+        runner.Update(1, 0.016f);
+        Assert.Equal(new[] { "speed:5,-,-" }, e.Log.ToArray());
+        Assert.Equal(0, runner.PendingDelayed);
+        host.NowMs = 5000;
+        runner.Update(1, 0.016f);
+        Assert.Single(e.Log);       // 单次位:同一圈不会再排一次
+    }
+
+    [Fact]
+    public void ANegativeDelayOrGroupNumberQueuesNothingButStillCounts()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[FRAME]", 0, 0), L("[DELAY DO BEHAVIOR]"), L("[ME]", 0, -5)),
+            Trigger(L("[FRAME]", 0, 0), L("[DELAY DO BEHAVIOR]"), L("[ME]", -1, 5)),
+            Behavior(Speed(5))));
+        var e = new Entity();
+        var host = new Host { NowMs = 0 };
+        var runner = new ActRunner(p, e, host);
+        runner.Update(0, 0.016f);
+        Assert.Equal(0, runner.PendingDelayed);
+        Assert.Equal(2, runner.TotalFired);
+        host.NowMs = 100;
+        runner.Update(1, 0.016f);
+        Assert.Empty(e.Log);
+    }
+
+    [Fact]
+    public void ADelayedBehaviorKeepsTheTargetsOfTheMomentItWasQueuedAndSkipsTheDeadOnes()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[FRAME]", 0, 0), L("[WHICH]"), L("[ALL ENEMY]"), L("[DELAY DO BEHAVIOR]"), L("[CHECKUP OBJECT]", 0, 100)),
+            Behavior(Speed(1))));
+        var owner = new Entity();
+        var a = new Entity { Kind = ActEntityKind.Character };
+        var b = new Entity { Kind = ActEntityKind.Character };
+        var late = new Entity { Kind = ActEntityKind.Character };
+        var host = new Host { NowMs = 0 };
+        host.Sets[ActSelector.AllEnemy] = new List<IActEntity> { a, b };
+        var runner = new ActRunner(p, owner, host);
+        runner.Update(0, 0.016f);
+
+        b.IsAlive = false;
+        host.Sets[ActSelector.AllEnemy].Add(late);
+        host.NowMs = 100;
+        runner.Update(1, 0.016f);
+
+        Assert.Equal(new[] { "speed:1,-,-" }, a.Log.ToArray());
+        Assert.Empty(b.Log);
+        Assert.Empty(late.Log);
+    }
+
+    [Fact]
+    public void RestartingTheActionDropsPendingDelaysButKeepsTheVariables()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[FRAME]", 0, 0), L("[DO BEHAVIOR]"), L("[ME]", 1)),
+            Trigger(L("[FRAME]", 0, 0), L("[DELAY DO BEHAVIOR]"), L("[ME]", 0, 50)),
+            Behavior(Speed(2)),
+            Behavior(L("[DIM]", "n"), L("[=]", "n"), L("[+]", 1), L("[/DIM]"))));
+        var e = new Entity();
+        var host = new Host { NowMs = 0 };
+        var runner = new ActRunner(p, e, host);
+        runner.Update(0, 0.016f);
+        Assert.Equal(1, runner.PendingDelayed);
+
+        runner.Begin();
+        Assert.Equal(0, runner.PendingDelayed);
+        host.NowMs = 100;
+        runner.Update(0, 0.016f);      // 重来后第 0 帧又排了一个
+        Assert.Equal(1, runner.PendingDelayed);
+        Assert.Empty(e.Log);
+        Assert.True(runner.TryGetVariable("n", out int n));
+        Assert.Equal(2, n);              // 变量跨过了动作重来(两次 [DIM] n = n + 1)
+    }
+
+    [Fact]
+    public void ADelayedBehaviorThatSwitchesTheMotionEndsTheRestOfThatUpdate()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[FRAME]", 0, 0), L("[DELAY DO BEHAVIOR]"), L("[ME]", 0, 0)),
+            Trigger(L("[FRAME]", 1, 1), L("[DO BEHAVIOR]"), L("[ME]", 1)),
+            Behavior(L("[SET FRAME]", 3)),
+            Behavior(Speed(7))));
+        var e = new Entity();
+        var host = new Host { NowMs = 0 };
+        var runner = new ActRunner(p, e, host);
+        runner.Update(0, 0.016f);          // 排队(延迟 0 毫秒,下一次更新开头执行)
+        runner.Update(1, 0.016f);          // 开头先执行延迟行为:改了帧,这次更新的触发器不再求值
+        Assert.Equal(new[] { "frame:3" }, e.Log.ToArray());
+        runner.Update(1, 0.016f);          // 下一次更新照常
+        Assert.Equal(new[] { "frame:3", "speed:7,-,-" }, e.Log.ToArray());
+    }
+
+    [Fact]
+    public void AnHpConditionComparesPercentOfMaxAndPointsAndDropsObjectsWithoutHealth()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[WHICH]"), L("[ME]"), L("[CHECKUP]"), L("[HP]"), L("[<=]", 50), L("[%]"), L("[/CHECKUP]"), L("[DO BEHAVIOR]"), L("[CHECKUP OBJECT]", 0)),
+            Trigger(L("[WHICH]"), L("[ME]"), L("[CHECKUP]"), L("[HP]"), L("[>]", 30), L("[POINT]"), L("[/CHECKUP]"), L("[DO BEHAVIOR]"), L("[CHECKUP OBJECT]", 1)),
+            Behavior(Speed(1)),
+            Behavior(Speed(2))));
+        Assert.True(p.Triggers[0].Supported);
+        Assert.Equal(ActRecordKind.Hp, p.Triggers[0].Records[1].Kind);
+        Assert.True(p.Triggers[0].Records[1].Percent);
+        Assert.False(p.Triggers[1].Records[1].Percent);
+
+        List<string> Run(int hp, int max)
+        {
+            var e = new Entity { Hp = hp, HpMax = max };
+            new ActRunner(p, e, new Host()).Update(0, 0.016f);
+            return e.Log;
+        }
+
+        Assert.Equal(new[] { "speed:1,-,-", "speed:2,-,-" }, Run(50, 100).ToArray());   // 50% 恰好满足 <= 50;50 点大于 30
+        Assert.Equal(new[] { "speed:2,-,-" }, Run(51, 100).ToArray());                   // 51% 不满足
+        Assert.Equal(new[] { "speed:1,-,-" }, Run(30, 100).ToArray());                   // 30 点不大于 30
+        Assert.Empty(Run(10, 0));                                                        // 没有生命的对象:被剔除,两条都不触发
+    }
+
+    [Fact]
+    public void ThePercentThresholdUsesA32BitMultiplyLikeTheClient()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[WHICH]"), L("[ME]"), L("[CHECKUP]"), L("[HP]"), L("[<=]", 50), L("[%]"), L("[/CHECKUP]"), L("[DO BEHAVIOR]"), L("[CHECKUP OBJECT]", 0)),
+            Behavior(Speed(1))));
+        // 最大生命 1 亿 × 50 在 32 位里回绕成 705032704,再除 100 得 7050327:4000 万不满足,700 万满足(客户端的乘法是 32 位的)
+        var big = new Entity { Hp = 40_000_000, HpMax = 100_000_000 };
+        new ActRunner(p, big, new Host()).Update(0, 0.016f);
+        Assert.Empty(big.Log);
+        var small = new Entity { Hp = 7_000_000, HpMax = 100_000_000 };
+        new ActRunner(p, small, new Host()).Update(0, 0.016f);
+        Assert.Single(small.Log);
+    }
+
+    [Fact]
+    public void AnHpWordInsteadOfANumberIsStillUnsupported()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[WHICH]"), L("[ME]"), L("[CHECKUP]"), L("[HP]"), L("[LOW]"), L("[/CHECKUP]"), L("[DO BEHAVIOR]"), L("[CHECKUP OBJECT]", 0)),
+            Behavior(Speed(1))));
+        Assert.False(p.Triggers[0].Supported);
+        Assert.Contains("[HP]", p.Triggers[0].UnsupportedTags);
+    }
+
+    [Fact]
+    public void ADoProcBehaviorRunsLikeADoBehaviorInTheSameFile()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[FRAME]", 0, 0), L("[DO PROC BEHAVIOR]"), L("[ME]", 0)),
+            Behavior(Speed(4))));
+        Assert.True(p.Triggers[0].Supported);
+        var e = new Entity();
+        new ActRunner(p, e, new Host()).Update(0, 0.016f);
+        Assert.Equal(new[] { "speed:4,-,-" }, e.Log.ToArray());
+    }
+
+    [Fact]
+    public void FrontSideKeepsOnlyTheTargetsThatFaceTheOwnerAlongTheXAxis()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[FRAME]", 0, 0), L("[WHICH]"), L("[ALL ENEMY]"), L("[CHECKUP]"), L("[FRONTSIDE]"), L("[/CHECKUP]"), L("[DO BEHAVIOR]"), L("[CHECKUP OBJECT]", 0)),
+            Behavior(Speed(1))));
+        Assert.True(p.Triggers[0].Supported);
+        var owner = new Entity { X = 100 };
+        var leftFacingRight = new Entity { Kind = ActEntityKind.Character, X = 50, FacingLeft = false };     // 在拥有者左边、朝右:正面
+        var leftFacingLeft = new Entity { Kind = ActEntityKind.Character, X = 50, FacingLeft = true };       // 在左边、朝左:背对
+        var rightFacingLeft = new Entity { Kind = ActEntityKind.Character, X = 150, FacingLeft = true };     // 在右边、朝左:正面
+        var rightFacingRight = new Entity { Kind = ActEntityKind.Character, X = 150, FacingLeft = false };   // 在右边、朝右:背对
+        var samePlaceFacingRight = new Entity { Kind = ActEntityKind.Character, X = 100, FacingLeft = false };
+        var dead = new Entity { Kind = ActEntityKind.Character, X = 50, FacingLeft = false, IsAlive = false };
+        var host = new Host();
+        host.Sets[ActSelector.AllEnemy] = new List<IActEntity> { leftFacingRight, leftFacingLeft, rightFacingLeft, rightFacingRight, samePlaceFacingRight, dead };
+        new ActRunner(p, owner, host).Update(0, 0.016f);
+
+        Assert.Single(leftFacingRight.Log);
+        Assert.Empty(leftFacingLeft.Log);
+        Assert.Single(rightFacingLeft.Log);
+        Assert.Empty(rightFacingRight.Log);
+        Assert.Single(samePlaceFacingRight.Log);      // 同一 X 算"在左边或同位置":要朝右
+        Assert.Empty(dead.Log);
+    }
+
+    [Fact]
+    public void IsInPosNeedsAllThreeIntegerCoordinatesToMatchExactly()
+    {
+        ActProgram p = P(Cat(
+            Trigger(L("[WHICH]"), L("[ME]"), L("[CHECKUP]"), L("[IS IN POS]", 10, 20, 30), L("[/CHECKUP]"), L("[DO BEHAVIOR]"), L("[CHECKUP OBJECT]", 0)),
+            Trigger(L("[WHICH]"), L("[ME]"), L("[CHECKUP]"), L("[IS IN POS]", 10, 20), L("[/CHECKUP]"), L("[DO BEHAVIOR]"), L("[CHECKUP OBJECT]", 0)),
+            Behavior(Speed(1))));
+        Assert.True(p.Triggers[0].Supported);
+        Assert.False(p.Triggers[1].Supported);       // 少一个坐标:读不懂
+
+        int Fired(float x, float y, float z)
+        {
+            var e = new Entity { X = x, Y = y, Z = z };
+            new ActRunner(p, e, new Host()).Update(0, 0.016f);
+            return e.Log.Count;
+        }
+
+        Assert.Equal(1, Fired(10, 20, 30));
+        Assert.Equal(1, Fired(10.9f, 20.5f, 30.99f));      // 取整数部分比较
+        Assert.Equal(0, Fired(11, 20, 30));
+        Assert.Equal(0, Fired(10, 20, 29));
     }
 }

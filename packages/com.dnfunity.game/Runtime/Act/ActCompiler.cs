@@ -204,6 +204,52 @@ namespace Dnf.Game.Act
             return false;
         }
 
+        /// <summary>读一项:整数、变量名(字符串值)或 [GET TIME];读不到返回 false(游标不动)。</summary>
+        public bool TryTerm(out ActTerm term)
+        {
+            if (AtNumber)
+            {
+                term = ActTerm.OfNumber(Int());
+                return true;
+            }
+            if (AtString)
+            {
+                term = ActTerm.OfVariable(TakeString());
+                return true;
+            }
+            if (AtOpen("[GET TIME]"))
+            {
+                _i++;
+                term = ActTerm.Clock;
+                return true;
+            }
+            term = default;
+            return false;
+        }
+
+        /// <summary>读表达式:一项,后面可以跟 [+] 或 [-] 再一项;读不全返回 false(游标停在读到的地方)。</summary>
+        public bool TryExpression(out ActExpression expression)
+        {
+            expression = null;
+            if (!TryTerm(out ActTerm first))
+            {
+                return false;
+            }
+            ActArith op = ActArith.None;
+            ActTerm second = default;
+            if (AtOpen("[+]") || AtOpen("[-]"))
+            {
+                op = AtOpen("[+]") ? ActArith.Add : ActArith.Subtract;
+                _i++;
+                if (!TryTerm(out second))
+                {
+                    return false;
+                }
+            }
+            expression = new ActExpression(first, op, second);
+            return true;
+        }
+
         /// <summary>跳到下一个满足 <paramref name="isHead"/> 的开标签(不消耗它)或流尾。</summary>
         public void SkipToHead(Func<string, bool> isHead)
         {
@@ -356,8 +402,66 @@ namespace Dnf.Game.Act
                         break;
                     case "[DO BEHAVIOR]":
                     case "[DIRECT DO BEHAVIOR]":
+                    case "[DO PROC BEHAVIOR]":
                         records.Add(ParseDo(cur, tag, unsupported));
                         break;
+                    case "[DELAY DO BEHAVIOR]":
+                        records.Add(ParseDelayDo(cur, tag, unsupported));
+                        break;
+                    case "[FRONTSIDE]":
+                        records.Add(new ActRecord { Kind = ActRecordKind.FrontSide, Tag = tag });
+                        break;
+                    case "[IS IN POS]":
+                    {
+                        int[] pos = cur.Ints();
+                        if (pos.Length >= 3)
+                        {
+                            records.Add(new ActRecord { Kind = ActRecordKind.IsInPos, Tag = tag, Ints = pos });
+                            break;
+                        }
+                        AddUnsupported(records, unsupported, tag);
+                        cur.SkipToHead(IsTriggerHead);
+                        break;
+                    }
+                    case "[IF]":
+                    {
+                        // [IF] 左表达式 比较符 右表达式 [/IF](E-132):变量与毫秒时钟的比较,全库 11 种写法都是这个形状
+                        if (cur.TryExpression(out ActExpression left) && cur.AtOpen(out string cmp) && ActCompares.TryParse(cmp, out ActCompare sign))
+                        {
+                            cur.Skip();
+                            if (cur.TryExpression(out ActExpression right))
+                            {
+                                cur.TakeClose(tag);
+                                records.Add(new ActRecord { Kind = ActRecordKind.If, Tag = tag, Left = left, Sign = sign, Right = right });
+                                break;
+                            }
+                        }
+                        AddUnsupported(records, unsupported, tag);
+                        cur.SkipToHead(IsTriggerHead);
+                        break;
+                    }
+                    case "[HP]":
+                    {
+                        // [HP] 比较符 数 [%] 或 [POINT](逐对象过滤;[HP] [LOW] 之类的写法不认)
+                        if (cur.TryCompare(out ActCompare hpSign, out int hpNumber))
+                        {
+                            bool percent = false;
+                            if (cur.AtOpen("[%]"))
+                            {
+                                cur.Skip();
+                                percent = true;
+                            }
+                            else if (cur.AtOpen("[POINT]"))
+                            {
+                                cur.Skip();
+                            }
+                            records.Add(new ActRecord { Kind = ActRecordKind.Hp, Tag = tag, Sign = hpSign, Number = hpNumber, Percent = percent });
+                            break;
+                        }
+                        AddUnsupported(records, unsupported, tag);
+                        cur.SkipToHead(IsTriggerHead);
+                        break;
+                    }
                     case "[ON SET ACTION]":
                         records.Add(new ActRecord { Kind = ActRecordKind.OnSetAction, Tag = tag });
                         break;
@@ -516,6 +620,25 @@ namespace Dnf.Game.Act
                 cur.SkipToHead(IsTriggerHead);
                 return new ActRecord { Kind = ActRecordKind.Unsupported, Tag = tag };
             }
+            return rec;
+        }
+
+        /// <summary>[DELAY DO BEHAVIOR] 选择器 行为组号 延迟毫秒(E-132;全库 267 处,第二个数是 100 到几千的延迟)。</summary>
+        private static ActRecord ParseDelayDo(ActCursor cur, string tag, List<string> unsupported)
+        {
+            ActRecord rec = ParseDo(cur, tag, unsupported);
+            if (rec.Kind == ActRecordKind.Unsupported)
+            {
+                return rec;
+            }
+            if (!cur.TryInt(out int delay))
+            {
+                AddUnsupportedTag(unsupported, tag + " (no delay)");
+                cur.SkipToHead(IsTriggerHead);
+                return new ActRecord { Kind = ActRecordKind.Unsupported, Tag = tag };
+            }
+            rec.Kind = ActRecordKind.DelayDoBehavior;
+            rec.Number = delay;
             return rec;
         }
 
@@ -679,6 +802,20 @@ namespace Dnf.Game.Act
                 }
                 case "[SET FRAME]":
                     return new ActBehavior { Kind = ActBehaviorKind.SetFrame, Tag = tag, Frame = cur.Int() };
+                case "[DIM]":
+                {
+                    // [DIM] "名字" [=] 表达式 [/DIM](E-132;全库只有赋值,没有别的比较符)
+                    string name = cur.TakeString();
+                    if (name != null && cur.AtOpen("[=]"))
+                    {
+                        cur.Skip();
+                        if (cur.TryExpression(out ActExpression value))
+                        {
+                            return new ActBehavior { Kind = ActBehaviorKind.SetVariable, Tag = tag, VariableName = name, Expression = value };
+                        }
+                    }
+                    return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
+                }
                 default:
                     return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
             }

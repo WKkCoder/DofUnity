@@ -147,6 +147,71 @@ namespace Dnf.Game.Act
         public override string ToString() => _mode + "(" + string.Join(",", _v) + ")";
     }
 
+    /// <summary>表达式里的一项:整数、变量名(字符串值)或 [GET TIME](毫秒时钟)。</summary>
+    public enum ActTermKind : byte
+    {
+        Number,
+        Variable,
+        GetTime,
+    }
+
+    /// <summary>表达式里的一项(<see cref="ActTermKind"/>)。</summary>
+    public readonly struct ActTerm
+    {
+        private ActTerm(ActTermKind kind, int number, string name)
+        {
+            Kind = kind;
+            Number = number;
+            Name = name;
+        }
+
+        public ActTermKind Kind { get; }
+
+        /// <summary>整数项的值。</summary>
+        public int Number { get; }
+
+        /// <summary>变量项的名字。</summary>
+        public string Name { get; }
+
+        public static ActTerm OfNumber(int number) => new ActTerm(ActTermKind.Number, number, null);
+
+        public static ActTerm OfVariable(string name) => new ActTerm(ActTermKind.Variable, 0, name);
+
+        public static ActTerm Clock => new ActTerm(ActTermKind.GetTime, 0, null);
+
+        public override string ToString() => Kind == ActTermKind.Number ? Number.ToString() : Kind == ActTermKind.Variable ? "\"" + Name + "\"" : "[GET TIME]";
+    }
+
+    /// <summary>项之间的运算:没有(只有一项)、加、减。</summary>
+    public enum ActArith : byte
+    {
+        None,
+        Add,
+        Subtract,
+    }
+
+    /// <summary>
+    /// [IF] 与 [DIM] 里的小表达式(E-132;客户端求值函数 0x010ae520 的读法,全库只出现 <c>项</c>、<c>项 [+] 项</c>、<c>项 [-] 项</c> 三种):
+    /// 项是整数、变量名或 [GET TIME];变量取同一个运行器的变量表(没赋过值读 0),[GET TIME] 取宿主的毫秒时钟。
+    /// </summary>
+    public sealed class ActExpression
+    {
+        public ActExpression(ActTerm first, ActArith op, ActTerm second)
+        {
+            First = first;
+            Op = op;
+            Second = second;
+        }
+
+        public ActTerm First { get; }
+
+        public ActArith Op { get; }
+
+        public ActTerm Second { get; }
+
+        public override string ToString() => Op == ActArith.None ? First.ToString() : First + (Op == ActArith.Add ? " + " : " - ") + Second;
+    }
+
     /// <summary>[WHICH] 之后与 [DO BEHAVIOR] 目标处用的选择器(<c>docs/act-tags.tsv</c> 的 selector 一节),加上"当前工作集"。</summary>
     public enum ActSelector : byte
     {
@@ -207,6 +272,21 @@ namespace Dnf.Game.Act
         RandomCheck,
         TriggerCheck,
         GetTarget,
+
+        /// <summary>[IF] 左表达式 比较符 右表达式:整体真假,不改工作集(E-132)。</summary>
+        If,
+
+        /// <summary>[HP] 比较符 数 [%] 或 [POINT]:逐对象过滤(E-132)。</summary>
+        Hp,
+
+        /// <summary>[DELAY DO BEHAVIOR] 选择器 行为组号 延迟毫秒:把行为组排进延迟队列(E-132)。</summary>
+        DelayDoBehavior,
+
+        /// <summary>[FRONTSIDE]:逐对象过滤,留下"正面朝向拥有者"的(E-132)。</summary>
+        FrontSide,
+
+        /// <summary>[IS IN POS] x y z:逐对象过滤,X、Y、Z 三个整数坐标全等(E-132)。</summary>
+        IsInPos,
     }
 
     /// <summary>触发器里的一条记录(条件、事件或 [DO BEHAVIOR])。字段按种类取用。</summary>
@@ -240,11 +320,19 @@ namespace Dnf.Game.Act
         /// <summary>[DO BEHAVIOR] 的行为组编号(值表达式)。</summary>
         public ActValue Behavior { get; internal set; }
 
-        /// <summary>[IS INDEX]、[IS NOT INDEX] 的编号表;[IS OBJECT TYPE] 的对象种类(<see cref="ActEntityKind"/> 的整数);[TRIGGER CHECK] 的触发器编号。</summary>
+        /// <summary>[IS INDEX]、[IS NOT INDEX] 的编号表;[IS OBJECT TYPE] 的对象种类(<see cref="ActEntityKind"/> 的整数);[TRIGGER CHECK] 的触发器编号;[IS IN POS] 的 X、Y、Z。</summary>
         public int[] Ints { get; internal set; } = Array.Empty<int>();
 
         /// <summary>[TRIGGER CHECK]:要求目标触发器开着(true)还是关着(false)。</summary>
         public bool Flag { get; internal set; }
+
+        /// <summary>[IF] 的左、右表达式。</summary>
+        public ActExpression Left { get; internal set; }
+
+        public ActExpression Right { get; internal set; }
+
+        /// <summary>[HP]:阈值是最大生命的百分比([%])而不是绝对点数([POINT])。[DELAY DO BEHAVIOR] 的延迟毫秒放在 <see cref="Number"/>。</summary>
+        public bool Percent { get; internal set; }
 
         public override string ToString() => Kind + " " + Tag;
     }
@@ -307,6 +395,9 @@ namespace Dnf.Game.Act
         SetFrame,
         Teleport,
         ChangeActionFile,
+
+        /// <summary>[DIM] "名字" [=] 表达式:给运行器的变量赋值(E-132)。</summary>
+        SetVariable,
     }
 
     /// <summary>[SET ACTION] 的动作族。</summary>
@@ -413,6 +504,11 @@ namespace Dnf.Game.Act
 
         // ---- [SET FRAME]
         public int Frame { get; internal set; }
+
+        // ---- [DIM]
+        public string VariableName { get; internal set; }
+
+        public ActExpression Expression { get; internal set; }
 
         public override string ToString() => Kind + " " + Tag;
     }

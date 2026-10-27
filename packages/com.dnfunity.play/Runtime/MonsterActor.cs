@@ -666,6 +666,10 @@ namespace Dnf.Play
 
             public int MotionVersion => _m._motionVersion;
 
+            public int Hp => _m.Hp;
+
+            public int HpMax => _m.HpMax;
+
             public void SetFacing(bool left)
             {
                 _m.FacingLeft = left;

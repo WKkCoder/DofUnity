@@ -35,6 +35,8 @@ public class PassiveObjectTests
 
         public int Random(int n) => 0;
 
+        public long NowMs => 0;
+
         public void SpawnPassive(IActEntity owner, int index, int level, float x, float y, float z, bool facingLeft) => Spawns.Add((index, x, y, z, facingLeft));
 
         public void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into)
@@ -54,6 +56,8 @@ public class PassiveObjectTests
         public IActEntity Target => null;
         public IActEntity Master => null;
         public int MotionVersion => 0;
+        public int Hp => 0;
+        public int HpMax => 0;
 
         public void SetFacing(bool left)
         {

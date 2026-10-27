@@ -477,10 +477,10 @@ internal static class ActRunCheck
         Report(withActFile > 0 && attackActs.Count > 0, "怪物招式的 .act 读得到并编得出程序(" + attackActs.Count + " 个)");
         Report(missingActs * 50 <= actRefs, "怪物招式引用的 .act 读不到的不超过 2%(" + missingActs + "/" + actRefs + ")");
         Report(monsterTally.CreateBroken == 0 && objectTally.CreateBroken == 0, "每个 [CREATE PASSIVEOBJECT] 都带对象编号,编得出(读不通 " + (monsterTally.CreateBroken + objectTally.CreateBroken) + " 条)");
-        Report(monsterTally.Triggers > 0 && monsterTally.Supported * 100 >= monsterTally.Triggers * 85,
-            "怪物出招里运行器认得的触发器占比不低于 85%(" + Percent(monsterTally.Supported, monsterTally.Triggers) + ")");
-        Report(objectTally.Triggers > 0 && objectTally.Supported * 100 >= objectTally.Triggers * 80,
-            "被动对象自己的 .act 里运行器认得的触发器占比不低于 80%(" + Percent(objectTally.Supported, objectTally.Triggers) + ")");
+        Report(monsterTally.Triggers > 0 && monsterTally.Supported * 100 >= monsterTally.Triggers * 95,
+            "怪物出招里运行器认得的触发器占比不低于 95%(" + Percent(monsterTally.Supported, monsterTally.Triggers) + ")");
+        Report(objectTally.Triggers > 0 && objectTally.Supported * 100 >= objectTally.Triggers * 90,
+            "被动对象自己的 .act 里运行器认得的触发器占比不低于 90%(" + Percent(objectTally.Supported, objectTally.Triggers) + ")");
         Report(reached.Count > 0 && missingObjects * 50 <= reached.Count, "怪物出招能放出的被动对象的 .obj 读不到的不超过 2%(" + missingObjects + "/" + reached.Count + ")");
         Report(reached.Count > 0 && templates * 100 >= reached.Count * 95, "能放出的被动对象里模板(基础动画读得到)配得出的不低于 95%(" + templates + "/" + reached.Count + ")");
         Report(withRunnable > 0 && withSpawn > 0, "有怪物带运行器认得的触发器,也有怪物的招式会放被动对象");

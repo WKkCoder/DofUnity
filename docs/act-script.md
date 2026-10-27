@@ -83,7 +83,7 @@
    - `[WHICH]`(0x1f)用选择器函数 `0x010d25e0` **重新选择**目标集合;
    - `[FRAME]`(1)用 `0x010d1320`;`[CHECKED NO]`(0x27)用比较函数 `0x00977450` 比集合大小;`[SAVE TARGET OBJECT]`(0x3d)用 `0x010d1f40` 把集合存进槽位;
    - `[DO BEHAVIOR]`(0)与 `[DIRECT DO BEHAVIOR]`(0x2b):本运行器的事件已经出现且集合非空(或之前 `[CHECKED NO]` 放过了空集合)时,触发次数加一,调用 `0x010d1850` 去执行第 k 个 `[BEHAVIOR]`;
-   - `[DELAY DO BEHAVIOR]`(0x5c)把行为排进延迟队列(`0x006c8420`),并可置运行期禁用位;
+   - `[DELAY DO BEHAVIOR]`(0x5c)把行为排进延迟队列(`0x006c8420`,调用点 `0x010adbc5`):判空与次数规则同 `[DO BEHAVIOR]`,行为组号或延迟为负数就不排队,排队后同样“动作状态没变就置完成字节(`+0x1d`)”;这个字节只被 `[FRAME]` 与事件触发器检查(M39,E-132);
    - 其它条件交给 `checkTriggerEvent`(`0x010d3630`)逐对象过滤。别的运行器负责的事件记录(7、8、9、0xa 到 0x12、0x58)会让这条触发器在本运行器里直接跳过。
 3. 选择器共 24 个(`[ME]`=0、`[LAST ATTACKER]`=1 … `[SUMMON OBJECT]`=0x18,完整表见 `docs/act-tags.tsv` 与 tsv 的 `sel` 行);`[LAST ATTACKERS]` 全库一次也没出现。
 
@@ -97,7 +97,7 @@
 
 - 触发器 0x24 字节里 `+0x00..+0x0b`(记录向量)与 `+0x0c..+0x13`、`+0x1e..+0x23` 的含义;
 - 受保护区域里的几个调用(行为 `0x6e`、`0xee`、`0xdf`、`0x8d` 的一部分,以及评估函数的两处),按约定当黑盒;
-- 值表达式 `valueOf` 的完整语法、延迟队列的取消语义、`[SET ACTION]` 的完整"关键字 → 族码 → 内置状态号"表(`docs/act-semantics.tsv` 的 `open` 列逐条列出)。
+- 值表达式 `valueOf` 的完整语法、延迟队列的消费端(`0x006c8420` 内部与每帧出队)与取消语义、`[SET ACTION]` 的完整"关键字 → 族码 → 内置状态号"表(`docs/act-semantics.tsv` 的 `open` 列逐条列出)。
 
 ### 现状:动画层(M36,E-128)与触发器运行期(M36-4,E-130)
 
@@ -105,3 +105,5 @@
 
 
 **触发器运行期(M36-4,E-130)**:`Dnf.Game.Act.ActCompiler` 把语法树编成类型化的 `ActProgram`,`ActRunner` 按上面的模型运行——第 0 帧复位是**边沿触发**(`0x010ade50` 每次更新读当前帧,帧不为 0 清标志 `+0x11c`,帧为 0 且标志未置位才调 `0x010a3fe0` 复位各条目的“已完成”字节;回到第 0 帧只复位一次),跳过的帧逐帧补跑,`[FRAME]` 先看一次性位再看区间,`[DO BEHAVIOR]` 在目标集合非空时计数并跑第 k 组行为、行为里拥有者换了动作则不置一次性位。`[SET DIRECTION]` 取值编号:0 左、1 右、2 朝目标、3 反向、4 随机、7 本体朝向、8 本体反向;`[SET SPEED]` 的 X 在被设对象朝左时取反;`[CREATE PASSIVEOBJECT]` 的基点、X 取反(朝向不是 1)、朝向来源(`[FIX DIRECTION]` 0 左/1 右/4 中立/5 随机,再看 `[USE MY DIRECTION]`)与 Z 绝对值的规则都读通了。宿主在 `Dnf.Play`(`ActLibrary`、`PassiveObject`、`MonsterActor`、`RoomCombat`),整库审计命令是 `dnf act-run-check`;整个里程碑见 [`docs/flow.md`](flow.md) §24,证据 E-130。
+
+**语言补全(M39,E-132)**:`ActCompiler`/`ActRunner` 又认得 `[DIM]` 变量(整数、按名字、没赋值读 0,右边可以是数、变量、`[GET TIME]` 与加减)、`[IF]` 整体条件、`[DELAY DO BEHAVIOR]` 延迟队列、`[HP]`(绝对值或百分比,百分比阈值是 32 位的“最大生命乘原始值再除以 100”)、`[FRONTSIDE]`、`[IS IN POS]` 与 `[DO PROC BEHAVIOR]`(与 `[DO BEHAVIOR]` 同一个分支)。`[GET TIME]` 当毫秒时钟(整库 394 处“变量加常数与取时间比较”的常数中位数 3000,量级上是毫秒,单位仍是推断)。整库审计(汇总数,本机,非 REA):怪物出招的 `.act` 里认得的触发器 96.4%,被动对象自己的 92.2%,`[proc action]` 83.6%。还没做:`[TRIGGER CHECK]` 与按动作槽选容器的 `[TRIGGER]`(跨动作的触发器池)、`[BACKSIDE]`、`[IS GRABABLE]`、非出招动作的脚本宿主,以及 `[TELEPORT]`、`[SET POS FORCE]`、`[CHANGE FLOATING HEIGHT]`、`[SET DAMAGE BOX]`、`[CHANGE ATTACKINFO]`、`[SHAKING]`、`[SET HP]`、`[SUMMON MONSTER]`、`[CHANGE ACTION FILE]` 等行为(见 `dnf act-run-check` 的汇总)。

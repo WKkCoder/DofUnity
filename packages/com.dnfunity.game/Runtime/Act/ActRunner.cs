@@ -40,6 +40,11 @@ namespace Dnf.Game.Act
         /// <summary>每次切换动作或设置帧时加一;运行器用它判断"这条行为改变了动画帧"。</summary>
         int MotionVersion { get; }
 
+        /// <summary>当前生命与最大生命([HP] 条件取用);没有生命的对象(被动对象等)最大生命为 0,不满足任何 [HP] 条件。</summary>
+        int Hp { get; }
+
+        int HpMax { get; }
+
         void SetFacing(bool left);
 
         /// <summary>设速度(世界坐标/秒);X 的符号已经按朝向取过。</summary>
@@ -61,6 +66,9 @@ namespace Dnf.Game.Act
         /// <summary>[0, n) 的随机整数(n &gt;= 1)。</summary>
         int Random(int n);
 
+        /// <summary>单调递增的毫秒时钟:[GET TIME] 与 [DELAY DO BEHAVIOR] 用它(客户端取游戏时间,不随单个对象的命中停顿冻结)。</summary>
+        long NowMs { get; }
+
         /// <summary>生成一个被动对象。(x, y, z) 已经是世界坐标,<paramref name="facingLeft"/> 是它的朝向。</summary>
         void SpawnPassive(IActEntity owner, int index, int level, float x, float y, float z, bool facingLeft);
 
@@ -81,6 +89,14 @@ namespace Dnf.Game.Act
     /// </summary>
     public sealed class ActRunner
     {
+        /// <summary>排队等待的 [DELAY DO BEHAVIOR]:到期的毫秒时钟、行为组号、排队那一刻定下的目标。</summary>
+        private sealed class Delayed
+        {
+            public long DueMs;
+            public int Group;
+            public List<IActEntity> Targets;
+        }
+
         /// <summary>"这条触发器不带事件记录"的标记(与 <see cref="ActRecordKind.Unsupported"/> 共用同一个值,事件数组里不会出现真正的 Unsupported)。</summary>
         private const ActRecordKind NoEvent = ActRecordKind.Unsupported;
 
@@ -96,6 +112,8 @@ namespace Dnf.Game.Act
         private readonly bool[] _inert;
         private readonly List<IActEntity> _set = new List<IActEntity>();
         private readonly List<IActEntity> _targets = new List<IActEntity>();
+        private readonly Dictionary<string, int> _vars = new Dictionary<string, int>(StringComparer.Ordinal);
+        private readonly List<Delayed> _delayed = new List<Delayed>();
         private float _time;
         private int _lastFrame = -1;
         private bool _loopReset;
@@ -185,7 +203,14 @@ namespace Dnf.Game.Act
             _aborted = false;
             _victim = null;
             _attacker = null;
+            _delayed.Clear();      // 排队的延迟行为随动作重来作废(推断);变量不清,留到下一次(E-132)
         }
+
+        /// <summary>变量当前值([DIM] 赋的;没赋过读 0,推断);测试与审计用。</summary>
+        public bool TryGetVariable(string name, out int value) => _vars.TryGetValue(name, out value);
+
+        /// <summary>排队中的延迟行为条数(测试用)。</summary>
+        public int PendingDelayed => _delayed.Count;
 
         /// <summary>
         /// 每次更新调用一次。<paramref name="frame"/> 是此刻动画的当前帧;帧号比上次大一以上时先按顺序补跑被跳过的帧(客户端的做法),
@@ -199,6 +224,7 @@ namespace Dnf.Game.Act
             }
             _aborted = false;
             _time += dt;
+            RunDelayed();
             if (frame != 0)
             {
                 _loopReset = false;
@@ -330,6 +356,8 @@ namespace Dnf.Game.Act
                     case ActRecordKind.IsObjectType:
                     case ActRecordKind.IsLeft:
                     case ActRecordKind.IsRight:
+                    case ActRecordKind.FrontSide:
+                    case ActRecordKind.IsInPos:
                         FilterSet(rec);
                         break;
                     case ActRecordKind.IsDirectionLeft:
@@ -345,6 +373,15 @@ namespace Dnf.Game.Act
                         }
                         break;
                     case ActRecordKind.GetTarget:
+                        break;
+                    case ActRecordKind.If:
+                        if (!ActCompares.Test(Eval(rec.Left), rec.Sign, Eval(rec.Right)))
+                        {
+                            return;
+                        }
+                        break;
+                    case ActRecordKind.Hp:
+                        FilterSet(rec);
                         break;
                     case ActRecordKind.OnSetAction:
                     case ActRecordKind.OnAttackSuccess:
@@ -365,6 +402,16 @@ namespace Dnf.Game.Act
                             return;
                         }
                         if (_aborted)
+                        {
+                            return;
+                        }
+                        break;
+                    case ActRecordKind.DelayDoBehavior:
+                        if (t.Limit > 0 && _fired[index] >= t.Limit)
+                        {
+                            return;
+                        }
+                        if (!Enqueue(index, rec, allowEmpty))
                         {
                             return;
                         }
@@ -425,6 +472,14 @@ namespace Dnf.Game.Act
                     return e.X <= _owner.X;
                 case ActRecordKind.IsRight:
                     return e.X > _owner.X;
+                case ActRecordKind.Hp:
+                    return KeepHp(rec, e);
+                case ActRecordKind.FrontSide:
+                    // 目标正面朝向拥有者(客户端 0x010d5186 起的块,只比 X 坐标与朝向,E-132):目标在拥有者左边或同位置就要朝右,在右边就要朝左;
+                    // 客户端还要求目标的 +0x36c 槽返回 1(语义不明,按"活着"处理,推断)
+                    return e.IsAlive && (e.X <= _owner.X ? !e.FacingLeft : e.FacingLeft);
+                case ActRecordKind.IsInPos:
+                    return (int)e.X == rec.Ints[0] && (int)e.Y == rec.Ints[1] && (int)e.Z == rec.Ints[2];
                 default:
                     return true;
             }
@@ -482,6 +537,121 @@ namespace Dnf.Game.Act
                 default:
                     _host.Resolve(_owner, selector, partyIndex, into);
                     break;
+            }
+        }
+
+        /// <summary>
+        /// [HP] 条件(客户端 0x010d3f66 起的求值块,E-132):取对象的 getHp,[%] 写法的阈值是 最大生命 × 数 / 100(32 位乘法、截断除法,
+        /// 大血量会溢出,与客户端一致),[POINT] 写法直接用数;没有生命的对象(最大生命 0)被剔除。
+        /// </summary>
+        private static bool KeepHp(ActRecord rec, IActEntity e)
+        {
+            int max = e.HpMax;
+            if (max <= 0)
+            {
+                return false;
+            }
+            int limit = rec.Percent ? unchecked(max * rec.Number) / 100 : rec.Number;
+            return ActCompares.Test(e.Hp, rec.Sign, limit);
+        }
+
+        /// <summary>求表达式:整数、变量(没赋过读 0)、[GET TIME](宿主毫秒时钟的低 32 位,溢出回绕,差值照样对);加减按 32 位回绕。</summary>
+        private int Eval(ActExpression e)
+        {
+            int a = Term(e.First);
+            switch (e.Op)
+            {
+                case ActArith.Add:
+                    return unchecked(a + Term(e.Second));
+                case ActArith.Subtract:
+                    return unchecked(a - Term(e.Second));
+                default:
+                    return a;
+            }
+        }
+
+        private int Term(ActTerm t)
+        {
+            switch (t.Kind)
+            {
+                case ActTermKind.Number:
+                    return t.Number;
+                case ActTermKind.GetTime:
+                    return unchecked((int)_host.NowMs);
+                default:
+                    return _vars.TryGetValue(t.Name, out int v) ? v : 0;
+            }
+        }
+
+        /// <summary>
+        /// 执行 [DELAY DO BEHAVIOR]:和 [DO BEHAVIOR] 一样选目标、记一次触发、置单次位,但行为组不立刻执行,
+        /// 而是把"到期时刻 + 行为组号 + 此刻的目标"排进队列,由之后的 <see cref="Update"/> 到期执行(E-132)。
+        /// </summary>
+        private bool Enqueue(int index, ActRecord rec, bool allowEmpty)
+        {
+            _targets.Clear();
+            if (rec.Selector == ActSelector.WorkingSet)
+            {
+                _targets.AddRange(_set);
+            }
+            else
+            {
+                Select(rec.Selector, rec.PartyIndex, _targets);
+            }
+            if (_targets.Count == 0 && !allowEmpty)
+            {
+                return false;
+            }
+            _fired[index]++;
+            int group = rec.Behavior.Eval(_rand);
+            if (group >= 0 && rec.Number >= 0)
+            {
+                // 行为组号或延迟是负数就不排队(客户端 0x010adaed 起的两个符号判断),次数照加
+                _delayed.Add(new Delayed
+                {
+                    DueMs = _host.NowMs + rec.Number,
+                    Group = group,
+                    Targets = new List<IActEntity>(_targets),
+                });
+            }
+            _oneShot[index] = true;       // 排队本身不动动画,与 [DO BEHAVIOR] 的"没动画变化就置位"一致(0x010adc08 起)
+            return true;
+        }
+
+        /// <summary>每次更新开头:把到期的延迟行为按排队顺序执行(目标里已经死掉的不再作用)。</summary>
+        private void RunDelayed()
+        {
+            if (_delayed.Count == 0)
+            {
+                return;
+            }
+            long now = _host.NowMs;
+            int i = 0;
+            while (i < _delayed.Count && !_aborted)
+            {
+                Delayed d = _delayed[i];
+                if (d.DueMs > now)
+                {
+                    i++;
+                    continue;
+                }
+                _delayed.RemoveAt(i);
+                d.Targets.RemoveAll(t => !t.IsAlive);
+                RunGroup(d.Group, d.Targets);
+            }
+        }
+
+        private void RunGroup(int k, List<IActEntity> targets)
+        {
+            if (k < 0 || k >= _program.Behaviors.Count)
+            {
+                return;
+            }
+            int version = _owner.MotionVersion;
+            Execute(_program.Behaviors[k], targets);
+            if (_owner.MotionVersion != version)
+            {
+                _aborted = true;       // 延迟行为切了动作或改了帧:同一次更新里后面的触发器不再求值(与 [DO BEHAVIOR] 一致)
             }
         }
 
@@ -576,6 +746,9 @@ namespace Dnf.Game.Act
                         break;
                     case ActBehaviorKind.TriggerSwitch:
                         SwitchTrigger(b);
+                        break;
+                    case ActBehaviorKind.SetVariable:
+                        _vars[b.VariableName] = Eval(b.Expression);      // 变量属于运行器(每个对象每个动作一份),与目标集合无关
                         break;
                     default:
                         break;     // 没做的行为按空操作处理(ActBehaviorGroup.UnsupportedTags 供审计)

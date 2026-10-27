@@ -118,6 +118,11 @@ namespace Dnf.Play
 
         int IActEntity.MotionVersion => _motionVersion;
 
+        // 被动对象没有生命(这一版不做可打碎的被动对象):不满足任何 [HP] 条件
+        int IActEntity.Hp => 0;
+
+        int IActEntity.HpMax => 0;
+
         void IActEntity.SetFacing(bool left)
         {
             FacingLeft = left;
@@ -365,11 +370,15 @@ namespace Dnf.Play
     {
         private readonly TownHero _hero;
         private readonly Func<bool> _alive;
+        private readonly Func<int> _hp;
+        private readonly Func<int> _hpMax;
 
-        public HeroActEntity(TownHero hero, Func<bool> alive)
+        public HeroActEntity(TownHero hero, Func<bool> alive, Func<int> hp = null, Func<int> hpMax = null)
         {
             _hero = hero ?? throw new ArgumentNullException(nameof(hero));
             _alive = alive ?? (() => true);
+            _hp = hp ?? (() => 0);
+            _hpMax = hpMax ?? (() => 0);
         }
 
         public ActEntityKind Kind => ActEntityKind.Character;
@@ -391,6 +400,10 @@ namespace Dnf.Play
         public IActEntity Master => null;
 
         public int MotionVersion => 0;
+
+        public int Hp => _hp();
+
+        public int HpMax => _hpMax();
 
         public void SetFacing(bool left)
         {

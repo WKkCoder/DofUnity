@@ -416,6 +416,9 @@ namespace Dnf.Play
         /// <summary>界面计时用的墙钟(毫秒):每一小步累加,与命中停顿无关(目标血条的闪光与缩短、死亡 X 的闪烁都按它走)。</summary>
         private double _hudClockMs;
 
+        /// <summary>脚本运行器的毫秒时钟:每一小步开头累加,不随命中停顿冻结([GET TIME] 与 [DELAY DO BEHAVIOR] 读它,E-132)。</summary>
+        private double _actClockMs;
+
         /// <summary>伤害数字的位图字画法(证据 E-107);图包里没有 combo_big.img 时为 null,退回占位的文字。</summary>
         private DamageNumberArt _numberArt;
 
@@ -1425,6 +1428,7 @@ namespace Dnf.Play
         private void Step(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed, SkillKeys skillsPressed)
         {
             SyncProgress();   // 别的房间里升了级的话,换上新等级的生命上限与攻击面板(证据 E-111)
+            _actClockMs += deltaMs;
             Skills.Advance(deltaMs);
             Vitals?.RegenMp(deltaMs);   // 魔法值按墙钟恢复(证据 E-087);死了不恢复在 RegenMp 里判断
             if (Vitals != null)
@@ -2373,7 +2377,7 @@ namespace Dnf.Play
                 }
                 return;
             }
-            _heroEntity = new HeroActEntity(_room.Hero, () => !HeroDead);
+            _heroEntity = new HeroActEntity(_room.Hero, () => !HeroDead, () => Vitals?.Hp ?? 0, () => Vitals?.HpMax ?? 0);
             _actWorld = new ActWorld(this);
             foreach (MonsterActor m in _monsters)
             {
@@ -2509,6 +2513,8 @@ namespace Dnf.Play
             {
                 return n <= 1 ? 0 : _session._actRandom.Next(n);
             }
+
+            public long NowMs => (long)_session._actClockMs;
 
             public void SpawnPassive(IActEntity owner, int index, int level, float x, float y, float z, bool facingLeft)
             {

@@ -117,7 +117,7 @@ cond	0x58	ON END BEHAVIOR	非本五 runner	低	主运行器地址
 cond	0x59	[IS DAMAGE ENABLE]	目标 +0x36c 伤害开启	高	—
 cond	0x5a	[REALDUNGEON CHECKUP]	RealDungeon 键值表查询+比较，整段真假	中	三 mode 脚本含义；007ddad0/007ddb20
 cond	0x5b	[AREA]	相对拥有者 X/Y 轴对齐范围过滤	高	Z 未参与
-cond	0x5c	DELAY DO BEHAVIOR	006c8420 排队；count 先加	中	取消语义
+cond	0x5c	DELAY DO BEHAVIOR	006c8420 排队；count 先加	中	队列消费端(006c8420 内部与每帧出队)与取消语义;入口条件与完成字节已读(M39)
 cond	0x5d	[IS MOUNT]	+0x55a8==0x17 与参数 0/1 一致	中	catalog 缺失
 cond	0x5e	[IS DIRECTION LEFT]	拥有者 getDirection==0 为真	高	不滤 targets
 cond	0x5f	[IS DIRECTION RIGHT]	拥有者 getDirection==1 为真	高	不滤 targets
@@ -142,7 +142,7 @@ beh	0x7b	[ACTIVE STATUS]	对目标施加异常状态（种类+概率+多种附�
 beh	0x7d	[SET FRAME]	参数大于 0 时,设置当前动作所关联动画的当前帧	高	帧写入在被调函数里,没有跟入
 beh	0x7e	[CASTING]	参数 1 大于 0 时写拥有者(CollisionObject 族)的施法相关字段	中	字段含义
 beh	0x7f	[ABS CASTING]	本机控制实体上按两整数创建绝对读条(gauge+0x280对象,常量20000)	中	paramA/B与[CASTING]差异、目标集合检查
-beh	0x81	[DIM]	在 action+0x120 按变量名读写 int；支持 =/+/-/GET TIME	高	GET TIME 的时间单位
+beh	0x81	[DIM]	在 action+0x120 按变量名读写 int；支持 =/+/-/GET TIME	高	GET TIME 的时间单位(按常数量级推断为毫秒)
 beh	0x83	[SET POS FORCE]	对目标施加强制位移（起止点与多种移动模式）	中	010b3ca0 插值细节未读
 beh	0xa9	[SHAKING]	参数 1 不小于 0 时调用场景的震屏(参数 0、参数 1)	高	—
 beh	0xaa	[PARTICLE]	以拥有者坐标加三轴偏移生成粒子,不随朝向镜像,不用目标集合	中	粒子类型与朝向处理

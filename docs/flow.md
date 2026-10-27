@@ -630,7 +630,7 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --room --map 
 
 **推断与占位(非 REA)**:Z 速度的重力(1500 像素/秒²,显式欧拉)、一个动作里攻击判定只打一次直到脚本重置、没有时限也没有"动画结束消失"的对象最多活 12 秒、速度单位当像素/秒、`[CUSTOM] n` 取 `[etc action]` 第 n 个、`[ATTACK] n` 取招式列表第 n 个、带 `[END]` 的招式切换等当前动画结束、脚本里的"站立"当作出招结束、选择器的映射、`[POS]` 写不足三个值时缺的当 0,都是自己的推断,没有对着录像核。
 
-**没做**:`[IF]`/`[GET TIME]`、`[IS IN POS]`、`[TRIGGER CHECK] [CUSTOM] n`、`[LOAD TARGET]`、`[DO PROC BEHAVIOR]`(带这些的触发器不会触发);`[DELAY DO BEHAVIOR]`;`[SUB ANI]` 叠加层与 `[SOUND]` 声音事件;事件角色(被动出招);怪物的 `[etc action]` 与 `[last action]`;被动对象的生命值、销毁动作与父对象死亡等销毁条件;行为标签 `[DIM]`、`[SHAKING]`、`[CASTING]`、`[TELEPORT]`、`[SUMMON MONSTER]`、`[CHANGE ACTION FILE]`、`[PARTICLE]`、`[SAY SPEECH]` 等(按行为组个数排序,见 `dnf act-run-check`);类型 0xA 对象的复位跳过条件。
+**没做**(`[IF]`/`[DIM]`/`[GET TIME]`、`[IS IN POS]`、`[DO PROC BEHAVIOR]`、`[DELAY DO BEHAVIOR]` 已在 M39 补上,见 §26):`[TRIGGER CHECK] [CUSTOM] n`、`[LOAD TARGET]`(带这些的触发器不会触发);`[SUB ANI]` 叠加层与 `[SOUND]` 声音事件;事件角色(被动出招);怪物的 `[etc action]` 与 `[last action]`;被动对象的生命值、销毁动作与父对象死亡等销毁条件;行为标签 `[SHAKING]`、`[CASTING]`、`[TELEPORT]`、`[SUMMON MONSTER]`、`[CHANGE ACTION FILE]`、`[PARTICLE]`、`[SAY SPEECH]` 等(按行为组个数排序,见 `dnf act-run-check`);类型 0xA 对象的复位跳过条件。
 
 ## 25 第二个配方技能(连斩)与 `.act` 其余动作的审计(M38,证据 E-131)
 
@@ -657,3 +657,30 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --room --map 
 
 **没做**:五段版、脚下的移动特效与音效、技能等级对攻击范围的影响;其余起手函数(带阶段的、空中的、投射物的、增益的)。
 
+## 26 `.act` 语言补全:变量与表达式、整体条件、延迟队列和几个逐对象条件(M39,证据 E-132)
+
+**读到了什么**(静态读码:客户端 `DNF.exe` 普通代码段里的触发器运行器 `0x010ad580` 一带与几个条件块(Ghidra 无头脚本与 Capstone 反汇编,只读;受保护区的调用当黑盒);没有新录像、没有连服务器;`.act` 的具体内容、编号、路径与数值一律不写进仓库,整库审计、实现、单元测试全部非 REA):
+
+- **整体条件 `[IF]`**:左右两侧各是一小串求值项(一个数、一个变量或取时间,或者“项 加 项”“项 减 项”),整数比较,为真才往下;不改目标集合。求值函数在 `0x010ae520`。
+- **变量 `[DIM]`**:一个动作对象里按名字查找的整数变量表(`+0x120`);没赋过值的读成 0 是推断。`[GET TIME]` 是客户端的毫秒时钟(从常数的量级推断:整库 394 处“变量加常数与取时间比较”里常数的中位数 3000、第 90 百分位 15000)。
+- **逐对象条件**:`[HP]`(大小比较,单位可选百分比;百分比阈值是“最大生命乘原始值再除以 100”,32 位乘法,最大生命不是正数的对象直接丢掉)、`[FRONTSIDE]`(目标在拥有者朝向的前侧,沿 X 轴)、`[IS IN POS]`(X、Y、Z 三个整数全相等)。
+- **延迟队列 `[DELAY DO BEHAVIOR]`**:判空与次数规则同 `[DO BEHAVIOR]`;行为组号或延迟是负数就不排队;排队后同样“动作状态没变就置完成字节”。完成字节只被 `[FRAME]` 与事件触发器检查,所以只有条件的触发器在条件一直成立时会每次更新都排一次队。
+- **`[DO PROC BEHAVIOR]`** 与 `[DO BEHAVIOR]` 是同一个分支,只出现在 proc 动作的脚本里(整库 231 个 `.act` 用到)。
+
+**代码**:
+
+- `Dnf.Game/Act`:`ActTerm`/`ActExpression`(数、变量、取时间)与 `[DIM]` 的 `SetVariable` 行为;记录类型 `If`、`Hp`、`FrontSide`、`IsInPos`、`DelayDoBehavior`;`ActRunner` 多变量表(属于运行器,重来时保留)、延迟队列(排队时复制目标、到点按排队时的目标执行、死目标跳过、重来时清空)与对应的条件;`IActEntity` 多 `Hp`/`HpMax`,`IActHost` 多毫秒时钟 `NowMs`。读不懂的写法(缺项、格式错)仍记成“不支持”,触发器不会触发。
+- `Dnf.Play`:怪物、被动对象与主角的脚本实体补 `Hp`/`HpMax`;`RoomCombat` 的脚本宿主有自己的毫秒时钟,按步累加(不被命中停顿冻结)。
+- `dnf act-run-check` 的两个认得率门槛从 85%、80% 抬到 95%、90%。
+
+**运行时的样子**:带计时与变量的怪物脚本(“出招开始时记下时间、过一会儿再触发下一步”这类)现在会按时间推进,不再卡在一个永远不触发的条件上;带血量条件(低于百分之几)的触发器按怪物当前血量触发;延迟行为在设定的毫秒后对排队那一刻的目标生效,中途死掉的目标被跳过;只对前方生效的触发器按朝向判断。
+
+**验证**:
+
+- 单元测试新增 16 条(全套 3019 条;脚本、怪物、数字全是合成的):变量与取时间的算术(含 32 位回绕)、`[IF]` 的各种比较、`[HP]` 的绝对值与百分比(含溢出与最大生命非正)、`[FRONTSIDE]`、`[IS IN POS]`、延迟队列(目标快照、死目标、重来清空、负数不排队)、读不懂的写法仍不触发。
+- 整库审计(命令行,本机,汇总数,非 REA):怪物出招的 `.act` 里运行器认得的触发器 90.8% → 96.4%,被动对象自己的 92.2%;其余动作里 proc 从 25.2% 升到 83.6%、待机 97.1%、行走 95.0%、受击 93.8%、倒地 90.8%、etc 98.0%、死亡 97.5%、坐 93.8%。
+- `tools/verify-all.sh` 全部通过;EditMode:57 通过、10 条 GPU 对拍跳过。
+
+**推断与占位(非 REA)**:没赋值的变量读 0、取时间取毫秒、变量不跨出招保留(怪物每次出招新建运行器)、延迟队列重来时清空、“活着”用 `+0x36c` 等于 1,都是自己的推断,没有对着录像核。
+
+**没做**:`[BACKSIDE]`、`[IS GRABABLE]`(卡片含糊);按动作槽选容器的 `[TRIGGER]` 与 `[TRIGGER CHECK]`(跨动作的触发器池,用在被动对象之间的拼图类机关上);非出招动作(待机、行走、受击、倒地、etc、proc、死亡)的脚本宿主;行为标签 `[TELEPORT]`、`[SET POS FORCE]`、`[CHANGE FLOATING HEIGHT]`、`[SET DAMAGE BOX]`、`[CHANGE ATTACKINFO]`、`[SHAKING]`、`[SET HP]`、`[SUMMON MONSTER]`、`[CHANGE ACTION FILE]`、`[APPENDAGE]` 一族、粒子等。
