@@ -701,6 +701,9 @@ namespace Dnf.Play
         /// <summary>放出来的技能次数(冷却中、忙碌或没绑定的按键不算)。</summary>
         public int SkillCasts { get; private set; }
 
+        /// <summary>多段技能接上下一段的次数(证据 E-129;不算进 <see cref="SkillCasts"/>,接段不是新的一次施放)。</summary>
+        public int SkillChains { get; private set; }
+
         public string MapPath => _room.MapPath;
         public TownHero Hero => _room.Hero;
         public TownCamera Camera => _room.Camera;
@@ -1430,12 +1433,20 @@ namespace Dnf.Play
                 _bufferedJump = false;
                 _bufferedSkills = SkillKeys.None;
                 _heroDown.Step(heroDelta);     // 倒地在命中停顿里一起冻结(与怪物的倒地一样);先走倒地,摄像机在后面的 Update 里跟着新位置
-                HeroSkillSlot cast = skillsPressed == SkillKeys.None ? null : Skills.TryCast(skillsPressed, _room.Hero, Vitals);
-                if (skillsPressed != SkillKeys.None)
+                // 正在放多段技能时,再按它的键就是接下一段(证据 E-129);不是接段才按起手处理
+                HeroSkillSlot chained = skillsPressed == SkillKeys.None ? null : Skills.TryChain(skillsPressed, _room.Hero, dirX, dirY);
+                HeroSkillSlot cast = skillsPressed == SkillKeys.None || chained != null ? null : Skills.TryCast(skillsPressed, _room.Hero, Vitals, dirX, dirY);
+                if (skillsPressed != SkillKeys.None && chained == null)
                 {
                     EmitSkillCues(cast);
                 }
-                if (cast != null)
+                if (chained != null)
+                {
+                    attackPressed = false;
+                    jumpPressed = false;
+                    SkillChains++;
+                }
+                else if (cast != null)
                 {
                     attackPressed = false;
                     jumpPressed = false;
@@ -1447,6 +1458,7 @@ namespace Dnf.Play
                     attackPressed = false;     // 攻击键这一下用来捡东西了(证据 E-122)
                 }
                 _room.Update(heroDelta, dirX, dirY, attackPressed, jumpPressed);
+                SpawnStageEffect(_room.Hero);
             }
             EmitHeroCues();
             UpdateRevive(deltaMs, reviveKey);
@@ -1629,6 +1641,43 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>
+        /// 配方技能的分段特效(证据 E-129):这一段(按 <see cref="TownHero.SwingNumber"/> 区分)的动画播到指定帧时放一次,
+        /// 特效挂在主角身上跟着走(客户端是把它放进主角的动画图层,所以滑行时跟着动),朝向与主角一致。
+        /// </summary>
+        private void SpawnStageEffect(TownHero hero)
+        {
+            if (hero.Motion != HeroMotion.Skill)
+            {
+                _stageEffectSwing = -1;
+                return;
+            }
+            HeroSkillSlot slot = Skills.SlotOfSkill(hero.SkillId);
+            SkillRecipe recipe = slot?.Recipe;
+            if (recipe == null || _stageEffectSwing == hero.SwingNumber)
+            {
+                return;
+            }
+            SkillStageSpec stage = recipe.Stages[Math.Min(hero.SkillStage, recipe.Stages.Count - 1)];
+            if (stage.EffectIndex < 0 || hero.CurrentFrame < stage.EffectFrame)
+            {
+                return;
+            }
+            _stageEffectSwing = hero.SwingNumber;
+            if (stage.EffectIndex >= slot.StageEffects.Count)
+            {
+                return;   // 技能预载表里没有这个下标(读不到脚本或脚本没写):这一段不放特效
+            }
+            AnimatedEffect effect = AnimatedEffect.Create(_assets, slot.StageEffects[stage.EffectIndex], hero.X, hero.Y, hero.Z, hero.FacingLeft);
+            if (effect != null)
+            {
+                _effects.Add(effect);
+                _followEffects.Add(effect);
+            }
+        }
+
+        private long _stageEffectSwing = -1;
+
         private void ResolveHits()
         {
             TownHero hero = _room.Hero;
@@ -1734,9 +1783,10 @@ namespace Dnf.Play
                 case HeroAttackKind.Skill:
                     // 有自己攻击信息与伤害数的技能(鬼斩)用自己的;借普攻动作放的技能(上挑)沿用那一段普攻的攻击信息
                     HeroSkillSlot slot = Skills.SlotOfSkill(hero.SkillId);
-                    if (slot != null && slot.Strike.HasValue)
+                    HeroStrikeInfo? own = slot?.StrikeAt(hero.SkillStage);
+                    if (own.HasValue)
                     {
-                        return slot.Strike.Value;
+                        return own.Value;
                     }
                     break;
             }

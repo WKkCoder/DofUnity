@@ -143,6 +143,9 @@ namespace Dnf.Cli
         /// <summary>dungeon-check、flow-check、combat-check --learn:开局先让主角按自动机策略(<see cref="SkillPlanner"/>)把技能点与觉醒点花光(M35,证据 E-127;默认关)。</summary>
         public bool LearnSkills { get; set; }
 
+        /// <summary>combat-check、dungeon-check、flow-check --quick 编号[:等级],…:开局把这些技能学到指定等级(默认 1 级),依次放进快捷栏的第 4、5、6 格(F、G、H;M37,证据 E-129)。</summary>
+        public List<(int Id, int Level)>? QuickSkills { get; set; }
+
         public int Seed { get; set; } = 1;
         public bool RandomLayout { get; set; }
 
@@ -639,6 +642,9 @@ namespace Dnf.Cli
                     case "--learn":
                         opts.LearnSkills = true;
                         break;
+                    case "--quick":
+                        opts.QuickSkills = ParseQuick(NextValue(args, ref i));
+                        break;
                     case "--pick":
                         opts.Pick = true;
                         break;
@@ -857,6 +863,26 @@ namespace Dnf.Cli
                 throw new UserError("--eval 需要 x0,y0,x1,y1 且 x1 > x0、y1 > y0");
             }
             return (x0, y0, x1, y1);
+        }
+
+        private static List<(int Id, int Level)> ParseQuick(string text)
+        {
+            var list = new List<(int Id, int Level)>();
+            foreach (string item in text.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                string[] parts = item.Split(':');
+                int level = 1;
+                if (parts.Length > 2 || !int.TryParse(parts[0], out int id) || id < 1 || (parts.Length == 2 && (!int.TryParse(parts[1], out level) || level < 1)))
+                {
+                    throw new UserError("--quick 需要 编号[:等级],… 形式(编号与等级都是正整数)");
+                }
+                list.Add((id, level));
+            }
+            if (list.Count == 0 || list.Count > 3)
+            {
+                throw new UserError("--quick 里放 1 到 3 个技能(快捷栏的 F、G、H 三个格)");
+            }
+            return list;
         }
 
         private static string NextValue(string[] args, ref int i)

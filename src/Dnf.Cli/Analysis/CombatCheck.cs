@@ -140,11 +140,12 @@ internal static class CombatCheck
                         .Select(p => "  [数字 " + p.Value + " 标志 " + p.Flags + " 世界 (" + F(p.WorldX) + "," + F(p.WorldY) + "," + p.Z + ")]")));
                 lastHeroHits = session.HeroHits;
             }
-            string state = session.Hero.Motion + "/" + session.Hero.AttackStage + (session.HeroDown.Active ? "/倒地" + session.HeroDown.Stage : string.Empty);
+            string state = session.Hero.Motion + "/" + session.Hero.AttackStage + "/" + session.Hero.SkillStage + (session.HeroDown.Active ? "/倒地" + session.HeroDown.Stage : string.Empty);
             if (state != lastState)
             {
                 Console.WriteLine("  t=" + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s  主角 " + session.Hero.Motion
                     + (session.Hero.IsAttacking && session.Hero.AttackKind == HeroAttackKind.Normal ? " 第 " + (session.Hero.AttackStage + 1) + " 段" : string.Empty)
+                    + (session.Hero.Motion == HeroMotion.Skill ? " 技能 " + session.Hero.SkillId + " 第 " + (session.Hero.SkillStage + 1) + " 段" : string.Empty)
                     + (session.HeroDown.Active ? " 倒地阶段 " + session.HeroDown.Stage : string.Empty)
                     + (session.Hero.Z > 0 ? " 离地 " + F(session.Hero.Z) : string.Empty)
                     + " (" + F(session.Hero.X) + "," + F(session.Hero.Y) + ") 朝" + (session.Hero.FacingLeft ? "左" : "右") + " 镜头 " + session.Camera.IntX);
@@ -167,7 +168,7 @@ internal static class CombatCheck
         }
 
         Console.WriteLine();
-        Console.WriteLine("结束:主角 (" + F(session.Hero.X) + "," + F(session.Hero.Y) + "),命中 " + session.Hits + " 次,放技能 " + session.SkillCasts + " 次,击杀 " + session.Kills + " 个,总伤害 " + session.TotalDamage
+        Console.WriteLine("结束:主角 (" + F(session.Hero.X) + "," + F(session.Hero.Y) + "),命中 " + session.Hits + " 次,放技能 " + session.SkillCasts + " 次(接段 " + session.SkillChains + " 次),击杀 " + session.Kills + " 个,总伤害 " + session.TotalDamage
             + ",剩余 " + session.AliveCount + " 个,怪物扔出投射物 " + session.ProjectilesThrown + " 个,打中主角 " + session.ProjectileHits + " 个(E-103)"
             + (session.Vitals != null
                 ? ",主角被打中 " + session.HeroHits + " 次(共 " + session.HeroDamageTaken + " 点),生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax

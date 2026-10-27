@@ -41,7 +41,14 @@ internal static class HeroDamageCheck
         {
             foreach (HeroSkillSlot slot in session.Skills.Slots)
             {
-                if (slot.Strike.HasValue)
+                if (slot.StageStrikes != null)
+                {
+                    for (int stage = 0; stage < slot.StageStrikes.Count; stage++)
+                    {
+                        moves.Add(("技能 " + slot.Key + "(编号 " + slot.SkillId + " 级 " + slot.Level + ")第 " + (stage + 1) + " 段", slot.StageStrikes[stage]));
+                    }
+                }
+                else if (slot.Strike.HasValue)
                 {
                     moves.Add(("技能 " + slot.Key + "(编号 " + slot.SkillId + " 级 " + slot.Level + ")", slot.Strike.Value));
                 }

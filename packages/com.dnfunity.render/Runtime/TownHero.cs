@@ -638,6 +638,13 @@ namespace Dnf.Render
         /// <summary>正在放的技能编号(客户端的技能序号,例如上挑是 46);不在放技能时为 0。</summary>
         public int SkillId { get; private set; }
 
+        /// <summary>
+        /// 正在放的多段技能处于第几段(从 0 数):起手是第 0 段,每次 <see cref="ChainSkillMotion"/> 换一段加 1;不在放技能或单段技能时为 0(证据 E-129)。
+        /// </summary>
+        public int SkillStage => Motion == HeroMotion.Skill ? _skillStage : 0;
+
+        private int _skillStage;
+
         /// <summary>技能还在起手阶段(先播普攻的第 <see cref="AttackStage"/> 段,播到指定帧才换成技能自己的动画)。</summary>
         public bool SkillWindingUp => Motion == HeroMotion.Skill && _skillWindupStage >= 0;
 
@@ -1028,6 +1035,34 @@ namespace Dnf.Render
             return true;
         }
 
+        /// <summary>
+        /// 多段技能进下一段(证据 E-129):正在放技能 <paramref name="skillId"/> 的主体阶段时,换成 [etc motion] 第 <paramref name="etcIndex"/> 项,
+        /// 新动画从头播,按 <paramref name="slideSpeed"/>、<paramref name="slideAccel"/> 重新起滑,算新的一击(<see cref="SwingNumber"/> 加 1,
+        /// 命中判定重新数帧、同一个目标又能被打一次),<see cref="SkillStage"/> 加 1。
+        /// 不在放这个技能的主体阶段(没在放、放的是别的技能、还在起手阶段),或者读不到动画时返回 false,不改变状态。
+        /// </summary>
+        public bool ChainSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel)
+        {
+            if (Motion != HeroMotion.Skill || SkillId != skillId || _skillWindupStage >= 0 || _skillMotion == null)
+            {
+                return false;
+            }
+            EtcMotion m = EtcAt(etcIndex);
+            if (m == null)
+            {
+                return false;
+            }
+            _skillMotion = m;
+            _skillThen = m;
+            _skillSlideV0 = slideSpeed;
+            _skillSlideAccel = slideAccel;
+            _skillSlideV = slideSpeed;
+            _motionMs = 0;
+            _skillStage++;
+            SwingNumber++;
+            return true;
+        }
+
         /// <summary>后跳时"跳跃速度属性"的取值:客户端的后跳参数(模式 1)把它当 100 算(证据 E-076)。</summary>
         public const int BackStepJumpSpeedStat = 100;
 
@@ -1092,6 +1127,7 @@ namespace Dnf.Render
         {
             Motion = HeroMotion.Skill;
             SkillId = skillId;
+            _skillStage = 0;
             AttackStage = windupStage < 0 ? 0 : windupStage;
             _skillWindupStage = windupStage;
             _skillWindupUntilFrame = untilFrame;
@@ -1137,6 +1173,7 @@ namespace Dnf.Render
             FacingLeft = facingLeft;
             Motion = HeroMotion.Skill;
             SkillId = skillId;
+            _skillStage = 0;
             AttackStage = 0;
             _skillWindupStage = -1;
             _skillMotion = m;
@@ -1202,6 +1239,7 @@ namespace Dnf.Render
             Motion = HeroMotion.Rest;
             AttackStage = 0;
             SkillId = 0;
+            _skillStage = 0;
             _skillWindupStage = -1;
             _skillMotion = null;
             _skillSlideV = 0.0;

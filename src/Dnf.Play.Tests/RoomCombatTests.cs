@@ -38,12 +38,13 @@ public class RoomCombatTests
         /// <param name="defense">每个怪物的防御面板;不给就没有(按零防御、怪物自己的等级算)。</param>
         /// <param name="objects">房间里摆的物件(可破坏物件的测试用);拿到打开的素材后建出来,不给就是空房间。</param>
         /// <param name="walkArea">主角可走的区域(不给就没有限制;<paramref name="frozen"/> 优先);测"够不着"的场景用。</param>
+        /// <param name="skillsFactory">给了就用它排技能槽(拿到打开的数据),优先于 <paramref name="withSkills"/>。</param>
         public Arena(IReadOnlyList<(int X, int Y)> monsters, HeroStrikeInfo[] strikes = null, bool facingLeft = false, int hp = 100,
             bool frozen = false, int seed = 1, string chr = null, HeroStrikeInfo dash = default, HeroStrikeInfo jump = default, double monsterSpeed = 222.5,
             bool withSkills = false, int weaponStun = 0, HitStunTable stunTable = null, int monsterRecovery = 0, float weaponDelay = -1f,
             HeroPanel heroPanel = null, DamageConstants damageConstants = null, DefenderPanel defense = null, HeroVitals vitals = null,
             HeroProgress progress = null, float expWeight = 1f, int monsterLevel = 1, bool monsterBoss = false,
-            Func<DnfAssets, IReadOnlyList<RoomObject>> objects = null, List<WorldRect> walkArea = null)
+            Func<DnfAssets, IReadOnlyList<RoomObject>> objects = null, List<WorldRect> walkArea = null, Func<GameData, HeroSkills> skillsFactory = null)
         {
             Assets = DnfAssets.Open(_fx.Root);
             var tiles = new List<TileFile>();
@@ -68,7 +69,11 @@ public class RoomCombatTests
                 actors.Add(new MonsterActor(i, spawn, model, monsterLevel, hp, monsterSpeed, 1500, 0, monsterRecovery) { Defense = defense });
             }
             HeroSkills skills = null;
-            if (withSkills)
+            if (skillsFactory != null)
+            {
+                skills = skillsFactory(new GameData(new PvfScriptSource(Assets.Pvf)));   // 测试自己排技能槽(多段技能的合成配方等)
+            }
+            else if (withSkills)
             {
                 var data = new GameData(new PvfScriptSource(Assets.Pvf));
                 skills = HeroSkills.Create(data, data.GetCharacter(0), 0);

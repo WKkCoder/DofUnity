@@ -62,6 +62,24 @@ internal sealed class AvatarFixture : IDisposable
     public const int HardAttackMotionMs = 600;
 
     /// <summary>
+    /// 多段技能(M37,证据 E-129)的合成数据:技能编号 <see cref="ChainSkill"/>,[etc motion] 第 2、3 项是两段动作(<see cref="ChainAAni"/> 400 毫秒、<see cref="ChainBAni"/> 300 毫秒),
+    /// [etc attack info] 第 1、2 项是两段的攻击信息;.skl 的 [static data] 是 (200, −400, 100, −100),[level info] 四列 (第 1 级 150、250、30、50,第 2 级 180、300、40、60)。
+    /// A 段第 2 帧(200 到 300 毫秒)有攻击框,B 段第 1 帧(100 到 200 毫秒)有;两段的特效(<see cref="ChainEffect1"/>、<see cref="ChainEffect2"/>)是 350 毫秒的合成动画,
+    /// 技能预载脚本(<c>sqr/common.nut</c>)里按这个顺序登记。数全是测试用的。
+    /// </summary>
+    public const int ChainSkill = 901;
+    public const string ChainAAni = "character/test/animation/chaina.ani";
+    public const string ChainBAni = "character/test/animation/chainb.ani";
+    public const string ChainAAtk = "character/test/attackinfo/chaina.atk";
+    public const string ChainBAtk = "character/test/attackinfo/chainb.atk";
+    public const string ChainEffect1 = "character/test/effect/animation/chain1.ani";
+    public const string ChainEffect2 = "character/test/effect/animation/chain2.ani";
+    public const int ChainAPushAside = 120;
+    public const int ChainBPushAside = 200;
+    public const int ChainMotionAMs = 400;
+    public const int ChainMotionBMs = 300;
+
+    /// <summary>
     /// 鬼斩的两层特效(角色目录下 effect/animation/):都是 350 毫秒——空帧 150、图 50、图 50、空帧 100(原版的斩击光影也是先空一段再出图);
     /// 第二层每帧带图形特效 2(加法混合)。图用皮肤 IMG 的第 0、1 帧,帧偏移 (-5, -8)。
     /// </summary>
@@ -379,15 +397,30 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[initial value]")
                 .Tag("[skill]").Int(181, 2, HardAttackSkill, 1, UpperSlashSkill, UpperSlashLevel, BackStepSkill, 1, 174, 1)
                 // 技能动作与攻击信息(两个表的下标不对应:护身动作没有攻击信息,鬼斩在动作表里是第 1 项、在攻击信息表里是第 0 项)
-                .Tag("[etc motion]").Str("Animation/Guard.ani").Str("Animation/HardAttack.ani")
-                .Tag("[etc attack info]").Str("AttackInfo/HardAttack.atk")
+                .Tag("[etc motion]").Str("Animation/Guard.ani").Str("Animation/HardAttack.ani").Str("Animation/ChainA.ani").Str("Animation/ChainB.ani")
+                .Tag("[etc attack info]").Str("AttackInfo/HardAttack.atk").Str("AttackInfo/ChainA.atk").Str("AttackInfo/ChainB.atk")
                 .Tag("[attack motion]").Str("animation/attack1.ani").Str("Animation/Attack2.ani").Str("animation/attack3.ani").Build()),
             // 技能目录:职业 0 → ActionChrPath;三个主动技能与一个被动技能的 .skl(数是合成的)
             ("character/character.lst", NewScript().Int(0).Str("test/action.chr").Build()),
             ("skill/skilllist.lst", NewScript().Int(0).Str("testskill.lst").Build()),
             ("skill/testskill.lst", NewScript()
                 .Int(181).Str("test/passive.skl").Int(HardAttackSkill).Str("test/hardattack.skl").Int(UpperSlashSkill).Str("test/upperslash.skl")
-                .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Build()),
+                .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Int(ChainSkill).Str("test/chain.skl").Build()),
+            ("skill/test/chain.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[command]").Str("SKILL").Tag("[maximum level]").Int(10)
+                .Tag("[consume MP]").Int(20, 20).Tag("[cool time]").Int(3000, 3000).Tag("[static data]").Int(200, -400, 100, -100)
+                .Tag("[level info]").Int(4, 150, 250, 30, 50, 180, 300, 40, 60).Build()),     // 第一个数是列数(4),后面按行排:第 1 级 (150, 250, 30, 50),第 2 级 (180, 300, 40, 60)
+            // 多段技能两段的攻击信息:第一段击退 ChainAPushAside,第二段击倒并击退 ChainBPushAside
+            (ChainAAtk, NewScript().Tag("[damage reaction]").Tag("[damage]").Tag("[push aside]").Int(ChainAPushAside).Build()),
+            (ChainBAtk, NewScript().Tag("[damage reaction]").Tag("[down]").Tag("[push aside]").Int(ChainBPushAside).Build()),
+            // 技能预载脚本(与原版 sqr/common.nut 同形):常量、职业函数、按技能编号分支、依次预载特效;前面放一个别的技能的分支做干扰
+            ("sqr/common.nut", Encoding.ASCII.GetBytes(
+                "SKILL_OTHER_TEST <- 902;\r\nSKILL_CHAIN_TEST <- 901;\r\n"
+                + "function sq_LoadSkillEffect_Swordman(obj, skillIndex)\r\n{\r\n"
+                + "\tif (skillIndex == SKILL_OTHER_TEST)\r\n\t{\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Other.ani\");\r\n\t}\r\n"
+                + "\telse if (skillIndex == SKILL_CHAIN_TEST)\r\n\t{\r\n\t\t// comment\r\n"
+                + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain1.ani\");\r\n"
+                + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain2.ani\");\r\n\t}\r\n}\r\n")),
             ("skill/test/passive.skl", NewScript().Tag("[type]").Str("[passive]").Build()),
             ("skill/test/hardattack.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Str("UP").Tag("[maximum level]").Int(10)
@@ -473,6 +506,10 @@ internal sealed class AvatarFixture : IDisposable
             ("character/test/animation/guard.ani", BuildBoxAni((0, 100, null))),
             (HardAttackEffect1, BuildEffectAni(false)),
             (HardAttackEffect2, BuildEffectAni(true)),
+            (ChainEffect1, BuildEffectAni(false)),
+            (ChainEffect2, BuildEffectAni(true)),
+            (ChainAAni, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }), (1, 100, null))),
+            (ChainBAni, BuildBoxAni((0, 100, null), (1, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }), (0, 100, null))),
             (LevelUpEffect, BuildEffectAni(false)),
             // 通关营地:营火动作脚本(相对路径故意混着大小写)与两层动画、NPC 目录与三个 NPC、带 [NPC] 的地图
             (CampfireAct, NewScript()

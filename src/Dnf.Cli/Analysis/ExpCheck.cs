@@ -37,6 +37,23 @@ internal static class ExpCheck
             Console.WriteLine("  学技能:自动机策略加了 " + levels + " 级(技能点 " + sp + " → " + progress.SkillPoints + ",觉醒点 " + ap + " → " + progress.AwakeningPoints
                 + "),现在学会 " + progress.SkillsLearned + " 个技能");
         }
+        if (progress != null && opts.QuickSkills != null)
+        {
+            // --quick:把指定技能学到指定等级,依次放进快捷栏第 4、5、6 格(M37,证据 E-129);技能点不够、要求等级不到时只打印结果,不改别的
+            int position = 3;
+            foreach ((int id, int level) in opts.QuickSkills)
+            {
+                int have = progress.Skills.LevelOf(id);
+                if (level > have)
+                {
+                    SkillOpResult result = progress.LearnSkill(id, level - have, out int spent);
+                    Console.WriteLine("  --quick:技能 " + id + " 学到 " + level + " 级 → " + result + "(花 " + spent + " 点,现 " + progress.Skills.LevelOf(id) + " 级)");
+                }
+                bool placed = progress.Skills.AssignQuick(position, id);
+                Console.WriteLine("  --quick:技能 " + id + " 放进快捷栏第 " + (position + 1) + " 格 → " + (placed ? "成功" : "失败(没学会或不是主动技能)"));
+                position++;
+            }
+        }
         return progress;
     }
 

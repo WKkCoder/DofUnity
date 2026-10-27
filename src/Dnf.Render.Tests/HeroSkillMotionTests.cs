@@ -211,4 +211,94 @@ public class HeroSkillMotionTests
         hero.Update(100, 0, 0);
         Assert.Equal((200.0, 60.0), (hero.X, hero.Y));               // 摆好之后不会继续往后退
     }
+
+    // ---- 多段技能换段(证据 E-129) ----
+
+    [Fact]
+    public void ChainingSwitchesToTheNextEtcMotionFromTheStartWithFreshSlideAndANewSwing()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TownHero hero = NewHero(assets);
+        int a = hero.EtcMotionIndexOf("chaina.ani");
+        int b = hero.EtcMotionIndexOf("chainb.ani");
+        Assert.True(a >= 0 && b >= 0);
+
+        Assert.True(hero.BeginSkillMotion(AvatarFixture.ChainSkill, a, 200, -400));
+        Assert.Equal((HeroMotion.Skill, 0, "chaina.ani"), (hero.Motion, hero.SkillStage, hero.SkillMotionName));
+        long swings = hero.SwingNumber;
+        hero.Update(250, 0, 0);                                         // 第一段 400 毫秒,放到第 2 帧(200 到 300 毫秒)
+        Assert.Equal(2, hero.CurrentFrame);
+        double x = hero.X;
+        Assert.Equal(100 + TownHero.SlideDistance(200, -400, 0, 250), x, 6);
+
+        // 换段:新动画从头播,新一击(命中判定重新数),按新的速度重新起滑
+        Assert.True(hero.ChainSkillMotion(AvatarFixture.ChainSkill, b, 300, -500));
+        Assert.Equal((HeroMotion.Skill, 1, "chainb.ani", 0), (hero.Motion, hero.SkillStage, hero.SkillMotionName, hero.CurrentFrame));
+        Assert.Equal((swings + 1, 0L, 300.0), (hero.SwingNumber, hero.MotionMs, hero.SkillSlideSpeed));
+        Assert.Equal((AvatarFixture.ChainSkill, HeroAttackKind.Skill, true), (hero.SkillId, hero.AttackKind, hero.IsAttacking));
+        hero.Update(100, 0, 0);
+        Assert.Equal(1, hero.CurrentFrame);                             // 第二段 300 毫秒:100 毫秒时在第 1 帧
+        Assert.Equal(x + TownHero.SlideDistance(300, -500, 0, 100), hero.X, 6);
+
+        // 第二段 300 毫秒播完回到站立,段号清零,技能编号清零;再换段不行
+        hero.Update(200, 0, 0);
+        Assert.Equal((HeroMotion.Rest, 0, 0), (hero.Motion, hero.SkillStage, hero.SkillId));
+        Assert.False(hero.ChainSkillMotion(AvatarFixture.ChainSkill, b, 300, -500));
+    }
+
+    [Fact]
+    public void ChainingNeedsTheSameSkillInItsMainPhaseAndAReadableMotion()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        int b = NewHero(assets).EtcMotionIndexOf("chainb.ani");
+
+        // 没在放技能
+        TownHero idle = NewHero(assets);
+        Assert.False(idle.ChainSkillMotion(AvatarFixture.ChainSkill, b, 0, 0));
+        Assert.Equal((HeroMotion.Rest, 0), (idle.Motion, idle.SkillStage));
+
+        // 放的是别的技能(上挑借用普攻动画,起手阶段)
+        TownHero other = NewHero(assets);
+        Assert.True(other.BeginSkillStrike(AvatarFixture.UpperSlashSkill, 2));
+        Assert.False(other.ChainSkillMotion(AvatarFixture.ChainSkill, b, 0, 0));
+        Assert.False(other.ChainSkillMotion(AvatarFixture.UpperSlashSkill, b, 0, 0));    // 同一个技能,但它没有主体动画可换(整段借用普攻)
+        Assert.Equal((HeroMotion.Skill, 0), (other.Motion, other.SkillStage));
+
+        // 起手阶段(先挥普攻再换动画)里不换
+        TownHero windup = NewHero(assets);
+        Assert.True(windup.BeginSkillWindup(AvatarFixture.UpperSlashSkill, 0, 2, b, 100, -100));
+        Assert.True(windup.SkillWindingUp);
+        Assert.False(windup.ChainSkillMotion(AvatarFixture.UpperSlashSkill, b, 0, 0));
+
+        // 放同一个技能,但目标动作读不到:不改状态
+        TownHero hero = NewHero(assets);
+        int a = hero.EtcMotionIndexOf("chaina.ani");
+        Assert.True(hero.BeginSkillMotion(AvatarFixture.ChainSkill, a, 0, 0));
+        long swings = hero.SwingNumber;
+        Assert.False(hero.ChainSkillMotion(AvatarFixture.ChainSkill, 99, 0, 0));
+        Assert.Equal((0, "chaina.ani", swings), (hero.SkillStage, hero.SkillMotionName, hero.SwingNumber));
+    }
+
+    [Fact]
+    public void TheSkillStageIsZeroOutsideSkillsAndRestartsWithEachNewSkill()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TownHero hero = NewHero(assets);
+        int a = hero.EtcMotionIndexOf("chaina.ani");
+        int b = hero.EtcMotionIndexOf("chainb.ani");
+
+        Assert.Equal(0, hero.SkillStage);
+        Assert.True(hero.BeginSkillMotion(AvatarFixture.ChainSkill, a, 0, 0));
+        Assert.True(hero.ChainSkillMotion(AvatarFixture.ChainSkill, b, 0, 0));
+        Assert.Equal(1, hero.SkillStage);
+
+        // 被打断(摆回站立)之后段号读出来是 0,下一次放同一个技能从第 0 段开始
+        hero.Place(100, 50, false, HeroMotion.Rest, 0);
+        Assert.Equal(0, hero.SkillStage);
+        Assert.True(hero.BeginSkillMotion(AvatarFixture.ChainSkill, a, 0, 0));
+        Assert.Equal((0, "chaina.ani"), (hero.SkillStage, hero.SkillMotionName));
+    }
 }

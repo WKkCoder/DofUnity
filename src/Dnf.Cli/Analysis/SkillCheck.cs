@@ -268,6 +268,67 @@ internal static class SkillCheck
                 + ",花费与各技能加的级数对得上=" + conservedPlan + ",停下时还能再学一级的 " + stillLearnable + " 个,再跑一遍不再加=" + idempotent
                 + ",快捷栏排了 " + filled + " 格(学会的主动技能 " + activeLearned + " 个)");
         }
+
+        // 6. 技能配方(M37,证据 E-129):配方表里的每个技能在真实数据里都读得通——技能在目录里且是主动技能、[static data] 与 [level info] 的列数够用、
+        // 角色的 [etc motion] 与 [etc attack info] 的下标落在表内且文件在库里、特效列表够长且每个动画文件都在库里、要求的技能在目录里、1 级的逐段伤害数读得出
+        SkillEffectTable effects = SkillEffectTable.Load(data, SkillEffectTable.SwordmanJob);
+        bool InLibrary(string? path) => path != null && assets.Pvf.TryGetEntry(path, out _);
+        int recipeCount = 0;
+        int recipeStages = 0;
+        var recipeProblems = new List<string>();
+        foreach (SkillRecipe recipe in SkillRecipes.Default.All)
+        {
+            recipeCount++;
+            recipeStages += recipe.Stages.Count;
+            string label = "配方 #" + recipeCount;
+            SkillDef? def = catalog.Find(recipe.SkillId);
+            if (def == null || !def.IsActive)
+            {
+                recipeProblems.Add(label + ":技能不在目录里或不是主动技能");
+                continue;
+            }
+            int needStatic = new[] { recipe.SlideSpeedIndex, recipe.SlideAccelIndex, recipe.ForwardSpeedIndex, recipe.ForwardAccelIndex }.Max() + 1;
+            if (def.StaticData.Length < needStatic)
+            {
+                recipeProblems.Add(label + ":[static data] 只有 " + def.StaticData.Length + " 个数,配方要 " + needStatic + " 个");
+            }
+            int needColumns = recipe.Stages.Max(st => Math.Max(st.DamageRateColumn, st.DamageFixedColumn)) + 1;
+            if (def.LevelInfo.Columns < needColumns || !def.LevelInfo.IsConsistent)
+            {
+                recipeProblems.Add(label + ":[level info] 只有 " + def.LevelInfo.Columns + " 列,配方要 " + needColumns + " 列");
+            }
+            IReadOnlyList<string> effectPaths = effects.EffectsOf(recipe.SkillId);
+            for (int i = 0; i < recipe.Stages.Count; i++)
+            {
+                SkillStageSpec st = recipe.Stages[i];
+                if (!InLibrary(chr.CustomAnimationPath(st.MotionIndex)))
+                {
+                    recipeProblems.Add(label + " 第 " + i + " 段:动作读不到");
+                }
+                if (!InLibrary(chr.CustomAttackInfoPath(st.AttackInfoIndex)))
+                {
+                    recipeProblems.Add(label + " 第 " + i + " 段:攻击信息读不到");
+                }
+                if (st.EffectIndex >= 0 && (st.EffectIndex >= effectPaths.Count || !InLibrary(PvfPath.ResolveRelativeTo(chr.Path, effectPaths[st.EffectIndex]))))
+                {
+                    recipeProblems.Add(label + " 第 " + i + " 段:特效读不到(预载表里有 " + effectPaths.Count + " 个)");
+                }
+                if (st.RequiresSkill != 0 && catalog.Find(st.RequiresSkill) == null)
+                {
+                    recipeProblems.Add(label + " 第 " + i + " 段:要求的技能不在目录里");
+                }
+                if (def.GetLevel(1, st.DamageRateColumn, false) <= 0)
+                {
+                    recipeProblems.Add(label + " 第 " + i + " 段:1 级的百分比伤害读出来不是正数");
+                }
+            }
+        }
+        foreach (string line in recipeProblems)
+        {
+            Console.WriteLine("    " + line);
+        }
+        Report(recipeCount == SkillRecipes.Default.Count && recipeProblems.Count == 0,
+            "技能配方 " + recipeCount + " 个(共 " + recipeStages + " 段)在真实数据里都读得通(动作、攻击信息、特效、[static data]、[level info] 列;问题 " + recipeProblems.Count + " 条)");
         Console.WriteLine(bad == 0 ? "skill-check 全部通过" : "skill-check 有 " + bad + " 项失败");
         return bad == 0 ? 0 : 1;
     }
