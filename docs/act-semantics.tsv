@@ -125,7 +125,7 @@ cond	0x60	[IS CHILD]	vtbl+0x1f4 父指针是否等于 action.owner	高	槽名
 cond	0x61	[CHECK PLAYER NUM]	派对 009266c0 人数与 [COUNT] 期望值比较	中	多条 COUNT 时取哪条
 beh	0x62	[CREATE PASSIVEOBJECT]	在本机拥有者处按 INDEX/LEVEL/POS 与可选标志生成被动对象(vtbl+0xd1)	中	队伍码1重复、01562220 浮点常数、创建器内部;摆放(基点、X 取反、朝向来源、Z)E-130 已读
 beh	0x63	[SUMMON MONSTER]	对目标集合里每个可战斗对象,按"编号、等级、三轴偏移"召唤怪物;前置:行为拥有者存在且是本机控制的对象;参数流里可含 [RANDOM] 结构	中	随机结构与召唤数量上限
-beh	0x64	[TELEPORT]	把目标集合里的对象按三轴偏移瞬移;只改位置与少量关联状态,不换动作脚本	中	关联状态的完整列表
+beh	0x64	[TELEPORT]	按基准对象(拥有者或目标)的坐标加三轴偏移瞬移,朝左时 X 偏移取反;九个标志码已读通(M40);落点不合法时找最近合法点(半径 200)	中	最近合法点搜索的另两个参数(-1 与 3);USE EFFECT 的特效记录;关联状态的完整列表
 beh	0x67	[CHANGE ATTACKINFO]	DEFAULT(-1)或索引切换action+0xfb表(0x2cc)并刷新+0x200	中	具名attackinfo执行路径、+0x200槽名
 beh	0x6b	[SET SPEED]	对目标速度控制器(+0x50→+0xc)写 X/Y/Z 浮点速度，X 随朝向取反	高	加载侧 3/4 修饰在执行块无分支
 beh	0x6e	[TRIGGER]	运行时按编号启用/禁用/重置动作上的触发器条目	中	整数加载分支切片缺失；motion 分池语义未全核对
@@ -144,15 +144,15 @@ beh	0x7e	[CASTING]	参数 1 大于 0 时写拥有者(CollisionObject 族)的施�
 beh	0x7f	[ABS CASTING]	本机控制实体上按两整数创建绝对读条(gauge+0x280对象,常量20000)	中	paramA/B与[CASTING]差异、目标集合检查
 beh	0x81	[DIM]	在 action+0x120 按变量名读写 int；支持 =/+/-/GET TIME	高	GET TIME 的时间单位(按常数量级推断为毫秒)
 beh	0x83	[SET POS FORCE]	对目标施加强制位移（起止点与多种移动模式）	中	010b3ca0 插值细节未读
-beh	0xa9	[SHAKING]	参数 1 不小于 0 时调用场景的震屏(参数 0、参数 1)	高	—
+beh	0xa9	[SHAKING]	参数 1 不小于 0 时调用场景的震屏(参数 0 为振幅、参数 1 为持续毫秒);逐帧随机偏移、无衰减、到时归零(M40)	高	系数 0.5 的分支(全局浮点比较)
 beh	0xaa	[PARTICLE]	以拥有者坐标加三轴偏移生成粒子,不随朝向镜像,不用目标集合	中	粒子类型与朝向处理
 beh	0xac	[SAY SPEECH]	对目标显示语句:ActiveObject 族走带语音界面的虚槽 0x6c4,PassiveObject 族走虚槽 0x460	中	字符串来源
 beh	0xad	[DELETE APPENDAGE]	按名/[%]/float匹配owner下appendage并detach	低	0x4d分支、00982c90规则、param布局
 beh	0xb5	[CHANGE ACTION FILE]	给目标换成另一个动作脚本文件;不保留当前帧与内部子状态,换文件后靠后面的 [SET ACTION] 重新切入	中	已加载的动作脚本是否复用
 beh	0xb9	[FLASH SCREEN]	全屏闪光（七参数时间/alpha/RGB，EX 第八模式）	中	010c6b3e 以后渲染调用未切片
-beh	0xc3	[SET DAMAGE BOX]	对0x019d91e8目标开关受击盒(0x368);OFF时按帧清0x534/0x540	高	帧槽0x534/0x540命名
+beh	0xc3	[SET DAMAGE BOX]	对0x019d91e8目标开关受击盒(0x368),三档:开、关、复位;OFF时按帧清0x534/0x540(M40)	高	帧槽0x534/0x540命名;复位档的确切含义
 beh	0xc4	[SET TEAM]	valueOf整数调setTeam(0x228)	高	team枚举
 beh	0xd0	[ADD CATEGORY]	查表后0x288添加,0x019db264写+0x4f94与锚点坐标	中	0x288与0x1a语义
-beh	0xd7	[CHANGE FLOATING HEIGHT]	设置或关闭目标浮空高度（像素）	高	008331b0 模式码与 +1000 修正的精确含义
+beh	0xd7	[CHANGE FLOATING HEIGHT]	设置或关闭目标浮空高度(像素);升降初速 = 差值符号 × sqrt(2×|重力|×|差值|),关闭时 Z 速度清零(M40)	高	槽 0x274 的保持逻辑;008331b0 模式码与 +1000 修正的精确含义
 beh	0xdf	[SET USE HOMING]	param!=0则owner+0x50开homming再进黑盒022c34cf	中	+0x50与黑盒语义
 beh	0xec	[CHANGE AI]	切换 AI 宿主上的 .ai 脚本与 modeId	中	对象索引非 0x111/0x211 时行为未验证

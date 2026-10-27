@@ -58,6 +58,18 @@ namespace Dnf.Game.Act
         void AttackRect(ActAttackRectMode mode);
 
         void SetFrame(int frame);
+
+        /// <summary>[SET DAMAGE BOX]:开关受击盒(E-133)。没有受击盒的对象(被动对象、主角这一版)什么都不做。</summary>
+        void SetDamageBox(ActDamageBoxMode mode);
+
+        /// <summary>[CHANGE FLOATING HEIGHT] n:n ≥ 1 升到(或降到)这个高度悬停,n ≤ 0 结束悬停、落回地面(E-133)。没有高度概念的对象什么都不做。</summary>
+        void SetFloatingHeight(int height);
+
+        /// <summary>
+        /// [TELEPORT]:把对象摆到世界坐标 (x, y, z)(E-133)。落点合不合法由对象自己查(落点不合法就在附近找一个,找不到就不动),
+        /// 返回是否真的摆过去了。
+        /// </summary>
+        bool Teleport(float x, float y, float z);
     }
 
     /// <summary>运行器对世界的请求:随机数、生成被动对象、解析选择器。</summary>
@@ -77,6 +89,9 @@ namespace Dnf.Game.Act
         /// 运行器自己处理 ME、TARGET、SUMMON MASTER、最近的攻击者与被攻击者。
         /// </summary>
         void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into);
+
+        /// <summary>屏幕震动:[SHAKING] 的强度(像素)与持续毫秒(E-133)。整个画面一份,不分目标。</summary>
+        void Shake(int strength, int durationMs);
     }
 
     /// <summary>
@@ -750,6 +765,33 @@ namespace Dnf.Game.Act
                     case ActBehaviorKind.SetVariable:
                         _vars[b.VariableName] = Eval(b.Expression);      // 变量属于运行器(每个对象每个动作一份),与目标集合无关
                         break;
+                    case ActBehaviorKind.SetDamageBox:
+                        foreach (IActEntity t in targets)
+                        {
+                            t.SetDamageBox(b.DamageBox);
+                        }
+                        break;
+                    case ActBehaviorKind.SetFloatingHeight:
+                        foreach (IActEntity t in targets)
+                        {
+                            if (t.IsAlive)
+                            {
+                                t.SetFloatingHeight(b.Height);
+                            }
+                        }
+                        break;
+                    case ActBehaviorKind.Shake:
+                        if (b.ShakeMs >= 0)
+                        {
+                            _host.Shake(b.ShakeStrength, b.ShakeMs);     // 第二个参数为负时客户端不震(0x010c5f22 起的条件);不分目标,整个画面只震一次
+                        }
+                        break;
+                    case ActBehaviorKind.Teleport:
+                        foreach (IActEntity t in targets)
+                        {
+                            Teleport(b, t);
+                        }
+                        break;
                     default:
                         break;     // 没做的行为按空操作处理(ActBehaviorGroup.UnsupportedTags 供审计)
                 }
@@ -809,6 +851,47 @@ namespace Dnf.Game.Act
             float y = b.UseMapPos ? py : baseObject.Y + py;
             float z = b.UseObjectZ ? baseObject.Z + pz : pz;
             _host.SpawnPassive(_owner, index, level, x, y, z, left);
+        }
+
+        /// <summary>
+        /// [TELEPORT](客户端执行块 0x010b71a4 起,E-133):三个值取出来之后,位置按下面的顺序定,朝向 0(左)时 X 偏移取反——
+        /// 朝向取对象自己的,[USE MY DIRECTION] 时取拥有者的;[USE MAP POS] 是绝对坐标;[USE MY BASEPOS] 以拥有者为基准,否则以被作用的对象为基准
+        /// (X 偏移取反的规则相同,[NOT USE OBJECT DIRECTION] 时不取反;Z 偏移默认加基准的高度,[NOT USE OBJECT ZPOS] 时不加);
+        /// 没有 [USE MY BASEPOS] 却写了 [NOT USE OBJECT DIRECTION] 时三个值原样当绝对坐标。被移动的是被作用的对象,[MOVE ME] 时是拥有者。
+        /// </summary>
+        private void Teleport(ActBehavior b, IActEntity target)
+        {
+            int ox = b.PosX.Eval(_rand);
+            int oy = b.PosY.Eval(_rand);
+            int oz = b.PosZ.Eval(_rand);
+            bool left = (b.UseMyDirection ? _owner : target).FacingLeft;
+            float x = ox;
+            float y = oy;
+            float z = oz;
+            if (!b.UseMapPos)
+            {
+                IActEntity baseObject = null;
+                if (b.UseMyBasePos)
+                {
+                    baseObject = _owner;
+                }
+                else if (!b.NotUseDirection)
+                {
+                    baseObject = target;
+                }
+                if (baseObject != null)
+                {
+                    x = baseObject.X + (left && !b.NotUseDirection ? -ox : ox);
+                    y = baseObject.Y + oy;
+                    z = (b.NotUseZ ? 0f : baseObject.Z) + oz;
+                }
+            }
+            if (b.AllowFixture)
+            {
+                return;
+            }
+            IActEntity mover = b.MoveMe ? _owner : target;
+            mover.Teleport(x, y, z);
         }
 
         private void Speed(ActBehavior b, IActEntity target)

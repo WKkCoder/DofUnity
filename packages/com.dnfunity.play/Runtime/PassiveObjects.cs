@@ -202,6 +202,30 @@ namespace Dnf.Play
             _motionVersion++;
         }
 
+        void IActEntity.SetDamageBox(ActDamageBoxMode mode)
+        {
+            // 被动对象没有受击盒(这一版不做可打碎的被动对象)
+        }
+
+        void IActEntity.SetFloatingHeight(int height)
+        {
+            // 被动对象的高度由 Z 方向的速度与重力管,没有"悬停"这个概念(全库被动对象的 .act 里也没有 [CHANGE FLOATING HEIGHT])
+        }
+
+        /// <summary>[TELEPORT] 作用到被动对象:直接摆过去,不查可走区(被动对象本来就在可走区之外飞行;推断)。</summary>
+        bool IActEntity.Teleport(float x, float y, float z)
+        {
+            if (Finished)
+            {
+                return false;
+            }
+            X = x;
+            Y = y;
+            Z = Math.Max(0.0, z);
+            _motionVersion++;
+            return true;
+        }
+
         // ------------------------------------------------------------------ 推进
 
         private void SwitchAction(PassiveAction next)
@@ -427,6 +451,29 @@ namespace Dnf.Play
 
         public void SetFrame(int frame)
         {
+        }
+
+        public void SetDamageBox(ActDamageBoxMode mode)
+        {
+        }
+
+        public void SetFloatingHeight(int height)
+        {
+        }
+
+        /// <summary>
+        /// [TELEPORT] 作用到主角(怪物把主角拉到自己身边之类的写法,[MOVE TARGET]):落点在可走区里就直接摆,不在就找 <see cref="Placement.SearchRadius"/> 像素内最近的能站的点,找不到不动。
+        /// 只改 X、Y(高度与动作不动:主角的腾空与硬直状态机各管各的)。
+        /// </summary>
+        public bool Teleport(float x, float y, float z)
+        {
+            IWalkArea walk = _hero.Walk;
+            if (!Placement.TryResolve((px, py) => walk == null || walk.IsUnrestricted || walk.Contains(px, py), x, y, out double rx, out double ry))
+            {
+                return false;
+            }
+            _hero.Teleport(rx, ry);
+            return true;
         }
     }
 }

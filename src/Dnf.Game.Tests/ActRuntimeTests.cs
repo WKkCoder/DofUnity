@@ -98,6 +98,19 @@ public sealed class ActRuntimeTests
             Log.Add("frame:" + frame);
             MotionVersion++;
         }
+
+        public void SetDamageBox(ActDamageBoxMode mode) => Log.Add("box:" + mode);
+
+        public void SetFloatingHeight(int height) => Log.Add("float:" + height);
+
+        public bool Teleport(float x, float y, float z)
+        {
+            Log.Add("teleport:" + F(x) + "," + F(y) + "," + F(z));
+            X = x;
+            Y = y;
+            Z = z;
+            return true;
+        }
     }
 
     private sealed class Host : IActHost
@@ -108,6 +121,10 @@ public sealed class ActRuntimeTests
         public Dictionary<ActSelector, List<IActEntity>> Sets { get; } = new();
 
         public int Random(int n) => Randoms.Count > 0 ? Randoms.Dequeue() % n : 0;
+
+        public List<(int strength, int ms)> Shakes { get; } = new();
+
+        public void Shake(int strength, int durationMs) => Shakes.Add((strength, durationMs));
 
         public void SpawnPassive(IActEntity owner, int index, int level, float x, float y, float z, bool facingLeft)
             => Spawns.Add((owner, index, level, x, y, z, facingLeft));
@@ -1196,5 +1213,198 @@ public sealed class ActRuntimeTests
         Assert.Equal(1, Fired(10.9f, 20.5f, 30.99f));      // 取整数部分比较
         Assert.Equal(0, Fired(11, 20, 30));
         Assert.Equal(0, Fired(10, 20, 29));
+    }
+
+    // ------------------------------------------------------------------ 受击盒、浮空高度、震屏、瞬移(M40,证据 E-133)
+
+    private static ScriptLine[] Me(params ScriptLine[] body) => Cat(
+        Trigger(L("[FRAME]", 0, 0), L("[DO BEHAVIOR]"), L("[ME]", 0)),
+        Behavior(body));
+
+    private static ScriptLine[] OnEnemies(params ScriptLine[] body) => Cat(
+        Trigger(L("[FRAME]", 0, 0), L("[WHICH]"), L("[ALL ENEMY]"), L("[DO BEHAVIOR]"), L("[CHECKUP OBJECT]", 0)),
+        Behavior(body));
+
+    private static void Run(ActProgram p, IActEntity owner, Host host = null) => new ActRunner(p, owner, host ?? new Host()).Update(0, 0.016f);
+
+    [Fact]
+    public void SetDamageBoxHasOnOffAndResetAndABareTagMeansOff()
+    {
+        var on = new Entity();
+        Run(P(Me(L("[SET DAMAGE BOX]"), L("[ON]"))), on);
+        Assert.Equal(new[] { "box:On" }, on.Log.ToArray());
+
+        var off = new Entity();
+        Run(P(Me(L("[SET DAMAGE BOX]"), L("[OFF]"))), off);
+        Assert.Equal(new[] { "box:Off" }, off.Log.ToArray());
+
+        var reset = new Entity();
+        Run(P(Me(L("[SET DAMAGE BOX]"), L("[RESET]"))), reset);
+        Assert.Equal(new[] { "box:Reset" }, reset.Log.ToArray());
+
+        // 没写档位:写成关,而且后面的行为照常读(档位标签是偷看的,不是吞掉下一个标签)
+        var bare = new Entity();
+        Run(P(Me(L("[SET DAMAGE BOX]"), L("[SET SPEED]"), L("[X AXIS]", 3), L("[/SET SPEED]"))), bare);
+        Assert.Equal(new[] { "box:Off", "speed:3,-,-" }, bare.Log.ToArray());
+    }
+
+    [Fact]
+    public void SetDamageBoxReachesEveryTarget()
+    {
+        var owner = new Entity();
+        var a = new Entity { Kind = ActEntityKind.Character };
+        var b = new Entity { Kind = ActEntityKind.Character };
+        var host = new Host();
+        host.Sets[ActSelector.AllEnemy] = new List<IActEntity> { a, b };
+        Run(P(OnEnemies(L("[SET DAMAGE BOX]"), L("[OFF]"))), owner, host);
+        Assert.Equal(new[] { "box:Off" }, a.Log.ToArray());
+        Assert.Equal(new[] { "box:Off" }, b.Log.ToArray());
+        Assert.Empty(owner.Log);
+    }
+
+    [Fact]
+    public void ChangeFloatingHeightGoesToAliveTargetsOnly()
+    {
+        var owner = new Entity();
+        var alive = new Entity { Kind = ActEntityKind.Character };
+        var dead = new Entity { Kind = ActEntityKind.Character, IsAlive = false };
+        var host = new Host();
+        host.Sets[ActSelector.AllEnemy] = new List<IActEntity> { alive, dead };
+        Run(P(OnEnemies(L("[CHANGE FLOATING HEIGHT]", 120))), owner, host);
+        Assert.Equal(new[] { "float:120" }, alive.Log.ToArray());
+        Assert.Empty(dead.Log);
+
+        var self = new Entity();
+        Run(P(Me(L("[CHANGE FLOATING HEIGHT]", 0))), self);
+        Assert.Equal(new[] { "float:0" }, self.Log.ToArray());      // 0 与负数是结束悬停,由宿主处理
+    }
+
+    [Fact]
+    public void ShakingStartsOneHostShakeNoMatterHowManyTargets()
+    {
+        var owner = new Entity();
+        var host = new Host();
+        host.Sets[ActSelector.AllEnemy] = new List<IActEntity> { new Entity { Kind = ActEntityKind.Character }, new Entity { Kind = ActEntityKind.Character } };
+        Run(P(OnEnemies(L("[SHAKING]", 6, 300))), owner, host);
+        Assert.Equal(new[] { (6, 300) }, host.Shakes.ToArray());
+    }
+
+    [Fact]
+    public void ShakingWithANegativeDurationDoesNothing()
+    {
+        var host = new Host();
+        Run(P(Me(L("[SHAKING]", 6, -1))), new Entity(), host);
+        Assert.Empty(host.Shakes);
+        Run(P(Me(L("[SHAKING]", 6, 0))), new Entity(), host);
+        Assert.Equal(new[] { (6, 0) }, host.Shakes.ToArray());
+    }
+
+    private static string TeleportLog(Entity self, Entity other, bool targetOther, params ScriptLine[] teleport)
+    {
+        var lines = new List<ScriptLine> { L("[TELEPORT]") };
+        lines.AddRange(teleport);
+        lines.Add(L("[/TELEPORT]"));
+        var host = new Host();
+        if (other != null)
+        {
+            host.Sets[ActSelector.AllEnemy] = new List<IActEntity> { other };
+        }
+        ActProgram p = P(targetOther ? OnEnemies(lines.ToArray()) : Me(lines.ToArray()));
+        Run(p, self, host);
+        return string.Join("|", self.Log.Concat(other?.Log ?? new List<string>()));
+    }
+
+    [Fact]
+    public void TeleportOffsetsFromTheTargetAndMirrorsXWhenFacingLeft()
+    {
+        // 默认:以被作用的对象为基准,X 偏移在朝左时取反,Z 偏移加基准的高度
+        var left = new Entity { X = 100, Y = 50, Z = 10, FacingLeft = true };
+        Assert.Equal("teleport:70,55,17", TeleportLog(left, null, false, L("[POS]", 30, 5, 7)));
+        var right = new Entity { X = 100, Y = 50, Z = 10, FacingLeft = false };
+        Assert.Equal("teleport:130,55,17", TeleportLog(right, null, false, L("[POS]", 30, 5, 7)));
+    }
+
+    [Fact]
+    public void TeleportMapPositionIsAbsolute()
+    {
+        var e = new Entity { X = 100, Y = 50, Z = 10, FacingLeft = true };
+        Assert.Equal("teleport:30,5,7", TeleportLog(e, null, false, L("[POS]", 30, 5, 7), L("[USE MAP POS]")));
+    }
+
+    [Fact]
+    public void TeleportCanIgnoreTheBaseHeightAndTheDirection()
+    {
+        var e = new Entity { X = 100, Y = 50, Z = 10, FacingLeft = true };
+        Assert.Equal("teleport:70,55,7", TeleportLog(e, null, false, L("[POS]", 30, 5, 7), L("[NOT USE OBJECT ZPOS]")));
+
+        // 没有 [USE MY BASEPOS] 却写了 [NOT USE OBJECT DIRECTION]:三个值原样当绝对坐标
+        var f = new Entity { X = 100, Y = 50, Z = 10, FacingLeft = true };
+        Assert.Equal("teleport:30,5,7", TeleportLog(f, null, false, L("[POS]", 30, 5, 7), L("[NOT USE OBJECT DIRECTION]")));
+    }
+
+    [Fact]
+    public void TeleportFromMyBasePositionUsesTheOwnerAsTheBase()
+    {
+        var owner = new Entity { X = 200, Y = 80, Z = 0, FacingLeft = true };
+        var enemy = new Entity { Kind = ActEntityKind.Character, X = 10, Y = 10, Z = 0, FacingLeft = false };
+        // 目标是敌人(朝右),基准是拥有者:X 的取反看敌人的朝向(右 → 不取反);移动的是敌人
+        string log = TeleportLog(owner, enemy, true, L("[POS]", 30, 5, 0), L("[USE MY BASEPOS]"));
+        Assert.Equal("teleport:230,85,0", log);
+        Assert.Equal(200, owner.X);
+        Assert.Equal(230, enemy.X);
+    }
+
+    [Fact]
+    public void TeleportUseMyDirectionTakesTheOwnersFacingForTheMirror()
+    {
+        var owner = new Entity { X = 200, Y = 80, Z = 0, FacingLeft = true };
+        var enemy = new Entity { Kind = ActEntityKind.Character, X = 10, Y = 10, Z = 0, FacingLeft = false };
+        string log = TeleportLog(owner, enemy, true, L("[POS]", 30, 5, 0), L("[USE MY BASEPOS]"), L("[USE MY DIRECTION]"));
+        Assert.Equal("teleport:170,85,0", log);
+    }
+
+    [Fact]
+    public void TeleportMovesTheTargetByDefaultAndTheOwnerWithMoveMe()
+    {
+        var owner = new Entity { X = 200, Y = 80, FacingLeft = false };
+        var enemy = new Entity { Kind = ActEntityKind.Character, X = 10, Y = 10, FacingLeft = false };
+        // 基准是被作用的敌人;默认移动敌人自己
+        Assert.Equal("teleport:40,15,0", TeleportLog(owner, enemy, true, L("[POS]", 30, 5, 0)));
+        Assert.Empty(owner.Log);
+
+        var owner2 = new Entity { X = 200, Y = 80, FacingLeft = false };
+        var enemy2 = new Entity { Kind = ActEntityKind.Character, X = 10, Y = 10, FacingLeft = false };
+        // [MOVE ME]:基准仍是被作用的敌人,被移动的是拥有者(瞬移到目标身边)
+        string moved = TeleportLog(owner2, enemy2, true, L("[POS]", 30, 5, 0), L("[MOVE ME]"));
+        Assert.Equal("teleport:40,15,0", moved);
+        Assert.Equal(40, owner2.X);
+        Assert.Empty(enemy2.Log);
+
+        var owner3 = new Entity { X = 200, Y = 80, FacingLeft = false };
+        var enemy3 = new Entity { Kind = ActEntityKind.Character, X = 10, Y = 10, FacingLeft = false };
+        // [MOVE TARGET] 把前面的 [MOVE ME] 取消
+        TeleportLog(owner3, enemy3, true, L("[POS]", 30, 5, 0), L("[MOVE ME]"), L("[MOVE TARGET]"));
+        Assert.Empty(owner3.Log);
+        Assert.Equal(40, enemy3.X);
+    }
+
+    [Fact]
+    public void TeleportWithAllowFixtureDoesNothingAndAMissingPosIsZero()
+    {
+        var e = new Entity { X = 100, Y = 50, Z = 10, FacingLeft = false };
+        Assert.Equal("", TeleportLog(e, null, false, L("[POS]", 30, 5, 7), L("[ALLOW FIXTURE]")));
+        var f = new Entity { X = 100, Y = 50, Z = 10, FacingLeft = false };
+        Assert.Equal("teleport:100,50,10", TeleportLog(f, null, false));
+    }
+
+    [Fact]
+    public void TeleportReadsRandomValuesInThePosition()
+    {
+        var owner = new Entity { X = 100, Y = 50, Z = 0, FacingLeft = false };
+        var host = new Host();
+        host.Randoms.Enqueue(5);       // [RANDOM] 10 20:10 + 5
+        host.Randoms.Enqueue(1);       // [RANDOM SELECT] 4 9:第二项
+        Run(P(Me(L("[TELEPORT]"), L("[POS]", 0), L("[RANDOM]", 10, 20), L("[RANDOM SELECT]", 4, 9), L("[/RANDOM SELECT]"), L("[/TELEPORT]"))), owner, host);
+        Assert.Equal(new[] { "teleport:100,65,9" }, owner.Log.ToArray());
     }
 }

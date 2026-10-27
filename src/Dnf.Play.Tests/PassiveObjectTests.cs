@@ -13,7 +13,7 @@ namespace Dnf.Play.Tests;
 /// 主角站在 (300, 100),站立时受击框是世界 x ∈ [288, 312]、y ∈ [94, 106]、z ∈ [0, 80];怪物站在 (340, 100) 朝左;
 /// 被动对象的攻击框是以它为中心的 16 × 16 × 16(z 从它的高度起)。
 /// </summary>
-public class PassiveObjectTests
+public partial class PassiveObjectTests
 {
     private const int HeroX = 300;
     private const int HeroY = 100;
@@ -38,6 +38,10 @@ public class PassiveObjectTests
         public long NowMs => 0;
 
         public void SpawnPassive(IActEntity owner, int index, int level, float x, float y, float z, bool facingLeft) => Spawns.Add((index, x, y, z, facingLeft));
+
+        public void Shake(int strength, int durationMs)
+        {
+        }
 
         public void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into)
         {
@@ -82,6 +86,16 @@ public class PassiveObjectTests
         public void SetFrame(int frame)
         {
         }
+
+        public void SetDamageBox(ActDamageBoxMode mode)
+        {
+        }
+
+        public void SetFloatingHeight(int height)
+        {
+        }
+
+        public bool Teleport(float x, float y, float z) => false;
     }
 
     private sealed class Rig : IDisposable

@@ -634,8 +634,11 @@ namespace Dnf.Play
             return true;
         }
 
+        /// <summary>自动机地面攻击够得着的最大离地高度(像素):更高的怪物(脚本把自己升到半空的)先放着,打别的,等它落下来再打(E-133)。</summary>
+        private const double ReachZ = 60.0;
+
         /// <summary>
-        /// 最近的活怪物。当前帧没有受击框的怪物(藏起来的、变身中的、只能等脚本放它出来的)打不到,
+        /// 最近的活怪物。当前帧没有受击框的怪物(藏起来的、变身中的、只能等脚本放它出来的)和飞在半空够不着的怪物打不到,
         /// 先挑打得到的;全都打不到时才退而求其次靠近最近的那只等它现身,免得自动机对着一个打不中的怪物挥一辈子。
         /// </summary>
         private MonsterActor Nearest(RoomCombatSession fight, TownHero hero)
@@ -655,7 +658,7 @@ namespace Dnf.Play
                     bestAnyD = d;
                     bestAny = m;
                 }
-                bool hittable = m.HasDamageBox;
+                bool hittable = m.HasDamageBox && m.Z <= ReachZ;
                 if (d < bestD && hittable)
                 {
                     bestD = d;

@@ -56,8 +56,16 @@ namespace Dnf.Render
         public int LayerCount => Content.Layers.Count + Content.Backgrounds.Count;
         public int NpcCount => 0;
 
-        /// <summary>此刻的投影:镜头 x、y 由主角位置按 <see cref="Camera"/> 算出(纵向的镜头只有带扩展瓦片的地图才会动:地面常数减去镜头 y)。</summary>
-        public TownProjection Projection => new TownProjection(Camera.IntX, GroundY - Camera.IntY);
+        /// <summary>
+        /// 屏幕震动给世界画面的偏移(像素;证据 E-133):整个世界层(地图、角色、怪物、特效、伤害数字)一起挪,界面不挪。0 是不震。
+        /// 由战斗会话每一步按 [SHAKING] 写入。
+        /// </summary>
+        public int ShakeX { get; set; }
+
+        public int ShakeY { get; set; }
+
+        /// <summary>此刻的投影:镜头 x、y 由主角位置按 <see cref="Camera"/> 算出(纵向的镜头只有带扩展瓦片的地图才会动:地面常数减去镜头 y),再加上震屏偏移。</summary>
+        public TownProjection Projection => new TownProjection(Camera.IntX - ShakeX, GroundY - Camera.IntY + ShakeY);
 
         public RoomSession(DnfAssets assets, RoomContent content, TownHero hero, TownCamera camera, int groundY = DefaultGroundY)
         {
@@ -103,7 +111,7 @@ namespace Dnf.Render
             {
                 sprites.AddRange(extra);
             }
-            return RoomScene.Build(_assets, Content, Camera.IntX, GroundY, timeMs, sprites.Count == 0 ? null : sprites, Camera.IntY);
+            return RoomScene.Build(_assets, Content, Camera.IntX - ShakeX, GroundY, timeMs, sprites.Count == 0 ? null : sprites, Camera.IntY - ShakeY);
         }
     }
 

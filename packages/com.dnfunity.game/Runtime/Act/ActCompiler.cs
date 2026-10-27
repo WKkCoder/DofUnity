@@ -802,6 +802,35 @@ namespace Dnf.Game.Act
                 }
                 case "[SET FRAME]":
                     return new ActBehavior { Kind = ActBehaviorKind.SetFrame, Tag = tag, Frame = cur.Int() };
+                case "[SET DAMAGE BOX]":
+                {
+                    // 档位是同一行里可选的 [ON]/[OFF]/[RESET];没写档位的行客户端只关盒,和 [OFF] 一样(E-133)
+                    ActDamageBoxMode mode = ActDamageBoxMode.Off;
+                    if (cur.AtOpen("[ON]"))
+                    {
+                        cur.Skip();
+                        mode = ActDamageBoxMode.On;
+                    }
+                    else if (cur.AtOpen("[OFF]"))
+                    {
+                        cur.Skip();
+                    }
+                    else if (cur.AtOpen("[RESET]"))
+                    {
+                        cur.Skip();
+                        mode = ActDamageBoxMode.Reset;
+                    }
+                    return new ActBehavior { Kind = ActBehaviorKind.SetDamageBox, Tag = tag, DamageBox = mode };
+                }
+                case "[CHANGE FLOATING HEIGHT]":
+                    return new ActBehavior { Kind = ActBehaviorKind.SetFloatingHeight, Tag = tag, Height = cur.Int() };
+                case "[SHAKING]":
+                {
+                    int strength = cur.Int();
+                    return new ActBehavior { Kind = ActBehaviorKind.Shake, Tag = tag, ShakeStrength = strength, ShakeMs = cur.Int() };
+                }
+                case "[TELEPORT]":
+                    return ParseTeleport(cur, tag);
                 case "[DIM]":
                 {
                     // [DIM] "名字" [=] 表达式 [/DIM](E-132;全库只有赋值,没有别的比较符)
@@ -879,6 +908,63 @@ namespace Dnf.Game.Act
                 b.PosY = b.PosY ?? ActValue.Literal(0);
                 b.PosZ = b.PosZ ?? ActValue.Literal(0);
             }
+            return b;
+        }
+
+        /// <summary>
+        /// [TELEPORT] [POS] x y z 标志… [/TELEPORT](E-133):位置三元组是记录的前三个参数,其后的标志逐个读,后写的算(见 <see cref="ActBehavior.MoveMe"/>)。
+        /// 没写 [POS] 的当 0(推断:客户端的执行块不管有没有 [POS] 都读三个值,缺的读到什么没有核对;全库样本里每条都写了)。
+        /// </summary>
+        private static ActBehavior ParseTeleport(ActCursor cur, string tag)
+        {
+            var b = new ActBehavior { Kind = ActBehaviorKind.Teleport, Tag = tag };
+            while (!cur.End && !cur.TakeClose(tag))
+            {
+                string t = cur.TakeOpen();
+                if (t == null)
+                {
+                    cur.Skip();
+                    continue;
+                }
+                switch (t)
+                {
+                    case "[POS]":
+                        b.PosX = cur.Value();
+                        b.PosY = cur.Value();
+                        b.PosZ = cur.Value();
+                        break;
+                    case "[USE MY DIRECTION]":
+                        b.UseMyDirection = true;
+                        break;
+                    case "[USE MY BASEPOS]":
+                        b.UseMyBasePos = true;
+                        break;
+                    case "[NOT USE OBJECT DIRECTION]":
+                        b.NotUseDirection = true;
+                        break;
+                    case "[NOT USE OBJECT ZPOS]":
+                        b.NotUseZ = true;
+                        break;
+                    case "[USE MAP POS]":
+                        b.UseMapPos = true;
+                        break;
+                    case "[MOVE ME]":
+                        b.MoveMe = true;
+                        break;
+                    case "[MOVE TARGET]":
+                        b.MoveMe = false;
+                        break;
+                    case "[ALLOW FIXTURE]":
+                        b.AllowFixture = true;
+                        break;
+                    case "[USE EFFECT]":
+                        b.UseEffect = true;
+                        break;
+                }
+            }
+            b.PosX = b.PosX ?? ActValue.Literal(0);
+            b.PosY = b.PosY ?? ActValue.Literal(0);
+            b.PosZ = b.PosZ ?? ActValue.Literal(0);
             return b;
         }
 

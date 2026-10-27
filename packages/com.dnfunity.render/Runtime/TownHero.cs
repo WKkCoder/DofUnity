@@ -852,6 +852,16 @@ namespace Dnf.Render
             TriedDown = false;
         }
 
+        /// <summary>
+        /// 把主角瞬间挪到 (<paramref name="x"/>, <paramref name="y"/>),动作、朝向与高度都不动(脚本 [TELEPORT] 作用到主角,E-133)。
+        /// 落点合不合法由调用方查。
+        /// </summary>
+        public void Teleport(double x, double y)
+        {
+            X = x;
+            Y = y;
+        }
+
         private void ResetAir()
         {
             Z = 0;

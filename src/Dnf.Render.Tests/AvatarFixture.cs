@@ -241,7 +241,8 @@ internal sealed class AvatarFixture : IDisposable
     /// plain(只有动画,没有触发器,对照)、shoot(出招开始起 X 速度 100、帧 1 放 <see cref="ActShotId"/>、帧 2 速度归零)、
     /// chain(帧 1 立即切第 1 招 shoot)、chainend(帧 1 [END] 切第 1 招 plain)、rectoff(出招开始关攻击框)、rectreset(帧 3 重置攻击框再拨回帧 2,限一次)、
     /// skip(帧 1 拨到帧 3,跳过攻击框那一帧)、stand(帧 1 立即回待机)、reverse(帧 1 反转朝向)、jump(出招开始起 Z 速度 300)、
-    /// onhit(近战一击打中主角后起 X 速度 100)、
+    /// onhit(近战一击打中主角后起 X 速度 100)、dmgoff(出招开始关受击盒、帧 3 再开)、dmgkeep(出招开始关受击盒、不再开)、hover(出招开始浮到 60)、
+    /// land(出招开始浮到 30、帧 3 取消浮空)、tele(出招开始瞬移到自己前方偏移 (50, 0, 30),落在半空)、shake(出招开始震屏,强度 6、200 毫秒)、
     /// 以及 spawn&lt;编号&gt;(帧 1 在偏移 (30, 0, 40) 放对应的被动对象)。
     /// 被动对象都在 <see cref="ActObjectDir"/> 下:<see cref="ActShotId"/> 出生后以 X 速度 200 飞,打中主角就切自定义动作 0(三帧、没有攻击框的 boom),播完消失,限时 1000 毫秒;
     /// <see cref="ActRepeatId"/> 不动、带攻击框,每次动画回到第 0 帧重置攻击框(所以隔一圈就能再打一次),限时 1000 毫秒;
@@ -429,6 +430,12 @@ internal sealed class AvatarFixture : IDisposable
         ("spawn9203", new[] { "ActSpawn9203" }),
         ("spawn9204", new[] { "ActSpawn9204" }),
         ("spawn9205", new[] { "ActSpawn9205" }),
+        ("dmgoff", new[] { "ActDmgOff" }),
+        ("dmgkeep", new[] { "ActDmgKeep" }),
+        ("hover", new[] { "ActHover" }),
+        ("land", new[] { "ActLand" }),
+        ("tele", new[] { "ActTele" }),
+        ("shake", new[] { "ActShake" }),
     };
 
     private IEnumerable<(string Name, byte[] Data)> ActScripts()
@@ -498,6 +505,35 @@ internal sealed class AvatarFixture : IDisposable
         yield return (BlobActionDir + "/actonhit.act", ActWith(StrikeActAni)
             .Trigger(r => r.Tag("[ON ATTACKSUCCESS]"), 0)
             .Behavior(b => b.SetSpeed("[X AXIS]", 100))
+            .Build());
+        // M40(证据 E-133):受击盒开关、浮空高度、瞬移、震屏
+        yield return (BlobActionDir + "/actdmgoff.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(3, 3), 1)
+            .Behavior(b => b.Tag("[SET DAMAGE BOX]").Tag("[OFF]"))
+            .Behavior(b => b.Tag("[SET DAMAGE BOX]").Tag("[ON]"))
+            .Build());
+        yield return (BlobActionDir + "/actdmgkeep.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[SET DAMAGE BOX]").Tag("[OFF]"))
+            .Build());
+        yield return (BlobActionDir + "/acthover.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[CHANGE FLOATING HEIGHT]").Int(60))
+            .Build());
+        yield return (BlobActionDir + "/actland.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(3, 3), 1)
+            .Behavior(b => b.Tag("[CHANGE FLOATING HEIGHT]").Int(30))
+            .Behavior(b => b.Tag("[CHANGE FLOATING HEIGHT]").Int(0))
+            .Build());
+        yield return (BlobActionDir + "/acttele.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[TELEPORT]").Tag("[POS]").Int(50, 0, 30).Tag("[/TELEPORT]"))
+            .Build());
+        yield return (BlobActionDir + "/actshake.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[SHAKING]").Int(6, 200))
             .Build());
         foreach (int id in new[] { ActShotId, ActRepeatId, ActGraveId, ActSpawnerId, ActFallId })
         {

@@ -456,4 +456,36 @@ public sealed class MonsterScriptTests
         }
         Assert.Single(chosen.Distinct());
     }
+
+    [Fact]
+    public void TheBotPrefersAMonsterItCanReachOverOneHoveringOutOfReach()
+    {
+        // 近的那只飞在 150 的半空(脚本把自己升上去的),地面攻击够不着:先打远的那只地上的,免得对着空气挥一辈子(M40,E-133)
+        using var high = new DungeonSessionTests.Dungeon(DungeonSessionTests.RingLayout(),
+            (cx, cy) => cx == 0 && cy == 0 ? new[] { (340, 100), (460, 100) } : DungeonSessionTests.None(), hp: 1_000_000);
+        high.Session.Current.Monsters[0].SetBaseFloatingHeight(150);
+        high.Session.Hero.Place(300, 100, false, HeroMotion.Rest, 0);
+        var bot = new DungeonBot(false);
+        bot.Next(high.Session, out _, out _);
+        Assert.Contains("打怪 #1", bot.Intent ?? string.Empty);
+
+        // 飞在 40(够得着)就仍按最近的算
+        using var low = new DungeonSessionTests.Dungeon(DungeonSessionTests.RingLayout(),
+            (cx, cy) => cx == 0 && cy == 0 ? new[] { (340, 100), (460, 100) } : DungeonSessionTests.None(), hp: 1_000_000);
+        low.Session.Current.Monsters[0].SetBaseFloatingHeight(40);
+        low.Session.Hero.Place(300, 100, false, HeroMotion.Rest, 0);
+        var bot2 = new DungeonBot(false);
+        bot2.Next(low.Session, out _, out _);
+        Assert.Contains("打怪 #0", bot2.Intent ?? string.Empty);
+
+        // 全都够不着时退而求其次靠近最近的那只等它落下来
+        using var all = new DungeonSessionTests.Dungeon(DungeonSessionTests.RingLayout(),
+            (cx, cy) => cx == 0 && cy == 0 ? new[] { (340, 100), (460, 100) } : DungeonSessionTests.None(), hp: 1_000_000);
+        all.Session.Current.Monsters[0].SetBaseFloatingHeight(150);
+        all.Session.Current.Monsters[1].SetBaseFloatingHeight(150);
+        all.Session.Hero.Place(300, 100, false, HeroMotion.Rest, 0);
+        var bot3 = new DungeonBot(false);
+        bot3.Next(all.Session, out _, out _);
+        Assert.Contains("打怪 #0", bot3.Intent ?? string.Empty);
+    }
 }

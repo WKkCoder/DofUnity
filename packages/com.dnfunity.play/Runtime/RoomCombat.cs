@@ -418,6 +418,7 @@ namespace Dnf.Play
 
         /// <summary>脚本运行器的毫秒时钟:每一小步开头累加,不随命中停顿冻结([GET TIME] 与 [DELAY DO BEHAVIOR] 读它,E-132)。</summary>
         private double _actClockMs;
+        private readonly ScreenShake _shake = new ScreenShake();
 
         /// <summary>伤害数字的位图字画法(证据 E-107);图包里没有 combo_big.img 时为 null,退回占位的文字。</summary>
         private DamageNumberArt _numberArt;
@@ -580,6 +581,9 @@ namespace Dnf.Play
 
         /// <summary>脚本运行器眼里的房间(随机数、放被动对象、解析选择器);没接上程序库时为 null。单测与工具用它直接放对象。</summary>
         public IActHost ActHost => _actWorld;
+
+        /// <summary>屏幕震动([SHAKING],E-133):每一步把偏移写进房间的 <see cref="RoomSession.ShakeX"/>、<see cref="RoomSession.ShakeY"/>。</summary>
+        public ScreenShake Shake => _shake;
 
         /// <summary>地上还没捡的金币堆(证据 E-116)。</summary>
         public IReadOnlyList<FieldDrop> Drops => _drops;
@@ -1264,6 +1268,8 @@ namespace Dnf.Play
                         ? HeroStrikeInfo.Read(data, model.AttackInfoPaths[a])
                         : new HeroStrikeInfo(0, 0, false);
                 }
+                // 出生悬停(.mob 的 [floating height],MonsterActor.SetBaseFloatingHeight)暂不接线(E-133):有 36 种怪物的基准高度在 150 以上,
+                // 地面攻击框够不着,自动机清不掉这些房间(全库扫描里 5 个副本会因此卡住);要先读清楚原版的命中高度规则与跳击再接
                 actor.Strike = attackStrikes.Length > 0 ? attackStrikes[0] : new HeroStrikeInfo(0, 0, false);
                 actor.SetStrikes(attackStrikes);
                 actor.SetAttackKinds(AttackKindRecord.Parse(def.Tags), unchecked((uint)seed * 2654435761u + (uint)actor.Index * 40503u + 12345u));
@@ -1429,6 +1435,9 @@ namespace Dnf.Play
         {
             SyncProgress();   // 别的房间里升了级的话,换上新等级的生命上限与攻击面板(证据 E-111)
             _actClockMs += deltaMs;
+            _shake.Step(deltaMs);                  // 震屏按墙钟走,不受命中停顿冻结(客户端是场景自己的秒表)
+            _room.ShakeX = _shake.OffsetX;
+            _room.ShakeY = _shake.OffsetY;
             Skills.Advance(deltaMs);
             Vitals?.RegenMp(deltaMs);   // 魔法值按墙钟恢复(证据 E-087);死了不恢复在 RegenMp 里判断
             if (Vitals != null)
@@ -2524,6 +2533,11 @@ namespace Dnf.Play
             public void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into)
             {
                 _session.ResolveSelector(selector, into);
+            }
+
+            public void Shake(int strength, int durationMs)
+            {
+                _session._shake.Start(strength, durationMs);
             }
         }
 

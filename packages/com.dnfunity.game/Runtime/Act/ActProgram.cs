@@ -398,6 +398,23 @@ namespace Dnf.Game.Act
 
         /// <summary>[DIM] "名字" [=] 表达式:给运行器的变量赋值(E-132)。</summary>
         SetVariable,
+
+        /// <summary>[SET DAMAGE BOX] [ON]/[OFF]/[RESET]:开关受击盒(E-133)。</summary>
+        SetDamageBox,
+
+        /// <summary>[CHANGE FLOATING HEIGHT] n:浮空高度,0 以下结束浮空(E-133)。</summary>
+        SetFloatingHeight,
+
+        /// <summary>[SHAKING] 强度 毫秒:屏幕震动,不分目标,由行为拥有者所在的场景执行(E-133)。</summary>
+        Shake,
+    }
+
+    /// <summary>[SET DAMAGE BOX] 的三档:开、关、什么都不做。没写档位的行写成关(客户端的"其它档位只关盒"分支)。</summary>
+    public enum ActDamageBoxMode : byte
+    {
+        On,
+        Off,
+        Reset,
     }
 
     /// <summary>[SET ACTION] 的动作族。</summary>
@@ -509,6 +526,34 @@ namespace Dnf.Game.Act
         public string VariableName { get; internal set; }
 
         public ActExpression Expression { get; internal set; }
+
+        // ---- [SET DAMAGE BOX]
+        public ActDamageBoxMode DamageBox { get; internal set; }
+
+        // ---- [CHANGE FLOATING HEIGHT]
+        public int Height { get; internal set; }
+
+        // ---- [SHAKING]
+        public int ShakeStrength { get; internal set; }
+
+        public int ShakeMs { get; internal set; }
+
+        // ---- [TELEPORT](位置三元组沿用 PosX/PosY/PosZ;[USE MY DIRECTION]、[USE MAP POS]、[USE MY BASEPOS] 沿用上面的三个标志)
+
+        /// <summary>[NOT USE OBJECT DIRECTION]:X 偏移不随朝向取反;没有 [USE MY BASEPOS] 与 [USE MAP POS] 时位置整个是绝对的(客户端汇编的写法)。</summary>
+        public bool NotUseDirection { get; internal set; }
+
+        /// <summary>[NOT USE OBJECT ZPOS]:Z 偏移不加基准对象的高度(缺省是加)。</summary>
+        public bool NotUseZ { get; internal set; }
+
+        /// <summary>[MOVE ME]:被移动的是行为拥有者而不是被作用的对象;[MOVE TARGET] 把它取消(后写的算)。</summary>
+        public bool MoveMe { get; internal set; }
+
+        /// <summary>[ALLOW FIXTURE]:客户端走"场景物件"的另一条路,不直接摆位置;怪物与主角不是那类对象,这一版不移动。</summary>
+        public bool AllowFixture { get; internal set; }
+
+        /// <summary>[USE EFFECT]:传送特效(创建记录 0x24f9);这一版不放特效。</summary>
+        public bool UseEffect { get; internal set; }
 
         public override string ToString() => Kind + " " + Tag;
     }

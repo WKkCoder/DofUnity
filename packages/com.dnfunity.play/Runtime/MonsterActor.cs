@@ -180,6 +180,15 @@ namespace Dnf.Play
         private int _motionVersion;
         private int _deferredAttack = -1;
 
+        // 受击盒开关、浮空悬停与瞬移(证据 E-133)
+        private bool _damageBoxOff;
+        private bool _hovering;
+        private double _baseHover;
+        private double _hoverHeight;
+        private double _hoverVz;
+        private bool _hoverFalling;
+        private IWalkArea _lastWalk;
+
         /// <summary>血已经没了、但还在走倒地流程(腾空、颠一下);躺下的那一刻转入死亡(证据 E-079 第 3 步、E-082、E-084)。</summary>
         private bool _dead;
 
@@ -451,6 +460,33 @@ namespace Dnf.Play
         /// <summary>脚本把攻击框关了([ATTACKRECT] [OFF]):出招动画里的攻击框不再判定,直到脚本再开或重新出招。</summary>
         public bool AttackRectOff => _attackRectOff;
 
+        /// <summary>脚本把受击盒关了([SET DAMAGE BOX] [OFF]):没有受击框,主角打不到;脚本再开或怪物离开出招阶段时恢复(E-133)。</summary>
+        public bool DamageBoxOff => _damageBoxOff;
+
+        /// <summary>正悬停在 <see cref="HoverHeight"/> 上(.mob 的 [floating height] 或脚本 [CHANGE FLOATING HEIGHT],E-133)。</summary>
+        public bool IsHovering => _hovering;
+
+        /// <summary>悬停高度(像素);没悬停时 0。</summary>
+        public double HoverHeight => _hovering ? _hoverHeight : 0.0;
+
+        /// <summary>
+        /// 出生时的悬停高度(.mob 的 [floating height],全库约 13% 的怪物带它):怪物直接停在这个高度上,画面、受击框与攻击框都按它抬升(E-133;
+        /// 推断:这个标签是出生时的浮空高度,与脚本 [CHANGE FLOATING HEIGHT] 改的是同一个量)。小于 1 什么都不做。
+        /// </summary>
+        public void SetBaseFloatingHeight(int height)
+        {
+            if (height < 1)
+            {
+                return;
+            }
+            _baseHover = height;
+            _hovering = true;
+            _hoverHeight = height;
+            _hoverVz = 0;
+            _hoverFalling = false;
+            Z = height;
+        }
+
         /// <summary>.act 的触发器通知:这只怪物打中了主角(<paramref name="victim"/>),唤醒带 [ON ATTACKSUCCESS] 的触发器。</summary>
         public void NotifyAttackSuccess(IActEntity victim)
         {
@@ -490,7 +526,7 @@ namespace Dnf.Play
             {
                 TryMove(_actVx * seconds, _actVy * seconds, walk);
             }
-            if (_actFalling)
+            if (_actFalling && !_hovering)
             {
                 Z += _actVz * seconds;
                 _actVz -= PassiveObject.Gravity * seconds;
@@ -525,6 +561,8 @@ namespace Dnf.Play
         /// <summary>离开出招阶段:脚本的速度与攻击框开关清零。离开的原因是被打倒(倒地的飞行自己接管 Z)时不碰高度。</summary>
         private void EndActs()
         {
+            _damageBoxOff = false;      // 受击盒关着出了出招阶段:当作脚本忘了开,别让怪物永远打不到而清不掉房间(推断,E-133)
+            RestoreHover();
             if (_actRunner == null && !_actFalling && _actVx == 0 && _actVy == 0 && _actVz == 0 && !_attackRectOff)
             {
                 return;
@@ -538,10 +576,35 @@ namespace Dnf.Play
             _actRunner = null;
         }
 
+        /// <summary>
+        /// 离开出招阶段:脚本用 [CHANGE FLOATING HEIGHT] 改过的悬停高度回到基准高度(.mob 的 [floating height],没设就是地面)。
+        /// 推断(E-133):原版的悬停保持逻辑(虚槽 0x274)没读到;用到 [CHANGE FLOATING HEIGHT] 的 18 种怪物里有 7 种只升不降(汇总数,本机脚本扫描,非 REA),
+        /// 它们的待机、行走 .act 里没有降落的行为——所以按"出招结束回到基准"处理;不这么做怪物升空后永远停在主角够不着的高度,房间清不掉。
+        /// 倒地飞行与死亡自己管 Z,不在这里动。
+        /// </summary>
+        private void RestoreHover()
+        {
+            if (_flight.Active || Phase == MonsterPhase.Dying || Phase == MonsterPhase.Gone)
+            {
+                return;
+            }
+            if (_baseHover >= 1)
+            {
+                if (!_hovering || _hoverHeight != _baseHover)
+                {
+                    ActSetFloatingHeight((int)_baseHover);
+                }
+            }
+            else if (_hovering)
+            {
+                ActSetFloatingHeight(0);
+            }
+        }
+
         /// <summary>出完一招(动画播完,或脚本 [SET ACTION] [STAND]):进冷却、回待机;脚本抛起来还没落地的落回地面(推断)。</summary>
         private void FinishAttack()
         {
-            if (_actFalling)
+            if (_actFalling && !_hovering)
             {
                 Z = 0;
             }
@@ -636,6 +699,111 @@ namespace Dnf.Play
             _motionVersion++;
         }
 
+        // ------------------------------------------------------------------ 受击盒、浮空与瞬移(E-133)
+
+        private void ActSetDamageBox(ActDamageBoxMode mode)
+        {
+            switch (mode)
+            {
+                case ActDamageBoxMode.On:
+                    _damageBoxOff = false;
+                    break;
+                case ActDamageBoxMode.Off:
+                    _damageBoxOff = true;
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// [CHANGE FLOATING HEIGHT] n(客户端 0x010bdfb8 起):n ≥ 1 记下悬停高度并给一个刚好够到的垂直初速度(±sqrt(2·g·|差|),0x008b25c0),
+        /// n ≤ 0 结束悬停、垂直速度清零、之后受重力落回地面。重力取与被动对象同值(推断);到了高度之后"停住不动"也是推断(悬停的物理在虚槽 0x274 里,没读)。
+        /// </summary>
+        private void ActSetFloatingHeight(int height)
+        {
+            if (!IsAlive || Phase == MonsterPhase.Gone)
+            {
+                return;
+            }
+            if (height >= 1)
+            {
+                _hovering = true;
+                _hoverHeight = height;
+                _hoverFalling = false;
+                double delta = height - Z;
+                _hoverVz = delta == 0 ? 0.0 : Math.Sign(delta) * Math.Sqrt(2.0 * PassiveObject.Gravity * Math.Abs(delta));
+            }
+            else
+            {
+                _hovering = false;
+                _hoverVz = 0;
+                _hoverFalling = Z > 0;
+            }
+        }
+
+        /// <summary>悬停的一步:升到(或降到)悬停高度后停住;不悬停但离地的(结束悬停、被瞬移到半空)受重力落回地面。</summary>
+        private void StepHover(double seconds)
+        {
+            if (_hovering)
+            {
+                if (Z == _hoverHeight && _hoverVz == 0)
+                {
+                    return;
+                }
+                bool rising = _hoverVz > 0 || (_hoverVz == 0 && Z < _hoverHeight);
+                Z += _hoverVz * seconds;
+                _hoverVz -= PassiveObject.Gravity * seconds;
+                if (rising ? (Z >= _hoverHeight || _hoverVz <= 0) : Z <= _hoverHeight)
+                {
+                    Z = _hoverHeight;
+                    _hoverVz = 0;
+                }
+                return;
+            }
+            if (_hoverFalling)
+            {
+                Z += _hoverVz * seconds;
+                _hoverVz -= PassiveObject.Gravity * seconds;
+                if (Z <= 0)
+                {
+                    Z = 0;
+                    _hoverVz = 0;
+                    _hoverFalling = false;
+                }
+            }
+        }
+
+        /// <summary>
+        /// [TELEPORT] 摆位置(客户端 0x010b71a4 起):落点在可走区里、没压在门体上就直接摆;不然在 <see cref="Placement.SearchRadius"/> 像素内找最近的能站的点,找不到就不动。
+        /// 高度直接取传入的值(小于 0 当 0);摆到半空而又不在悬停的怪物受重力落下(推断)。倒地飞行中、死亡的怪物不动。
+        /// </summary>
+        private bool ActTeleport(float x, float y, float z)
+        {
+            if (!IsAlive || Phase == MonsterPhase.Gone || Phase == MonsterPhase.Dying || _flight.Active)
+            {
+                return false;
+            }
+            IWalkArea walk = _lastWalk;
+            if (!Placement.TryResolve((px, py) => CanStandAt(px, py, walk, false, false), x, y, out double rx, out double ry))
+            {
+                return false;
+            }
+            X = rx;
+            Y = ry;
+            Z = Math.Max(0.0, z);
+            if (_hovering)
+            {
+                // 悬停中的怪物瞬移之后重新向悬停高度靠拢(比悬停高度低就给够得着的初速,高就落下来)
+                _hoverVz = Z < _hoverHeight ? Math.Sqrt(2.0 * PassiveObject.Gravity * (_hoverHeight - Z)) : 0.0;
+            }
+            else
+            {
+                _hoverVz = 0;
+                _hoverFalling = Z > 0;
+            }
+            _motionVersion++;
+            return true;
+        }
+
         /// <summary>怪物在 .act 脚本里的身份:位置、朝向取自怪物,脚本的"作用"落到怪物自己的方法上。</summary>
         private sealed class ActBody : IActEntity
         {
@@ -698,6 +866,21 @@ namespace Dnf.Play
             public void SetFrame(int frame)
             {
                 _m.ActSetFrame(frame);
+            }
+
+            public void SetDamageBox(ActDamageBoxMode mode)
+            {
+                _m.ActSetDamageBox(mode);
+            }
+
+            public void SetFloatingHeight(int height)
+            {
+                _m.ActSetFloatingHeight(height);
+            }
+
+            public bool Teleport(float x, float y, float z)
+            {
+                return _m.ActTeleport(x, y, z);
             }
         }
 
@@ -832,6 +1015,7 @@ namespace Dnf.Play
             {
                 deltaMs = 0;
             }
+            _lastWalk = walk;
             if (_hurtOnClock && Phase == MonsterPhase.Hurt)
             {
                 // 按公式算的硬直是一块秒表:命中停顿冻结动画、行走与击退,但不冻结它(推断,E-080)
@@ -911,6 +1095,10 @@ namespace Dnf.Play
                     }
                     Think(deltaMs, heroX, heroY, heroPresent, walk, heroBoxes);
                     break;
+            }
+            if (Phase != MonsterPhase.Dying && Phase != MonsterPhase.Gone && !_flight.Active)
+            {
+                StepHover(deltaMs / 1000.0);
             }
             if (Hp <= 0 && Phase != MonsterPhase.Gone && _deathMs >= MonsterTuning.DeathMs)
             {
@@ -1441,6 +1629,9 @@ namespace Dnf.Play
         /// </summary>
         private void BeginDown(KnockdownRequest request, int rollHorizontal, int rollHeight, bool pushToLeft)
         {
+            _hovering = false;                 // 被打得倒地:悬停结束,从当前高度起飞行(E-133)
+            _hoverFalling = false;
+            _hoverVz = 0;
             _flight.DieOnLying = _dead;
             _flight.Place(X, Y, Z, FacingLeft);
             _flight.Begin(request, rollHorizontal, rollHeight, pushToLeft);
@@ -1595,9 +1786,12 @@ namespace Dnf.Play
                 BeginDown(new KnockdownRequest(outputTwo, type, (int)pushPixels, down.LiftUp), down.RollHorizontal, down.RollHeight, pushToLeft);
                 return false;
             }
-            // 占位路径:不在倒地状态机里(落到地上)
+            // 占位路径:不在倒地状态机里(落到地上;悬停中的怪物挨一下普通受击留在原高度,E-133)
             _flight.Stop(false);
-            Z = 0;
+            if (!_hovering)
+            {
+                Z = 0;
+            }
             AniFile ani;
             if (knockDown && _model.Down != null)
             {
@@ -1641,7 +1835,7 @@ namespace Dnf.Play
         public List<Aabb> DamageBoxes()
         {
             var result = new List<Aabb>();
-            if (!IsAlive || Phase == MonsterPhase.Gone || Phase == MonsterPhase.Dying)
+            if (!IsAlive || Phase == MonsterPhase.Gone || Phase == MonsterPhase.Dying || _damageBoxOff)
             {
                 return result;
             }
@@ -1674,7 +1868,7 @@ namespace Dnf.Play
         {
             get
             {
-                if (!IsAlive || Phase == MonsterPhase.Gone || Phase == MonsterPhase.Dying)
+                if (!IsAlive || Phase == MonsterPhase.Gone || Phase == MonsterPhase.Dying || _damageBoxOff)
                 {
                     return false;
                 }
