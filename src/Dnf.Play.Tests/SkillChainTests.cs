@@ -14,17 +14,22 @@ namespace Dnf.Play.Tests;
 /// </summary>
 public class SkillChainTests
 {
-    private static SkillRecipes Recipes(int gateForStage1 = 0, int chainFromFrame = 2)
+    private static SkillRecipes Recipes(int gateForStage1 = 0, int chainFromFrame = 2, bool followHeld = true, bool threeStages = false)
     {
+        var stages = new List<SkillStageSpec>
+        {
+            new SkillStageSpec(motionIndex: 2, attackInfoIndex: 1, damageRateColumn: 0, damageFixedColumn: 2, effectIndex: 0, effectFrame: 1),
+            new SkillStageSpec(motionIndex: 3, attackInfoIndex: 2, damageRateColumn: 1, damageFixedColumn: 3, effectIndex: 1, effectFrame: 0, requiresSkill: gateForStage1),
+        };
+        if (threeStages)
+        {
+            // 第三段重用第一段的动作与攻击信息(夹具里只有两个动作),伤害列取第 1、3 列,不放特效
+            stages.Add(new SkillStageSpec(motionIndex: 2, attackInfoIndex: 1, damageRateColumn: 1, damageFixedColumn: 3, effectIndex: -1, effectFrame: 0));
+        }
         return new SkillRecipes(new[]
         {
-            new SkillRecipe(AvatarFixture.ChainSkill,
-                new[]
-                {
-                    new SkillStageSpec(motionIndex: 2, attackInfoIndex: 1, damageRateColumn: 0, damageFixedColumn: 2, effectIndex: 0, effectFrame: 1),
-                    new SkillStageSpec(motionIndex: 3, attackInfoIndex: 2, damageRateColumn: 1, damageFixedColumn: 3, effectIndex: 1, effectFrame: 0, requiresSkill: gateForStage1),
-                },
-                slideSpeedIndex: 0, slideAccelIndex: 1, forwardSpeedIndex: 2, forwardAccelIndex: 3, chainFromFrame: chainFromFrame),
+            new SkillRecipe(AvatarFixture.ChainSkill, stages,
+                slideSpeedIndex: 0, slideAccelIndex: 1, forwardSpeedIndex: 2, forwardAccelIndex: 3, chainFromFrame: chainFromFrame, slideFollowsHeldDirection: followHeld),
         });
     }
 
@@ -140,7 +145,75 @@ public class SkillChainTests
         Assert.Equal(speed == 0.0, distance == 0.0);
     }
 
+    [Theory]
+    [InlineData(0, 0, false)]
+    [InlineData(1, 0, false)]     // 朝右、按右
+    [InlineData(-1, 0, false)]    // 朝右、按左:照样滑
+    [InlineData(0, 1, false)]
+    [InlineData(-1, -1, false)]
+    [InlineData(-1, 0, true)]     // 朝左、按左
+    [InlineData(1, 0, true)]      // 朝左、按右:照样滑
+    [InlineData(0, -1, true)]
+    public void ARecipeThatDoesNotReadTheHeldDirectionAlwaysSlidesForwardByTheBaseNumbers(int heldX, int heldY, bool facingLeft)
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        HeroSkills skills = Load(new GameData(new PvfScriptSource(assets.Pvf)), 2, Recipes(followHeld: false));
+        TownHero hero = NewHero(assets, facingLeft: facingLeft);
+
+        Assert.Equal(SkillCastResult.Cast, skills.Cast(skills.SlotOf(SkillKeys.A), hero, null, heldX, heldY));
+        Assert.Equal(200.0, hero.SkillSlideSpeed);                        // 基础的两个数(200、-400),没有"顺着按"的加成,也没有"按别的方向不滑"
+        hero.Update(400, 0, 0);
+        Assert.Equal(100 + (facingLeft ? -1 : 1) * TownHero.SlideDistance(200.0, -400.0, 0, 400), hero.X, 6);
+
+        // 接段同样不看方向键
+        HeroSkills again = Load(new GameData(new PvfScriptSource(assets.Pvf)), 2, Recipes(followHeld: false));
+        TownHero other = NewHero(assets, facingLeft: facingLeft);
+        Assert.NotNull(again.TryCast(SkillKeys.A, other, null, heldX, heldY));
+        other.Update(200, 0, 0);
+        Assert.NotNull(again.TryChain(SkillKeys.A, other, -heldX, heldY));
+        Assert.Equal(200.0, other.SkillSlideSpeed);
+    }
+
     // ------------------------------------------------------------------ 接段
+
+    [Fact]
+    public void AThreeStageRecipeChainsThroughEveryStageAndEachStageNeedsItsOwnChainFrame()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        var data = new GameData(new PvfScriptSource(assets.Pvf));
+        HeroSkills skills = Load(data, 2, Recipes(threeStages: true));
+        HeroSkillSlot slot = skills.SlotOf(SkillKeys.A);
+        Assert.Equal(3, slot.Recipe.Stages.Count);
+        Assert.Equal(3, slot.StageStrikes.Count);
+        Assert.Equal(300, slot.StageStrikes[2].SkillRatePercent);          // 第三段取第 1、3 列(2 级:300、60)
+        Assert.Equal(60, slot.StageStrikes[2].SkillFixed);
+
+        TownHero hero = NewHero(assets);
+        var vitals = new HeroVitals(1, 500, 100, 0, 0, 0);
+        Assert.NotNull(skills.TryCast(SkillKeys.A, hero, vitals));
+        Assert.Equal((0, 80), (hero.SkillStage, vitals.Mp));
+
+        // 第 0 段:没到接段帧(第 2 帧)按键没有反应;到了接上第 1 段,换段后帧号从头数,所以马上再按接不上第 2 段
+        hero.Update(100, 0, 0);
+        Assert.Null(skills.TryChain(SkillKeys.A, hero));
+        hero.Update(100, 0, 0);
+        Assert.NotNull(skills.TryChain(SkillKeys.A, hero));
+        Assert.Equal((1, 0), (hero.SkillStage, hero.CurrentFrame));
+        Assert.Null(skills.TryChain(SkillKeys.A, hero));
+        Assert.Equal(1, hero.SkillStage);
+
+        // 第 1 段播到第 2 帧(200 毫秒)后接上第 2 段(最后一段):不再扣蓝,最后一段之后没有下一段
+        hero.Update(200, 0, 0);
+        Assert.Equal(2, hero.CurrentFrame);
+        Assert.NotNull(skills.TryChain(SkillKeys.A, hero));
+        Assert.Equal((2, 80), (hero.SkillStage, vitals.Mp));
+        hero.Update(300, 0, 0);
+        Assert.Null(skills.TryChain(SkillKeys.A, hero));
+        hero.Update(200, 0, 0);
+        Assert.Equal((HeroMotion.Rest, 0), (hero.Motion, hero.SkillStage));
+    }
 
     [Fact]
     public void PressingTheSameKeyAgainAfterTheChainFrameStartsTheNextStageWithoutPayingAgain()

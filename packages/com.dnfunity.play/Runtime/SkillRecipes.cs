@@ -52,7 +52,7 @@ namespace Dnf.Play
     public sealed class SkillRecipe
     {
         public SkillRecipe(int skillId, IEnumerable<SkillStageSpec> stages, int slideSpeedIndex, int slideAccelIndex, int forwardSpeedIndex, int forwardAccelIndex,
-            int chainFromFrame)
+            int chainFromFrame, bool slideFollowsHeldDirection = true)
         {
             SkillId = skillId;
             Stages = new List<SkillStageSpec>(stages ?? throw new ArgumentNullException(nameof(stages))).AsReadOnly();
@@ -65,6 +65,7 @@ namespace Dnf.Play
             ForwardSpeedIndex = forwardSpeedIndex;
             ForwardAccelIndex = forwardAccelIndex;
             ChainFromFrame = chainFromFrame;
+            SlideFollowsHeldDirection = slideFollowsHeldDirection;
         }
 
         public int SkillId { get; }
@@ -84,6 +85,12 @@ namespace Dnf.Play
 
         /// <summary>当前段的动画播到第几帧(从 0 数)以后,再按同一个技能键才算接下一段。</summary>
         public int ChainFromFrame { get; }
+
+        /// <summary>
+        /// 进入一段时的起滑要不要看按着的方向键(证据 E-129、E-131):true 时按"没按/顺着按/按别的方向就不滑"算;
+        /// false 时不看方向键,每一段都按基础的两个数朝着主角的朝向滑(状态进入块里没有读按住的方向)。
+        /// </summary>
+        public bool SlideFollowsHeldDirection { get; }
     }
 
     /// <summary>
@@ -126,6 +133,19 @@ namespace Dnf.Play
                     new SkillStageSpec(motionIndex: 62, attackInfoIndex: 55, damageRateColumn: 1, damageFixedColumn: 4, effectIndex: 1, effectFrame: 0),
                 },
                 slideSpeedIndex: 0, slideAccelIndex: 1, forwardSpeedIndex: 2, forwardAccelIndex: 3, chainFromFrame: 3),
+
+            // 连斩技能的默认三段版本:起手函数 0x0049d3d0 → 状态 0x16(证据 E-131)。动作取 [etc motion] 的 3+段号,
+            // 攻击信息取 [etc attack info] 的 段号+2(三段版的最后一段取第 7 项),伤害列(百分比,固定值=百分比列+3)三段版是 0、0、1;
+            // 特效取预载表的第"段号"个;不看方向键、朝向一侧滑 [static data] 头两个数。接段帧表(0x016f8cd0)前四项都是 3。
+            // 五段版要求学会两个被动技能中的一个并持对应武器,三段版没有预载的移动特效(脚下的)与音效,这些都还没做。
+            new SkillRecipe(8,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 3, attackInfoIndex: 2, damageRateColumn: 0, damageFixedColumn: 3, effectIndex: 0, effectFrame: 0),
+                    new SkillStageSpec(motionIndex: 4, attackInfoIndex: 3, damageRateColumn: 0, damageFixedColumn: 3, effectIndex: 1, effectFrame: 0),
+                    new SkillStageSpec(motionIndex: 5, attackInfoIndex: 7, damageRateColumn: 1, damageFixedColumn: 4, effectIndex: 2, effectFrame: 0),
+                },
+                slideSpeedIndex: 0, slideAccelIndex: 1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: 3, slideFollowsHeldDirection: false),
         });
     }
 }

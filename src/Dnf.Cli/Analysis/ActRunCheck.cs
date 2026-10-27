@@ -266,6 +266,78 @@ internal static class ActRunCheck
         }
         monsterTally.Print("怪物出招的 .act");
 
+        // ---- 第一部分之二:怪物其余动作(待机、行走、受击、倒地、etc、proc、死亡……)的 .act;怪物脚本里"待机里藏着整套首领流程"的就在这里
+        var otherKinds = new (string Title, string[] Tags)[]
+        {
+            ("待机 [waiting action]", new[] { "[waiting action]" }),
+            ("行走 [move action]", new[] { "[move action]" }),
+            ("受击 [damage action 1/2]", new[] { "[damage action 1]", "[damage action 2]" }),
+            ("倒地 [down action] [overturn action]", new[] { "[down action]", "[overturn action]" }),
+            ("其它动作 [etc action]", new[] { "[etc action]" }),
+            ("过程 [proc action]", new[] { "[proc action]" }),
+            ("死亡 [last action]", new[] { "[last action]" }),
+            ("坐 [sit action]", new[] { "[sit action]" }),
+        };
+        var otherTallies = new Tally[otherKinds.Length];
+        var otherPrograms = new Dictionary<string, ActProgram>[otherKinds.Length];
+        var otherMonsters = new int[otherKinds.Length];
+        for (int k = 0; k < otherKinds.Length; k++)
+        {
+            otherTallies[k] = new Tally();
+            otherPrograms[k] = new Dictionary<string, ActProgram>(StringComparer.OrdinalIgnoreCase);
+        }
+        foreach (int id in data.MonsterIds())
+        {
+            MonsterDef? def = data.GetMonster(id);
+            ScriptLine[]? doc = def == null ? null : data.ReadScript(def.Path);
+            if (def == null || doc == null)
+            {
+                continue;
+            }
+            for (int k = 0; k < otherKinds.Length; k++)
+            {
+                bool any = false;
+                foreach (ScriptLine line in doc)
+                {
+                    bool match = false;
+                    foreach (string tag in otherKinds[k].Tags)
+                    {
+                        match |= line.TagIs(tag);
+                    }
+                    if (!match)
+                    {
+                        continue;
+                    }
+                    foreach (ScriptValue v in line.Values)
+                    {
+                        if (v.Kind != ScriptValueKind.String || string.IsNullOrEmpty(v.Text) || !v.Text.EndsWith(".act", StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+                        string path = PvfPath.ResolveRelativeTo(def.Path, v.Text);
+                        ActProgram? program = Program(path);
+                        if (program != null)
+                        {
+                            otherPrograms[k][path] = program;
+                            bool hasTriggers = program.Triggers.Count > 0;
+                            any |= hasTriggers;
+                        }
+                    }
+                }
+                otherMonsters[k] += any ? 1 : 0;
+            }
+        }
+        for (int k = 0; k < otherKinds.Length; k++)
+        {
+            foreach (ActProgram p in otherPrograms[k].Values)
+            {
+                otherTallies[k].Add(p);
+            }
+            Console.WriteLine();
+            Console.WriteLine("其余动作 · " + otherKinds[k].Title + ":带触发器的怪物 " + otherMonsters[k] + " 个");
+            otherTallies[k].Print("  这类 .act");
+        }
+
         // ---- 第二部分:顺着 [CREATE PASSIVEOBJECT] 能到的被动对象
         var reached = new SortedSet<int>();
         var queue = new Queue<int>(spawnRoots);

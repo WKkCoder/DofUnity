@@ -448,6 +448,7 @@ namespace Dnf.Play
         /// <summary>
         /// 进入一段那一刻的起滑速度与加速度(证据 E-129):没按方向键取基础的两个数;按着朝向一侧的方向键,再加上"顺着按"的加成;
         /// 按着别的方向(反向、只按上下)就不滑。同时按了左右与上下时只看左右(原版怎么选没读到,按横向优先推断)。
+        /// 配方标了 <see cref="SkillRecipe.SlideFollowsHeldDirection"/> 为 false 时不看方向键,一律取基础的两个数。
         /// </summary>
         internal static void Slide(HeroSkillSlot slot, TownHero hero, int heldX, int heldY, out double speed, out double accel)
         {
@@ -455,6 +456,10 @@ namespace Dnf.Play
             SkillDef def = slot.Def;
             speed = r.SlideSpeedIndex >= 0 && def != null ? def.GetStatic(r.SlideSpeedIndex, false) : 0;
             accel = r.SlideAccelIndex >= 0 && def != null ? def.GetStatic(r.SlideAccelIndex, false) : 0;
+            if (!r.SlideFollowsHeldDirection)
+            {
+                return;   // 状态进入块里不读按住的方向:每一段都按基础的两个数朝主角的朝向滑(证据 E-131)
+            }
             heldX = Math.Sign(heldX);
             heldY = Math.Sign(heldY);
             if (heldX == 0 && heldY == 0)
