@@ -440,6 +440,15 @@ namespace Dnf.Play
         /// <summary>整座副本里主角被怪物打中的总次数。</summary>
         public int HeroHits => Sum(s => s.HeroHits);
 
+        /// <summary>进过的房间里出招带有可执行 .act 触发器的怪物个数(证据 E-130)。</summary>
+        public int ActMonsters => Sum(s => s.ActMonsterCount);
+
+        /// <summary>怪物的 .act 脚本一共放出过多少个被动对象(证据 E-130)。</summary>
+        public int PassivesSpawned => Sum(s => s.PassivesSpawned);
+
+        /// <summary>被动对象打中主角的总次数(证据 E-130)。</summary>
+        public int PassiveHits => Sum(s => s.PassiveHits);
+
         /// <summary>
         /// 整座副本的声音提示队列(证据 E-089、E-090):每一步把当前房间会话发出的提示按时间顺序收进来,换房间时先放新房间的 <see cref="SoundCueKind.RoomEnter"/> 标记与地图声音
         /// (第一次进去还有怪物出场声);播放的一方每帧调 <see cref="DrainSounds"/> 取走。

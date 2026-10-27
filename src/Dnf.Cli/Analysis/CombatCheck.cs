@@ -67,6 +67,8 @@ internal static class CombatCheck
         int lastHits = 0;
         int lastHeroHits = 0;
         int lastThrown = 0;
+        int lastPassives = 0;
+        int lastPassiveHits = 0;
         int lastCombo = 0;
         int lastKills = 0;
         int lastLevelUps = 0;
@@ -129,6 +131,15 @@ internal static class CombatCheck
                     + string.Concat(session.Projectiles.Select(p => "  [怪物 " + p.Owner.Index + " (" + F(p.X) + "," + F(p.Y) + "," + F(p.Z) + ") 朝" + (p.FacingLeft ? "左" : "右") + "]")));
                 lastThrown = session.ProjectilesThrown;
             }
+            if (session.PassivesSpawned != lastPassives || session.PassiveHits != lastPassiveHits)
+            {
+                // .act 触发器放出的被动对象(E-130):个数与位置、打中主角的次数(这些数来自原版数据与我们的推断,只打印、不入库)
+                Console.WriteLine("  t=" + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s  脚本放出被动对象 +" + (session.PassivesSpawned - lastPassives) + "  累计 "
+                    + session.PassivesSpawned + "  场上 " + session.Passives.Count + "  打中主角 " + session.PassiveHits + " 次"
+                    + string.Concat(session.Passives.Select(o => "  [对象 " + o.Template.Index + " (" + F(o.X) + "," + F(o.Y) + "," + F(o.Z) + ") 朝" + (o.FacingLeft ? "左" : "右") + "]")));
+                lastPassives = session.PassivesSpawned;
+                lastPassiveHits = session.PassiveHits;
+            }
             if (session.HeroHits != lastHeroHits)
             {
                 Console.WriteLine("  t=" + (t / 1000.0).ToString("F2", CultureInfo.InvariantCulture) + "s  主角被打中 +" + (session.HeroHits - lastHeroHits) + "  累计 "
@@ -169,7 +180,7 @@ internal static class CombatCheck
 
         Console.WriteLine();
         Console.WriteLine("结束:主角 (" + F(session.Hero.X) + "," + F(session.Hero.Y) + "),命中 " + session.Hits + " 次,放技能 " + session.SkillCasts + " 次(接段 " + session.SkillChains + " 次),击杀 " + session.Kills + " 个,总伤害 " + session.TotalDamage
-            + ",剩余 " + session.AliveCount + " 个,怪物扔出投射物 " + session.ProjectilesThrown + " 个,打中主角 " + session.ProjectileHits + " 个(E-103)"
+            + ",剩余 " + session.AliveCount + " 个,怪物扔出投射物 " + session.ProjectilesThrown + " 个,打中主角 " + session.ProjectileHits + " 个(E-103),脚本放出被动对象 " + session.PassivesSpawned + " 个,打中主角 " + session.PassiveHits + " 次(E-130)"
             + (session.Vitals != null
                 ? ",主角被打中 " + session.HeroHits + " 次(共 " + session.HeroDamageTaken + " 点),生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax
                     + ",魔法 " + session.Vitals.Mp + "/" + session.Vitals.MpMax

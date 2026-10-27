@@ -99,7 +99,9 @@
 - 受保护区域里的几个调用(行为 `0x6e`、`0xee`、`0xdf`、`0x8d` 的一部分,以及评估函数的两处),按约定当黑盒;
 - 值表达式 `valueOf` 的完整语法、延迟队列的取消语义、`[SET ACTION]` 的完整"关键字 → 族码 → 内置状态号"表(`docs/act-semantics.tsv` 的 `open` 列逐条列出)。
 
-### 现状:动画层已接,运行期没做(M36,E-128)
+### 现状:动画层(M36,E-128)与触发器运行期(M36-4,E-130)
 
-怪物 `.mob` 里的 `[waiting action]`、`[move action]`、`[damage action]`、`[down action]`、`[overturn action]`、`[attack action]`、`[action list]` 指向的 `.act` 现在会被读:取 `[MOTION]` 里的 `[BASE ANI]` 当作该动作的动画(`MonsterModel`),`[TRIGGER]` 的 `[ENABLE]` 初值给 `.ai` 的 `is attack action enable()` 用;旧的 `[waiting motion]` 一类写法优先于新写法。**触发器运行期**(上面 10 个运行器、`[SET ACTION]` 动作链、`[CREATE PASSIVEOBJECT]`、`[SET SPEED]`、触发器的运行期开关)、`[SUB ANI]` 叠加层与 `[SOUND]` 声音事件都没做;脚本怪物出场之后全库副本扫描里新增的未通关副本(放大 5000 倍时约 8 到 9 座)卡在这里(变身循环、隐藏与出现状态、阶段分身、走路动画没有受击框的首领)。
+怪物 `.mob` 里的 `[waiting action]`、`[move action]`、`[damage action]`、`[down action]`、`[overturn action]`、`[attack action]`、`[action list]` 指向的 `.act` 现在会被读:取 `[MOTION]` 里的 `[BASE ANI]` 当作该动作的动画(`MonsterModel`),`[TRIGGER]` 的 `[ENABLE]` 初值给 `.ai` 的 `is attack action enable()` 用;旧的 `[waiting motion]` 一类写法优先于新写法。触发器运行期(`[SET ACTION]`、`[CREATE PASSIVEOBJECT]`、`[SET SPEED]`、触发器开关等)在 M36-4 做了(见下),`[SUB ANI]` 叠加层与 `[SOUND]` 声音事件还没做;脚本怪物出场之后全库副本扫描里新增的未通关副本(放大 5000 倍时约 8 到 9 座)卡在这里(变身循环、隐藏与出现状态、阶段分身、走路动画没有受击框的首领)。
 
+
+**触发器运行期(M36-4,E-130)**:`Dnf.Game.Act.ActCompiler` 把语法树编成类型化的 `ActProgram`,`ActRunner` 按上面的模型运行——第 0 帧复位是**边沿触发**(`0x010ade50` 每次更新读当前帧,帧不为 0 清标志 `+0x11c`,帧为 0 且标志未置位才调 `0x010a3fe0` 复位各条目的“已完成”字节;回到第 0 帧只复位一次),跳过的帧逐帧补跑,`[FRAME]` 先看一次性位再看区间,`[DO BEHAVIOR]` 在目标集合非空时计数并跑第 k 组行为、行为里拥有者换了动作则不置一次性位。`[SET DIRECTION]` 取值编号:0 左、1 右、2 朝目标、3 反向、4 随机、7 本体朝向、8 本体反向;`[SET SPEED]` 的 X 在被设对象朝左时取反;`[CREATE PASSIVEOBJECT]` 的基点、X 取反(朝向不是 1)、朝向来源(`[FIX DIRECTION]` 0 左/1 右/4 中立/5 随机,再看 `[USE MY DIRECTION]`)与 Z 绝对值的规则都读通了。宿主在 `Dnf.Play`(`ActLibrary`、`PassiveObject`、`MonsterActor`、`RoomCombat`),整库审计命令是 `dnf act-run-check`;整个里程碑见 [`docs/flow.md`](flow.md) §24,证据 E-130。

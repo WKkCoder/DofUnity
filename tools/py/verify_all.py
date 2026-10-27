@@ -10,7 +10,7 @@
 
 用法(由 tools/verify-all.sh 调用;需要先 . tools/env.sh 并已构建 dnf):
   python3 tools/py/verify_all.py [--only 名字,名字] [--skip 名字,名字] [--out out/verify-all.json]
-名字:unit p1 atk act mob damage sq sweep flow dungeons sound exp text oracle difficulty breakable skill(oracle 与 difficulty 的对拍部分需要 re/venv 里的 Unicorn 与本机的服务端二进制;dungeons 是全库副本扫描,非门槛项)
+名字:unit p1 atk act mob damage sq sweep flow dungeons actrun sound exp text oracle difficulty breakable skill(oracle 与 difficulty 的对拍部分需要 re/venv 里的 Unicorn 与本机的服务端二进制;dungeons 是全库副本扫描,非门槛项)
 """
 import argparse
 import json
@@ -281,7 +281,52 @@ def check_dungeons():
     total, cleared, stuck, nolayout, nomaps, crash, timeout, other = (int(g) for g in m.groups())
     note = "通关 %d/%d;卡住 %d、没有迷宫 %d、没有登记房间 %d、崩溃 %d、超时 %d、其他 %d(进阶祭坛类、战争屋等还没做,见 docs/flow.md §7);明细在 out/dungeon-sweep.tsv,不入库" % (
         cleared, total, stuck, nolayout, nomaps, crash, timeout, other)
+    a = re.search(r"脚本\(只在本机,E-130\):有出招带触发器的怪物的副本 (\d+) 个,其中放出过被动对象的 (\d+) 个", text)
+    if a is not None:
+        note += ";.act 脚本(E-130):有出招带触发器的怪物的副本 %s 个,其中放出过被动对象的 %s 个" % (a.group(1), a.group(2))
     return [item("dungeons", "全库副本扫描:每个副本定义跑一局探索自动机(600 模拟秒上限、关伤害)", "整条流程", "E-113", total, total - cleared, sec, note, gate=False)]
+
+
+def check_actrun():
+    """.act 触发器运行期(M36-4,E-130):整库结构检查(act-run-check 的每一项 [通过]:引用读得到、没有读不通的 [CREATE PASSIVEOBJECT]、认得的触发器占比、被动对象的 .obj 与模板配得出),
+    加一项实机:从全库副本扫描的明细里挑放出过被动对象的副本,开伤害各跑一局自动机,至少一局里脚本放出了被动对象、并且打中了主角。"""
+    code, text, sec = sh(DNF + ["act-run-check"], "actrun.txt")
+    ok = len(re.findall(r"^\s*\[通过\]", text, re.M))
+    bad = len(re.findall(r"^\s*\[失败\]", text, re.M))
+    if ok + bad == 0:
+        return [item("actrun", ".act 触发器运行期", "全库读通", "E-130", 0, 1, sec, "没解析出检查项,见 out/verify-all/actrun.txt")]
+    total = sec
+    sweep_json = os.path.join(ROOT, "out", "dungeon-sweep.json")
+
+    def load():
+        try:
+            with open(sweep_json, encoding="utf-8") as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            return []
+
+    results = load()
+    if not any("passives" in r for r in results):
+        # 没有带脚本统计的扫描明细(没跑过 dungeons 项,或明细是旧的):先扫一遍,只为挑副本
+        c2, t2, s2 = sh(PY + [os.path.join(ROOT, "tools", "py", "dungeon_sweep.py"), "--seconds", "600", "--real-timeout", "180", "--jobs", "8"], "actrun_sweep.txt")
+        total += s2
+        results = load()
+    cands = [r for r in results if r.get("status") == "cleared" and 0 < r.get("passives", 0) < 3000]
+    cands.sort(key=lambda r: (-r["passives"], r["dungeon"]))
+    live = "没有放出过被动对象的副本可选"
+    live_ok = False
+    for n, r in enumerate(cands[:6], 1):
+        c3, t3, s3 = sh(DNF + ["dungeon-check", "--dungeon", r["dungeon"], "--bot", "--explore", "--seed", "1", "--seconds", "400", "--damage-scale", "5000"], "actrun_live_%d.txt" % n)
+        total += s3
+        m = re.search(r"脚本\(E-130\):进过的房间里出招带 \.act 触发器的怪物 (\d+) 只,脚本放出被动对象 (\d+) 个,打中主角 (\d+) 次", t3)
+        live = "试了 %d 个副本" % n
+        if m is not None and int(m.group(2)) > 0 and int(m.group(3)) > 0:
+            live_ok = True
+            live = "第 %d 个副本里脚本放出被动对象 %s 个、打中主角 %s 次" % (n, m.group(2), m.group(3))
+            break
+    return [item("actrun", ".act 触发器运行期(整库引用与触发器认得的占比、被动对象模板配得出、实机里脚本放出被动对象并打中主角)", "全库读通+整条流程", "E-130", ok + bad + 1,
+                 bad + (0 if code == 0 else 1) + (0 if live_ok else 1), total,
+                 "结构检查 %d 项;实机:%s;副本名与数值只在本机 out/verify-all/ 下,不入库" % (ok + bad, live))]
 
 
 def check_sound():
@@ -395,7 +440,7 @@ def check_skill():
 
 CHECKS = [
     ("unit", check_unit), ("p1", check_p1), ("atk", check_atk), ("act", check_act), ("mob", check_mob),
-    ("damage", check_damage), ("sq", check_sq), ("sweep", check_sweep), ("flow", check_flow), ("dungeons", check_dungeons), ("sound", check_sound),
+    ("damage", check_damage), ("sq", check_sq), ("sweep", check_sweep), ("flow", check_flow), ("dungeons", check_dungeons), ("actrun", check_actrun), ("sound", check_sound),
     ("exp", check_exp), ("text", check_text), ("oracle", check_oracle), ("difficulty", check_difficulty), ("breakable", check_breakable), ("skill", check_skill),
 ]
 

@@ -251,6 +251,19 @@ namespace Dnf.Game
             return null;
         }
 
+        /// <summary>passiveobject/passiveobject.lst 里的全部被动对象编号(按编号升序);读不到列表时为空。</summary>
+        public int[] PassiveObjectIds()
+        {
+            Dictionary<int, string> list = ReadList(PassiveObjectListPath);
+            if (list == null)
+            {
+                return Array.Empty<int>();
+            }
+            var ids = new List<int>(list.Keys);
+            ids.Sort();
+            return ids.ToArray();
+        }
+
         private readonly Dictionary<int, PassiveObjectDef> _passiveObjects = new Dictionary<int, PassiveObjectDef>();
 
         /// <summary>被动对象编号对应的 .obj 定义;找不到返回 null。结果会缓存。</summary>

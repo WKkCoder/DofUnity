@@ -32,6 +32,37 @@ namespace Dnf.Game
         public string BasicMotionPath => MotionPath("[basic motion]");
 
         /// <summary>
+        /// [basic action] 指向的动作脚本 .act 的路径(规范化);没有则 null。新式的被动对象不写 [basic motion],而是由 .act 的第一个 [BASE ANI]
+        /// 给基础动画、由它的触发器与行为驱动(<see cref="Dnf.Game.Act.ActProgram"/>)。
+        /// </summary>
+        public string BasicActionPath
+        {
+            get
+            {
+                string s = Tags.FirstString("[basic action]");
+                return string.IsNullOrEmpty(s) ? null : PvfPath.ResolveRelativeTo(Path, s);
+            }
+        }
+
+        /// <summary>
+        /// [etc action] 里各个 .act 的路径(规范化),下标就是脚本 [SET ACTION] [CUSTOM] n 的 n;空串项给 null;没有这个标签时是空数组。
+        /// (n 与这张表的下标对应是推断,依据 E-130 的全库扫描:用到 [CUSTOM] 的被动对象里,绝大多数的最大 n 小于这张表的长度。)
+        /// </summary>
+        public string[] EtcActionPaths
+        {
+            get
+            {
+                string[] raw = Tags.Strings("[etc action]");
+                var paths = new string[raw.Length];
+                for (int i = 0; i < raw.Length; i++)
+                {
+                    paths[i] = string.IsNullOrEmpty(raw[i]) ? null : PvfPath.ResolveRelativeTo(Path, raw[i]);
+                }
+                return paths;
+            }
+        }
+
+        /// <summary>
         /// [object destroy condition] 里的 "[on end of animation]":动画播完(非循环)后对象自动消失。
         /// 观察:全库 .obj 里该行最常见的取值是 "[on end of animation]"(699)与 "[time limite]"(458,后跟毫秒数);另有 "[z pos equal zero]"(17)等,未实现。
         /// </summary>

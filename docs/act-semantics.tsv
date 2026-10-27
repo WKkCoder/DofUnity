@@ -123,7 +123,7 @@ cond	0x5e	[IS DIRECTION LEFT]	拥有者 getDirection==0 为真	高	不滤 target
 cond	0x5f	[IS DIRECTION RIGHT]	拥有者 getDirection==1 为真	高	不滤 targets
 cond	0x60	[IS CHILD]	vtbl+0x1f4 父指针是否等于 action.owner	高	槽名
 cond	0x61	[CHECK PLAYER NUM]	派对 009266c0 人数与 [COUNT] 期望值比较	中	多条 COUNT 时取哪条
-beh	0x62	[CREATE PASSIVEOBJECT]	在本机拥有者处按 INDEX/LEVEL/POS 与可选标志生成被动对象(vtbl+0xd1)	中	队伍码1重复、01562220 浮点常数、创建器内部
+beh	0x62	[CREATE PASSIVEOBJECT]	在本机拥有者处按 INDEX/LEVEL/POS 与可选标志生成被动对象(vtbl+0xd1)	中	队伍码1重复、01562220 浮点常数、创建器内部;摆放(基点、X 取反、朝向来源、Z)E-130 已读
 beh	0x63	[SUMMON MONSTER]	对目标集合里每个可战斗对象,按"编号、等级、三轴偏移"召唤怪物;前置:行为拥有者存在且是本机控制的对象;参数流里可含 [RANDOM] 结构	中	随机结构与召唤数量上限
 beh	0x64	[TELEPORT]	把目标集合里的对象按三轴偏移瞬移;只改位置与少量关联状态,不换动作脚本	中	关联状态的完整列表
 beh	0x67	[CHANGE ATTACKINFO]	DEFAULT(-1)或索引切换action+0xfb表(0x2cc)并刷新+0x200	中	具名attackinfo执行路径、+0x200槽名
@@ -134,7 +134,7 @@ beh	0x71	[SEND DO BEHAVIOR]	对目标+0x148动作实例远程执行第k号BEHAVI
 beh	0x73	[DESTROY] / [DESTROY BY FORCE]	分类型调用销毁/死亡虚函数；FORCE 附 SKIP MASTER CHECK 绕过 master 校验	中	master 规则细节与各 +0x7e4 等语义
 beh	0x74	[SET HP]	valueOf设HP(+0x2a0);hp<=0时怪物/AI旁路结构	中	0x211/0x111类型码、011a0930
 beh	0x75	[ATTACKRECT]	开、关、重置目标对象的攻击判定矩形(虚槽 0x360 / 0x208)	高	—
-beh	0x76	[SET DIRECTION]	设置目标朝向(虚槽 0xf0);行为拥有者不是本机控制对象时整段跳过	高	各参数取值到方向的完整映射
+beh	0x76	[SET DIRECTION]	设置目标朝向(虚槽 0xf0);行为拥有者不是本机控制对象时整段跳过	高	取值编号已读通(E-130:0 左、1 右、2 朝目标、3 反向、4 随机、7 本体朝向、8 本体反向);随机的取余基准与保护区调用未读
 beh	0x77	[SET ACTION]	按动作族码与 ATTACK/CUSTOM 索引切换状态(函数 0x010b1d50 + vtbl+0x172/0xa7)	中	完整关键字→族码表、内置 stateId 全表
 beh	0x79	[SEND MESSAGE]	本机控owner时向AI发五类COMMAND组包(0x34/2)	中	对端接收与触发器耦合
 beh	0x7a	[REMOVE CATEGORY]	查类别表后0x28c移除,怪物+0x4f94清零	中	id 0x1a含义、0x28c返回值

@@ -234,6 +234,31 @@ internal sealed class AvatarFixture : IDisposable
     public const int ShotDamageBonus = 25;
     public const string ShotThrowSound = "THROW_BLOB";
     public static readonly (ushort Type, int[] Values) ShotBox = ((ushort)15, new[] { -8, -8, 0, 16, 16, 16 });
+
+    /// <summary>
+    /// 出招靠 .act 触发器的迷你怪物与它们放出的被动对象(M36-4,证据 E-130)。怪物 <see cref="ActMobPath"/>(名字) 的出招动画是 <see cref="BlobThrowAni"/>
+    /// (四帧各 80 毫秒、只有受击框,自己不伤人)或 <see cref="BlobStrikeAni"/>(第 2 帧、160 到 240 毫秒带攻击框),各招的 .act 在 <see cref="BlobActionDir"/> 下:
+    /// plain(只有动画,没有触发器,对照)、shoot(出招开始起 X 速度 100、帧 1 放 <see cref="ActShotId"/>、帧 2 速度归零)、
+    /// chain(帧 1 立即切第 1 招 shoot)、chainend(帧 1 [END] 切第 1 招 plain)、rectoff(出招开始关攻击框)、rectreset(帧 3 重置攻击框再拨回帧 2,限一次)、
+    /// skip(帧 1 拨到帧 3,跳过攻击框那一帧)、stand(帧 1 立即回待机)、reverse(帧 1 反转朝向)、jump(出招开始起 Z 速度 300)、
+    /// onhit(近战一击打中主角后起 X 速度 100)、
+    /// 以及 spawn&lt;编号&gt;(帧 1 在偏移 (30, 0, 40) 放对应的被动对象)。
+    /// 被动对象都在 <see cref="ActObjectDir"/> 下:<see cref="ActShotId"/> 出生后以 X 速度 200 飞,打中主角就切自定义动作 0(三帧、没有攻击框的 boom),播完消失,限时 1000 毫秒;
+    /// <see cref="ActRepeatId"/> 不动、带攻击框,每次动画回到第 0 帧重置攻击框(所以隔一圈就能再打一次),限时 1000 毫秒;
+    /// <see cref="ActGraveId"/> 不动、带攻击框,打中主角就销毁自己;<see cref="ActSpawnerId"/> 没有攻击框,出生就在自己的位置放一个 <see cref="ActGraveId"/>;
+    /// <see cref="ActFallId"/> 没有攻击框,出生起 Z 速度 300(受重力落回地面);限时 1000 毫秒;<see cref="ActForeverId"/> 没有任何消失条件、没有触发器。数全是测试用的。
+    /// </summary>
+    public const int ActForeverId = 9206;
+    public const int ActShotId = 9201;
+    public const int ActRepeatId = 9202;
+    public const int ActGraveId = 9203;
+    public const int ActSpawnerId = 9204;
+    public const int ActFallId = 9205;
+    public const string ActObjectDir = "passiveobject/blob";
+    public const string ActBoomAni = "passiveobject/blob/animation/boom.ani";
+    public const string ActIdleAni = "passiveobject/blob/animation/idle.ani";
+
+    public static string ActMobPath(string name) => "monster/blob/act_" + name + ".mob";
     public const string BlobAnimationDir = "monster/blob/animation_blob";
     public const string BlobImage = "sprite/monster/blob/blob.img";
 
@@ -324,6 +349,34 @@ internal sealed class AvatarFixture : IDisposable
         {
             return TestData.BuildTokenScript(_tokens);
         }
+
+        /// <summary>一个 [TRIGGER] 块:<paramref name="records"/> 写条件记录,最后是 [DO BEHAVIOR] 目标 <paramref name="target"/> 与行为组编号 <paramref name="behavior"/>。</summary>
+        public Script Trigger(Action<Script> records, int behavior, string target = "[ME]")
+        {
+            Tag("[TRIGGER]");
+            records(this);
+            return Tag("[DO BEHAVIOR]").Tag(target).Int(behavior).Tag("[/TRIGGER]");
+        }
+
+        /// <summary>一个 [BEHAVIOR] 块(行为组)。</summary>
+        public Script Behavior(Action<Script> body)
+        {
+            Tag("[BEHAVIOR]");
+            body(this);
+            return Tag("[/BEHAVIOR]");
+        }
+
+        /// <summary>[SET SPEED] 某一轴的速度:<paramref name="axis"/> 是 "[X AXIS]"、"[Y AXIS]" 或 "[Z AXIS]"。</summary>
+        public Script SetSpeed(string axis, int value)
+        {
+            return Tag("[SET SPEED]").Tag(axis).Int(value).Tag("[/SET SPEED]");
+        }
+
+        /// <summary>[CREATE PASSIVEOBJECT],被动对象 <paramref name="index"/>,偏移 (x, y, z)。</summary>
+        public Script Create(int index, int x, int y, int z)
+        {
+            return Tag("[CREATE PASSIVEOBJECT]").Tag("[INDEX]").Int(index).Tag("[POS]").Int(x, y, z).Tag("[/CREATE PASSIVEOBJECT]");
+        }
     }
 
     private int Intern(string text)
@@ -346,6 +399,166 @@ internal sealed class AvatarFixture : IDisposable
     private byte[] ActMotion(string baseAni)
     {
         return NewScript().Tag("[MOTION]").Tag("[BASE ANI]").Str(baseAni).Tag("[/MOTION]").Build();
+    }
+
+    /// <summary>以一个 [MOTION] 开头的 .act,后面接 <see cref="Script.Trigger"/> 与 <see cref="Script.Behavior"/>。</summary>
+    private Script ActWith(string baseAni)
+    {
+        return NewScript().Tag("[MOTION]").Tag("[BASE ANI]").Str(baseAni).Tag("[/MOTION]");
+    }
+
+    private const string ThrowActAni = "../Animation_Blob/Throw.ani";
+    private const string StrikeActAni = "../Animation_Blob/Strike.ani";
+
+    /// <summary>每只 act_&lt;名字&gt; 怪物的出招 .act 文件名表(同一个 .act 可以出现在不同怪物里)。</summary>
+    private static readonly (string Name, string[] Acts)[] ActMobs =
+    {
+        ("plain", new[] { "ActPlain" }),
+        ("shoot", new[] { "ActShoot" }),
+        ("chain", new[] { "ActChain", "ActShoot" }),
+        ("chainend", new[] { "ActChainEnd", "ActPlain" }),
+        ("rectoff", new[] { "ActRectOff" }),
+        ("rectreset", new[] { "ActRectReset" }),
+        ("skip", new[] { "ActSkip" }),
+        ("stand", new[] { "ActStand" }),
+        ("reverse", new[] { "ActReverse" }),
+        ("jump", new[] { "ActJump" }),
+        ("onhit", new[] { "ActOnHit" }),
+        ("spawn9201", new[] { "ActSpawn9201" }),
+        ("spawn9202", new[] { "ActSpawn9202" }),
+        ("spawn9203", new[] { "ActSpawn9203" }),
+        ("spawn9204", new[] { "ActSpawn9204" }),
+        ("spawn9205", new[] { "ActSpawn9205" }),
+    };
+
+    private IEnumerable<(string Name, byte[] Data)> ActScripts()
+    {
+        foreach ((string name, string[] acts) in ActMobs)
+        {
+            Script mob = NewScript()
+                .Tag("[waiting action]").Str("Action/Stay.act")
+                .Tag("[move action]").Str("Action/Move.act")
+                .Tag("[damage action 1]").Str("Action/Damage1.act")
+                .Tag("[damage action 2]").Str("Action/Damage2.act")
+                .Tag("[down action]").Str("Action/Down.act")
+                .Tag("[attack action]");
+            foreach (string act in acts)
+            {
+                mob.Str("Action/" + act + ".act");
+            }
+            mob.Tag("[/attack action]").Tag("[attack info]");
+            foreach (string _ in acts)
+            {
+                mob.Str("");
+            }
+            yield return (ActMobPath(name), mob.Tag("[/attack info]").Build());
+        }
+        // ---- 怪物的出招 .act
+        yield return (BlobActionDir + "/actplain.act", ActMotion(StrikeActAni));
+        yield return (BlobActionDir + "/actshoot.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 1)
+            .Trigger(r => r.Tag("[FRAME]").Int(2, 2), 2)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 100))
+            .Behavior(b => b.Create(ActShotId, ShotStartX, 0, ShotStartZ))
+            .Behavior(b => b.SetSpeed("[X AXIS]", 0))
+            .Build());
+        yield return (BlobActionDir + "/actchain.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[NOW]"))
+            .Build());
+        yield return (BlobActionDir + "/actchainend.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[END]"))
+            .Build());
+        yield return (BlobActionDir + "/actrectoff.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[ATTACKRECT]").Tag("[OFF]"))
+            .Build());
+        yield return (BlobActionDir + "/actrectreset.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[LIMIT]").Int(1).Tag("[FRAME]").Int(3, 3), 0)
+            .Behavior(b => b.Tag("[ATTACKRECT]").Tag("[RESET]").Tag("[SET FRAME]").Int(2))
+            .Build());
+        yield return (BlobActionDir + "/actskip.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET FRAME]").Int(3))
+            .Build());
+        yield return (BlobActionDir + "/actstand.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[STAND]").Tag("[NOW]"))
+            .Build());
+        yield return (BlobActionDir + "/actreverse.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET DIRECTION]").Tag("[REVERSE]"))
+            .Build());
+        yield return (BlobActionDir + "/actjump.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.SetSpeed("[Z AXIS]", 300))
+            .Build());
+        yield return (BlobActionDir + "/actonhit.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON ATTACKSUCCESS]"), 0)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 100))
+            .Build());
+        foreach (int id in new[] { ActShotId, ActRepeatId, ActGraveId, ActSpawnerId, ActFallId })
+        {
+            int spawned = id;
+            yield return (BlobActionDir + "/actspawn" + id + ".act", ActWith(ThrowActAni)
+                .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+                .Behavior(b => b.Create(spawned, ShotStartX, 0, ShotStartZ))
+                .Build());
+        }
+        // ---- 被动对象:.obj 的 [basic action]/[etc action] 相对 .obj 所在目录,.act 里的 [BASE ANI] 相对 .act 所在目录
+        string shotDestroy = "[destroy condition]";
+        yield return (ActObjectDir + "/actshot.obj", NewScript()
+            .Tag("[basic action]").Str("action/actshot.act")
+            .Tag("[etc action]").Str("action/actshot_boom.act")
+            .Tag("[attack info]").Str("attackinfo/shot.atk")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[on end of animation]", "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actshot.act", ActWith("../animation/shot.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[ON ATTACKSUCCESS]"), 1)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 200))
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(0).Tag("[NOW]"))
+            .Build());
+        yield return (ActObjectDir + "/action/actshot_boom.act", ActWith("../animation/boom.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 0))
+            .Build());
+        yield return (ActObjectDir + "/actrepeat.obj", NewScript()
+            .Tag("[basic action]").Str("action/actrepeat.act")
+            .Tag("[attack info]").Str("attackinfo/shot.atk")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actrepeat.act", ActWith("../animation/shot.ani")
+            .Trigger(r => r.Tag("[FRAME]").Int(0, 0), 0)
+            .Behavior(b => b.Tag("[ATTACKRECT]").Tag("[RESET]"))
+            .Build());
+        yield return (ActObjectDir + "/actgrave.obj", NewScript()
+            .Tag("[basic action]").Str("action/actgrave.act")
+            .Tag("[attack info]").Str("attackinfo/shot.atk")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actgrave.act", ActWith("../animation/shot.ani")
+            .Trigger(r => r.Tag("[ON ATTACKSUCCESS]"), 0)
+            .Behavior(b => b.Tag("[DESTROY]"))
+            .Build());
+        yield return (ActObjectDir + "/actspawner.obj", NewScript()
+            .Tag("[basic action]").Str("action/actspawner.act")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actspawner.act", ActWith("../animation/idle.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Create(ActGraveId, 0, 0, 0))
+            .Build());
+        yield return (ActObjectDir + "/actfall.obj", NewScript()
+            .Tag("[basic action]").Str("action/actfall.act")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actfall.act", ActWith("../animation/idle.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.SetSpeed("[Z AXIS]", 300))
+            .Build());
+        yield return (ActObjectDir + "/actforever.obj", NewScript().Tag("[basic action]").Str("action/actidle.act").Build());
+        yield return (ActObjectDir + "/action/actidle.act", ActMotion("../animation/idle.ani"));
+        yield return (ActBoomAni, BuildBlobBoxesAni(false, (0, 100, new (ushort Type, int[] Values)[0]), (1, 100, new (ushort Type, int[] Values)[0]),
+            (2, 100, new (ushort Type, int[] Values)[0])));
+        yield return (ActIdleAni, BuildBlobBoxesAni(true, (0, 100, new (ushort Type, int[] Values)[0])));
     }
 
     public AvatarFixture()
@@ -582,6 +795,12 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[/throw attack]").Build()),
             ("passiveobject/passiveobject.lst", NewScript()
                 .Int(ShotObjectId).Str("blob/shot.obj")
+                .Int(ActShotId).Str("blob/actshot.obj")
+                .Int(ActRepeatId).Str("blob/actrepeat.obj")
+                .Int(ActGraveId).Str("blob/actgrave.obj")
+                .Int(ActSpawnerId).Str("blob/actspawner.obj")
+                .Int(ActFallId).Str("blob/actfall.obj")
+                .Int(ActForeverId).Str("blob/actforever.obj")
                 .Int(CrateObjectId).Str("MapObject/BreakableObject/Crate.obj")
                 .Int(BarrelObjectId).Str("MapObject/BreakableObject/Barrel.obj")
                 .Int(PillarObjectId).Str("MapObject/BreakableObject/Pillar.obj")
@@ -701,6 +920,7 @@ internal sealed class AvatarFixture : IDisposable
             (AreaMap, NewScript().Tag("[virtual movable area]").Int(10, 20, 100, 50, 100, 60, 30, 40).Build()),
         };
 
+        scripts.AddRange(ActScripts().Select(a => (a.Name, a.Data)));
         var files = new List<TestData.PvfFileSpec>();
         // 先把所有脚本里的字符串都登记好,再生成字符串表(标记流里存的是字符串表的序号)
         var strings = new List<byte[]>();

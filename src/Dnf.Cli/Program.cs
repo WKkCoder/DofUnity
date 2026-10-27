@@ -319,6 +319,8 @@ namespace Dnf.Cli
             "      用 Dnf.Game 的 .atk 加载器读全库 .atk(证据 E-047),统计不规整情况;--dump 写出每个文件读到的字段,可与 tools/py/atk_ref.py --dump 逐行对拍。\n" +
             "  dnf act-check [--dump <文件>] [--json <文件>]\n" +
             "      用 Dnf.Game 的语法树解析器读全库 .act(证据 E-050),统计节点、块、多余与笔误闭合;--json 写出\"父标签 → 子标签 → 次数\"表,可与 tools/py/act_tree.py 逐项对拍。\n" +
+            "  dnf act-run-check [--json <文件>]\n" +
+            "      从怪物出发看 .act 触发器的运行期覆盖度(证据 E-130):怪物出招的 .act 里有多少带触发器、触发器多少是运行器认得的,这些招式能放出的被动对象(含对象再放对象)与它们自己的 .act,以及被动对象全表的总体情况;只输出个数与标签名。\n" +
             "  dnf ai-check [--dump <文件>] [--json <文件>]\n" +
             "      用 Dnf.Game 的 .ai 解析器读全库 .ai(证据 E-052):能否读完、错误、剩余标记、关键字与运算符直方图,以及 [void] 函数真假两路的返回形状(用来判断真假方向);名表运行时从数据包的 AICharacter/OperatingValue.lst 读。\n" +
             "  dnf ai-eval [--json <文件>]\n" +
@@ -797,6 +799,8 @@ namespace Dnf.Cli
                     return ActCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "ai-check":
                     return AiCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "act-run-check":
+                    return ActRunCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "ai-eval":
                     return AiEval.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "mob-check":

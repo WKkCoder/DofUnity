@@ -189,6 +189,8 @@ internal static class DungeonCheck
             + "  进过 " + session.RoomsEntered + " 个房间,清空 " + session.RoomsCleared + " 个,换房间 " + session.Transitions + " 次;命中 " + session.Hits
             + " 次,击杀 " + session.Kills + " 个,总伤害 " + session.TotalDamage
             + (session.Vitals != null ? ";主角被打中 " + session.HeroHits + " 次,生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax + ",魔法 " + session.Vitals.Mp + "/" + session.Vitals.MpMax : ";怪物不还手(--no-damage)"));
+        Console.WriteLine("脚本(E-130):进过的房间里出招带 .act 触发器的怪物 " + session.ActMonsters + " 只,脚本放出被动对象 " + session.PassivesSpawned + " 个,打中主角 "
+            + session.PassiveHits + " 次");
         if (session.Revive != null && session.Revive.Deaths > 0)
         {
             Console.WriteLine("死亡与复活(E-115):死亡 " + session.Revive.Deaths + " 次,复活 " + session.Revive.Revives + " 次,用币 " + session.Revive.Used + " 个,库存剩 "

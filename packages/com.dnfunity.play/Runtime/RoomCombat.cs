@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Dnf.Data;
 using Dnf.Game;
+using Dnf.Game.Act;
 using Dnf.Game.Ai;
 using Dnf.Render;
 using Dnf.Script;
@@ -430,6 +431,12 @@ namespace Dnf.Play
         private readonly List<AnimatedEffect> _effects = new List<AnimatedEffect>();
         private readonly List<MonsterProjectile> _projectiles = new List<MonsterProjectile>();
 
+        // .act 触发器放出来的被动对象(证据 E-130):程序库、宿主与主角在脚本里的身份;没接上程序库(AttachActs)时全空,怪物只用 .mob/.ai 的行为
+        private readonly List<PassiveObject> _passives = new List<PassiveObject>();
+        private ActLibrary _acts;
+        private ActWorld _actWorld;
+        private HeroActEntity _heroEntity;
+
         // 金币掉落(证据 E-116):表为 null 时杀怪不掉东西(旧行为)
         private readonly List<FieldDrop> _drops = new List<FieldDrop>();
         private readonly List<GainPopup> _gains = new List<GainPopup>();
@@ -466,6 +473,9 @@ namespace Dnf.Play
 
         /// <summary>怪物打主角的伤害种子用的随机数,与主角打怪物的伤害序列分开,免得互相改变对方的序列。</summary>
         private readonly Random _monsterRandom;
+
+        /// <summary>.act 脚本的随机数([RANDOM]、[RANDOM SELECT]、随机朝向),与其余随机数分开,免得改变伤害与掉落的序列。</summary>
+        private readonly Random _actRandom;
         private readonly DamageConstants _damageConstants;
 
         /// <summary>主角打怪物时的攻击面板(证据 E-110);为 null 时主角打怪物仍用占位伤害(<see cref="PlaceholderDamage"/>)。升级时换成新等级的(证据 E-111)。</summary>
@@ -532,6 +542,41 @@ namespace Dnf.Play
 
         /// <summary>其中打中主角的个数。</summary>
         public int ProjectileHits { get; private set; }
+
+        /// <summary>怪物的 .act 脚本放出来、还在场上的被动对象(证据 E-130)。</summary>
+        public IReadOnlyList<PassiveObject> Passives => _passives;
+
+        /// <summary>从开始玩起脚本一共放出过多少个被动对象(含已经消失的)。</summary>
+        public int PassivesSpawned { get; private set; }
+
+        /// <summary>其中打中主角的次数(一个对象被脚本 [ATTACKRECT] [RESET] 之后可以再打,所以可能比对象个数多)。</summary>
+        public int PassiveHits { get; private set; }
+
+        /// <summary>被动对象的程序库;没接上时为 null。</summary>
+        public ActLibrary Acts => _acts;
+
+        /// <summary>这个房间里出招带有可执行 .act 触发器的怪物个数(没接上程序库时为 0)。</summary>
+        public int ActMonsterCount
+        {
+            get
+            {
+                int n = 0;
+                foreach (MonsterActor m in _monsters)
+                {
+                    if (m.HasActs)
+                    {
+                        n++;
+                    }
+                }
+                return n;
+            }
+        }
+
+        /// <summary>主角在 .act 脚本里的身份;没接上程序库时为 null。</summary>
+        public IActEntity HeroEntity => _heroEntity;
+
+        /// <summary>脚本运行器眼里的房间(随机数、放被动对象、解析选择器);没接上程序库时为 null。单测与工具用它直接放对象。</summary>
+        public IActHost ActHost => _actWorld;
 
         /// <summary>地上还没捡的金币堆(证据 E-116)。</summary>
         public IReadOnlyList<FieldDrop> Drops => _drops;
@@ -941,6 +986,7 @@ namespace Dnf.Play
             Vitals = vitals;
             _damageConstants = damageConstants;
             _monsterRandom = new Random(unchecked(seed * 131 + 29));
+            _actRandom = new Random(unchecked(seed * 977 + 61));
             _assets = assets ?? throw new ArgumentNullException(nameof(assets));
             _dropSprites = _assets;
             _room = room ?? throw new ArgumentNullException(nameof(room));
@@ -1259,6 +1305,7 @@ namespace Dnf.Play
                 hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null, weaponSound, heroPanel,
                 progress, expWeight, difficulty);
             session.Character = chr;
+            session.AttachActs(new ActLibrary(assets, data));                      // .act 的触发器与行为:被动对象、冲刺、攻击框开关(证据 E-130)
             foreach (MonsterActor a in actors)
             {
                 MonsterActor self = a;
@@ -1477,12 +1524,15 @@ namespace Dnf.Play
                 m.TargetAiState = heroAiState;
                 m.Update(deltaMs, hero.X, hero.Y, heroAlive, hero.Walk, heroBoxes);
             }
+            UpdatePassives(deltaMs);
             CollectThrown();
             EmitMonsterCues();
             ResolveHits();
             ResolveMonsterHits();
             ResolveProjectileHits();
+            ResolvePassiveHits();
             _projectiles.RemoveAll(p => p.Finished);
+            _passives.RemoveAll(p => p.Finished);
             SyncStance();
             EmitCooldownCues();
             for (int i = _popups.Count - 1; i >= 0; i--)
@@ -2237,6 +2287,7 @@ namespace Dnf.Play
                     {
                         m.HitHeroThisSwing = true;
                         StrikeHero(m, hero, hit);
+                        m.NotifyAttackSuccess(_heroEntity);          // 脚本的 [ON ATTACKSUCCESS](E-130)
                     }
                 }
                 if (frame > m.AttackEvalFrame)
@@ -2295,6 +2346,178 @@ namespace Dnf.Play
                 {
                     break;
                 }
+            }
+        }
+
+        // ------------------------------------------------------------------ .act 触发器与被动对象(M36-4,证据 E-130)
+
+        /// <summary>场上同时最多的被动对象个数:脚本写坏了(无限再生成)时的保险,正常的房间远用不到(推断)。</summary>
+        public const int MaxPassives = 64;
+
+        /// <summary>
+        /// 接上 .act 程序库:每只怪物的每一招(.mob 的 [attack action]/[action list] 指向的 .act)里有触发器的,装给怪物;
+        /// 同时预读它们会放出来的被动对象。传 null 把脚本触发器全部撤掉(怪物只用 .mob/.ai 的行为)。
+        /// </summary>
+        public void AttachActs(ActLibrary library)
+        {
+            _acts = library;
+            _passives.Clear();
+            if (library == null)
+            {
+                _actWorld = null;
+                _heroEntity = null;
+                foreach (MonsterActor m in _monsters)
+                {
+                    m.ActTarget = null;
+                    m.SetActs(null, null);
+                }
+                return;
+            }
+            _heroEntity = new HeroActEntity(_room.Hero, () => !HeroDead);
+            _actWorld = new ActWorld(this);
+            foreach (MonsterActor m in _monsters)
+            {
+                IReadOnlyList<string> paths = m.Model.AttackActionPaths;
+                var programs = new ActProgram[paths.Count];
+                bool any = false;
+                for (int i = 0; i < programs.Length; i++)
+                {
+                    ActProgram p = library.Program(paths[i]);
+                    if (p != null && p.Triggers.Count > 0)
+                    {
+                        programs[i] = p;
+                        any = true;
+                        library.Preload(p);
+                    }
+                }
+                m.ActTarget = _heroEntity;
+                m.SetActs(any ? programs : null, any ? _actWorld : null);
+            }
+        }
+
+        /// <summary>被动对象各走一步(这一步里新放出来的从下一步起走)。</summary>
+        private void UpdatePassives(double deltaMs)
+        {
+            int count = _passives.Count;
+            for (int i = 0; i < count; i++)
+            {
+                _passives[i].Update(deltaMs);
+            }
+        }
+
+        /// <summary>
+        /// 被动对象打主角:当前帧的攻击框与主角的受击框相交就算打中(规则与投射物同,E-103);一个对象打中一次之后不再打,
+        /// 直到脚本 [ATTACKRECT] [RESET]。命中后唤醒对象自己带 [ON ATTACKSUCCESS] 的触发器(常见写法是接着销毁自己或切动作)。
+        /// 伤害按链条上最早那只怪物的等级与攻击力算,攻击信息取 .obj 的 [attack info]。
+        /// </summary>
+        private void ResolvePassiveHits()
+        {
+            if (Vitals == null || !Vitals.IsAlive || _passives.Count == 0 || HeroInvincible)
+            {
+                return;
+            }
+            TownHero hero = _room.Hero;
+            List<Aabb> hurt = HeroHurtBoxes.At(hero);
+            for (int i = 0; i < _passives.Count; i++)
+            {
+                PassiveObject o = _passives[i];
+                if (o.Finished)
+                {
+                    continue;
+                }
+                List<Aabb> strike = o.AttackBoxes();
+                if (strike.Count == 0 || !TryHit(strike, hurt, out Aabb hit))
+                {
+                    continue;
+                }
+                PassiveHits++;
+                StrikeHero(o.Owner, o.Template.Strike, o.FacingLeft, hero, null, hit);
+                o.NotifyHit(_heroEntity);
+                if (!Vitals.IsAlive)
+                {
+                    break;
+                }
+            }
+        }
+
+        private void SpawnPassive(IActEntity owner, int index, float x, float y, float z, bool facingLeft)
+        {
+            if (_acts == null || _passives.Count >= MaxPassives)
+            {
+                return;
+            }
+            MonsterActor root = MonsterActor.From(owner);
+            PassiveTemplate template = root == null ? null : _acts.Passive(index);
+            if (template == null)
+            {
+                return;
+            }
+            _passives.Add(new PassiveObject(template, owner, root, _actWorld, x, y, z, facingLeft));
+            PassivesSpawned++;
+        }
+
+        /// <summary>运行器自己不认识的选择器:敌人、角色队伍、主角这几种落到主角;己方、怪物队伍落到活着的怪物;被动对象落到场上的对象。其余这一版不接。</summary>
+        private void ResolveSelector(ActSelector selector, List<IActEntity> into)
+        {
+            switch (selector)
+            {
+                case ActSelector.AllEnemy:
+                case ActSelector.AllCharacterTeam:
+                case ActSelector.Character:
+                case ActSelector.Player:
+                case ActSelector.AiCharacter:
+                case ActSelector.PartyTarget:
+                    if (_heroEntity != null && _heroEntity.IsAlive)
+                    {
+                        into.Add(_heroEntity);
+                    }
+                    break;
+                case ActSelector.AllOurTeam:
+                case ActSelector.AllMonsterTeam:
+                case ActSelector.Monster:
+                    foreach (MonsterActor m in _monsters)
+                    {
+                        if (m.IsAlive && m.Phase != MonsterPhase.Gone)
+                        {
+                            into.Add(m.ActSelf);
+                        }
+                    }
+                    break;
+                case ActSelector.Passive:
+                    foreach (PassiveObject o in _passives)
+                    {
+                        if (!o.Finished)
+                        {
+                            into.Add(o);
+                        }
+                    }
+                    break;
+            }
+        }
+
+        /// <summary>脚本运行器眼里的房间:随机数、生成被动对象、解析选择器。</summary>
+        private sealed class ActWorld : IActHost
+        {
+            private readonly RoomCombatSession _session;
+
+            public ActWorld(RoomCombatSession session)
+            {
+                _session = session;
+            }
+
+            public int Random(int n)
+            {
+                return n <= 1 ? 0 : _session._actRandom.Next(n);
+            }
+
+            public void SpawnPassive(IActEntity owner, int index, int level, float x, float y, float z, bool facingLeft)
+            {
+                _session.SpawnPassive(owner, index, x, y, z, facingLeft);
+            }
+
+            public void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into)
+            {
+                _session.ResolveSelector(selector, into);
             }
         }
 
@@ -2443,6 +2666,14 @@ namespace Dnf.Play
             foreach (MonsterProjectile p in _projectiles)
             {
                 SceneSprite s = p.Sprite(_assets, projection);
+                if (s != null)
+                {
+                    extra.Add(s);
+                }
+            }
+            foreach (PassiveObject o in _passives)
+            {
+                SceneSprite s = o.Sprite(_assets, projection);
                 if (s != null)
                 {
                     extra.Add(s);

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Dnf.Data;
 using Dnf.Game;
+using Dnf.Game.Act;
 using Dnf.Game.Ai;
 using Dnf.Render;
 
@@ -163,6 +164,21 @@ namespace Dnf.Play
         private double _reachDx;
         private double _reachDy;
         private IReadOnlyList<Aabb> _reachBoxes;
+
+        // .act 触发器与行为(证据 E-130):每一招的 .act 程序(与 Attacks 同下标,没有触发器的为 null)、这一招的运行器(每次出招新建,
+        // 触发器里再切招时旧运行器还在执行,不能复用)、脚本给的速度与攻击框开关;出招阶段每一步由 TickActs 推进
+        private ActProgram[] _actPrograms;
+        private ActRunner _actRunner;
+        private IActHost _actHost;
+        private ActBody _actBody;
+        private bool _actSetPending;
+        private double _actVx;
+        private double _actVy;
+        private double _actVz;
+        private bool _actFalling;
+        private bool _attackRectOff;
+        private int _motionVersion;
+        private int _deferredAttack = -1;
 
         /// <summary>血已经没了、但还在走倒地流程(腾空、颠一下);躺下的那一刻转入死亡(证据 E-079 第 3 步、E-082、E-084)。</summary>
         private bool _dead;
@@ -377,6 +393,311 @@ namespace Dnf.Play
         public MonsterThrows Throws => _throws;
 
         /// <summary>
+        /// 装上各招的 .act 程序(证据 E-130):<paramref name="programs"/> 与 <see cref="MonsterModel.Attacks"/> 同下标,没有 .act 或没有触发器的招给 null。
+        /// 之后出招阶段的每一步让当前这一招的触发器跑一遍(放被动对象、设速度、切招、开关攻击框……);<paramref name="host"/> 提供随机数与生成对象。
+        /// 全是 null(或 <paramref name="programs"/> 为 null)表示这只怪物不用脚本触发器。
+        /// </summary>
+        public void SetActs(ActProgram[] programs, IActHost host)
+        {
+            _actRunner = null;
+            _actPrograms = null;
+            _actHost = host;
+            if (programs == null || host == null)
+            {
+                return;
+            }
+            foreach (ActProgram p in programs)
+            {
+                if (p != null && p.Triggers.Count > 0)
+                {
+                    _actPrograms = programs;
+                    return;
+                }
+            }
+        }
+
+        /// <summary>装了 .act 触发器(至少一招有)。</summary>
+        public bool HasActs => _actPrograms != null;
+
+        /// <summary>怪物在 .act 脚本里的目标(主角);房间会话装。</summary>
+        public IActEntity ActTarget { get; set; }
+
+        /// <summary>怪物在 .act 脚本里的身份(被动对象的创建者、触发器的拥有者)。</summary>
+        public IActEntity ActSelf => _actBody ?? (_actBody = new ActBody(this));
+
+        /// <summary>脚本里的 <paramref name="entity"/> 属于哪只怪物(怪物自己,或被动对象链条上最早的那只);不是这两种返回 null。</summary>
+        public static MonsterActor From(IActEntity entity)
+        {
+            if (entity is ActBody body)
+            {
+                return body._m;
+            }
+            return (entity as PassiveObject)?.Owner;
+        }
+
+        /// <summary>怪物的动画与动作路径(.mob 读出来的模型)。</summary>
+        public MonsterModel Model => _model;
+
+        /// <summary>当前这一招的运行器;没有(不在出招、这一招没有触发器)时为 null。测试与审计用。</summary>
+        public ActRunner CurrentActRunner => _actRunner;
+
+        /// <summary>这一次出招里脚本给的速度(像素/秒;X 已按朝向取过符号)。出招结束清零。</summary>
+        public double ActSpeedX => _actVx;
+
+        public double ActSpeedY => _actVy;
+
+        public double ActSpeedZ => _actVz;
+
+        /// <summary>脚本把攻击框关了([ATTACKRECT] [OFF]):出招动画里的攻击框不再判定,直到脚本再开或重新出招。</summary>
+        public bool AttackRectOff => _attackRectOff;
+
+        /// <summary>.act 的触发器通知:这只怪物打中了主角(<paramref name="victim"/>),唤醒带 [ON ATTACKSUCCESS] 的触发器。</summary>
+        public void NotifyAttackSuccess(IActEntity victim)
+        {
+            if (Phase == MonsterPhase.Attack && _actRunner != null)
+            {
+                _actRunner.OnAttackSuccess(victim);
+            }
+        }
+
+        /// <summary>
+        /// 出招阶段每一步:先让这一招的触发器跑(刚进出招时先唤醒 [ON SET ACTION]),再按脚本给的速度移动、Z 方向受重力;
+        /// 触发器里切了招或结束了出招就不再往下做(新的一招从下一步起算)。
+        /// </summary>
+        private void TickActs(double deltaMs, IWalkArea walk)
+        {
+            ActRunner runner = _actRunner;
+            if (runner == null)
+            {
+                return;
+            }
+            if (_actSetPending)
+            {
+                _actSetPending = false;
+                runner.OnSetAction();
+                if (_actRunner != runner || Phase != MonsterPhase.Attack)
+                {
+                    return;
+                }
+            }
+            runner.Update(CurrentFrame, (float)(deltaMs / 1000.0));
+            if (_actRunner != runner || Phase != MonsterPhase.Attack)
+            {
+                return;
+            }
+            double seconds = deltaMs / 1000.0;
+            if (_actVx != 0 || _actVy != 0)
+            {
+                TryMove(_actVx * seconds, _actVy * seconds, walk);
+            }
+            if (_actFalling)
+            {
+                Z += _actVz * seconds;
+                _actVz -= PassiveObject.Gravity * seconds;
+                if (Z <= 0)
+                {
+                    Z = 0;
+                    _actVz = 0;
+                    _actFalling = false;
+                }
+            }
+        }
+
+        /// <summary>进入出招阶段时挂上这一招的运行器:动作从头开始,触发器开关回到初值,下一步先唤醒 [ON SET ACTION]。</summary>
+        private void BeginActs()
+        {
+            _actVx = 0;
+            _actVy = 0;
+            _actVz = 0;
+            _actFalling = false;
+            _attackRectOff = false;
+            _deferredAttack = -1;
+            _motionVersion++;
+            _actRunner = null;
+            if (_actPrograms == null || (uint)_attackIndex >= (uint)_actPrograms.Length || _actPrograms[_attackIndex] == null)
+            {
+                return;
+            }
+            _actRunner = new ActRunner(_actPrograms[_attackIndex], ActSelf, _actHost);
+            _actSetPending = true;
+        }
+
+        /// <summary>离开出招阶段:脚本的速度与攻击框开关清零。离开的原因是被打倒(倒地的飞行自己接管 Z)时不碰高度。</summary>
+        private void EndActs()
+        {
+            if (_actRunner == null && !_actFalling && _actVx == 0 && _actVy == 0 && _actVz == 0 && !_attackRectOff)
+            {
+                return;
+            }
+            _actVx = 0;
+            _actVy = 0;
+            _actVz = 0;
+            _actFalling = false;
+            _attackRectOff = false;
+            _deferredAttack = -1;
+            _actRunner = null;
+        }
+
+        /// <summary>出完一招(动画播完,或脚本 [SET ACTION] [STAND]):进冷却、回待机;脚本抛起来还没落地的落回地面(推断)。</summary>
+        private void FinishAttack()
+        {
+            if (_actFalling)
+            {
+                Z = 0;
+            }
+            _cooldownMs = AttackDelayMs;
+            _script?.AttackFinished();
+            EnterPhase(MonsterPhase.Wait);
+        }
+
+        private void ActSetSpeed(bool hasX, float vx, bool hasY, float vy, bool hasZ, float vz)
+        {
+            if (Phase != MonsterPhase.Attack)
+            {
+                return;
+            }
+            if (hasX)
+            {
+                _actVx = vx;
+            }
+            if (hasY)
+            {
+                _actVy = vy;
+            }
+            if (hasZ)
+            {
+                _actVz = vz;
+                _actFalling = vz != 0;     // 给了 Z 方向的速度才受重力,落到地面就停(推断,E-130)
+            }
+        }
+
+        /// <summary>脚本的 [SET ACTION]:出招阶段里切到另一招([ATTACK] n)或回待机;别的动作族(走、受击、倒地……)怪物这一版不接。</summary>
+        private void ActSetAction(ActActionKind kind, int index, bool now, bool atEnd)
+        {
+            if (!IsAlive || Phase != MonsterPhase.Attack)
+            {
+                return;
+            }
+            switch (kind)
+            {
+                case ActActionKind.Attack:
+                    if ((uint)index >= (uint)_model.Attacks.Count || _model.Attacks[index] == null)
+                    {
+                        return;
+                    }
+                    if (atEnd && !now)
+                    {
+                        _deferredAttack = index;
+                        return;
+                    }
+                    _script?.AttackStarted(index);
+                    _attackIndex = index;
+                    EnterPhase(MonsterPhase.Attack);
+                    break;
+                case ActActionKind.Stand:
+                case ActActionKind.Default:
+                    if (!(atEnd && !now))
+                    {
+                        FinishAttack();       // [END] 的回待机等动画播完,本来就是这样
+                    }
+                    break;
+            }
+        }
+
+        private void ActAttackRect(ActAttackRectMode mode)
+        {
+            switch (mode)
+            {
+                case ActAttackRectMode.On:
+                    _attackRectOff = false;
+                    break;
+                case ActAttackRectMode.Off:
+                    _attackRectOff = true;
+                    break;
+                default:
+                    // [RESET]:再次允许打中,并让当前帧的攻击框重新判一遍
+                    HitHeroThisSwing = false;
+                    AttackEvalFrame = Math.Min(AttackEvalFrame, CurrentFrame - 1);
+                    break;
+            }
+        }
+
+        private void ActSetFrame(int frame)
+        {
+            AniFile ani = CurrentAni;
+            if (Phase != MonsterPhase.Attack || ani == null || ani.Frames.Length == 0)
+            {
+                return;
+            }
+            AniTimeline timeline = Timeline(ani);
+            int f = Math.Max(0, Math.Min(frame, timeline.FrameCount - 1));
+            _phaseMs = timeline.StartMs(f) / AttackRate;
+            AttackEvalFrame = f - 1;          // 跳过去的帧不判,从目标帧起判
+            _motionVersion++;
+        }
+
+        /// <summary>怪物在 .act 脚本里的身份:位置、朝向取自怪物,脚本的"作用"落到怪物自己的方法上。</summary>
+        private sealed class ActBody : IActEntity
+        {
+            internal readonly MonsterActor _m;
+
+            public ActBody(MonsterActor monster)
+            {
+                _m = monster;
+            }
+
+            public ActEntityKind Kind => ActEntityKind.Monster;
+
+            public int ObjectIndex => _m.Code;
+
+            public float X => (float)_m.X;
+
+            public float Y => (float)_m.Y;
+
+            public float Z => (float)_m.Z;
+
+            public bool FacingLeft => _m.FacingLeft;
+
+            public bool IsAlive => _m.IsAlive && _m.Phase != MonsterPhase.Gone;
+
+            public IActEntity Target => _m.ActTarget;
+
+            public IActEntity Master => null;
+
+            public int MotionVersion => _m._motionVersion;
+
+            public void SetFacing(bool left)
+            {
+                _m.FacingLeft = left;
+            }
+
+            public void SetSpeed(bool hasX, float vx, bool hasY, float vy, bool hasZ, float vz)
+            {
+                _m.ActSetSpeed(hasX, vx, hasY, vy, hasZ, vz);
+            }
+
+            public void SetAction(ActActionKind kind, int index, bool now, bool atEnd)
+            {
+                _m.ActSetAction(kind, index, now, atEnd);
+            }
+
+            public void Destroy(bool force)
+            {
+                // 怪物被脚本销毁(召唤物自毁之类)这一版不接:怪物只会被打死
+            }
+
+            public void AttackRect(ActAttackRectMode mode)
+            {
+                _m.ActAttackRect(mode);
+            }
+
+            public void SetFrame(int frame)
+            {
+                _m.ActSetFrame(frame);
+            }
+        }
+
+        /// <summary>
         /// 取走自上次以来发射出来的投射物与发射声音标签(各追加到传入的表里,取走后清空);没有投掷或什么都没发射时返回 false。
         /// 房间会话每一步调一次:投射物从此归会话管(移动、命中、绘制)。
         /// </summary>
@@ -558,11 +879,25 @@ namespace Dnf.Play
                         EnterPhase(MonsterPhase.Attack);          // 记录的剩余次数还在 2 以上:这一招从头再来一遍(证据 E-103)
                         break;
                     }
+                    if (_actRunner != null)
+                    {
+                        TickActs(deltaMs, walk);
+                        if (Phase != MonsterPhase.Attack)
+                        {
+                            break;
+                        }
+                    }
                     if (_phaseMs * AttackRate >= Duration(CurrentAni))
                     {
-                        _cooldownMs = AttackDelayMs;
-                        _script?.AttackFinished();
-                        EnterPhase(MonsterPhase.Wait);
+                        if (_deferredAttack >= 0)
+                        {
+                            int next = _deferredAttack;
+                            _script?.AttackStarted(next);
+                            _attackIndex = next;
+                            EnterPhase(MonsterPhase.Attack);          // 脚本用 [END] 切招:这一招播完再接下一招(E-130)
+                            break;
+                        }
+                        FinishAttack();
                     }
                     break;
                 default:
@@ -590,6 +925,11 @@ namespace Dnf.Play
                 AttackEvalFrame = -1;
                 HitHeroThisSwing = false;
                 _throws?.Runner.EnterAttack();
+                BeginActs();
+            }
+            else
+            {
+                EndActs();
             }
         }
 
@@ -648,7 +988,7 @@ namespace Dnf.Play
         public List<Aabb> AttackBoxesAt(int frame)
         {
             var result = new List<Aabb>();
-            if (!IsAlive || Phase != MonsterPhase.Attack)
+            if (!IsAlive || Phase != MonsterPhase.Attack || _attackRectOff)
             {
                 return result;
             }
@@ -1211,6 +1551,10 @@ namespace Dnf.Play
             if (!IsAlive || Phase == MonsterPhase.Gone)
             {
                 return false;
+            }
+            if (Phase == MonsterPhase.Attack && _actRunner != null)
+            {
+                _actRunner.OnDamage(ActTarget);                // 出招时挨了打:唤醒带 [ON DAMAGE] 的触发器(E-130;挨打者当作攻击者就是主角)
             }
             _brain?.NotifyDamaged();                           // 挨了打:马上找目标、不等发现迟滞(E-114)
             Hp = Math.Max(0, Hp - Math.Max(0, damage));
