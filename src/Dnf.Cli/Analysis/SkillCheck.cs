@@ -278,6 +278,8 @@ internal static class SkillCheck
         int recipeStages = 0;
         int recipeObjects = 0;
         int recipeHolds = 0;
+        int recipeEndFrames = 0;
+        int recipeGates = 0;
         var recipeProblems = new List<string>();
         foreach (SkillRecipe recipe in SkillRecipes.Default.All)
         {
@@ -317,9 +319,21 @@ internal static class SkillCheck
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:没有自己的命中,配方却没有放对象");
                 }
-                if (st.EffectIndex >= 0 && (st.EffectIndex >= effectPaths.Count || !InLibrary(PvfPath.ResolveRelativeTo(chr.Path, effectPaths[st.EffectIndex]))))
+                foreach (int effectIndex in st.EffectIndices)
                 {
-                    recipeProblems.Add(label + " 第 " + i + " 段:特效读不到(预载表里有 " + effectPaths.Count + " 个)");
+                    if (effectIndex >= effectPaths.Count || !InLibrary(PvfPath.ResolveRelativeTo(chr.Path, effectPaths[effectIndex])))
+                    {
+                        recipeProblems.Add(label + " 第 " + i + " 段:特效读不到(预载表里有 " + effectPaths.Count + " 个)");
+                    }
+                }
+                if (st.EndFrame >= 0)
+                {
+                    recipeEndFrames++;
+                    AniFile? endMotion = assets.LoadAni(chr.CustomAnimationPath(st.MotionIndex) ?? "");
+                    if (endMotion == null || st.EndFrame >= endMotion.Frames.Length)
+                    {
+                        recipeProblems.Add(label + " 第 " + i + " 段:结束帧 " + st.EndFrame + " 超出动作的帧数 " + (endMotion == null ? 0 : endMotion.Frames.Length));
+                    }
                 }
                 if (st.RequiresSkill != 0 && catalog.Find(st.RequiresSkill) == null)
                 {
@@ -403,6 +417,23 @@ internal static class SkillCheck
                 {
                     recipeProblems.Add(label + " 对象 " + i + ":1 级的两个伤害列读出来不是正数");
                 }
+                if (o.AfterEffect >= 0)
+                {
+                    // 等特效播到关键帧标志:特效在预载表里、动画在库里、动画里真有这个标志的帧,而且这一段确实放这个特效
+                    recipeGates++;
+                    SkillStageSpec objectStage = recipe.Stages[Math.Min(o.Stage, recipe.Stages.Count - 1)];
+                    AniFile? gate = o.AfterEffect < effectPaths.Count
+                        ? assets.LoadAni(PvfPath.ResolveRelativeTo(chr.Path, effectPaths[o.AfterEffect]))
+                        : null;
+                    if (!objectStage.EffectIndices.Contains(o.AfterEffect))
+                    {
+                        recipeProblems.Add(label + " 对象 " + i + ":等的特效这一段并不放");
+                    }
+                    else if (gate == null || !gate.Frames.Any(fr => fr.TryGetKeyFrameFlag(out int flag) && flag == o.AfterEffectFlag))
+                    {
+                        recipeProblems.Add(label + " 对象 " + i + ":等的特效读不到,或动画里没有关键帧标志 " + o.AfterEffectFlag);
+                    }
+                }
             }
         }
         foreach (string line in recipeProblems)
@@ -410,8 +441,9 @@ internal static class SkillCheck
             Console.WriteLine("    " + line);
         }
         Report(recipeCount == SkillRecipes.Default.Count && recipeProblems.Count == 0,
-            "技能配方 " + recipeCount + " 个(共 " + recipeStages + " 段、放对象 " + recipeObjects + " 个、带蓄力 " + recipeHolds + " 段)在真实数据里都读得通"
-            + "(动作、攻击信息、特效、对象、蓄力、[static data]、[level info] 列;问题 " + recipeProblems.Count + " 条)");
+            "技能配方 " + recipeCount + " 个(共 " + recipeStages + " 段、放对象 " + recipeObjects + " 个、带蓄力 " + recipeHolds + " 段、等特效标志的对象 " + recipeGates
+            + " 个、定结束帧 " + recipeEndFrames + " 段)在真实数据里都读得通"
+            + "(动作、攻击信息、特效、对象、蓄力、结束帧、[static data]、[level info] 列;问题 " + recipeProblems.Count + " 条)");
         Console.WriteLine(bad == 0 ? "skill-check 全部通过" : "skill-check 有 " + bad + " 项失败");
         return bad == 0 ? 0 : 1;
     }

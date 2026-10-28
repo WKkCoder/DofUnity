@@ -48,6 +48,37 @@ public class AnimatedEffectTests
     }
 
     [Fact]
+    public void AnEffectKnowsWhenItsFlaggedKeyFrameStartsAndReportsItReachedFromThenOn()
+    {
+        // 合成动画(M44,证据 E-137):空帧 50、图 50、图 50(关键帧标志 7)、空帧 100 毫秒,共 250 毫秒;标志帧从 100 毫秒起
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        AnimatedEffect e = AnimatedEffect.Create(assets, AvatarFixture.WaveEffect2, 100, 50, 0, false);
+
+        Assert.Equal(250, e.DurationMs);
+        Assert.Equal(AvatarFixture.WaveEffect2FlagMs, e.KeyFrameStartMs(AvatarFixture.WaveEffect2Flag));
+        Assert.Equal(-1, e.KeyFrameStartMs(99));
+        Assert.False(e.ReachedKeyFrame(AvatarFixture.WaveEffect2Flag));
+        e.Advance(99);
+        Assert.False(e.ReachedKeyFrame(AvatarFixture.WaveEffect2Flag));
+        e.Advance(1);
+        Assert.True(e.ReachedKeyFrame(AvatarFixture.WaveEffect2Flag));
+        e.Advance(500);                                                  // 播完以后也一直为真
+        Assert.True(e.ReachedKeyFrame(AvatarFixture.WaveEffect2Flag));
+
+        // 动画里没有的标志:播完才算到(免得依赖它的状态卡住)
+        AnimatedEffect other = AnimatedEffect.Create(assets, AvatarFixture.WaveEffect2, 100, 50, 0, false);
+        other.Advance(249);
+        Assert.False(other.ReachedKeyFrame(99));
+        other.Advance(1);
+        Assert.True(other.ReachedKeyFrame(99));
+
+        // 没带标志的普通特效:任何标志都要播完才算到
+        AnimatedEffect plain = AnimatedEffect.Create(assets, AvatarFixture.HardAttackEffect1, 100, 50, 0, false);
+        Assert.Equal(-1, plain.KeyFrameStartMs(1));
+    }
+
+    [Fact]
     public void FacingLeftMirrorsAboutTheWorldXAndTheFramesOwnGraphicEffectDecidesTheBlend()
     {
         using var fx = new AvatarFixture();

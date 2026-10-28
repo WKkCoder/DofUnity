@@ -415,6 +415,7 @@ namespace Dnf.Render
         private double _skillSlideV0;
         private double _skillSlideAccel;
         private double _skillSlideV;
+        private double _skillEndMs = -1.0;
 
         // 受击:[damage motion 1]、[damage motion 2](没写就是 null,对应的受击不生效),当前播的那一段,硬直与击退的进度
         private AniFile _damage1;
@@ -1005,8 +1006,10 @@ namespace Dnf.Render
         /// 直接放一个技能:播 [etc motion] 第 <paramref name="etcIndex"/> 项,沿朝向以 <paramref name="slideSpeed"/>(像素/秒)起滑,
         /// 加速度 <paramref name="slideAccel"/>(像素/秒²,通常为负),速度减到 0 为止。读不到动画时返回 false,不改变状态。
         /// 只在地面站立、行走、奔跑时能放。<paramref name="holdFirstFrameMs"/> 不小于 0 时,动画第 0 帧的停留换成这个毫秒数(施法蓄力,证据 E-135)。
+        /// <paramref name="endFrame"/> 不小于 0 时,动画播到这一帧(从 0 数)的开头技能状态就结束、回到站立(证据 E-137:状态码在帧号到数时直接请求站立状态,
+        /// 不等动画播完);小于 0 就播到动画结束。
         /// </summary>
-        public bool BeginSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel, int holdFirstFrameMs = -1)
+        public bool BeginSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel, int holdFirstFrameMs = -1, int endFrame = -1)
         {
             if (!CanBeginSkill)
             {
@@ -1018,7 +1021,22 @@ namespace Dnf.Render
                 return false;
             }
             StartSkill(skillId, -1, 0, m, slideSpeed, slideAccel);
+            _skillEndMs = EndMsOf(m, endFrame);
             return true;
+        }
+
+        /// <summary>
+        /// 动画 <paramref name="m"/> 播到第 <paramref name="endFrame"/> 帧开头的毫秒数(按攻击速度折算);<paramref name="endFrame"/> 小于 0、没有动画、
+        /// 或动画根本没有这么多帧(帧号永远到不了)时返回 -1(播到结束)。
+        /// </summary>
+        private double EndMsOf(EtcMotion m, int endFrame)
+        {
+            if (m == null || endFrame < 0 || endFrame >= m.Timeline.FrameCount)
+            {
+                return -1.0;
+            }
+            double rate = AttackAnimationRate > 0.0 ? AttackAnimationRate : 1.0;
+            return Math.Ceiling(m.Timeline.StartMs(endFrame) / rate);
         }
 
         /// <summary>同一段动画换上"第 0 帧停留 <paramref name="holdFirstFrameMs"/> 毫秒"的时间线;不需要换(小于 0)或没有动画时原样返回。</summary>
@@ -1072,7 +1090,7 @@ namespace Dnf.Render
         /// 命中判定重新数帧、同一个目标又能被打一次),<see cref="SkillStage"/> 加 1。
         /// 不在放这个技能的主体阶段(没在放、放的是别的技能、还在起手阶段),或者读不到动画时返回 false,不改变状态。
         /// </summary>
-        public bool ChainSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel, int holdFirstFrameMs = -1)
+        public bool ChainSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel, int holdFirstFrameMs = -1, int endFrame = -1)
         {
             if (Motion != HeroMotion.Skill || SkillId != skillId || _skillWindupStage >= 0 || _skillMotion == null)
             {
@@ -1085,6 +1103,7 @@ namespace Dnf.Render
             }
             _skillMotion = m;
             _skillThen = m;
+            _skillEndMs = EndMsOf(m, endFrame);
             _skillSlideV0 = slideSpeed;
             _skillSlideAccel = slideAccel;
             _skillSlideV = slideSpeed;
@@ -1167,6 +1186,7 @@ namespace Dnf.Render
             _skillSlideV0 = slideSpeed;
             _skillSlideAccel = slideAccel;
             _skillSlideV = windupStage < 0 ? slideSpeed : 0.0;
+            _skillEndMs = -1.0;
             _motionMs = 0;
             _attackQueued = false;
             SwingNumber++;
@@ -1209,6 +1229,7 @@ namespace Dnf.Render
             _skillWindupStage = -1;
             _skillMotion = m;
             _skillThen = m;
+            _skillEndMs = -1.0;
             _skillSlideV0 = 0;
             _skillSlideAccel = 0;
             _skillSlideV = 0;
@@ -1245,6 +1266,10 @@ namespace Dnf.Render
             double from = _motionMs;
             _motionMs += deltaMs;
             double duration = EtcDurationMs(_skillMotion);
+            if (_skillEndMs >= 0.0 && _skillEndMs < duration)
+            {
+                duration = _skillEndMs;    // 状态码在帧号到数时直接请求站立状态,不等动画播完(证据 E-137)
+            }
             double t0 = Math.Min(from, duration);
             double t1 = Math.Min(_motionMs, duration);
             if (t1 > t0 && _skillSlideV0 != 0.0)

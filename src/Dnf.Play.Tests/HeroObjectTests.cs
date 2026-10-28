@@ -26,6 +26,26 @@ public class HeroObjectTests
         });
     }
 
+    /// <summary>多特效、等特效关键帧标志、定结束帧的配方(证据 E-137):蓄力同波系配方;对象放在第 <paramref name="objectFrame"/> 帧以后(再等特效标志)。</summary>
+    private static SkillRecipes EffectRecipes(int[] moreEffects = null, int endFrame = -1, int afterEffect = -1, int objectFrame = 0, int effectFrame = 0)
+    {
+        return new SkillRecipes(new[]
+        {
+            new SkillRecipe(AvatarFixture.WaveSkill,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 4, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: 0, effectFrame: effectFrame, castHoldFrames: 3,
+                        moreEffects: moreEffects, endFrame: endFrame),
+                },
+                slideSpeedIndex: 1, slideAccelIndex: 2, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: 1, slideFollowsHeldDirection: false,
+                objects: new[]
+                {
+                    new SkillObjectSpec(AvatarFixture.WaveObjectId, 0, objectFrame, damageRateColumn: 2, damageFixedColumn: 0, afterEffect: afterEffect,
+                        afterEffectFlag: AvatarFixture.WaveEffect2Flag),
+                }),
+        });
+    }
+
     private static HeroSkills Load(GameData data, int level = 2, SkillRecipes recipes = null)
     {
         CharacterDef chr = data.GetCharacter(0);
@@ -94,7 +114,7 @@ public class HeroObjectTests
         Assert.False(slot.StageHasOwnStrike(0));
         Assert.False(slot.StageHasOwnStrike(7));                     // 段号越界取最后一段
         Assert.Equal(0, slot.StageStrikes[0].SkillRatePercent);
-        Assert.Equal(new[] { AvatarFixture.WaveEffect }, slot.StageEffects.ToArray());   // 预载表里的特效
+        Assert.Equal(new[] { AvatarFixture.WaveEffect, AvatarFixture.WaveEffect2 }, slot.StageEffects.ToArray());   // 预载表里的特效(按登记顺序)
 
         // 没有放对象的配方:对象表为空
         Assert.Empty(Load(data, 2, Recipes(withObject: false)).SlotOf(SkillKeys.A).ObjectStrikes);
@@ -172,7 +192,7 @@ public class HeroObjectTests
         SkillRecipe wave = null;
         foreach (SkillRecipe r in SkillRecipes.Default.All)
         {
-            if (r.Objects.Count > 0)
+            if (r.Objects.Count > 0 && r.Stages[0].CastHoldFrames > 0)
             {
                 wave = r;
             }
@@ -183,6 +203,144 @@ public class HeroObjectTests
         Assert.True(HeroSkills.IsImplemented(wave.SkillId));
         Assert.False(wave.SlideFollowsHeldDirection);
         Assert.All(wave.Objects, o => Assert.True(o.Frame >= 1 && o.DamageRateColumn != o.DamageFixedColumn));
+    }
+
+    // ------------------------------------------------------------------ 多特效、特效标志与结束帧(M44,证据 E-137)
+
+    [Fact]
+    public void AStagesEffectListIsEveryIndexOnceWithTheFirstOneFirst()
+    {
+        var one = new SkillStageSpec(0, -1, -1, -1, effectIndex: 2, effectFrame: 0);
+        Assert.Equal(new[] { 2 }, one.EffectIndices.ToArray());
+        var none = new SkillStageSpec(0, -1, -1, -1, effectIndex: -1, effectFrame: 0);
+        Assert.Empty(none.EffectIndices);
+        var many = new SkillStageSpec(0, -1, -1, -1, effectIndex: 0, effectFrame: 0, moreEffects: new[] { 1, 2, 3 }, endFrame: 10);
+        Assert.Equal(new[] { 0, 1, 2, 3 }, many.EffectIndices.ToArray());
+        Assert.Equal(10, many.EndFrame);
+        Assert.Equal(-1, one.EndFrame);
+        var onlyMore = new SkillStageSpec(0, -1, -1, -1, effectIndex: -1, effectFrame: 0, moreEffects: new[] { 4 });
+        Assert.Equal(new[] { 4 }, onlyMore.EffectIndices.ToArray());     // 第一个下标是 -1 时只放"额外"的
+    }
+
+    [Fact]
+    public void TheStageEndFrameEndsTheSkillStateAtThatFramesStartInsteadOfTheAnimationsEnd()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        var data = new GameData(new PvfScriptSource(assets.Pvf));
+        // 施法动作:第 0 帧蓄力 150 毫秒,第 1 到 5 帧各 50 毫秒(第 3 帧从 250 毫秒起,整段 400 毫秒)
+        foreach ((int endFrame, int endsAt) in new[] { (3, 250), (1, 150), (5, 350), (6, 400), (99, 400), (-1, 400) })
+        {
+            HeroSkills skills = Load(data, 2, EffectRecipes(endFrame: endFrame));
+            TownHero hero = NewHero(assets);
+            Assert.Equal(SkillCastResult.Cast, skills.Cast(skills.SlotOf(SkillKeys.A), hero));
+            hero.Update(endsAt - 1, 0, 0);
+            Assert.Equal(HeroMotion.Skill, hero.Motion);
+            hero.Update(1, 0, 0);
+            Assert.Equal(HeroMotion.Rest, hero.Motion);                  // 帧号太大(动画没有这么多帧)等于不设结束帧
+        }
+    }
+
+    [Fact]
+    public void EveryEffectOfAStageIsPlacedWhenTheStageStartsAndAnEffectIndexOutsideThePreloadTableIsSkipped()
+    {
+        using var arena = new RoomCombatTests.Arena(new[] { (900, 100) }, hp: 1000, frozen: true, chr: AvatarFixture.ActionChrPath,
+            skillsFactory: data => Load(data, 2, EffectRecipes(moreEffects: new[] { 1, 5 })));
+        Attach(arena);
+        RoomCombatSession s = arena.Session;
+
+        Assert.Empty(s.Effects);
+        s.Update(10, 0, 0, false, false, SkillKeys.A);
+        Assert.Equal(new[] { AvatarFixture.WaveEffect, AvatarFixture.WaveEffect2 }, s.Effects.Select(e => e.Path).ToArray());   // 下标 5 预载表里没有:不放
+        Run(s, 60);
+        Assert.Equal(2, s.Effects.Count);                                // 同一次挥击不重复放
+    }
+
+    [Fact]
+    public void AnObjectThatWaitsForAnEffectsKeyFrameFlagAppearsOnlyWhenThatEffectReachesTheFlaggedFrame()
+    {
+        using var arena = new RoomCombatTests.Arena(new[] { (900, 100) }, hp: 1000, frozen: true, chr: AvatarFixture.ActionChrPath,
+            skillsFactory: data => Load(data, 2, EffectRecipes(moreEffects: new[] { 1 }, afterEffect: 1)));
+        Attach(arena);
+        RoomCombatSession s = arena.Session;
+
+        s.Update(10, 0, 0, false, false, SkillKeys.A);                   // 特效这一步放出来,播放时间从 0 起
+        Assert.Equal((2, 0), (s.Effects.Count, s.HeroObjectsSpawned));
+        Run(s, 90);                                                      // 特效已播 90 毫秒:标志帧(第 2 帧)从 100 毫秒起,还没到
+        Assert.Equal(0, s.HeroObjectsSpawned);
+        Run(s, 10);                                                      // 这一步开头特效已播 100 毫秒:到了
+        Assert.Equal(1, s.HeroObjectsSpawned);
+        Run(s, 100);
+        Assert.Equal(1, s.HeroObjectsSpawned);                           // 一次挥击只放一次
+    }
+
+    [Fact]
+    public void AnObjectDoesNotWaitWhenItsEffectIsNotPartOfTheStageOrWasNeverPlaced()
+    {
+        // 没有 afterEffect:第一步就放(对照)
+        using (var arena = new RoomCombatTests.Arena(new[] { (900, 100) }, hp: 1000, frozen: true, chr: AvatarFixture.ActionChrPath,
+            skillsFactory: data => Load(data, 2, EffectRecipes(moreEffects: new[] { 1 }, afterEffect: -1))))
+        {
+            Attach(arena);
+            arena.Session.Update(10, 0, 0, false, false, SkillKeys.A);
+            Assert.Equal(1, arena.Session.HeroObjectsSpawned);
+        }
+        // 等的特效这一段并不放(只放第 0 个):不拦着
+        using (var arena = new RoomCombatTests.Arena(new[] { (900, 100) }, hp: 1000, frozen: true, chr: AvatarFixture.ActionChrPath,
+            skillsFactory: data => Load(data, 2, EffectRecipes(afterEffect: 1))))
+        {
+            Attach(arena);
+            arena.Session.Update(10, 0, 0, false, false, SkillKeys.A);
+            Assert.Equal((1, 1), (arena.Session.Effects.Count, arena.Session.HeroObjectsSpawned));
+        }
+        // 这一段放,但预载表里没有这个特效(没放出来):退回只看帧号
+        using (var arena = new RoomCombatTests.Arena(new[] { (900, 100) }, hp: 1000, frozen: true, chr: AvatarFixture.ActionChrPath,
+            skillsFactory: data => Load(data, 2, EffectRecipes(moreEffects: new[] { 5 }, afterEffect: 5))))
+        {
+            Attach(arena);
+            arena.Session.Update(10, 0, 0, false, false, SkillKeys.A);
+            Assert.Equal((1, 1), (arena.Session.Effects.Count, arena.Session.HeroObjectsSpawned));
+        }
+    }
+
+    [Fact]
+    public void TheFrameGateStillAppliesBeforeTheEffectFlagIsLookedAt()
+    {
+        // 对象要第 3 帧(250 毫秒起)以后、并且特效到了标志才放:标志(100 毫秒)早到了,放的时间由帧号定
+        using var arena = new RoomCombatTests.Arena(new[] { (900, 100) }, hp: 1000, frozen: true, chr: AvatarFixture.ActionChrPath,
+            skillsFactory: data => Load(data, 2, EffectRecipes(moreEffects: new[] { 1 }, afterEffect: 1, objectFrame: 3)));
+        Attach(arena);
+        RoomCombatSession s = arena.Session;
+        s.Update(10, 0, 0, false, false, SkillKeys.A);
+        Run(s, 230);                                                     // 240 毫秒
+        Assert.Equal(0, s.HeroObjectsSpawned);
+        Run(s, 20);                                                      // 260 毫秒:第 3 帧已过
+        Assert.Equal(1, s.HeroObjectsSpawned);
+    }
+
+    [Fact]
+    public void TheDefaultTableHasAMultiEffectRecipeWithAnEndFrameAndAnObjectThatWaitsForAnEffectFlag()
+    {
+        SkillRecipe multi = null;
+        foreach (SkillRecipe r in SkillRecipes.Default.All)
+        {
+            if (r.Stages.Count == 1 && r.Stages[0].EffectIndices.Count >= 3)
+            {
+                multi = r;
+            }
+        }
+        Assert.NotNull(multi);
+        SkillStageSpec st = multi.Stages[0];
+        Assert.False(st.HasOwnStrike);                                   // 动作里没有攻击框:身体不打人
+        Assert.True(st.EndFrame > 0);
+        Assert.Equal(st.EffectIndices.Distinct().Count(), st.EffectIndices.Count);
+        Assert.Single(multi.Objects);
+        SkillObjectSpec o = multi.Objects[0];
+        Assert.Contains(o.AfterEffect, st.EffectIndices);
+        Assert.True(o.Frame >= 1 && o.ForwardX > 0 && o.OffsetZ > 0 && o.DamageRateColumn != o.DamageFixedColumn);
+        Assert.True(HeroSkills.IsImplemented(multi.SkillId));
+        Assert.False(multi.SlideFollowsHeldDirection);
+        Assert.True(multi.SlideSpeedIndex < 0);                          // 进入块把速度清零:不滑行
     }
 
     // ------------------------------------------------------------------ 房间里

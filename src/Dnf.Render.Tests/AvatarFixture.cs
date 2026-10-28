@@ -93,6 +93,14 @@ internal sealed class AvatarFixture : IDisposable
     public const int WaveSkill = 903;
     public const string WaveCastAni = "character/test/animation/wavecast.ani";
     public const string WaveEffect = "character/test/effect/animation/waveslash.ani";
+
+    /// <summary>
+    /// 波系技能预载的第二个特效(M44,证据 E-137):四帧——空帧 50、图 50、图 50(带关键帧标志 <see cref="WaveEffect2Flag"/>)、空帧 100 毫秒,
+    /// 标志帧从 <see cref="WaveEffect2FlagMs"/> 毫秒起。
+    /// </summary>
+    public const string WaveEffect2 = "character/test/effect/animation/waveslash2.ani";
+    public const int WaveEffect2Flag = 7;
+    public const int WaveEffect2FlagMs = 100;
     public const int WaveObjectId = 9301;
     public const string WaveObj = "passiveobject/hero/wave.obj";
     public const string WaveObjAni = "passiveobject/hero/animation/wave.ani";
@@ -753,7 +761,8 @@ internal sealed class AvatarFixture : IDisposable
                 + "\telse if (skillIndex == SKILL_CHAIN_TEST)\r\n\t{\r\n\t\t// comment\r\n"
                 + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain1.ani\");\r\n"
                 + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain2.ani\");\r\n\t}\r\n"
-                + "\telse if (skillIndex == SKILL_WAVE_TEST)\r\n\t{\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/WaveSlash.ani\");\r\n\t}\r\n}\r\n")),
+                + "\telse if (skillIndex == SKILL_WAVE_TEST)\r\n\t{\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/WaveSlash.ani\");\r\n"
+                + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/WaveSlash2.ani\");\r\n\t}\r\n}\r\n")),
             ("skill/test/passive.skl", NewScript().Tag("[type]").Str("[passive]").Build()),
             ("skill/test/hardattack.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Str("UP").Tag("[maximum level]").Int(10)
@@ -852,6 +861,7 @@ internal sealed class AvatarFixture : IDisposable
             (ChainEffect1, BuildEffectAni(false)),
             (ChainEffect2, BuildEffectAni(true)),
             (WaveEffect, BuildEffectAni(false)),
+            (WaveEffect2, BuildKeyedEffectAni()),
             (WaveCastAni, BuildBoxAni((0, 10000, null), (1, 50, null), (0, 50, null), (1, 50, null),
                 (0, 50, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }), (1, 50, null))),
             (ChainAAni, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }), (1, 100, null))),
@@ -1119,6 +1129,23 @@ internal sealed class AvatarFixture : IDisposable
             if (additive)
             {
                 f.Props.Add((11, new byte[] { 2, 0 }));
+            }
+            specs.Add(f);
+        }
+        return TestData.BuildAni(new[] { "Character/Test/Equipment/Avatar/skin/tt_body0000.img" }, new (ushort, byte[])[0], specs);
+    }
+
+    /// <summary>带关键帧标志的特效 .ani(见 <see cref="WaveEffect2"/>):空帧 50、图 50、图 50(标志 <see cref="WaveEffect2Flag"/>)、空帧 100 毫秒,不循环。</summary>
+    private static byte[] BuildKeyedEffectAni()
+    {
+        var specs = new List<TestData.AniFrameSpec>();
+        foreach ((int image, int frameIndex, int delay, int flag) in new[] { (-1, 0, 50, 0), (0, 0, 50, 0), (0, 1, 50, WaveEffect2Flag), (-1, 0, 100, 0) })
+        {
+            var f = new TestData.AniFrameSpec { ImageIndex = image, FrameIndex = frameIndex, X = -5, Y = -8 };
+            f.Props.Add((12, TestData.LE32(delay)));
+            if (flag != 0)
+            {
+                f.Props.Add((23, TestData.LE32(flag)));
             }
             specs.Add(f);
         }

@@ -1,7 +1,8 @@
 using System;
 using System.Collections.Generic;
 
-// 证据:E-129(客户端原生技能状态码的读码结果:技能起手函数、状态进入块、逐帧块里的连击判定);E-135(波系技能状态 0x18:施法蓄力与主角放出的被动对象)。
+// 证据:E-129(客户端原生技能状态码的读码结果:技能起手函数、状态进入块、逐帧块里的连击判定);E-135(波系技能状态 0x18:施法蓄力与主角放出的被动对象);
+// E-137(挂多个特效、对象等特效关键帧的那一类技能,状态 0x23:一进状态就挂四个特效、被动对象等特效动画的关键帧标志、帧号到数就结束状态)。
 namespace Dnf.Play
 {
     /// <summary>
@@ -12,7 +13,7 @@ namespace Dnf.Play
     public sealed class SkillStageSpec
     {
         public SkillStageSpec(int motionIndex, int attackInfoIndex, int damageRateColumn, int damageFixedColumn, int effectIndex, int effectFrame, int requiresSkill = 0,
-            int castHoldFrames = 0)
+            int castHoldFrames = 0, int[] moreEffects = null, int endFrame = -1)
         {
             MotionIndex = motionIndex;
             AttackInfoIndex = attackInfoIndex;
@@ -22,6 +23,17 @@ namespace Dnf.Play
             EffectFrame = effectFrame;
             RequiresSkill = requiresSkill;
             CastHoldFrames = castHoldFrames < 0 ? 0 : castHoldFrames;
+            var effects = new List<int>();
+            if (effectIndex >= 0)
+            {
+                effects.Add(effectIndex);
+            }
+            if (moreEffects != null)
+            {
+                effects.AddRange(moreEffects);
+            }
+            EffectIndices = effects.AsReadOnly();
+            EndFrame = endFrame;
         }
 
         /// <summary>[etc motion] 里的下标:这一段播的技能动作。</summary>
@@ -39,8 +51,20 @@ namespace Dnf.Play
         /// <summary>这一段放的特效在技能预载特效表(<see cref="Dnf.Game.SkillEffectTable"/>)里的下标;-1 表示没有特效。</summary>
         public int EffectIndex { get; }
 
+        /// <summary>
+        /// 这一段放的全部特效在预载表里的下标(<see cref="EffectIndex"/> 排第一,后面是额外要同时放的,证据 E-137:状态 0x23 一进状态就把四个预载特效各放进一个图层);
+        /// 没有特效为空表。
+        /// </summary>
+        public IReadOnlyList<int> EffectIndices { get; }
+
         /// <summary>特效在这一段的动画播到第几帧(从 0 数)时放;0 就是这一段一开始就放。</summary>
         public int EffectFrame { get; }
+
+        /// <summary>
+        /// 这一段动画播到第几帧(从 0 数)的开头状态就结束、主角回到站立(证据 E-137:状态码在帧号到数时直接请求站立状态,动画没播完也不管);
+        /// 负数表示播到动画结束。
+        /// </summary>
+        public int EndFrame { get; }
 
         /// <summary>进入这一段要求学会的技能(编号);0 表示没有要求。</summary>
         public int RequiresSkill { get; }
@@ -59,11 +83,12 @@ namespace Dnf.Play
     /// 技能放出的被动对象(证据 E-135):主角自己放出去、打怪物的老式对象(.obj 只有 [basic motion] 与 [attack info],没有 .act)。
     /// 编号是客户端状态码里写死的被动对象编号(passiveobject.lst 的键);动画播到 <see cref="Frame"/> 帧时放一次,放在主角前方 <see cref="ForwardX"/> 像素、
     /// 朝向与主角一致;伤害取 .skl [level info] 当前等级的 <see cref="DamageRateColumn"/>(百分比)与 <see cref="DamageFixedColumn"/>(固定值)两列,
-    /// 命中用对象自己 .obj 的 [attack info]。
+    /// 命中用对象自己 .obj 的 [attack info]。<see cref="Frame"/> 是下限;带 <see cref="AfterEffect"/> 时还要等那个特效的动画播到关键帧标志。
     /// </summary>
     public sealed class SkillObjectSpec
     {
-        public SkillObjectSpec(int objectId, int stage, int frame, int damageRateColumn, int damageFixedColumn, int forwardX = 0, int offsetY = 0, int offsetZ = 0)
+        public SkillObjectSpec(int objectId, int stage, int frame, int damageRateColumn, int damageFixedColumn, int forwardX = 0, int offsetY = 0, int offsetZ = 0,
+            int afterEffect = -1, int afterEffectFlag = 1)
         {
             ObjectId = objectId;
             Stage = stage;
@@ -73,6 +98,8 @@ namespace Dnf.Play
             ForwardX = forwardX;
             OffsetY = offsetY;
             OffsetZ = offsetZ;
+            AfterEffect = afterEffect;
+            AfterEffectFlag = afterEffectFlag;
         }
 
         /// <summary>被动对象编号(passiveobject.lst 的键)。</summary>
@@ -98,6 +125,15 @@ namespace Dnf.Play
 
         /// <summary>离地高度的偏移。</summary>
         public int OffsetZ { get; }
+
+        /// <summary>
+        /// 放这个对象还要等预载表里第几个特效的动画播到关键帧标志 <see cref="AfterEffectFlag"/>(证据 E-137:状态 0x23 的对象在第 1 个特效播到带标志 1 的帧时才放);
+        /// -1 表示只看 <see cref="Frame"/>。特效没放出来(读不到动画)时退回只看 <see cref="Frame"/>。
+        /// </summary>
+        public int AfterEffect { get; }
+
+        /// <summary>等到的关键帧标志编号。</summary>
+        public int AfterEffectFlag { get; }
     }
 
     /// <summary>
@@ -221,6 +257,25 @@ namespace Dnf.Play
                 objects: new[]
                 {
                     new SkillObjectSpec(objectId: 20001, stage: 0, frame: 3, damageRateColumn: 2, damageFixedColumn: 0),
+                }),
+
+            // 挂多个特效、对象等特效关键帧的技能(状态 0x23,证据 E-137):施放动作是 [etc motion] 第 25 项,这个动作里一个攻击框也没有(状态码设的攻击信息没有框可打),
+            // 所以主角的身体不打人,伤害全在放出的被动对象上。一进状态就把预载表的四个特效各放进一个图层(都跟着主角);
+            // 动画播到第 6 帧以后、第 1 个特效播到关键帧标志 1 的那一帧,放一个被动对象:主角前方 85 像素、离地 82,朝向同主角,
+            // 编号是基础职业的那个(状态码按职业判断二选一,另一个职业的没做),伤害取 [level info] 第 1 列(百分比)与第 7 列(固定值);
+            // 动画播到第 10 帧的开头状态就结束。不滑行(进入块把速度清零)。
+            // 没做:放到一半再按一次技能键的续放(状态里有一条"关键帧标志 1 之后再按键"的分支,含义没读透)、对象按 [level info] 其余列放大、被动技能加成与音效。
+            new SkillRecipe(64,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 25, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0,
+                        moreEffects: new[] { 1, 2, 3 }, endFrame: 10),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: 1, slideFollowsHeldDirection: false,
+                objects: new[]
+                {
+                    new SkillObjectSpec(objectId: 20028, stage: 0, frame: 6, damageRateColumn: 1, damageFixedColumn: 7, forwardX: 85, offsetY: 0, offsetZ: 82,
+                        afterEffect: 1, afterEffectFlag: 1),
                 }),
         });
     }

@@ -472,8 +472,8 @@ namespace Dnf.Play
             Slide(slot, hero, heldX, heldY, out double speed, out double accel);
             int hold = CastHoldMs(slot, spec, hero);
             return chain
-                ? hero.ChainSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold)
-                : hero.BeginSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold);
+                ? hero.ChainSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame)
+                : hero.BeginSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame);
         }
 
         /// <summary>

@@ -1801,6 +1801,8 @@ namespace Dnf.Play
         /// <summary>
         /// 配方技能的分段特效(证据 E-129):这一段(按 <see cref="TownHero.SwingNumber"/> 区分)的动画播到指定帧时放一次,
         /// 特效挂在主角身上跟着走(客户端是把它放进主角的动画图层,所以滑行时跟着动),朝向与主角一致。
+        /// 一段可以同时放好几个特效(<see cref="SkillStageSpec.EffectIndices"/>,证据 E-137);放出来的特效记在 <c>_stageEffectInstances</c> 里,
+        /// 被动对象要等某个特效播到关键帧标志时查它。
         /// </summary>
         private void SpawnStageEffect(TownHero hero)
         {
@@ -1816,24 +1818,32 @@ namespace Dnf.Play
                 return;
             }
             SkillStageSpec stage = recipe.Stages[Math.Min(hero.SkillStage, recipe.Stages.Count - 1)];
-            if (stage.EffectIndex < 0 || hero.CurrentFrame < stage.EffectFrame)
+            if (stage.EffectIndices.Count == 0 || hero.CurrentFrame < stage.EffectFrame)
             {
                 return;
             }
             _stageEffectSwing = hero.SwingNumber;
-            if (stage.EffectIndex >= slot.StageEffects.Count)
+            _stageEffectInstances.Clear();
+            foreach (int index in stage.EffectIndices)
             {
-                return;   // 技能预载表里没有这个下标(读不到脚本或脚本没写):这一段不放特效
-            }
-            AnimatedEffect effect = AnimatedEffect.Create(_assets, slot.StageEffects[stage.EffectIndex], hero.X, hero.Y, hero.Z, hero.FacingLeft);
-            if (effect != null)
-            {
-                _effects.Add(effect);
-                _followEffects.Add(effect);
+                if (index < 0 || index >= slot.StageEffects.Count)
+                {
+                    continue;   // 技能预载表里没有这个下标(读不到脚本或脚本没写):不放这个特效
+                }
+                AnimatedEffect effect = AnimatedEffect.Create(_assets, slot.StageEffects[index], hero.X, hero.Y, hero.Z, hero.FacingLeft);
+                if (effect != null)
+                {
+                    _effects.Add(effect);
+                    _followEffects.Add(effect);
+                    _stageEffectInstances[index] = effect;
+                }
             }
         }
 
         private long _stageEffectSwing = -1;
+
+        /// <summary>这一次挥击里放出来的分段特效,按预载表下标索引(被动对象等它们播到关键帧标志,证据 E-137)。</summary>
+        private readonly Dictionary<int, AnimatedEffect> _stageEffectInstances = new Dictionary<int, AnimatedEffect>();
 
         private void ResolveHits()
         {
@@ -1938,6 +1948,10 @@ namespace Dnf.Play
                 {
                     continue;
                 }
+                if (spec.AfterEffect >= 0 && !AfterEffectReady(recipe.Stages[stage], spec, hero))
+                {
+                    continue;
+                }
                 _objectsDone |= bit;
                 PassiveTemplate template = _acts?.Passive(spec.ObjectId);
                 if (template == null || _heroObjects.Count >= MaxHeroObjects || i >= slot.ObjectStrikes.Count)
@@ -1948,6 +1962,28 @@ namespace Dnf.Play
                 _heroObjects.Add(new HeroObject(template, slot.ObjectStrikes[i], slot.SkillId, x, hero.Y + spec.OffsetY, hero.Z + spec.OffsetZ, hero.FacingLeft));
                 HeroObjectsSpawned++;
             }
+        }
+
+        /// <summary>
+        /// 被动对象要等的那个特效到点了吗(证据 E-137):这一段的特效还没放出来就等;放出来了就看它播到关键帧标志没有;
+        /// 这一段根本不放这个特效、或者特效读不到动画(没放出来),就不拦着(只看帧号)。
+        /// </summary>
+        private bool AfterEffectReady(SkillStageSpec stage, SkillObjectSpec spec, TownHero hero)
+        {
+            bool stageHasEffect = false;
+            foreach (int index in stage.EffectIndices)
+            {
+                stageHasEffect |= index == spec.AfterEffect;
+            }
+            if (!stageHasEffect)
+            {
+                return true;
+            }
+            if (_stageEffectSwing != hero.SwingNumber)
+            {
+                return false;
+            }
+            return !_stageEffectInstances.TryGetValue(spec.AfterEffect, out AnimatedEffect gate) || gate.ReachedKeyFrame(spec.AfterEffectFlag);
         }
 
         /// <summary>主角的被动对象各走一步(按墙钟,不受主角的命中停顿冻结:对象有自己的时间)。</summary>

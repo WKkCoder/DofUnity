@@ -41,6 +41,32 @@ namespace Dnf.Render
 
         public bool Finished => !Persistent && AgeMs >= DurationMs;
 
+        /// <summary>
+        /// 动画里第一个带关键帧标志 <paramref name="flag"/>(<see cref="AniFrameProperty.KeyFrameFlag"/>)的帧,从动画开头数到它开始的毫秒数;没有这样的帧返回 -1。
+        /// 客户端在动画播到带标志的那一帧时记下标志、状态码用"当前标志等于某数"来判断(证据 E-137)。
+        /// </summary>
+        public long KeyFrameStartMs(int flag)
+        {
+            for (int i = 0; i < _ani.Frames.Length; i++)
+            {
+                if (_ani.Frames[i].TryGetKeyFrameFlag(out int f) && f == flag)
+                {
+                    return _timeline.StartMs(i);
+                }
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// 动画播到带关键帧标志 <paramref name="flag"/> 的那一帧了吗(到了就一直为真)。动画里没有这个标志时只有播完才算到(客户端那边这个条件永远不会成立,
+        /// 这里按"播完就放行"处理,免得依赖它的状态卡住)。
+        /// </summary>
+        public bool ReachedKeyFrame(int flag)
+        {
+            long start = KeyFrameStartMs(flag);
+            return start >= 0 ? AgeMs >= start : AgeMs >= DurationMs;
+        }
+
         private AnimatedEffect(AniFile ani, string path, double x, double y, double z, bool facingLeft, int sortBias, bool persistent, int layerRank)
         {
             _ani = ani;
