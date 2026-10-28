@@ -177,8 +177,9 @@ namespace Dnf.Game
     /// <item>持续伤害:<see cref="ActiveStatusRules.DealsDamage"/> 的种类把附加参数第 0 项(<see cref="ActiveStatusInstance.Extra"/>)当作整次的总量,
     /// 按 <see cref="ActiveStatusRules.TickIntervalMs"/> 摊开(<see cref="ActiveStatusFormulas.EvenTickDamage"/>;出血就是客户端公式,其余是推断),
     /// 每跳都不会超过服务端的允许值(<see cref="ActiveStatusFormulas.ServerAllowedDamage"/>)。</item>
-    /// <item>失去控制(<see cref="ControlLocked"/>)、减速(<see cref="MoveSlowPercent"/>)是给调用方读的;睡着的挨打就醒(<see cref="NotifyHit"/>,
-    /// 客户端受击处理里读到的"睡眠被打醒"分支,条件的细节没读通,这里按任何一击处理,推断);冰冻、眩晕、石化能乱按方向键摇脱(<see cref="Shake"/>,
+    /// <item>失去控制(<see cref="ControlLocked"/>)、减速(<see cref="MoveSlowPercent"/>)是给调用方读的;睡着的挨了有受击反应的一击就醒、
+    /// 冰冻被火属性的一击打碎(<see cref="NotifyHit"/>,客户端受击处理 0x008260f0 开头读到的两个解除,睡眠那条的另外两个条件没读通,推断);
+    /// 冰冻、眩晕、石化能乱按方向键摇脱(<see cref="Shake"/>,
     /// 服务端的 ACTIVESTATUS_SHAKABLE 表),每按一下缩短多少在客户端受保护区域里没读到,由调用方给占位值。</item>
     /// </list>
     /// </summary>
@@ -391,10 +392,27 @@ namespace Dnf.Game
             return any;
         }
 
-        /// <summary>挨了一击:睡眠被打醒(推断见类注释)。</summary>
-        public void NotifyHit()
+        /// <summary>摘掉某一种状态;身上有才返回 true。</summary>
+        public bool Remove(ActiveStatusKind kind)
         {
-            _active.RemoveAll(s => s.Kind == ActiveStatusKind.Sleep);
+            return _active.RemoveAll(s => s.Kind == kind) > 0;
+        }
+
+        /// <summary>
+        /// 挨了一击(客户端受击方处理 0x008260f0 开头的两个解除,E-136):<paramref name="fire"/> = 这一击的元素集合里有火(元素 0;判断函数 0x012b81d0 是对元素位集的查询)时
+        /// 打碎冰冻;<paramref name="hasReaction"/> = 这一击的 [damage reaction] 不是 none 时睡眠被打醒(这个分支另外还问受击方的对象类别与一个受保护变量,
+        /// 那两项没读通,这里不问,推断)。
+        /// </summary>
+        public void NotifyHit(bool hasReaction = true, bool fire = false)
+        {
+            if (hasReaction)
+            {
+                Remove(ActiveStatusKind.Sleep);
+            }
+            if (fire)
+            {
+                Remove(ActiveStatusKind.Freeze);
+            }
         }
 
         /// <summary>清空(死亡、复活、换房间)。</summary>

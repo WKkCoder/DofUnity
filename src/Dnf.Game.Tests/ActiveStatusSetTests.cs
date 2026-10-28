@@ -380,6 +380,46 @@ public sealed class ActiveStatusSetTests
     }
 
     [Fact]
+    public void ASleeperIsWokenOnlyByAHitWithAReactionAndFireBreaksTheIceOnly()
+    {
+        var s = Set();
+        s.Apply(E(ActiveStatusKind.Sleep, 5000), 0, 0.0);
+        s.Apply(E(ActiveStatusKind.Freeze, 5000), 0, 0.0);
+        s.NotifyHit(hasReaction: false, fire: false);                    // 没有受击反应、不是火:什么也不动
+        Assert.True(s.Has(ActiveStatusKind.Sleep));
+        Assert.True(s.Has(ActiveStatusKind.Freeze));
+        s.NotifyHit(hasReaction: false, fire: true);                     // 火:打碎冰冻,睡眠看的是有没有受击反应
+        Assert.True(s.Has(ActiveStatusKind.Sleep));
+        Assert.False(s.Has(ActiveStatusKind.Freeze));
+        s.NotifyHit(hasReaction: true, fire: false);
+        Assert.False(s.Has(ActiveStatusKind.Sleep));
+        Assert.Equal(0, s.Count);
+    }
+
+    [Fact]
+    public void FireDoesNotMeltStoneOrStun()
+    {
+        var s = Set();
+        s.Apply(E(ActiveStatusKind.Stone, 5000), 0, 0.0);
+        s.Apply(E(ActiveStatusKind.Stun, 5000), 0, 0.0);
+        s.NotifyHit(hasReaction: true, fire: true);
+        Assert.True(s.Has(ActiveStatusKind.Stone));
+        Assert.True(s.Has(ActiveStatusKind.Stun));
+    }
+
+    [Fact]
+    public void RemoveTakesOffOneKindAndSaysWhetherItWasThere()
+    {
+        var s = Set();
+        s.Apply(E(ActiveStatusKind.Stun, 5000), 0, 0.0);
+        s.Apply(E(ActiveStatusKind.Slow, 5000, extra: new[] { 30, 20 }), 0, 0.0);
+        Assert.True(s.Remove(ActiveStatusKind.Stun));
+        Assert.False(s.Remove(ActiveStatusKind.Stun));
+        Assert.False(s.Remove(ActiveStatusKind.Poison));
+        Assert.Equal(new[] { ActiveStatusKind.Slow }, s.Active.Select(a => a.Kind));
+    }
+
+    [Fact]
     public void SlowComesFromTheTwoExtrasAndIsClamped()
     {
         var none = Set();

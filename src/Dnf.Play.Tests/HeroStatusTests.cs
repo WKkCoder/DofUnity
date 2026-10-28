@@ -36,6 +36,13 @@ public class HeroStatusTests
             reactionDamage: true, hitWav: null, reactionNone: false, source: null, statuses: slots, humanActiveStatusRate: humanRate);
     }
 
+    // 带火属性、没有受击反应或倒地标志的一击
+    private static HeroStrikeInfo OtherStrike(bool fire = false, bool none = false, bool down = false)
+    {
+        return new HeroStrikeInfo(AvatarFixture.StrikerDamageBonus, 0, down, 0, 0, -1, false, -1f, 0, false, 0, false, 300, false, false,
+            reactionDamage: !down && !none, hitWav: null, reactionNone: none, source: null, statuses: null, humanActiveStatusRate: 1f, fireElement: fire);
+    }
+
     private static HeroKnockdownTests.Arena NewArena(float humanRate, int hpMax, int attackDelayMs, params ActiveStatusEntry[] slots)
     {
         var arena = new HeroKnockdownTests.Arena(StatusStrike(humanRate, slots), hpMax, null, attackDelayMs);
@@ -70,16 +77,19 @@ public class HeroStatusTests
         Assert.Equal(new[] { 300 }, info.Statuses[1].Extra);
         Assert.Equal(new[] { 40, 20 }, info.Statuses[2].Extra);
         Assert.Equal(0.5f, info.HumanActiveStatusRate);
+        Assert.True(info.FireElement);
 
         HeroStrikeInfo withSkill = info.WithSkillDamage(10, 20);                                  // 换技能伤害不丢状态
         Assert.Equal(3, withSkill.Statuses.Count);
         Assert.Equal(0.5f, withSkill.HumanActiveStatusRate);
+        Assert.True(withSkill.FireElement);
 
         // 没写状态的攻击信息、没有攻击信息、缺省的一击:没有槽,比率 1
         foreach (HeroStrikeInfo none in new[] { HeroStrikeInfo.Read(data, AvatarFixture.BlobStrikerAtk), HeroStrikeInfo.Read(data, null), default })
         {
             Assert.Empty(none.Statuses);
             Assert.Equal(1f, none.HumanActiveStatusRate);
+            Assert.False(none.FireElement);
         }
     }
 
@@ -144,7 +154,7 @@ public class HeroStatusTests
     [Fact]
     public void ALaterPlainHitDoesNotReleaseTheHold()
     {
-        using var arena = NewArena(1f, 1000, 500, E(ActiveStatusKind.Freeze, 5000));
+        using var arena = NewArena(1f, 1000, 500, E(ActiveStatusKind.Stun, 5000));
         RoomCombatSession s = arena.Session;
         arena.RunToFirstHit();
         arena.Monster.Strike = HeroKnockdownTests.Strike();             // 之后每 500 毫秒一击不带状态的普通受击
@@ -169,6 +179,71 @@ public class HeroStatusTests
         Assert.False(s.HeroStatus.Has(ActiveStatusKind.Sleep));
         Assert.Equal(1000 - 2 * Damage, s.Vitals.Hp);
         Assert.True(arena.RunUntil(() => hero.Motion == HeroMotion.Rest, 200));
+    }
+
+    // ---- 受击方规则:冰冻与石化不产生反应、火打碎冰冻、睡眠只被有反应的一击叫醒 ----
+
+    [Fact]
+    public void AFrozenOrStonedHeroIsNotFlinchedOrKnockedDownByLaterHits()
+    {
+        foreach (ActiveStatusKind kind in new[] { ActiveStatusKind.Freeze, ActiveStatusKind.Stone })
+        {
+            using var arena = NewArena(1f, 1000, 400, E(kind, 6000));
+            RoomCombatSession s = arena.Session;
+            arena.RunToFirstHit();
+            Assert.True(s.HeroStatus.Has(kind));
+            arena.Steps(50);                                                // 击退走完
+            double x = arena.Hero.X, y = arena.Hero.Y;
+
+            arena.Monster.Strike = OtherStrike(down: true);                 // 之后每 400 毫秒一击倒地攻击
+            Assert.True(arena.RunUntil(() => s.HeroHits >= 3, 400));
+            Assert.Equal(1000 - 3 * Damage, s.Vitals.Hp);                   // 照样扣血
+            Assert.False(arena.Down.Active);                                // 推不倒
+            Assert.Equal(HeroMotion.Hurt, arena.Hero.Motion);               // 还在原来的受击姿势里
+            Assert.Equal((x, y), (arena.Hero.X, arena.Hero.Y));             // 没有再被击退
+            Assert.True(s.HeroStatus.Has(kind));
+        }
+    }
+
+    [Fact]
+    public void AStunnedHeroIsStillKnockedDownByADownAttack()
+    {
+        using var arena = NewArena(1f, 1000, 400, E(ActiveStatusKind.Stun, 6000));
+        arena.RunToFirstHit();
+        arena.Monster.Strike = OtherStrike(down: true);
+        Assert.True(arena.RunUntil(() => arena.Down.Active, 400));         // 眩晕不在第 5 步的两种里:倒地攻击照样推倒
+    }
+
+    [Fact]
+    public void AFireHitBreaksTheIceButAPlainHitDoesNot()
+    {
+        using var arena = NewArena(1f, 1000, 400, E(ActiveStatusKind.Freeze, 6000));
+        RoomCombatSession s = arena.Session;
+        arena.RunToFirstHit();
+        arena.Monster.Strike = OtherStrike();                               // 普通一击:冰冻还在
+        Assert.True(arena.RunUntil(() => s.HeroHits >= 2, 400));
+        Assert.True(s.HeroStatus.Has(ActiveStatusKind.Freeze));
+
+        arena.Monster.Strike = OtherStrike(fire: true);                     // 火属性的一击:打碎
+        Assert.True(arena.RunUntil(() => s.HeroHits >= 3, 400));
+        Assert.False(s.HeroStatus.Has(ActiveStatusKind.Freeze));
+        arena.Monster.Strike = OtherStrike(none: true);
+        Assert.True(arena.RunUntil(() => arena.Hero.Motion == HeroMotion.Rest, 400));    // 没有留住了:放开受击姿势回到站立
+    }
+
+    [Fact]
+    public void ASleeperIsWokenOnlyByAHitWithAReaction()
+    {
+        using var arena = NewArena(1f, 1000, 400, E(ActiveStatusKind.Sleep, 8000));
+        RoomCombatSession s = arena.Session;
+        arena.RunToFirstHit();
+        Assert.True(s.HeroStatus.Has(ActiveStatusKind.Sleep));
+        arena.Monster.Strike = OtherStrike(fire: true, none: true);         // 火属性但没有受击反应:睡着的不醒(解除冰冻才看火)
+        Assert.True(arena.RunUntil(() => s.HeroHits >= 2, 400));
+        Assert.True(s.HeroStatus.Has(ActiveStatusKind.Sleep));
+        arena.Monster.Strike = OtherStrike();                               // 有反应的一击:叫醒
+        Assert.True(arena.RunUntil(() => s.HeroHits >= 3, 400));
+        Assert.False(s.HeroStatus.Has(ActiveStatusKind.Sleep));
     }
 
     // ---- 概率 ----

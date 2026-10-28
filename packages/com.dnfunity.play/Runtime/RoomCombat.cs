@@ -97,6 +97,11 @@ namespace Dnf.Play
         /// </summary>
         public float HumanActiveStatusRate => 1f + _humanStatusRateDelta;
 
+        /// <summary>
+        /// [elemental property] 里有火:受击方身上的冰冻被这一击打碎(客户端受击方处理 0x008260f0 开头对元素集合问元素 0,E-136)。
+        /// </summary>
+        public bool FireElement { get; }
+
         // 攻击信息读出来的伤害输入(没有 .atk 的手填写法为 null)
         private readonly HitInput _source;
 
@@ -117,8 +122,10 @@ namespace Dnf.Play
         public HeroStrikeInfo(int damageBonus, int pushAside, bool knockDown, int skillRatePercent = 0, int skillFixed = 0,
             int hitValue = -1, bool useWeaponHitDelayRate = false, float hitScale = -1f, int knockBackType = 0, bool noKnockBack = false,
             int forceHitStunMs = 0, bool magical = false, int liftUp = 0, bool bounce = false, bool ignoreWeight = false, bool reactionDamage = false,
-            string hitWav = null, bool reactionNone = false, HitInput source = null, ActiveStatusEntry[] statuses = null, float humanActiveStatusRate = 1f)
+            string hitWav = null, bool reactionNone = false, HitInput source = null, ActiveStatusEntry[] statuses = null, float humanActiveStatusRate = 1f,
+            bool fireElement = false)
         {
+            FireElement = fireElement;
             _source = source;
             _statuses = statuses != null && statuses.Length > 0 ? statuses : null;
             _humanStatusRateDelta = humanActiveStatusRate - 1f;
@@ -153,7 +160,8 @@ namespace Dnf.Play
                     info.HitScale, info.KnockBackType, info.HitType == HitKind.Burn, info.ForceHitStunTime, info.AttackType == AttackKind.Magic,
                     info.LiftUp, info.Bounce != 0, info.IgnoreWeight != 0,
                     info.Reaction == DamageReaction.Damage || info.Reaction == DamageReaction.DamageExceptHuman, info.HitWav,
-                    info.Reaction == DamageReaction.None, HitInput.From(info), StatusSlots(info), info.HumanActiveStatusRate);
+                    info.Reaction == DamageReaction.None, HitInput.From(info), StatusSlots(info), info.HumanActiveStatusRate,
+                    info.Elements.Contains(ElementKind.Fire));
         }
 
         /// <summary>攻击信息里真正写了的异常状态槽(种类不是"没有");一个也没有返回 null。</summary>
@@ -175,7 +183,7 @@ namespace Dnf.Play
         {
             return new HeroStrikeInfo(DamageBonus, PushAside, KnockDown, ratePercent, fixedDamage, HitValue, UseWeaponHitDelayRate,
                 HitScale, KnockBackType, NoKnockBack, ForceHitStunMs, Magical, LiftUp, Bounce, IgnoreWeight, ReactionDamage, HitWav, ReactionNone, _source,
-                _statuses, HumanActiveStatusRate);
+                _statuses, HumanActiveStatusRate, FireElement);
         }
     }
 
@@ -2994,6 +3002,7 @@ namespace Dnf.Play
         /// 没有倒地动作就停在受击姿势上(占位的死亡);没死:none → 不产生反应;倒地类的攻击(2),或普通受击(1、3)打中腾空的主角、已在倒地里的主角 →
         /// 倒地分支(有倒地动作才走,没有退到受击分支);其余走受击分支(交替放 [damage motion 1]、[damage motion 2],硬直与击退按 E-080 的公式)。
         /// 3([damage except human])按 1 处理:决策函数对"是不是人类"的那一问没有读通(推断)。
+        /// 没死而身上有冰冻或石化(第 5 步):不产生反应,受击硬直与击退都不再来,倒地攻击也推不倒(E-079、E-136)。
         /// </summary>
         private void ReactHero(HeroStrikeInfo info, bool attackerFacingLeft, TownHero hero, bool killed)
         {
@@ -3029,6 +3038,10 @@ namespace Dnf.Play
             {
                 return;
             }
+            if (_heroStatus != null && (_heroStatus.Has(ActiveStatusKind.Freeze) || _heroStatus.Has(ActiveStatusKind.Stone)))
+            {
+                return;                                   // 决策函数第 5 步:身上有冰冻或石化时不产生反应(E-079;状态接上是 E-136),已死的在上面第 3 步先处理
+            }
             if (_heroDown.Available && (info.KnockDown || (info.ReactionDamage && (_heroDown.Active || hero.Z > 0))))
             {
                 _heroDown.Begin(DownInput(info), info.PushAside, attackerFacingLeft, false);
@@ -3038,8 +3051,8 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 命中主角的这一击带的异常状态(M43,证据 E-136):先让睡着的主角被打醒(<see cref="ActiveStatusSet.NotifyHit"/>),
-        /// 被打死就清空,否则每个槽各掷一次概率(<see cref="ActiveStatusSet.Apply"/>:概率与受害者等级、状态等级之差);
+        /// 命中主角的这一击带的异常状态(M43,证据 E-136):先按这一击解除睡眠与冰冻(<see cref="ActiveStatusSet.NotifyHit"/>:有受击反应的一击叫醒睡着的,
+        /// 带火属性的一击打碎冰冻),被打死就清空,否则每个槽各掷一次概率(<see cref="ActiveStatusSet.Apply"/>:概率与受害者等级、状态等级之差);
         /// 挂上(或刷新)了失去控制的状态,主角留在受击姿势里直到它结束(<see cref="TownHero.HoldHurt"/>)。
         /// </summary>
         private void ApplyHeroStatuses(HeroStrikeInfo info, bool attackerFacingLeft, TownHero hero, bool killed)
@@ -3048,7 +3061,7 @@ namespace Dnf.Play
             {
                 return;
             }
-            _heroStatus.NotifyHit();
+            _heroStatus.NotifyHit(!info.ReactionNone, info.FireElement);
             if (killed)
             {
                 _heroStatus.Clear();
