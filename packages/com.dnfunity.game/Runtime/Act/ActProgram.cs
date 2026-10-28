@@ -287,6 +287,9 @@ namespace Dnf.Game.Act
 
         /// <summary>[IS IN POS] x y z:逐对象过滤,X、Y、Z 三个整数坐标全等(E-132)。</summary>
         IsInPos,
+
+        /// <summary>[IS CHILD] n:逐对象过滤,n 非 0 留下"创建者(召唤者)就是拥有者"的,n 为 0 留下不是的(E-134)。</summary>
+        IsChild,
     }
 
     /// <summary>触发器里的一条记录(条件、事件或 [DO BEHAVIOR])。字段按种类取用。</summary>
@@ -407,6 +410,29 @@ namespace Dnf.Game.Act
 
         /// <summary>[SHAKING] 强度 毫秒:屏幕震动,不分目标,由行为拥有者所在的场景执行(E-133)。</summary>
         Shake,
+
+        /// <summary>[SUMMON MONSTER]:让每个目标召唤一只怪物,由房间场景造出来(E-134)。</summary>
+        Summon,
+
+        /// <summary>[SET HP] 值:把每个活着的目标的生命设成这个值,小于等于 0 就是杀死(E-134)。</summary>
+        SetHp,
+
+        /// <summary>
+        /// [RESTORE] [HP] 数量 [%]:给每个活着的目标加(负数就是减)生命,带 [%] 时数量是目标最大生命的百分之几(客户端执行块 0x010b8c89;E-134)。
+        /// [MP] 这一版没有对应的量,当空操作。
+        /// </summary>
+        Restore,
+    }
+
+    /// <summary>
+    /// [SUMMON MONSTER] 的出场效果(客户端执行块里的"模式"整数,缺省 2):没写效果标签是魔法阵,[NO EFFECT] 直接出现,[JUMP OUT] 从召唤点跳出来(E-134)。
+    /// 这一版只记下,三种都是原地直接出现。
+    /// </summary>
+    public enum ActSummonEffect : byte
+    {
+        None = 0,
+        JumpOut = 1,
+        MagicCircle = 2,
     }
 
     /// <summary>[SET DAMAGE BOX] 的三档:开、关、什么都不做。没写档位的行写成关(客户端的"其它档位只关盒"分支)。</summary>
@@ -554,6 +580,38 @@ namespace Dnf.Game.Act
 
         /// <summary>[USE EFFECT]:传送特效(创建记录 0x24f9);这一版不放特效。</summary>
         public bool UseEffect { get; internal set; }
+
+        // ---- [SUMMON MONSTER](Index、Level、PosX/Y/Z 与 UseMyDirection、UseMapPos、UseMyBasePos、UseObjectZ、NotUseDirection 沿用上面的字段)
+
+        /// <summary>[USE TARGET TEAM]:召唤物的队伍取被作用对象的(缺省取拥有者的,没有拥有者是 200)。这一版没有队伍概念,只记下(E-134)。</summary>
+        public bool UseTargetTeam { get; internal set; }
+
+        /// <summary>[TEAM] n:指定队伍;没写是 -1。只记下。</summary>
+        public int Team { get; internal set; } = -1;
+
+        /// <summary>
+        /// [SUMMON TIME] 毫秒:召唤物的存活时间,0(没写)是不限。语义是推断:客户端只是把它放进创建请求,请求由服务端处理,服务端那一半没读(E-134)。
+        /// </summary>
+        public int SummonTimeMs { get; internal set; }
+
+        /// <summary>出场效果:没写效果标签是魔法阵。</summary>
+        public ActSummonEffect SummonEffect { get; internal set; } = ActSummonEffect.MagicCircle;
+
+        // ---- [SET HP]
+
+        /// <summary>目标生命值(值表达式,每次执行取一次,对所有目标相同)。</summary>
+        public ActValue Hp { get; internal set; }
+
+        // ---- [RESTORE]
+
+        /// <summary>数量(值表达式,每次执行取一次,可以是负数)。</summary>
+        public ActValue RestoreAmount { get; internal set; }
+
+        /// <summary>恢复的是魔法值([MP]):没有对应的量,什么都不做;false 是生命([HP])。</summary>
+        public bool RestoreMp { get; internal set; }
+
+        /// <summary>数量按百分比([%],客户端的符号码 7):目标最大生命 × 数量 / 100,向零截断。</summary>
+        public bool RestorePercent { get; internal set; }
 
         public override string ToString() => Kind + " " + Tag;
     }

@@ -70,6 +70,17 @@ namespace Dnf.Game.Act
         /// 返回是否真的摆过去了。
         /// </summary>
         bool Teleport(float x, float y, float z);
+
+        /// <summary>
+        /// 等级([SUMMON MONSTER] 的 [LEVEL] 取它:怪物与主角各自的等级,被动对象取创建它的怪物的;没有等级概念的返回 0,E-134)。
+        /// </summary>
+        int Level { get; }
+
+        /// <summary>
+        /// [SET HP]:把生命设成 <paramref name="hp"/>(E-134)。小于等于 0 是杀死;对象自己决定怎么处理超过上限的值、
+        /// 没有生命的对象(被动对象、主角这一版)怎么回应。
+        /// </summary>
+        void SetHp(int hp);
     }
 
     /// <summary>运行器对世界的请求:随机数、生成被动对象、解析选择器。</summary>
@@ -92,6 +103,13 @@ namespace Dnf.Game.Act
 
         /// <summary>屏幕震动:[SHAKING] 的强度(像素)与持续毫秒(E-133)。整个画面一份,不分目标。</summary>
         void Shake(int strength, int durationMs);
+
+        /// <summary>
+        /// 召唤怪物([SUMMON MONSTER],E-134):<paramref name="master"/> 是被作用的对象(召唤者,新怪物的创建者),<paramref name="index"/> 是怪物编号,
+        /// <paramref name="level"/> 是已经按规则算好的等级(至少 1;难度表的行数上限由场景来夹),(x, y, z) 是世界坐标,<paramref name="lifetimeMs"/> 大于 0 时是存活毫秒。
+        /// 场景可以拒绝(数据缺失、同时存活的召唤物太多、落点找不到)。
+        /// </summary>
+        void SummonMonster(IActEntity master, int index, int level, float x, float y, float z, bool facingLeft, int lifetimeMs);
     }
 
     /// <summary>
@@ -120,6 +138,7 @@ namespace Dnf.Game.Act
         private readonly IActHost _host;
         private readonly Func<int, int> _rand;
         private readonly bool[] _enabled;
+        private readonly bool _enabledShared;
         private readonly int[] _fired;
         private readonly bool[] _oneShot;
         private readonly float[] _clock;
@@ -137,14 +156,22 @@ namespace Dnf.Game.Act
         private IActEntity _victim;
         private IActEntity _attacker;
 
-        public ActRunner(ActProgram program, IActEntity owner, IActHost host)
+        /// <summary>
+        /// <paramref name="sharedEnabled"/>:触发器开关的持久副本(长度要等于触发器个数,用 <see cref="NewEnabledState"/> 建)。
+        /// 客户端里 [TRIGGER] n [ON]/[OFF] 改的是这一招的触发器条目上的开关字节(+0x1c),那个条目属于怪物、跨出招保留,
+        /// [ENABLE] 的初值只在载入时写一次,出招开始时的复位函数(0x010a3fe0)只清单次位与计数,不碰开关(E-134);
+        /// 所以怪物把同一份数组交给它每一次出招的运行器,开关就跨出招保留,.ai 的 is attack action enable() 也读同一份。
+        /// 不给(或长度对不上)时运行器自己一份,每次 <see cref="Begin"/> 回到脚本里写的初值(被动对象走这条:它们每次都是新建的)。
+        /// </summary>
+        public ActRunner(ActProgram program, IActEntity owner, IActHost host, bool[] sharedEnabled = null)
         {
             _program = program ?? throw new ArgumentNullException(nameof(program));
             _owner = owner ?? throw new ArgumentNullException(nameof(owner));
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _rand = host.Random;
             int n = program.Triggers.Count;
-            _enabled = new bool[n];
+            _enabledShared = sharedEnabled != null && sharedEnabled.Length == n;
+            _enabled = _enabledShared ? sharedEnabled : new bool[n];
             _fired = new int[n];
             _oneShot = new bool[n];
             _clock = new float[n];
@@ -201,12 +228,33 @@ namespace Dnf.Game.Act
             return kind == ActRecordKind.OnSetAction || kind == ActRecordKind.OnAttackSuccess || kind == ActRecordKind.OnDamage || kind == ActRecordKind.OnOtherEvent;
         }
 
-        /// <summary>动作(重新)开始:开关回到脚本里写的初值,次数、单次位、计时清零。</summary>
+        /// <summary>一份触发器开关数组,每个触发器取脚本里 [ENABLE] 写的初值(没写算开);交给 <see cref="ActRunner(ActProgram, IActEntity, IActHost, bool[])"/> 当持久开关。</summary>
+        public static bool[] NewEnabledState(ActProgram program)
+        {
+            if (program == null)
+            {
+                throw new ArgumentNullException(nameof(program));
+            }
+            var state = new bool[program.Triggers.Count];
+            for (int i = 0; i < state.Length; i++)
+            {
+                state[i] = program.Triggers[i].Enabled;
+            }
+            return state;
+        }
+
+        /// <summary>
+        /// 动作(重新)开始:次数、单次位、计时清零;开关回到脚本里写的初值——除非开关是调用方给的持久副本(见构造函数),那种不动,
+        /// 留着上一次出招里 [TRIGGER] 行为改过的样子。
+        /// </summary>
         public void Begin()
         {
             for (int i = 0; i < _enabled.Length; i++)
             {
-                _enabled[i] = _program.Triggers[i].Enabled;
+                if (!_enabledShared)
+                {
+                    _enabled[i] = _program.Triggers[i].Enabled;
+                }
                 _fired[i] = 0;
                 _oneShot[i] = false;
                 _clock[i] = 0f;
@@ -373,6 +421,7 @@ namespace Dnf.Game.Act
                     case ActRecordKind.IsRight:
                     case ActRecordKind.FrontSide:
                     case ActRecordKind.IsInPos:
+                    case ActRecordKind.IsChild:
                         FilterSet(rec);
                         break;
                     case ActRecordKind.IsDirectionLeft:
@@ -495,6 +544,12 @@ namespace Dnf.Game.Act
                     return e.IsAlive && (e.X <= _owner.X ? !e.FacingLeft : e.FacingLeft);
                 case ActRecordKind.IsInPos:
                     return (int)e.X == rec.Ints[0] && (int)e.Y == rec.Ints[1] && (int)e.Z == rec.Ints[2];
+                case ActRecordKind.IsChild:
+                {
+                    // 客户端 0x010d8bbb 起的块:目标的父对象(虚槽 0x1f4)与拥有者比较;参数非 0 留下相等的,0 留下不相等的(E-134)
+                    bool child = ReferenceEquals(e.Master, _owner);
+                    return rec.Number != 0 ? child : !child;
+                }
                 default:
                     return true;
             }
@@ -792,6 +847,25 @@ namespace Dnf.Game.Act
                             Teleport(b, t);
                         }
                         break;
+                    case ActBehaviorKind.Summon:
+                        Summon(b, targets);
+                        break;
+                    case ActBehaviorKind.SetHp:
+                    {
+                        // 值先取一次(客户端 0x010b95c9:hp 在目标循环之前求值),再对每个活着的目标设置(E-134)
+                        int hp = b.Hp.Eval(_rand);
+                        foreach (IActEntity t in targets)
+                        {
+                            if (t.IsAlive)
+                            {
+                                t.SetHp(hp);
+                            }
+                        }
+                        break;
+                    }
+                    case ActBehaviorKind.Restore:
+                        Restore(b, targets);
+                        break;
                     default:
                         break;     // 没做的行为按空操作处理(ActBehaviorGroup.UnsupportedTags 供审计)
                 }
@@ -799,6 +873,35 @@ namespace Dnf.Game.Act
                 {
                     return;
                 }
+            }
+        }
+
+        /// <summary>
+        /// [RESTORE] [HP]:数量先取一次(客户端 0x010b8c89 起的块里 valueOf 在目标循环之前),按百分比时每个目标算 数量 × 最大生命 / 100(有符号、向零截断,
+        /// 最大生命取目标自己的),再给每个活着的目标加上;客户端只发"恢复请求"、由服务端真正改生命(那一半没读),
+        /// 所以结果怎么夹是推断:上不超过最大生命,降到 0 或以下就是死(与 [SET HP] 同一条路)。没有最大生命的对象(被动对象等)不动;[MP] 没有对应的量,空操作。
+        /// </summary>
+        private void Restore(ActBehavior b, List<IActEntity> targets)
+        {
+            int amount = b.RestoreAmount.Eval(_rand);
+            if (b.RestoreMp)
+            {
+                return;
+            }
+            foreach (IActEntity t in targets)
+            {
+                int max = t.HpMax;
+                if (!t.IsAlive || max <= 0)
+                {
+                    continue;
+                }
+                int delta = b.RestorePercent ? (int)((long)amount * max / 100) : amount;
+                if (delta == 0)
+                {
+                    continue;
+                }
+                long hp = (long)t.Hp + delta;
+                t.SetHp((int)Math.Max(0L, Math.Min(max, hp)));
             }
         }
 
@@ -851,6 +954,59 @@ namespace Dnf.Game.Act
             float y = b.UseMapPos ? py : baseObject.Y + py;
             float z = b.UseObjectZ ? baseObject.Z + pz : pz;
             _host.SpawnPassive(_owner, index, level, x, y, z, left);
+        }
+
+        /// <summary>
+        /// [SUMMON MONSTER](客户端执行块 0x010b683d 起,E-134)。编号、等级、三个偏移在目标循环之前各取一次(所有目标共用同一组随机数);
+        /// 每个活着的目标:
+        /// 等级 = [LEVEL](-1 取目标的等级)加上目标的等级(目标是被动对象时不加),至少 1;
+        /// 朝向取目标自己的,[USE MY DIRECTION] 取拥有者的,否则 [NOT USE OBJECT DIRECTION] 固定朝右(客户端的朝向 1);
+        /// 位置:[USE MAP POS] 三个值原样是绝对坐标;否则以目标为基准([USE MY BASEPOS] 以拥有者为基准),X 偏移在朝左时取反,Y 直接加,
+        /// Z 是偏移本身、[USE OBJECT ZPOS] 时再加基准的高度。创建请求交给场景(客户端是发一个创建请求包,由服务端造怪)。
+        /// </summary>
+        private void Summon(ActBehavior b, List<IActEntity> targets)
+        {
+            int index = b.Index.Eval(_rand);
+            int level = b.Level != null ? b.Level.Eval(_rand) : 0;
+            int ox = b.PosX.Eval(_rand);
+            int oy = b.PosY.Eval(_rand);
+            int oz = b.PosZ.Eval(_rand);
+            foreach (IActEntity t in targets)
+            {
+                if (!t.IsAlive)
+                {
+                    continue;
+                }
+                int lv = level == -1 ? t.Level : level;
+                if (t.Kind != ActEntityKind.Passive)
+                {
+                    lv += t.Level;
+                }
+                if (lv < 1)
+                {
+                    lv = 1;
+                }
+                bool left = t.FacingLeft;
+                if (b.UseMyDirection)
+                {
+                    left = _owner.FacingLeft;
+                }
+                else if (b.NotUseDirection)
+                {
+                    left = false;
+                }
+                float x = ox;
+                float y = oy;
+                float z = oz;
+                if (!b.UseMapPos)
+                {
+                    IActEntity baseObject = b.UseMyBasePos ? _owner : t;
+                    x = baseObject.X + (left ? -ox : ox);
+                    y = baseObject.Y + oy;
+                    z = (b.UseObjectZ ? baseObject.Z : 0f) + oz;
+                }
+                _host.SummonMonster(t, index, lv, x, y, z, left, b.SummonTimeMs);
+            }
         }
 
         /// <summary>

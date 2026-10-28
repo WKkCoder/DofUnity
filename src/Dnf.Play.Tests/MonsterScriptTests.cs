@@ -180,6 +180,28 @@ public sealed class MonsterScriptTests
     }
 
     [Fact]
+    public void AttackActionEnableReadsTheLiveSwitchFirstAndFallsBackToTheInitialFlag()
+    {
+        // 动作脚本:第 0 招的第 1 个触发器开着就出第 0 招,否则不出(首领"每个血量段只用一次"的写法,E-134)
+        AiScript action = Script("[think]", "[void]", "is attack action enable()", 0, 1, "[true]", "[return]", 0, "[false]", "[return]", -1, "[/think]");
+        MonsterScript s = Make(action, attacks: 1);
+        MonsterAiView view = View();
+
+        Assert.Equal(-1, s.DecideAttack(view));                    // 什么都没设:全当关着
+        s.TriggerEnabled = (a, t) => a == 0 && t == 1;
+        Assert.Equal(0, s.DecideAttack(view));                     // .act 里 [ENABLE] 的初值
+
+        s.LiveTrigger = (a, t) => false;                           // 跑着的开关被脚本关了:盖过初值
+        Assert.Equal(-1, s.DecideAttack(view));
+        s.LiveTrigger = (a, t) => true;                            // 开回去
+        Assert.Equal(0, s.DecideAttack(view));
+        s.LiveTrigger = (a, t) => null;                            // 这一招没有触发器程序:交回初值
+        Assert.Equal(0, s.DecideAttack(view));
+        s.TriggerEnabled = (a, t) => false;
+        Assert.Equal(-1, s.DecideAttack(view));
+    }
+
+    [Fact]
     public void TheScriptReadsTheHealthPercentAndTheTargetDistanceFromTheView()
     {
         AiScript lowHp = Script("[think]", "[hp]", "%<=", 50, "[true]", "[return]", 1, "[false]", "[return]", 0, "[/think]");

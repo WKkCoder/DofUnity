@@ -168,6 +168,7 @@ namespace Dnf.Play
         // .act 触发器与行为(证据 E-130):每一招的 .act 程序(与 Attacks 同下标,没有触发器的为 null)、这一招的运行器(每次出招新建,
         // 触发器里再切招时旧运行器还在执行,不能复用)、脚本给的速度与攻击框开关;出招阶段每一步由 TickActs 推进
         private ActProgram[] _actPrograms;
+        private bool[][] _actEnabled;            // 每一招一份触发器开关(跨出招保留,E-134)
         private ActRunner _actRunner;
         private IActHost _actHost;
         private ActBody _actBody;
@@ -179,6 +180,9 @@ namespace Dnf.Play
         private bool _attackRectOff;
         private int _motionVersion;
         private int _deferredAttack = -1;
+
+        // 脚本召唤(证据 E-134)
+        private double _lifeLeftMs;
 
         // 受击盒开关、浮空悬停与瞬移(证据 E-133)
         private bool _damageBoxOff;
@@ -343,6 +347,7 @@ namespace Dnf.Play
         public void SetScript(MonsterScript script)
         {
             _script = script;
+            BindScriptTriggers();
             _aware = false;
             _hasDestination = false;
         }
@@ -410,18 +415,55 @@ namespace Dnf.Play
         {
             _actRunner = null;
             _actPrograms = null;
+            _actEnabled = null;
             _actHost = host;
-            if (programs == null || host == null)
+            if (programs != null && host != null)
             {
-                return;
-            }
-            foreach (ActProgram p in programs)
-            {
-                if (p != null && p.Triggers.Count > 0)
+                foreach (ActProgram p in programs)
                 {
-                    _actPrograms = programs;
-                    return;
+                    if (p != null && p.Triggers.Count > 0)
+                    {
+                        _actPrograms = programs;
+                        break;
+                    }
                 }
+            }
+            if (_actPrograms != null)
+            {
+                // 每一招的触发器开关从脚本里的 [ENABLE] 起步,之后只被 [TRIGGER] 行为改(客户端的开关字节属于怪物的招式条目,不随出招复位,E-134)
+                _actEnabled = new bool[_actPrograms.Length][];
+                for (int i = 0; i < _actPrograms.Length; i++)
+                {
+                    if (_actPrograms[i] != null && _actPrograms[i].Triggers.Count > 0)
+                    {
+                        _actEnabled[i] = ActRunner.NewEnabledState(_actPrograms[i]);
+                    }
+                }
+            }
+            BindScriptTriggers();
+        }
+
+        /// <summary>第 <paramref name="attack"/> 招的第 <paramref name="trigger"/> 个触发器现在开着吗;这一招没有装触发器程序(或下标越界)返回 null。测试与 .ai 的 is attack action enable() 用。</summary>
+        public bool? ActTriggerState(int attack, int trigger)
+        {
+            if (_actEnabled == null || (uint)attack >= (uint)_actEnabled.Length)
+            {
+                return null;
+            }
+            bool[] state = _actEnabled[attack];
+            if (state == null || (uint)trigger >= (uint)state.Length)
+            {
+                return null;
+            }
+            return state[trigger];
+        }
+
+        /// <summary>把怪物跑着的开关接给 .ai 脚本;没装触发器程序时撤掉,脚本回到 .act 里 [ENABLE] 的初值。</summary>
+        private void BindScriptTriggers()
+        {
+            if (_script != null)
+            {
+                _script.LiveTrigger = _actEnabled != null ? (Func<int, int, bool?>)ActTriggerState : null;
             }
         }
 
@@ -430,6 +472,20 @@ namespace Dnf.Play
 
         /// <summary>怪物在 .act 脚本里的目标(主角);房间会话装。</summary>
         public IActEntity ActTarget { get; set; }
+
+        /// <summary>
+        /// 召唤者(创建这只怪物的脚本对象,被作用的那个目标);地图出生点的怪物没有。脚本的 [IS CHILD]、[SUMMON MASTER]、[SUMMON OBJECT] 取它(E-134)。
+        /// </summary>
+        public IActEntity ActMaster { get; private set; }
+
+        /// <summary>
+        /// 是脚本召唤出来的(不是地图出生点的):客户端只发创建请求、怪物由服务端造,那一半没读,所以击杀给不给经验与掉落、算不算战绩是推断——
+        /// 按"不给、不算"处理,免得召唤关系被刷(E-134)。
+        /// </summary>
+        public bool IsSummoned { get; private set; }
+
+        /// <summary>召唤物的存活时间还剩多少毫秒(命中停顿里照走);0 是不限(没有 [SUMMON TIME],或不是召唤物)。</summary>
+        public double LifeLeftMs => _lifeLeftMs;
 
         /// <summary>怪物在 .act 脚本里的身份(被动对象的创建者、触发器的拥有者)。</summary>
         public IActEntity ActSelf => _actBody ?? (_actBody = new ActBody(this));
@@ -539,7 +595,7 @@ namespace Dnf.Play
             }
         }
 
-        /// <summary>进入出招阶段时挂上这一招的运行器:动作从头开始,触发器开关回到初值,下一步先唤醒 [ON SET ACTION]。</summary>
+        /// <summary>进入出招阶段时挂上这一招的运行器:动作从头开始,触发器开关沿用上次出招留下的样子(出生时是 [ENABLE] 的初值,E-134),下一步先唤醒 [ON SET ACTION]。</summary>
         private void BeginActs()
         {
             _actVx = 0;
@@ -554,7 +610,7 @@ namespace Dnf.Play
             {
                 return;
             }
-            _actRunner = new ActRunner(_actPrograms[_attackIndex], ActSelf, _actHost);
+            _actRunner = new ActRunner(_actPrograms[_attackIndex], ActSelf, _actHost, _actEnabled?[_attackIndex]);
             _actSetPending = true;
         }
 
@@ -773,6 +829,60 @@ namespace Dnf.Play
         }
 
         /// <summary>
+        /// 把脚本召唤出来的怪物摆到 (x, y, z)(E-134):落点按可走区与门体检查,不合法就在 <see cref="Placement.SearchRadius"/> 像素内找最近的能站的点,
+        /// 找不到返回 false(调用方改试召唤者的位置或放弃)。成功后记下召唤者与存活时间(<paramref name="lifetimeMs"/> 大于 0 才有限);
+        /// 摆在半空的怪物受重力落回地面(与瞬移一致)。
+        /// </summary>
+        public bool PlaceSummoned(double x, double y, double z, bool facingLeft, IWalkArea walk, IActEntity master, int lifetimeMs)
+        {
+            _lastWalk = walk;
+            if (!Placement.TryResolve((px, py) => CanStandAt(px, py, walk, false, false), x, y, out double rx, out double ry))
+            {
+                return false;
+            }
+            X = rx;
+            Y = ry;
+            Z = Math.Max(0.0, z);
+            FacingLeft = facingLeft;
+            _hoverVz = 0;
+            _hoverFalling = Z > 0;
+            ActMaster = master;
+            IsSummoned = true;
+            _lifeLeftMs = lifetimeMs > 0 ? lifetimeMs : 0;
+            return true;
+        }
+
+        /// <summary>
+        /// [SET HP](客户端 0x010b95c9 起,E-134):小于等于 0 杀死(见 <see cref="ScriptKill"/>),否则直接设成这个值(不超过生命上限,推断:
+        /// 客户端的 setHp 在虚槽 0x2a0 里,没读它对上限的处理)。倒下与消失的怪物不理。
+        /// </summary>
+        private void ActSetHp(int hp)
+        {
+            if (!IsAlive || Phase == MonsterPhase.Gone)
+            {
+                return;
+            }
+            if (hp <= 0)
+            {
+                ScriptKill();
+                return;
+            }
+            Hp = Math.Min(hp, HpMax);
+        }
+
+        /// <summary>
+        /// 不经过命中的死亡(脚本把血设成 0、召唤物存活时间到了):与"没有倒地动作时被打死"同一条路——停掉倒地飞行、进入死亡,
+        /// 白闪、淡出与消失照常(<see cref="MonsterTuning.DeathMs"/>);不算主角的击杀,没有经验与掉落(E-134)。
+        /// </summary>
+        private void ScriptKill()
+        {
+            Hp = 0;
+            _dyingFromDown = _flight.Active;
+            _flight.Stop(true);
+            EnterPhase(MonsterPhase.Dying);
+        }
+
+        /// <summary>
         /// [TELEPORT] 摆位置(客户端 0x010b71a4 起):落点在可走区里、没压在门体上就直接摆;不然在 <see cref="Placement.SearchRadius"/> 像素内找最近的能站的点,找不到就不动。
         /// 高度直接取传入的值(小于 0 当 0);摆到半空而又不在悬停的怪物受重力落下(推断)。倒地飞行中、死亡的怪物不动。
         /// </summary>
@@ -830,13 +940,20 @@ namespace Dnf.Play
 
             public IActEntity Target => _m.ActTarget;
 
-            public IActEntity Master => null;
+            public IActEntity Master => _m.ActMaster;
 
             public int MotionVersion => _m._motionVersion;
 
             public int Hp => _m.Hp;
 
             public int HpMax => _m.HpMax;
+
+            public int Level => _m.Level;
+
+            public void SetHp(int hp)
+            {
+                _m.ActSetHp(hp);
+            }
 
             public void SetFacing(bool left)
             {
@@ -1016,6 +1133,16 @@ namespace Dnf.Play
                 deltaMs = 0;
             }
             _lastWalk = walk;
+            if (_lifeLeftMs > 0 && IsAlive)
+            {
+                // 召唤物的存活时间按墙钟走(命中停顿里不冻结,推断);到点按脚本杀死处理(E-134)
+                _lifeLeftMs -= deltaMs;
+                if (_lifeLeftMs <= 0)
+                {
+                    _lifeLeftMs = 0;
+                    ScriptKill();
+                }
+            }
             if (_hurtOnClock && Phase == MonsterPhase.Hurt)
             {
                 // 按公式算的硬直是一块秒表:命中停顿冻结动画、行走与击退,但不冻结它(推断,E-080)

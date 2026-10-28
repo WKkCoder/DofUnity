@@ -510,6 +510,9 @@ namespace Dnf.Game.Act
                     case "[IS DIRECTION RIGHT]":
                         records.Add(new ActRecord { Kind = ActRecordKind.IsDirectionRight, Tag = tag });
                         break;
+                    case "[IS CHILD]":
+                        records.Add(new ActRecord { Kind = ActRecordKind.IsChild, Tag = tag, Number = cur.Int() });     // 全库 14 处都是一个整数 1(E-134)
+                        break;
                     case "[GET TARGET]":
                         // 在已有目标上排序、随机取、按距离取并截断到最多 N 个(E-130 读码);单人房间里目标最多一个,不改集合
                         cur.SkipToHead(IsTriggerHead);
@@ -831,6 +834,35 @@ namespace Dnf.Game.Act
                 }
                 case "[TELEPORT]":
                     return ParseTeleport(cur, tag);
+                case "[SUMMON MONSTER]":
+                    return ParseSummon(cur, tag);
+                case "[SET HP]":
+                {
+                    // [SET HP] 一个值表达式(全库 65 处;加载块 0x0133dcfb,E-134)
+                    ActValue hp = cur.Value();
+                    return hp == null
+                        ? new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag }
+                        : new ActBehavior { Kind = ActBehaviorKind.SetHp, Tag = tag, Hp = hp };
+                }
+                case "[RESTORE]":
+                {
+                    // [RESTORE] [HP]|[MP] 数量 [%]|[POINT](加载块 0x0133b455,执行块 0x010b8c89;E-134):种类只认 HP 与 MP,数量是值表达式(可负),
+                    // 后面跟 [%] 才是百分比(客户端的符号码 7),别的符号([POINT] 等)当点数
+                    string kind = cur.TakeOpen();
+                    ActValue amount = kind == "[HP]" || kind == "[MP]" ? cur.Value() : null;
+                    if (amount == null)
+                    {
+                        return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
+                    }
+                    return new ActBehavior
+                    {
+                        Kind = ActBehaviorKind.Restore,
+                        Tag = tag,
+                        RestoreMp = kind == "[MP]",
+                        RestoreAmount = amount,
+                        RestorePercent = cur.AtOpen("[%]"),
+                    };
+                }
                 case "[DIM]":
                 {
                     // [DIM] "名字" [=] 表达式 [/DIM](E-132;全库只有赋值,没有别的比较符)
@@ -965,6 +997,89 @@ namespace Dnf.Game.Act
             b.PosX = b.PosX ?? ActValue.Literal(0);
             b.PosY = b.PosY ?? ActValue.Literal(0);
             b.PosZ = b.PosZ ?? ActValue.Literal(0);
+            return b;
+        }
+
+        /// <summary>
+        /// [SUMMON MONSTER] [INDEX] 编号 [LEVEL] 等级 [POS] x y z 标志… [/SUMMON MONSTER](加载块的子标签表见 E-134):
+        /// 位置三元组与创建被动对象的写法相同,缺的当 0;其余是标志与带数的标签。[JUMP OUT] 后面跟的三个值与方向标签这一版不读(效果只记下),
+        /// 它们落在循环里被当作游离标签跳过。没有 [INDEX] 的放不出任何东西,记成不支持。
+        /// </summary>
+        private static ActBehavior ParseSummon(ActCursor cur, string tag)
+        {
+            var b = new ActBehavior { Kind = ActBehaviorKind.Summon, Tag = tag };
+            while (!cur.End && !cur.TakeClose(tag))
+            {
+                string t = cur.TakeOpen();
+                if (t == null)
+                {
+                    cur.Skip();
+                    continue;
+                }
+                switch (t)
+                {
+                    case "[INDEX]":
+                        b.Index = cur.Value();
+                        break;
+                    case "[LEVEL]":
+                        b.Level = cur.Value();
+                        break;
+                    case "[POS]":
+                        b.PosX = cur.Value();
+                        b.PosY = cur.Value();
+                        b.PosZ = cur.Value();
+                        break;
+                    case "[USE TARGET TEAM]":
+                        b.UseTargetTeam = true;
+                        break;
+                    case "[USE MY DIRECTION]":
+                        b.UseMyDirection = true;
+                        break;
+                    case "[USE MY BASEPOS]":
+                        b.UseMyBasePos = true;
+                        break;
+                    case "[NOT USE OBJECT DIRECTION]":
+                        b.NotUseDirection = true;
+                        break;
+                    case "[USE MAP POS]":
+                        b.UseMapPos = true;
+                        break;
+                    case "[USE OBJECT ZPOS]":
+                        b.UseObjectZ = true;
+                        break;
+                    case "[TEAM]":
+                        b.Team = cur.Int(-1);
+                        break;
+                    case "[SUMMON TIME]":
+                        b.SummonTimeMs = Math.Max(0, cur.Int());
+                        break;
+                    case "[SUMMON MARK]":
+                    case "[COLLISION GROUP]":
+                        cur.Ints();     // 标记与碰撞组:读掉后面的整数,这一版不用
+                        break;
+                    case "[NO EFFECT]":
+                        b.SummonEffect = ActSummonEffect.None;
+                        break;
+                    case "[JUMP OUT]":
+                        b.SummonEffect = ActSummonEffect.JumpOut;
+                        break;
+                    case "[MAGIC CIRCLE]":
+                        b.SummonEffect = ActSummonEffect.MagicCircle;
+                        break;
+                    default:
+                        break;
+                }
+            }
+            if (b.Index == null)
+            {
+                b.Kind = ActBehaviorKind.Unsupported;
+            }
+            else
+            {
+                b.PosX = b.PosX ?? ActValue.Literal(0);
+                b.PosY = b.PosY ?? ActValue.Literal(0);
+                b.PosZ = b.PosZ ?? ActValue.Literal(0);
+            }
             return b;
         }
 

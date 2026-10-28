@@ -41,6 +41,7 @@ END = re.compile(r"结束:t=([\d.]+)s\s+(\S+)\s+进过 (\d+) 个房间,清空 (\
 HITS = re.compile(r"命中 (\d+) 次,击杀 (\d+) 个")
 OBJECTS = re.compile(r"物件\(E-126\):进过的房间里有 (\d+) 个可破坏物件,挥中 (\d+) 次,打翻 (\d+) 个,放出 \[item\] 动作 (\d+) 次,掉出 (\d+) 件")
 ACTS = re.compile(r"脚本\(E-130\):进过的房间里出招带 \.act 触发器的怪物 (\d+) 只,脚本放出被动对象 (\d+) 个,打中主角 (\d+) 次")
+SUMMONS = re.compile(r"召唤\(E-134\):脚本召唤出怪物 (\d+) 只,被拒绝 (\d+) 次,召唤物被打死 (\d+) 只")
 EXC = re.compile(r"(Unhandled exception|未处理的异常|System\.\w+Exception|Exception:|   at Dnf\.)")
 
 
@@ -93,6 +94,9 @@ def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=5000
     a = ACTS.search(text)
     if a:
         rec["act_monsters"], rec["passives"], rec["passive_hits"] = (int(a.group(i)) for i in range(1, 4))
+    sm = SUMMONS.search(text)
+    if sm:
+        rec["summoned"], rec["summon_refused"], rec["summoned_killed"] = (int(sm.group(i)) for i in range(1, 4))
     if EXC.search(text):
         rec["status"] = "crash"
         lines = [l for l in text.splitlines() if l.strip()]
@@ -191,6 +195,11 @@ def main(argv):
     spawned = sum(1 for r in results if r.get("passives", 0) > 0)
     print("脚本(只在本机,E-130):有出招带触发器的怪物的副本 %d 个,其中放出过被动对象的 %d 个;怪物 %d 只,放出被动对象 %d 个,打中主角 %d 次"
           % (with_acts, spawned, act_sums["act_monsters"], act_sums["passives"], act_sums["passive_hits"]))
+    sum_keys = ["summoned", "summon_refused", "summoned_killed"]
+    sum_sums = {k: sum(r.get(k, 0) for r in results) for k in sum_keys}
+    with_summons = sum(1 for r in results if r.get("summoned", 0) > 0)
+    print("召唤(只在本机,E-134):召唤过怪物的副本 %d 个;召唤出 %d 只,被拒绝 %d 次,召唤物被打死 %d 只"
+          % (with_summons, sum_sums["summoned"], sum_sums["summon_refused"], sum_sums["summoned_killed"]))
     print("用时 %.0f 秒;明细 %s.json / %s.tsv" % (time.time() - t0, a.out, a.out))
     return 0
 

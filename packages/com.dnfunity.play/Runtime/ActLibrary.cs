@@ -117,12 +117,19 @@ namespace Dnf.Play
         private readonly GameData _data;
         private readonly Dictionary<string, ActProgram> _programs = new Dictionary<string, ActProgram>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<int, PassiveTemplate> _templates = new Dictionary<int, PassiveTemplate>();
+        private readonly HashSet<int> _summonCodes = new HashSet<int>();
 
         public ActLibrary(DnfAssets assets, GameData data)
         {
             _assets = assets ?? throw new ArgumentNullException(nameof(assets));
             _data = data ?? throw new ArgumentNullException(nameof(data));
         }
+
+        /// <summary>
+        /// 预读过的程序里 [SUMMON MONSTER] 写到的怪物编号(随机选的编号一并收,E-134);房间会话照这个表把召唤物的模型提前读好。
+        /// 随预读增长,遍历前请复制。
+        /// </summary>
+        public IReadOnlyCollection<int> SummonCodes => _summonCodes;
 
         /// <summary>读到并编好的程序个数(审计与测试用)。</summary>
         public int ProgramCount
@@ -237,6 +244,14 @@ namespace Dnf.Play
             {
                 foreach (ActBehavior b in group.Items)
                 {
+                    if (b.Kind == ActBehaviorKind.Summon && b.Index != null)
+                    {
+                        foreach (int code in b.Index.Candidates())
+                        {
+                            _summonCodes.Add(code);
+                        }
+                        continue;
+                    }
                     if (b.Kind != ActBehaviorKind.CreatePassive || b.Index == null)
                     {
                         continue;

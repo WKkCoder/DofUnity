@@ -125,6 +125,12 @@ namespace Dnf.Play
         /// <summary>第 a 个招式的第 t 个触发器现在是不是开着(.act 的 [ENABLE]);没设置时全是关的。</summary>
         public Func<int, int, bool> TriggerEnabled { get; set; }
 
+        /// <summary>
+        /// 怪物跑着的触发器开关(被 [TRIGGER] 行为改过、跨出招保留的那一份,E-134):给了就先问它,它答不上(返回 null,这一招没有触发器程序)再问
+        /// <see cref="TriggerEnabled"/> 的初值。.ai 的 is attack action enable() 读的就是这个开关,首领"每个血量段只用一次"的写法靠它。
+        /// </summary>
+        public Func<int, int, bool?> LiveTrigger { get; set; }
+
         /// <summary>区域计数(别的怪物、主角);没设置时恒为 0。</summary>
         public AreaCounter Counter { get; set; }
 
@@ -314,7 +320,15 @@ namespace Dnf.Play
 
             public bool IsAttackCooling(int index) => !_owner.CanUse(index);
 
-            public bool IsAttackEnabled(int action, int trigger) => _owner.TriggerEnabled != null && _owner.TriggerEnabled(action, trigger);
+            public bool IsAttackEnabled(int action, int trigger)
+            {
+                bool? live = _owner.LiveTrigger?.Invoke(action, trigger);
+                if (live.HasValue)
+                {
+                    return live.Value;
+                }
+                return _owner.TriggerEnabled != null && _owner.TriggerEnabled(action, trigger);
+            }
 
             public bool IsCustomEnabled(int action, int trigger) => false;
 

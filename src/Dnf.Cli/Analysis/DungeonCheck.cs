@@ -191,6 +191,7 @@ internal static class DungeonCheck
             + (session.Vitals != null ? ";主角被打中 " + session.HeroHits + " 次,生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax + ",魔法 " + session.Vitals.Mp + "/" + session.Vitals.MpMax : ";怪物不还手(--no-damage)"));
         Console.WriteLine("脚本(E-130):进过的房间里出招带 .act 触发器的怪物 " + session.ActMonsters + " 只,脚本放出被动对象 " + session.PassivesSpawned + " 个,打中主角 "
             + session.PassiveHits + " 次");
+        Console.WriteLine("召唤(E-134):脚本召唤出怪物 " + session.SummonsSpawned + " 只,被拒绝 " + session.SummonsRefused + " 次,召唤物被打死 " + session.SummonedKills + " 只");
         if (session.Revive != null && session.Revive.Deaths > 0)
         {
             Console.WriteLine("死亡与复活(E-115):死亡 " + session.Revive.Deaths + " 次,复活 " + session.Revive.Revives + " 次,用币 " + session.Revive.Used + " 个,库存剩 "

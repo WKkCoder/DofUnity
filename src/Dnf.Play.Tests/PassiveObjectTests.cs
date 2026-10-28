@@ -43,6 +43,10 @@ public partial class PassiveObjectTests
         {
         }
 
+        public void SummonMonster(IActEntity master, int index, int level, float x, float y, float z, bool facingLeft, int lifetimeMs)
+        {
+        }
+
         public void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into)
         {
         }
@@ -96,6 +100,12 @@ public partial class PassiveObjectTests
         }
 
         public bool Teleport(float x, float y, float z) => false;
+
+        public int Level => 0;
+
+        public void SetHp(int hp)
+        {
+        }
     }
 
     private sealed class Rig : IDisposable

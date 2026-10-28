@@ -226,6 +226,21 @@ namespace Dnf.Play
             return true;
         }
 
+        /// <summary>被动对象没有自己的等级:取链条上最早那只怪物的([SUMMON MONSTER] 里 [LEVEL] -1 之类的写法落到创建者的等级,推断,E-134)。</summary>
+        int IActEntity.Level => Owner.Level;
+
+        /// <summary>
+        /// [SET HP]:被动对象没有生命条;小于等于 0 就销毁它(推断:全库 [SET HP] 的值几乎都是 0,客户端对被动对象直接调 setHp,
+        /// 没读这个槽对 0 的处理,E-134),大于 0 什么也不做。
+        /// </summary>
+        void IActEntity.SetHp(int hp)
+        {
+            if (hp <= 0)
+            {
+                Finished = true;
+            }
+        }
+
         // ------------------------------------------------------------------ 推进
 
         private void SwitchAction(PassiveAction next)
@@ -396,13 +411,15 @@ namespace Dnf.Play
         private readonly Func<bool> _alive;
         private readonly Func<int> _hp;
         private readonly Func<int> _hpMax;
+        private readonly Func<int> _level;
 
-        public HeroActEntity(TownHero hero, Func<bool> alive, Func<int> hp = null, Func<int> hpMax = null)
+        public HeroActEntity(TownHero hero, Func<bool> alive, Func<int> hp = null, Func<int> hpMax = null, Func<int> level = null)
         {
             _hero = hero ?? throw new ArgumentNullException(nameof(hero));
             _alive = alive ?? (() => true);
             _hp = hp ?? (() => 0);
             _hpMax = hpMax ?? (() => 0);
+            _level = level ?? (() => 1);
         }
 
         public ActEntityKind Kind => ActEntityKind.Character;
@@ -428,6 +445,14 @@ namespace Dnf.Play
         public int Hp => _hp();
 
         public int HpMax => _hpMax();
+
+        /// <summary>主角的等级(召唤物按"召唤者的等级加偏移"定等级时,召唤者是主角的写法也能算,E-134)。</summary>
+        public int Level => _level();
+
+        /// <summary>[SET HP] 作用到主角:不执行(这一版脚本对主角的作用都不执行,与设速度、切动作一致)。</summary>
+        public void SetHp(int hp)
+        {
+        }
 
         public void SetFacing(bool left)
         {

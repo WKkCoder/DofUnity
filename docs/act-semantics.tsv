@@ -41,7 +41,7 @@ sel	0x14	PASSIVE	被动对象	高
 sel	0x15	LOAD TARGET	脚本槽	中	
 sel	0x16	PARTY TARGET	队伍块	低	
 sel	0x17	PLAYER	玩家槽	中	
-sel	0x18	SUMMON OBJECT	己方召唤	中	
+sel	0x18	SUMMON OBJECT	己方召唤:创建者(父对象)是拥有者的对象(块 0x010d25e0,E-134)	中	服务端怎样记创建者
 cond	0x00	DO BEHAVIOR	运行器内联 fire+010d1850	高	—
 cond	0x01	[FRAME]	仅 runner 010d1320；checkTriggerEvent 无分支	高	—
 cond	0x02	[XSPEED]	逐对象比较 X 轴 float 速度与符号码阈值	中	加载侧读参未核
@@ -121,18 +121,18 @@ cond	0x5c	DELAY DO BEHAVIOR	006c8420 排队；count 先加	中	队列消费端(0
 cond	0x5d	[IS MOUNT]	+0x55a8==0x17 与参数 0/1 一致	中	catalog 缺失
 cond	0x5e	[IS DIRECTION LEFT]	拥有者 getDirection==0 为真	高	不滤 targets
 cond	0x5f	[IS DIRECTION RIGHT]	拥有者 getDirection==1 为真	高	不滤 targets
-cond	0x60	[IS CHILD]	vtbl+0x1f4 父指针是否等于 action.owner	高	槽名
+cond	0x60	[IS CHILD]	目标的父对象(槽 0x1f4)与 action.owner 比较;参数非 0 留下相等的,0 留下不相等的(块 0x010d8bbb,E-134)	高	槽名
 cond	0x61	[CHECK PLAYER NUM]	派对 009266c0 人数与 [COUNT] 期望值比较	中	多条 COUNT 时取哪条
 beh	0x62	[CREATE PASSIVEOBJECT]	在本机拥有者处按 INDEX/LEVEL/POS 与可选标志生成被动对象(vtbl+0xd1)	中	队伍码1重复、01562220 浮点常数、创建器内部;摆放(基点、X 取反、朝向来源、Z)E-130 已读
-beh	0x63	[SUMMON MONSTER]	对目标集合里每个可战斗对象,按"编号、等级、三轴偏移"召唤怪物;前置:行为拥有者存在且是本机控制的对象;参数流里可含 [RANDOM] 结构	中	随机结构与召唤数量上限
+beh	0x63	[SUMMON MONSTER]	五个值(编号、等级、三偏移)在目标循环前各求一次;每个活着的目标:等级=等级值(-1 取目标的)加目标等级(被动对象目标不加),至少 1,夹到难度表行数与 200;朝向取目标的,标志 2 取拥有者的,标志 4 固定 1;位置:标志 5 绝对坐标,否则以目标(标志 3 以拥有者)为基准,X 朝向不是 1 时取反;标志码 0 模式 1 [USE TARGET TEAM] 2 [USE MY DIRECTION] 3 [USE MY BASEPOS] 4 [NOT USE OBJECT DIRECTION] 5 [USE MAP POS] 6 [USE OBJECT ZPOS] 7 [TEAM] 9 [SUMMON TIME] 0xb [SUMMON MARK] 0xc [COLLISION GROUP];创建槽 0x350 只写请求包(类型 0x16 子类型 2),服务端造怪(块 0x010b683d,E-134)	中	服务端创建函数、存活时间、标记与碰撞组含义、上限
 beh	0x64	[TELEPORT]	按基准对象(拥有者或目标)的坐标加三轴偏移瞬移,朝左时 X 偏移取反;九个标志码已读通(M40);落点不合法时找最近合法点(半径 200)	中	最近合法点搜索的另两个参数(-1 与 3);USE EFFECT 的特效记录;关联状态的完整列表
 beh	0x67	[CHANGE ATTACKINFO]	DEFAULT(-1)或索引切换action+0xfb表(0x2cc)并刷新+0x200	中	具名attackinfo执行路径、+0x200槽名
 beh	0x6b	[SET SPEED]	对目标速度控制器(+0x50→+0xc)写 X/Y/Z 浮点速度，X 随朝向取反	高	加载侧 3/4 修饰在执行块无分支
-beh	0x6e	[TRIGGER]	运行时按编号启用/禁用/重置动作上的触发器条目	中	整数加载分支切片缺失；motion 分池语义未全核对
-beh	0x6f	[RESTORE]	按种类恢复目标(ActiveObject 族)的数值,数量可按百分比	中	种类码与数值的对应
+beh	0x6e	[TRIGGER]	运行时按编号启用/禁用/重置动作上的触发器条目:模式 0 写条目 +0x1c=1,1 写 0,2 调桩 0x296a477(当复位);开关字节就是 [ENABLE],帧 0 复位(0x010a3fe0)不清它,所以跨出招保留;.ai 的 is attack action enable 读它(0x010a34d0,E-134)	中	整数加载分支切片缺失；motion 分池语义未全核对；桩 0x296a477 在受保护区
+beh	0x6f	[RESTORE]	种类 0 [HP] 1 [MP],数量(值表达式),第 2 个参数码 7 为 [%];血量百分比 = 数量 × 目标最大生命(槽 0x2a8) ÷ 100(有符号、向零截断),魔法走槽 0x51c;只构造请求对象(0x150/0xe0 字节)经 vtable+0x58 提交,血量由服务端改(块 0x010b8c89,E-134)	中	服务端怎样夹值与死亡;百分比以外的符号码
 beh	0x71	[SEND DO BEHAVIOR]	对目标+0x148动作实例远程执行第k号BEHAVIOR(010d1370)	中	加载侧选择器在执行侧未再读
 beh	0x73	[DESTROY] / [DESTROY BY FORCE]	分类型调用销毁/死亡虚函数；FORCE 附 SKIP MASTER CHECK 绕过 master 校验	中	master 规则细节与各 +0x7e4 等语义
-beh	0x74	[SET HP]	valueOf设HP(+0x2a0);hp<=0时怪物/AI旁路结构	中	0x211/0x111类型码、011a0930
+beh	0x74	[SET HP]	一个值在目标循环前求一次,对活着的目标写血量(+0x2a0 一带);hp<=0 时另有怪物/AI 旁路(块 0x010b95c9,E-134)	中	0x211/0x111 类型码、011a0930 旁路没读通
 beh	0x75	[ATTACKRECT]	开、关、重置目标对象的攻击判定矩形(虚槽 0x360 / 0x208)	高	—
 beh	0x76	[SET DIRECTION]	设置目标朝向(虚槽 0xf0);行为拥有者不是本机控制对象时整段跳过	高	取值编号已读通(E-130:0 左、1 右、2 朝目标、3 反向、4 随机、7 本体朝向、8 本体反向);随机的取余基准与保护区调用未读
 beh	0x77	[SET ACTION]	按动作族码与 ATTACK/CUSTOM 索引切换状态(函数 0x010b1d50 + vtbl+0x172/0xa7)	中	完整关键字→族码表、内置 stateId 全表

@@ -1234,62 +1234,18 @@ namespace Dnf.Play
             HeroStrikeInfo dash = HeroStrikeInfo.Read(data, chr?.MotionPath("[dashattack info]"));
             HeroStrikeInfo jump = HeroStrikeInfo.Read(data, chr?.MotionPath("[jumpattack info]"));
 
-            MonsterCatalog catalog = MonsterCatalog.Read(assets);
-            var models = new Dictionary<int, MonsterModel>();
-            var actors = new List<MonsterActor>();
-            int index = 0;
             // 主角的碰撞宽度与进深(.chr 的 [width]):怪物出招的射程判断把目标的半边按它们的四分之一放宽(证据 E-101)
             int[] heroWidth = chr?.Tags.Ints("[width]");
+            // 逐只怪物的构造(模型、数值、攻击信息、AI、脚本、面板)抽在 RoomMonsterBuilder 里,脚本召唤出来的怪物走同一条路(M41,E-134)
+            var builder = new RoomMonsterBuilder(assets, data, MonsterCatalog.Read(assets), room.Hero, room.Map.Width, seed, difficulty, dungeonBonus, heroWidth);
+            var actors = new List<MonsterActor>();
             foreach (RoomMonsterSpawn spawn in room.Map.Monsters)
             {
-                if (!models.TryGetValue(spawn.Code, out MonsterModel model))
+                MonsterActor actor = builder.Build(actors.Count, spawn);
+                if (actor != null)
                 {
-                    string mobPath = catalog.PathOf(spawn.Code);
-                    model = mobPath == null ? null : MonsterModel.Read(assets, mobPath);
-                    models[spawn.Code] = model;
+                    actors.Add(actor);
                 }
-                MonsterDef def = data.GetMonster(spawn.Code);
-                if (model == null || def == null || model.Waiting == null)
-                {
-                    continue;
-                }
-                int level = def.Tags.IntOr("[level]", 1);
-                MonsterKind kind = spawn.IsBoss ? MonsterKind.Boss : MonsterKind.Normal;
-                MonsterStats stats = MonsterAbility.Compute(def, data.MonsterBaseTables, data.GetMonsterOwnTable(def), level, 0, kind,
-                    data.MonsterDifficulty, difficulty, dungeonBonus);                  // 难度加成接在 [ability category] 之后(证据 E-125)
-                var actor = new MonsterActor(index++, spawn, model, level, stats.HpMax, WalkSpeed(room.Hero, stats.MoveSpeed > 0 ? stats.MoveSpeed : def.Tags.IntOr("[move speed]", 0)),
-                    def.Tags.IntOr("[attack delay]", 0), def.Tags.IntOr("[attack speed]", 0), stats.HitRecovery, stats.Weight);
-                // 出招的攻击信息:[attack info] 与 [attack motion] 同下标(证据 E-086);出哪一招由 [attack kind] 的记录决定(证据 E-100、E-101),
-                // 没有记录的怪物仍固定用第 0 个动作
-                var attackStrikes = new HeroStrikeInfo[model.AttackInfoPaths.Count];
-                for (int a = 0; a < attackStrikes.Length; a++)
-                {
-                    attackStrikes[a] = !string.IsNullOrEmpty(model.AttackInfoPaths[a])
-                        ? HeroStrikeInfo.Read(data, model.AttackInfoPaths[a])
-                        : new HeroStrikeInfo(0, 0, false);
-                }
-                // 出生悬停(.mob 的 [floating height],MonsterActor.SetBaseFloatingHeight)暂不接线(E-133):有 36 种怪物的基准高度在 150 以上,
-                // 地面攻击框够不着,自动机清不掉这些房间(全库扫描里 5 个副本会因此卡住);要先读清楚原版的命中高度规则与跳击再接
-                actor.Strike = attackStrikes.Length > 0 ? attackStrikes[0] : new HeroStrikeInfo(0, 0, false);
-                actor.SetStrikes(attackStrikes);
-                actor.SetAttackKinds(AttackKindRecord.Parse(def.Tags), unchecked((uint)seed * 2654435761u + (uint)actor.Index * 40503u + 12345u));
-                // 默认 AI 的走位:游荡、发现主角、按节拍朝主角走(证据 E-114);没有 [melee combat]/[range combat]/[stay] 类别的怪物仍走占位
-                actor.SetDefaultAi(MonsterBrain.For(def, room.Map.Width, unchecked((uint)seed * 2246822519u + (uint)actor.Index * 3266489917u + 374761393u)));
-                actor.SetThrows(MonsterThrows.Load(assets, data, def.Path, ThrowAttackRecord.Parse(def.Tags)));   // [throw attack]:出招动画到发射帧时扔东西(证据 E-103)
-                // .ai 脚本驱动(证据 E-128):带 [ai pattern] 的怪物出招、走位交给四个 .ai 脚本;读不到脚本的仍走上面的默认 AI 与占位
-                uint aiState = unchecked((uint)seed * 3266489917u + (uint)actor.Index * 668265263u + 2246822519u);
-                actor.SetScript(MonsterScript.Create(data, def, model, difficulty, () => ClientRandom.Next(ref aiState)));
-                if (heroWidth != null && heroWidth.Length >= 2)
-                {
-                    actor.TargetWidth = heroWidth[0];
-                    actor.TargetDepth = heroWidth[1];
-                }
-                actor.PhysicalAttack = stats.PhysicalAttack;
-                actor.MagicalAttack = stats.MagicalAttack;
-                actor.Defense = DefenderPanel.FromMonster(stats, level);                    // 挨打时的防御面板(证据 E-110)
-                actor.Panel = MonsterPanelInfo.From(def, kind, level, stats.HpMax, data);   // 目标血条窗口的资料(证据 E-106)
-                actor.Sounds = new MonsterSounds(def.AppearSound, def.DamageSound, def.DieSound, def.AttackSound, def.AmbientSound);
-                actors.Add(actor);
             }
             // 受击硬直的三张表:Etc/EtcParameter.etc(证据 E-080);读不到就退回占位硬直
             ScriptLine[] etc = data.ReadScript(HitStunTablePath);
@@ -1314,14 +1270,13 @@ namespace Dnf.Play
                 hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null, weaponSound, heroPanel,
                 progress, expWeight, difficulty);
             session.Character = chr;
+            // 脚本召唤([SUMMON MONSTER],E-134):造怪走同一个构造器,等级夹到难度表这一档的行数以内;要在 AttachActs 之前装,预读才知道读哪些怪物
+            session.UseSummons((code, level, index) => builder.Build(index, new RoomMonsterSpawn(code, 0, 0, 0, 0, 0, 0, 0, "[fixed]", "[normal]"),
+                builder.ClampSummonLevel(level)), code => builder.CanBuild(code));
             session.AttachActs(new ActLibrary(assets, data));                      // .act 的触发器与行为:被动对象、冲刺、攻击框开关(证据 E-130)
             foreach (MonsterActor a in actors)
             {
-                MonsterActor self = a;
-                if (self.Script != null)
-                {
-                    self.Script.Counter = (x0, x1, y0, y1, team, type, id) => session.CountForMonster(self, x0, x1, y0, y1, team, type, id);
-                }
+                session.WireScriptCounter(a);
             }
             MonsterDrops drops = MonsterDrops.Load(assets);
             if (drops.Available)
@@ -1538,6 +1493,7 @@ namespace Dnf.Play
                 m.Update(deltaMs, hero.X, hero.Y, heroAlive, hero.Walk, heroBoxes);
             }
             UpdatePassives(deltaMs);
+            FlushSummons();
             CollectThrown();
             EmitMonsterCues();
             ResolveHits();
@@ -1901,7 +1857,11 @@ namespace Dnf.Play
             TotalDamage += damage;
             Target = monster;
             _targetMs = 0;
-            if (killed)
+            if (killed && monster.IsSummoned)
+            {
+                SummonedKills++;       // 脚本召唤出来的:没有经验、掉落与战绩(推断,E-134)
+            }
+            else if (killed)
             {
                 Kills++;
                 if (_combo.Count >= ComboCounter.ShowFrom)
@@ -2375,6 +2335,7 @@ namespace Dnf.Play
         {
             _acts = library;
             _passives.Clear();
+            _pendingSummons.Clear();
             if (library == null)
             {
                 _actWorld = null;
@@ -2386,26 +2347,33 @@ namespace Dnf.Play
                 }
                 return;
             }
-            _heroEntity = new HeroActEntity(_room.Hero, () => !HeroDead, () => Vitals?.Hp ?? 0, () => Vitals?.HpMax ?? 0);
+            _heroEntity = new HeroActEntity(_room.Hero, () => !HeroDead, () => Vitals?.Hp ?? 0, () => Vitals?.HpMax ?? 0, () => Vitals?.Level ?? 1);
             _actWorld = new ActWorld(this);
             foreach (MonsterActor m in _monsters)
             {
-                IReadOnlyList<string> paths = m.Model.AttackActionPaths;
-                var programs = new ActProgram[paths.Count];
-                bool any = false;
-                for (int i = 0; i < programs.Length; i++)
-                {
-                    ActProgram p = library.Program(paths[i]);
-                    if (p != null && p.Triggers.Count > 0)
-                    {
-                        programs[i] = p;
-                        any = true;
-                        library.Preload(p);
-                    }
-                }
-                m.ActTarget = _heroEntity;
-                m.SetActs(any ? programs : null, any ? _actWorld : null);
+                AttachActsTo(m);
             }
+            PreloadSummons();
+        }
+
+        /// <summary>给一只怪物装它每一招的 .act 程序(有触发器的才装),并预读程序会放出来的被动对象。出生点的怪物与脚本召唤的怪物都走这里。</summary>
+        private void AttachActsTo(MonsterActor m)
+        {
+            IReadOnlyList<string> paths = m.Model.AttackActionPaths;
+            var programs = new ActProgram[paths.Count];
+            bool any = false;
+            for (int i = 0; i < programs.Length; i++)
+            {
+                ActProgram p = _acts.Program(paths[i]);
+                if (p != null && p.Triggers.Count > 0)
+                {
+                    programs[i] = p;
+                    any = true;
+                    _acts.Preload(p);
+                }
+            }
+            m.ActTarget = _heroEntity;
+            m.SetActs(any ? programs : null, any ? _actWorld : null);
         }
 
         /// <summary>被动对象各走一步(这一步里新放出来的从下一步起走)。</summary>
@@ -2453,6 +2421,162 @@ namespace Dnf.Play
             }
         }
 
+        // ------------------------------------------------------------------ 脚本召唤怪物(M41,E-134)
+
+        /// <summary>
+        /// 同时活着的召唤物个数上限。原版有没有上限、是多少没有读到(客户端只发创建请求,处理它的服务端函数没找到),
+        /// 这个数是推断的保险:脚本写坏了、或召唤者一直清不掉时不至于把房间塞满。
+        /// </summary>
+        public const int MaxSummoned = 24;
+
+        /// <summary>造召唤物的函数:怪物编号、脚本给的等级(还没夹)、会话里的怪物下标;造不出来(缺数据)返回 null。</summary>
+        public delegate MonsterActor SummonFactory(int code, int level, int index);
+
+        private SummonFactory _summonFactory;
+        private Action<int> _summonPreload;
+        private readonly List<PendingSummon> _pendingSummons = new List<PendingSummon>();
+        private readonly HashSet<int> _preloadedSummons = new HashSet<int>();
+
+        private readonly struct PendingSummon
+        {
+            public readonly IActEntity Master;
+            public readonly int Code;
+            public readonly int Level;
+            public readonly float X;
+            public readonly float Y;
+            public readonly float Z;
+            public readonly bool FacingLeft;
+            public readonly int LifetimeMs;
+
+            public PendingSummon(IActEntity master, int code, int level, float x, float y, float z, bool facingLeft, int lifetimeMs)
+            {
+                Master = master;
+                Code = code;
+                Level = level;
+                X = x;
+                Y = y;
+                Z = z;
+                FacingLeft = facingLeft;
+                LifetimeMs = lifetimeMs;
+            }
+        }
+
+        /// <summary>
+        /// 装上召唤用的工厂(<see cref="Create"/> 装;单测装合成的)。没装时脚本的召唤请求全部被拒绝(<see cref="SummonsRefused"/> 计数)。
+        /// <paramref name="preload"/> 在接上 .act 程序库时对脚本里写到的每个怪物编号调用一次,把模型提前读好,免得第一次召唤的那一帧才去读文件。
+        /// </summary>
+        public void UseSummons(SummonFactory factory, Action<int> preload = null)
+        {
+            _summonFactory = factory;
+            _summonPreload = preload;
+        }
+
+        /// <summary>脚本一共召唤出过多少只怪物(含已经死掉的)。</summary>
+        public int SummonsSpawned { get; private set; }
+
+        /// <summary>被拒绝的召唤请求个数:没装工厂、房间里已经没有活着的怪物、超过 <see cref="MaxSummoned"/>、数据缺失或找不到落点。</summary>
+        public int SummonsRefused { get; private set; }
+
+        /// <summary>召唤物被主角打死的个数(不计入 <see cref="Kills"/>,没有经验与掉落,推断)。</summary>
+        public int SummonedKills { get; private set; }
+
+        /// <summary>场上还活着的召唤物个数。</summary>
+        public int SummonedAlive
+        {
+            get
+            {
+                int n = 0;
+                foreach (MonsterActor m in _monsters)
+                {
+                    if (m.IsSummoned && m.IsAlive)
+                    {
+                        n++;
+                    }
+                }
+                return n;
+            }
+        }
+
+        /// <summary>给怪物的 .ai 脚本接上"数场上某类怪物"的回调(出生点怪物在造会话时接,召唤物在放出来时接)。</summary>
+        private void WireScriptCounter(MonsterActor monster)
+        {
+            if (monster.Script != null)
+            {
+                monster.Script.Counter = (x0, x1, y0, y1, team, type, id) => CountForMonster(monster, x0, x1, y0, y1, team, type, id);
+            }
+        }
+
+        /// <summary>把脚本里写到的怪物编号预读进工厂的缓存(每个编号一次)。</summary>
+        private void PreloadSummons()
+        {
+            if (_summonPreload == null || _acts == null)
+            {
+                return;
+            }
+            foreach (int code in new List<int>(_acts.SummonCodes))
+            {
+                if (_preloadedSummons.Add(code))
+                {
+                    _summonPreload(code);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 脚本的召唤请求:先排队,这一步里的怪物与被动对象都走完之后统一放出来(<see cref="FlushSummons"/>),免得遍历怪物时改列表。
+        /// 没装工厂、房间里已经没有活着的怪物(战斗已经结束,残留的对象不再召唤)、活着的召唤物加排队的已满上限时拒绝(推断)。
+        /// </summary>
+        private void QueueSummon(IActEntity master, int code, int level, float x, float y, float z, bool facingLeft, int lifetimeMs)
+        {
+            if (_summonFactory == null || AliveCount == 0 || SummonedAlive + _pendingSummons.Count >= MaxSummoned)
+            {
+                SummonsRefused++;
+                return;
+            }
+            _pendingSummons.Add(new PendingSummon(master, code, level, x, y, z, facingLeft, lifetimeMs));
+        }
+
+        /// <summary>
+        /// 把排队的召唤请求造成怪物并放进房间:落点不能站就在附近找,还找不到改试召唤者脚下,再不行放弃。
+        /// 新怪物接上 .act 程序与 .ai 的计数回调,从下一步起才开始走(这一步它们不更新);音效放它的出场声。
+        /// </summary>
+        private void FlushSummons()
+        {
+            if (_pendingSummons.Count == 0)
+            {
+                return;
+            }
+            TownHero hero = _room.Hero;
+            for (int i = 0; i < _pendingSummons.Count; i++)
+            {
+                PendingSummon p = _pendingSummons[i];
+                MonsterActor m = _summonFactory?.Invoke(p.Code, p.Level, _monsters.Count);
+                if (m == null)
+                {
+                    SummonsRefused++;
+                    continue;
+                }
+                m.Blocker = hero.Blocker;
+                bool placed = m.PlaceSummoned(p.X, p.Y, p.Z, p.FacingLeft, hero.Walk, p.Master, p.LifetimeMs)
+                    || (p.Master != null && m.PlaceSummoned(p.Master.X, p.Master.Y, 0, p.FacingLeft, hero.Walk, p.Master, p.LifetimeMs));
+                if (!placed)
+                {
+                    SummonsRefused++;
+                    continue;
+                }
+                WireScriptCounter(m);
+                if (_acts != null)
+                {
+                    AttachActsTo(m);
+                    PreloadSummons();
+                }
+                _monsters.Add(m);
+                SummonsSpawned++;
+                _sounds.Add(m.Sounds.Appear, SoundCueKind.Voice, m.Index + 1);
+            }
+            _pendingSummons.Clear();
+        }
+
         private void SpawnPassive(IActEntity owner, int index, float x, float y, float z, bool facingLeft)
         {
             if (_acts == null || _passives.Count >= MaxPassives)
@@ -2470,10 +2594,27 @@ namespace Dnf.Play
         }
 
         /// <summary>运行器自己不认识的选择器:敌人、角色队伍、主角这几种落到主角;己方、怪物队伍落到活着的怪物;被动对象落到场上的对象。其余这一版不接。</summary>
-        private void ResolveSelector(ActSelector selector, List<IActEntity> into)
+        private void ResolveSelector(IActEntity owner, ActSelector selector, List<IActEntity> into)
         {
             switch (selector)
             {
+                case ActSelector.SummonObject:
+                    // 己方召唤:创建者是拥有者的怪物与被动对象(客户端 0x010d25e0 起的块,E-134)
+                    foreach (MonsterActor m in _monsters)
+                    {
+                        if (m.IsAlive && m.Phase != MonsterPhase.Gone && ReferenceEquals(m.ActMaster, owner))
+                        {
+                            into.Add(m.ActSelf);
+                        }
+                    }
+                    foreach (PassiveObject o in _passives)
+                    {
+                        if (!o.Finished && ReferenceEquals(o.Master, owner))
+                        {
+                            into.Add(o);
+                        }
+                    }
+                    break;
                 case ActSelector.AllEnemy:
                 case ActSelector.AllCharacterTeam:
                 case ActSelector.Character:
@@ -2532,7 +2673,12 @@ namespace Dnf.Play
 
             public void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into)
             {
-                _session.ResolveSelector(selector, into);
+                _session.ResolveSelector(owner, selector, into);
+            }
+
+            public void SummonMonster(IActEntity master, int index, int level, float x, float y, float z, bool facingLeft, int lifetimeMs)
+            {
+                _session.QueueSummon(master, index, level, x, y, z, facingLeft, lifetimeMs);
             }
 
             public void Shake(int strength, int durationMs)

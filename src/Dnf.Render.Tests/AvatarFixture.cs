@@ -248,8 +248,16 @@ internal sealed class AvatarFixture : IDisposable
     /// <see cref="ActRepeatId"/> 不动、带攻击框,每次动画回到第 0 帧重置攻击框(所以隔一圈就能再打一次),限时 1000 毫秒;
     /// <see cref="ActGraveId"/> 不动、带攻击框,打中主角就销毁自己;<see cref="ActSpawnerId"/> 没有攻击框,出生就在自己的位置放一个 <see cref="ActGraveId"/>;
     /// <see cref="ActFallId"/> 没有攻击框,出生起 Z 速度 300(受重力落回地面);限时 1000 毫秒;<see cref="ActForeverId"/> 没有任何消失条件、没有触发器。数全是测试用的。
+    /// M41(证据 E-134)再加四只召唤怪:summon(帧 1 召唤怪物 <see cref="SummonedCode"/>,等级 2、偏移 (30, 0, 0))、
+    /// summontimed(同上,等级写 0,带 [SUMMON TIME] <see cref="SummonLifeMs"/>)、summonkill(帧 1 同 summon,帧 3 对 [SUMMON OBJECT] 执行 [SET HP] 0)、
+    /// summononce(帧 1 同 summon,随后 [TRIGGER] 0 [OFF] 把自己的触发器关掉:开关跨出招保留,只召唤一次)、
+    /// restore(帧 1 [RESTORE] [HP] -50 [%]:每次出招扣掉自己最大生命的一半)。
     /// </summary>
     public const int ActForeverId = 9206;
+
+    /// <summary>召唤用的怪物编号(.act 里写的是编号,真正造出什么由场景的工厂决定)与召唤物的存活时间(毫秒)。</summary>
+    public const int SummonedCode = 7;
+    public const int SummonLifeMs = 300;
     public const int ActShotId = 9201;
     public const int ActRepeatId = 9202;
     public const int ActGraveId = 9203;
@@ -373,6 +381,14 @@ internal sealed class AvatarFixture : IDisposable
             return Tag("[SET SPEED]").Tag(axis).Int(value).Tag("[/SET SPEED]");
         }
 
+        /// <summary>[SUMMON MONSTER],怪物编号 <paramref name="index"/>、等级 <paramref name="level"/>、偏移 (x, y, z),再接 <paramref name="flags"/> 里写的标志子标签。</summary>
+        public Script Summon(int index, int level, int x, int y, int z, Action<Script> flags = null)
+        {
+            Tag("[SUMMON MONSTER]").Tag("[INDEX]").Int(index).Tag("[LEVEL]").Int(level).Tag("[POS]").Int(x, y, z);
+            flags?.Invoke(this);
+            return Tag("[/SUMMON MONSTER]");
+        }
+
         /// <summary>[CREATE PASSIVEOBJECT],被动对象 <paramref name="index"/>,偏移 (x, y, z)。</summary>
         public Script Create(int index, int x, int y, int z)
         {
@@ -436,6 +452,11 @@ internal sealed class AvatarFixture : IDisposable
         ("land", new[] { "ActLand" }),
         ("tele", new[] { "ActTele" }),
         ("shake", new[] { "ActShake" }),
+        ("summon", new[] { "ActSummon" }),
+        ("summontimed", new[] { "ActSummonTimed" }),
+        ("summonkill", new[] { "ActSummonKill" }),
+        ("summononce", new[] { "ActSummonOnce" }),
+        ("restore", new[] { "ActRestore" }),
     };
 
     private IEnumerable<(string Name, byte[] Data)> ActScripts()
@@ -534,6 +555,31 @@ internal sealed class AvatarFixture : IDisposable
         yield return (BlobActionDir + "/actshake.act", ActWith(ThrowActAni)
             .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
             .Behavior(b => b.Tag("[SHAKING]").Int(6, 200))
+            .Build());
+        // M41(证据 E-134):召唤怪物与按创建者清场
+        yield return (BlobActionDir + "/actsummon.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Summon(SummonedCode, 2, 30, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/actsummontimed.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Summon(SummonedCode, 0, 30, 0, 0, f => f.Tag("[SUMMON TIME]").Int(SummonLifeMs)))
+            .Build());
+        yield return (BlobActionDir + "/actsummonkill.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(3, 3), 1, "[SUMMON OBJECT]")
+            .Behavior(b => b.Summon(SummonedCode, 2, 30, 0, 0))
+            .Behavior(b => b.Tag("[SET HP]").Int(0))
+            .Build());
+        // 首领"每个血量段只用一次"的写法:召唤完把自己的触发器关掉;开关属于怪物、跨出招保留(E-134)
+        yield return (BlobActionDir + "/actsummononce.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Summon(SummonedCode, 2, 30, 0, 0).Tag("[TRIGGER]").Int(0).Tag("[OFF]"))
+            .Build());
+        // 自己扣血的招式:每次出招帧 1 把自己的生命减去最大生命的一半(召唤型首领"每召唤一次掉一截血、掉光了就死"的写法)
+        yield return (BlobActionDir + "/actrestore.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[RESTORE]").Tag("[HP]").Int(-50).Tag("[%]"))
             .Build());
         foreach (int id in new[] { ActShotId, ActRepeatId, ActGraveId, ActSpawnerId, ActFallId })
         {

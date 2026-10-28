@@ -8,7 +8,7 @@ namespace Dnf.Game.Tests;
 /// .act 触发器与行为运行期(ActProgram 编译 + ActRunner 执行)的测试。规则依据 E-130(客户端静态读码):
 /// 逐帧运行器的三道闸、单次位、补帧、目标集合、各行为的执行语义。脚本内容全是合成的,不含原版内容。
 /// </summary>
-public sealed class ActRuntimeTests
+public sealed partial class ActRuntimeTests
 {
     private static ScriptValue I(int v) => new(ScriptValueKind.Int, v, null);
 
@@ -111,6 +111,18 @@ public sealed class ActRuntimeTests
             Z = z;
             return true;
         }
+
+        public int Level { get; set; }
+
+        public void SetHp(int hp)
+        {
+            Log.Add("sethp:" + hp);
+            Hp = hp;
+            if (hp <= 0)
+            {
+                IsAlive = false;
+            }
+        }
     }
 
     private sealed class Host : IActHost
@@ -125,6 +137,11 @@ public sealed class ActRuntimeTests
         public List<(int strength, int ms)> Shakes { get; } = new();
 
         public void Shake(int strength, int durationMs) => Shakes.Add((strength, durationMs));
+
+        public List<(IActEntity master, int index, int level, float x, float y, float z, bool left, int lifeMs)> Summons { get; } = new();
+
+        public void SummonMonster(IActEntity master, int index, int level, float x, float y, float z, bool facingLeft, int lifetimeMs)
+            => Summons.Add((master, index, level, x, y, z, facingLeft, lifetimeMs));
 
         public void SpawnPassive(IActEntity owner, int index, int level, float x, float y, float z, bool facingLeft)
             => Spawns.Add((owner, index, level, x, y, z, facingLeft));
