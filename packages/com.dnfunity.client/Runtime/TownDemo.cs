@@ -108,6 +108,7 @@ namespace Dnf.Client
         private IHeroSession _session;
         private bool _noHero;
         private bool _heroInput = true;
+        private SkillKeys _heldSkills;            // 这一帧还按着的技能键(蓄力类技能用,E-138)
         private string _heroSpec;
         private bool? _monsters;
         private bool _noDamage;
@@ -1781,6 +1782,10 @@ namespace Dnf.Client
                 {
                     attack = ReadHeroInput(out dirX, out dirY, out jump, out skills);
                 }
+                if (_session is ISkillHoldSession holdSession)
+                {
+                    holdSession.SkillsHeld = _heroInput ? _heldSkills : SkillKeys.None;   // 蓄力类技能每步查键是否还按着(E-138)
+                }
                 if (_session is ISkillSession skillSession)
                 {
                     skillSession.Update(deltaMs, dirX, dirY, attack, jump, skills);
@@ -2118,9 +2123,12 @@ namespace Dnf.Client
         {
             jump = false;
             skills = SkillKeys.None;
+            _heldSkills = SkillKeys.None;
             if (!_script.IsEmpty)
             {
-                return _script.Poll((Time.realtimeSinceStartup - _runningSince) * 1000.0, out dirX, out dirY, out jump, out skills);
+                bool scripted = _script.Poll((Time.realtimeSinceStartup - _runningSince) * 1000.0, out dirX, out dirY, out jump, out skills);
+                _heldSkills = _script.HeldSkills;
+                return scripted;
             }
             dirX = 0;
             dirY = 0;
@@ -2135,6 +2143,12 @@ namespace Dnf.Client
             if (Input.GetKeyDown(KeyCode.F)) { skills |= SkillKeys.F; }
             if (Input.GetKeyDown(KeyCode.G)) { skills |= SkillKeys.G; }
             if (Input.GetKeyDown(KeyCode.H)) { skills |= SkillKeys.H; }
+            if (Input.GetKey(KeyCode.A)) { _heldSkills |= SkillKeys.A; }
+            if (Input.GetKey(KeyCode.S)) { _heldSkills |= SkillKeys.S; }
+            if (Input.GetKey(KeyCode.D)) { _heldSkills |= SkillKeys.D; }
+            if (Input.GetKey(KeyCode.F)) { _heldSkills |= SkillKeys.F; }
+            if (Input.GetKey(KeyCode.G)) { _heldSkills |= SkillKeys.G; }
+            if (Input.GetKey(KeyCode.H)) { _heldSkills |= SkillKeys.H; }
             bool attack = Input.GetKeyDown(KeyCode.X);
             if (TouchActive)
             {
@@ -2145,6 +2159,7 @@ namespace Dnf.Client
                 attack |= f.Attack;
                 jump |= f.Jump;
                 skills |= f.Skills;
+                _heldSkills |= f.SkillsHeld;
             }
             return attack;
         }

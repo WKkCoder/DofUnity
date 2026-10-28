@@ -280,6 +280,7 @@ internal static class SkillCheck
         int recipeHolds = 0;
         int recipeEndFrames = 0;
         int recipeGates = 0;
+        int recipeHops = 0;
         var recipeProblems = new List<string>();
         foreach (SkillRecipe recipe in SkillRecipes.Default.All)
         {
@@ -293,6 +294,12 @@ internal static class SkillCheck
                 continue;
             }
             int needStatic = new[] { recipe.SlideSpeedIndex, recipe.SlideAccelIndex, recipe.ForwardSpeedIndex, recipe.ForwardAccelIndex }.Max() + 1;
+            if (recipe.Hop != null)
+            {
+                SkillHopSpec hopSpec = recipe.Hop;
+                needStatic = Math.Max(needStatic, new[] { hopSpec.HoldMinIndex, hopSpec.HoldMaxIndex, hopSpec.DistanceMinIndex, hopSpec.DistanceMaxIndex,
+                    hopSpec.HeightMinIndex, hopSpec.HeightMaxIndex, hopSpec.SpeedMinIndex, hopSpec.SpeedMaxIndex, hopSpec.HitsMinIndex, hopSpec.HitsMaxIndex }.Max() + 1);
+            }
             if (def.StaticData.Length < needStatic)
             {
                 recipeProblems.Add(label + ":[static data] 只有 " + def.StaticData.Length + " 个数,配方要 " + needStatic + " 个");
@@ -315,7 +322,7 @@ internal static class SkillCheck
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:攻击信息读不到");
                 }
-                if (!st.HasOwnStrike && recipe.Objects.Count == 0)
+                if (!st.HasOwnStrike && recipe.Objects.Count == 0 && recipe.Hop == null)
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:没有自己的命中,配方却没有放对象");
                 }
@@ -381,6 +388,58 @@ internal static class SkillCheck
                     }
                 }
             }
+            if (recipe.Hop != null)
+            {
+                // 蓄力跳跃(M45,证据 E-138):十个 [static data] 都在、最长蓄力大于最短、距离、高度与窗口数的档位 0 一端不大于档位 100 一端(变速的两个数不要求前小后大);
+                // 蓄力档位 0、50、100 下距离与高度不递减、变速为正、窗口数不小于 1;
+                // 重武装窗口的攻击信息在库里;跳跃动作里四个关键帧都在动画里、先后合理,命中帧里确有攻击框(具体数不打印)
+                recipeHops++;
+                SkillHopSpec h = recipe.Hop;
+                int Stat(int index) => def.GetStatic(index, false);
+                if (Stat(h.HoldMaxIndex) <= Stat(h.HoldMinIndex))
+                {
+                    recipeProblems.Add(label + " 蓄力跳跃:最长蓄力不大于最短蓄力");
+                }
+                foreach ((int lo, int hi, string name) in new[]
+                {
+                    (h.DistanceMinIndex, h.DistanceMaxIndex, "距离"), (h.HeightMinIndex, h.HeightMaxIndex, "高度"), (h.HitsMinIndex, h.HitsMaxIndex, "窗口数"),
+                })
+                {
+                    if (Stat(lo) > Stat(hi))
+                    {
+                        recipeProblems.Add(label + " 蓄力跳跃:" + name + "的档位 0 一端大于档位 100 一端");
+                    }
+                }
+                int lastDistance = int.MinValue;
+                int lastHeight = int.MinValue;
+                foreach (int charge in new[] { 0, 50, 100 })
+                {
+                    int distance = SkillHopPlan.IntLerp(Stat(h.DistanceMinIndex), Stat(h.DistanceMaxIndex), charge, 100);
+                    int height = SkillHopPlan.IntLerp(Stat(h.HeightMinIndex), Stat(h.HeightMaxIndex), charge, 100);
+                    int speed = SkillHopPlan.IntLerp(Stat(h.SpeedMinIndex), Stat(h.SpeedMaxIndex), charge, 100);
+                    int hits = SkillHopPlan.IntLerp(Stat(h.HitsMinIndex), Stat(h.HitsMaxIndex), charge, 100);
+                    if (distance < lastDistance || height < lastHeight || distance <= 0 || height <= 0 || speed <= 0 || hits < 1)
+                    {
+                        recipeProblems.Add(label + " 蓄力跳跃:蓄力档位 " + charge + " 的距离、高度、变速或窗口数不合理(不递减、为正、窗口数不小于 1)");
+                    }
+                    lastDistance = distance;
+                    lastHeight = height;
+                }
+                if (!InLibrary(chr.CustomAttackInfoPath(h.RepeatAttackInfoIndex)))
+                {
+                    recipeProblems.Add(label + " 蓄力跳跃:重武装窗口的攻击信息读不到");
+                }
+                AniFile? jump = assets.LoadAni(chr.CustomAnimationPath(recipe.Stages[1].MotionIndex) ?? "");
+                int jumpFrames = jump == null ? 0 : jump.Frames.Length;
+                if (jump == null || !(h.RiseFrame < h.LandFrame && h.LandFrame < jumpFrames && h.HitStartFrame < h.HitEndFrame && h.HitEndFrame < jumpFrames))
+                {
+                    recipeProblems.Add(label + " 蓄力跳跃:跳跃动作的帧数(" + jumpFrames + ")装不下上升、落地与命中的关键帧,或它们的先后不对");
+                }
+                else if (!Enumerable.Range(h.HitStartFrame, h.HitEndFrame - h.HitStartFrame).Any(f => jump.Frames[f].Boxes.Any(b => b.Type == AniBoxType.Attack)))
+                {
+                    recipeProblems.Add(label + " 蓄力跳跃:命中帧范围里没有任何攻击框");
+                }
+            }
             for (int i = 0; i < recipe.Objects.Count; i++)
             {
                 SkillObjectSpec o = recipe.Objects[i];
@@ -442,7 +501,7 @@ internal static class SkillCheck
         }
         Report(recipeCount == SkillRecipes.Default.Count && recipeProblems.Count == 0,
             "技能配方 " + recipeCount + " 个(共 " + recipeStages + " 段、放对象 " + recipeObjects + " 个、带蓄力 " + recipeHolds + " 段、等特效标志的对象 " + recipeGates
-            + " 个、定结束帧 " + recipeEndFrames + " 段)在真实数据里都读得通"
+            + " 个、定结束帧 " + recipeEndFrames + " 段、蓄力跳跃 " + recipeHops + " 个)在真实数据里都读得通"
             + "(动作、攻击信息、特效、对象、蓄力、结束帧、[static data]、[level info] 列;问题 " + recipeProblems.Count + " 条)");
         Console.WriteLine(bad == 0 ? "skill-check 全部通过" : "skill-check 有 " + bad + " 项失败");
         return bad == 0 ? 0 : 1;

@@ -434,7 +434,7 @@ namespace Dnf.Play
     /// 没做:属性点与技能点的花费、装备的其余加成、技能的逐级成长、上挑自己的攻击信息与伤害数、
     /// 复活与结算里的经验显示、技能音效与语音、掉落。出口开关与换房间在 <see cref="DungeonSession"/>。证据 E-069。
     /// </summary>
-    public sealed class RoomCombatSession : ISkillSession, ISoundSource, IItemSession
+    public sealed class RoomCombatSession : ISkillHoldSession, ISoundSource, IItemSession
     {
         /// <summary>一小步的最长时间(毫秒):比任何动画帧都短,保证每一帧的判定框至少被检查一次。</summary>
         public const double MaxStepMs = 10;
@@ -592,7 +592,9 @@ namespace Dnf.Play
         /// <summary>怪物每次进入出招状态放出招语音的概率(百分数,缺省 15,证据 E-104);测试可以改。</summary>
         public int AttackVoicePercent { get; set; } = MonsterAttackRules.AttackVoicePercent;
         private long _evalSwing = -1;
+        private long _evalRearm;
         private int _evalFrame = -1;
+        private int _hopLandingsSeen = -1;
         private double _targetMs = double.MaxValue;
         private double _heroPauseMs;
         private bool _bufferedAttack;
@@ -672,6 +674,18 @@ namespace Dnf.Play
 
         /// <summary>屏幕震动([SHAKING],E-133):每一步把偏移写进房间的 <see cref="RoomSession.ShakeX"/>、<see cref="RoomSession.ShakeY"/>。</summary>
         public ScreenShake Shake => _shake;
+
+        /// <summary>
+        /// 这一帧还按着的技能键(证据 E-138:蓄力类技能每步查快捷键是不是还按着,松开或蓄满才出招)。视图层或时间表在每次更新之前写入;
+        /// 不写就当全都松开(蓄力技能一放出来就按最低档出招)。
+        /// </summary>
+        public SkillKeys SkillsHeld { get; set; }
+
+        /// <summary>蓄力跳跃类技能打开过的命中窗口数(每个跳跃一个第一窗口,加上计时器每响一次重武装的一个;证据 E-138),给检查与测试用。</summary>
+        public int HopWindows { get; private set; }
+
+        /// <summary>此刻主角这一击用的攻击信息(普攻、奔跑攻击、空中攻击与各个技能各取各的;蓄力跳跃类技能的第一个窗口与重武装窗口用的不是同一项),给检查与测试用。</summary>
+        public HeroStrikeInfo CurrentHeroStrike => CurrentStrikeInfo(Hero);
 
         /// <summary>地上还没捡的金币堆(证据 E-116)。</summary>
         public IReadOnlyList<FieldDrop> Drops => _drops;
@@ -1606,8 +1620,10 @@ namespace Dnf.Play
                 {
                     attackPressed = false;     // 攻击键这一下用来捡东西了(证据 E-122)
                 }
+                UpdateHopCharge(_room.Hero);
                 _room.Update(heroDelta, dirX, dirY, attackPressed, jumpPressed);
                 SpawnStageEffect(_room.Hero);
+                UpdateHopLanding(_room.Hero);
             }
             EmitHeroCues();
             UpdateRevive(deltaMs, reviveKey);
@@ -1799,6 +1815,72 @@ namespace Dnf.Play
         }
 
         /// <summary>
+        /// 蓄力跳跃类技能的蓄力段(证据 E-138):站在蓄力姿势里每步看一次——这个技能的键还按着、而且没到最长蓄力时间就继续蓄;
+        /// 松开了或蓄满了,蓄力档位 = 夹住的整数插值(0, 100, 已蓄毫秒 − 最短, 最长 − 最短),换成跳跃段(<see cref="HeroSkills.BeginHop"/>)。
+        /// </summary>
+        private void UpdateHopCharge(TownHero hero)
+        {
+            if (hero.Motion != HeroMotion.Skill || hero.SkillStage != 0 || hero.SkillWindingUp)
+            {
+                return;
+            }
+            HeroSkillSlot slot = Skills.SlotOfSkill(hero.SkillId);
+            SkillHopSpec hop = slot?.Recipe?.Hop;
+            if (hop == null || slot.Def == null)
+            {
+                return;
+            }
+            int min = slot.Def.GetStatic(hop.HoldMinIndex, false);
+            int max = slot.Def.GetStatic(hop.HoldMaxIndex, false);
+            int elapsed = (int)hero.MotionMs;
+            if ((SkillsHeld & slot.Key) != SkillKeys.None && elapsed < max)
+            {
+                return;
+            }
+            HeroSkills.BeginHop(slot, hero, SkillHopPlan.IntLerp(0, 100, elapsed - min, max - min));
+        }
+
+        /// <summary>
+        /// 脚本跳跃落地时的震屏(证据 E-138):按这次跳跃的命中窗口数分三档,1 个窗口(强度 2,100 毫秒)、2 个(3,200)、更多(5,300)。
+        /// 客户端是看计时器的重武装次数(窗口数减一)是 0、1 还是更多;只在有镜头时震(这里的震屏本来就只管画面偏移)。
+        /// </summary>
+        internal static void HopLandingShake(int hits, out int strength, out int durationMs)
+        {
+            if (hits <= 1)
+            {
+                strength = 2;
+                durationMs = 100;
+            }
+            else if (hits == 2)
+            {
+                strength = 3;
+                durationMs = 200;
+            }
+            else
+            {
+                strength = 5;
+                durationMs = 300;
+            }
+        }
+
+        /// <summary>脚本跳跃这一步落地了(<see cref="TownHero.HopLandings"/> 变了)就震一下屏。第一次看到主角时只记下当前计数,不补震。</summary>
+        private void UpdateHopLanding(TownHero hero)
+        {
+            if (_hopLandingsSeen < 0)
+            {
+                _hopLandingsSeen = hero.HopLandings;
+                return;
+            }
+            if (hero.HopLandings == _hopLandingsSeen)
+            {
+                return;
+            }
+            _hopLandingsSeen = hero.HopLandings;
+            HopLandingShake(hero.HopLandingHits, out int strength, out int durationMs);
+            _shake.Start(strength, durationMs);
+        }
+
+        /// <summary>
         /// 配方技能的分段特效(证据 E-129):这一段(按 <see cref="TownHero.SwingNumber"/> 区分)的动画播到指定帧时放一次,
         /// 特效挂在主角身上跟着走(客户端是把它放进主角的动画图层,所以滑行时跟着动),朝向与主角一致。
         /// 一段可以同时放好几个特效(<see cref="SkillStageSpec.EffectIndices"/>,证据 E-137);放出来的特效记在 <c>_stageEffectInstances</c> 里,
@@ -1856,9 +1938,23 @@ namespace Dnf.Play
             if (hero.SwingNumber != _evalSwing)
             {
                 _evalSwing = hero.SwingNumber;
+                _evalRearm = hero.HitRearmNumber;
                 _evalFrame = -1;
+                if (hero.HopHits > 0)
+                {
+                    HopWindows++;
+                }
                 _hitThisSwing.Clear();
                 _hitBreakablesThisSwing.Clear();
+            }
+            else if (hero.HitRearmNumber != _evalRearm)
+            {
+                // 命中窗口重武装(蓄力跳跃类技能的计时器响了,证据 E-138):这一击里已经打中的目标清掉,当前这一帧重新判一遍
+                _evalRearm = hero.HitRearmNumber;
+                _hitThisSwing.Clear();
+                _hitBreakablesThisSwing.Clear();
+                _evalFrame = Math.Min(_evalFrame, hero.CurrentFrame - 1);
+                HopWindows++;
             }
             int frame = hero.CurrentFrame;
             for (int f = _evalFrame + 1; f <= frame; f++)
@@ -2088,6 +2184,11 @@ namespace Dnf.Play
                     // 有自己攻击信息与伤害数的技能(鬼斩)用自己的;借普攻动作放的技能(上挑)沿用那一段普攻的攻击信息
                     HeroSkillSlot slot = Skills.SlotOfSkill(hero.SkillId);
                     HeroStrikeInfo? own = slot?.StrikeAt(hero.SkillStage);
+                    if (slot != null && slot.HopRepeatStrike.HasValue && hero.HopHits > 0)
+                    {
+                        // 蓄力跳跃类技能(证据 E-138):窗口数大于 1 时第一个窗口用跳跃段的攻击信息,重武装的窗口(以及窗口数为 1 的唯一窗口)用另一项
+                        return hero.HopRearmsDone == 0 && hero.HopHits > 1 && own.HasValue ? own.Value : slot.HopRepeatStrike.Value;
+                    }
                     if (own.HasValue)
                     {
                         return own.Value;

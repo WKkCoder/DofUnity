@@ -2,7 +2,8 @@ using System;
 using System.Collections.Generic;
 
 // 证据:E-129(客户端原生技能状态码的读码结果:技能起手函数、状态进入块、逐帧块里的连击判定);E-135(波系技能状态 0x18:施法蓄力与主角放出的被动对象);
-// E-137(挂多个特效、对象等特效关键帧的那一类技能,状态 0x23:一进状态就挂四个特效、被动对象等特效动画的关键帧标志、帧号到数就结束状态)。
+// E-137(挂多个特效、对象等特效关键帧的那一类技能,状态 0x23:一进状态就挂四个特效、被动对象等特效动画的关键帧标志、帧号到数就结束状态);
+// E-138(蓄力后跳起来砸下去的那一类技能,状态 0x24:按住技能键蓄力、松开或蓄满才出招,跳跃距离与高度按蓄力档位插值,位移由动画时间脚本化,命中窗口由计时器重武装)。
 namespace Dnf.Play
 {
     /// <summary>
@@ -137,6 +138,73 @@ namespace Dnf.Play
     }
 
     /// <summary>
+    /// 蓄力跳跃类技能的特别部分(证据 E-138)。配方的第 0 段是蓄力姿势(没有命中;按住技能键就停在这里),第 1 段是跳跃。
+    /// 蓄力时长在 [<see cref="HoldMinIndex"/>, <see cref="HoldMaxIndex"/>] 两个 [static data] 数之间:松开技能键或到了最长时间就出招,
+    /// 蓄力档位 = 夹住的整数插值(0, 100, 已蓄毫秒 − 最短, 最长 − 最短);跳跃的水平距离、最大高度、动画变速(百分比)与命中窗口数,
+    /// 都在各自的一对 [static data] 数之间按档位(0 到 100)插值:前一个数对应档位 0、后一个对应档位 100(名字里的"最小/最大"只是这个次序,
+    /// 两个数不一定前小后大,实现按它们在 [static data] 里的次序插值)。
+    /// 命中窗口:第一个窗口在跳跃动画的 <see cref="HitStartFrame"/> 帧开头打开,每隔 (<see cref="HitEndFrame"/> − <see cref="HitStartFrame"/>) 两帧开头的时间差 / 窗口数
+    /// 重新武装一次,共 窗口数 − 1 次;第一个窗口在窗口数大于 1 时用第 1 段的攻击信息,重武装的窗口(以及窗口数为 1 时唯一的窗口)用
+    /// <see cref="RepeatAttackInfoIndex"/> 那一项;伤害百分比都取第 1 段的列。下标与帧号都是客户端状态码里的常量。
+    /// </summary>
+    public sealed class SkillHopSpec
+    {
+        public SkillHopSpec(int holdMinIndex, int holdMaxIndex, int distanceMinIndex, int distanceMaxIndex, int heightMinIndex, int heightMaxIndex,
+            int speedMinIndex, int speedMaxIndex, int hitsMinIndex, int hitsMaxIndex, int riseFrame, int landFrame, int hitStartFrame, int hitEndFrame,
+            int repeatAttackInfoIndex)
+        {
+            HoldMinIndex = holdMinIndex;
+            HoldMaxIndex = holdMaxIndex;
+            DistanceMinIndex = distanceMinIndex;
+            DistanceMaxIndex = distanceMaxIndex;
+            HeightMinIndex = heightMinIndex;
+            HeightMaxIndex = heightMaxIndex;
+            SpeedMinIndex = speedMinIndex;
+            SpeedMaxIndex = speedMaxIndex;
+            HitsMinIndex = hitsMinIndex;
+            HitsMaxIndex = hitsMaxIndex;
+            RiseFrame = riseFrame;
+            LandFrame = landFrame;
+            HitStartFrame = hitStartFrame;
+            HitEndFrame = hitEndFrame;
+            RepeatAttackInfoIndex = repeatAttackInfoIndex;
+        }
+
+        /// <summary>[static data] 里最短蓄力毫秒的下标(松开得早于它也算蓄力档位 0)。</summary>
+        public int HoldMinIndex { get; }
+
+        /// <summary>[static data] 里最长蓄力毫秒的下标(到了就自动出招)。</summary>
+        public int HoldMaxIndex { get; }
+
+        public int DistanceMinIndex { get; }
+        public int DistanceMaxIndex { get; }
+        public int HeightMinIndex { get; }
+        public int HeightMaxIndex { get; }
+
+        /// <summary>跳跃动画变速(百分比,100 是原速,在攻击速度的倍率之上再乘)在档位 0、档位 100 两端的值的下标。</summary>
+        public int SpeedMinIndex { get; }
+
+        public int SpeedMaxIndex { get; }
+        public int HitsMinIndex { get; }
+        public int HitsMaxIndex { get; }
+
+        /// <summary>跳跃动画里上升结束(也是下落开始)的帧号:这一帧的开头走完了上升段。</summary>
+        public int RiseFrame { get; }
+
+        /// <summary>落地的帧号:这一帧的开头主角落回地面。</summary>
+        public int LandFrame { get; }
+
+        /// <summary>第一个命中窗口打开的帧号。</summary>
+        public int HitStartFrame { get; }
+
+        /// <summary>命中窗口全部结束的帧号(算重武装间隔用)。</summary>
+        public int HitEndFrame { get; }
+
+        /// <summary>[etc attack info] 里重武装窗口用的攻击信息的下标。</summary>
+        public int RepeatAttackInfoIndex { get; }
+    }
+
+    /// <summary>
     /// 一个多段地面技能的放法(证据 E-129):各段(<see cref="Stages"/>)、起滑速度与加速度取 .skl [static data] 的哪几个数、接下一段的条件。
     /// 放法:起手放第 0 段;这一段的动画播过 <see cref="ChainFromFrame"/> 帧之后再按一次同一个技能键,就换成下一段(不再扣蓝、不再进冷却)。
     /// 滑行:起滑速度与加速度取 [static data] 的第 <see cref="SlideSpeedIndex"/>、<see cref="SlideAccelIndex"/> 个数;进入每一段那一刻看方向键——
@@ -145,7 +213,7 @@ namespace Dnf.Play
     public sealed class SkillRecipe
     {
         public SkillRecipe(int skillId, IEnumerable<SkillStageSpec> stages, int slideSpeedIndex, int slideAccelIndex, int forwardSpeedIndex, int forwardAccelIndex,
-            int chainFromFrame, bool slideFollowsHeldDirection = true, IEnumerable<SkillObjectSpec> objects = null)
+            int chainFromFrame, bool slideFollowsHeldDirection = true, IEnumerable<SkillObjectSpec> objects = null, SkillHopSpec hop = null)
         {
             SkillId = skillId;
             Stages = new List<SkillStageSpec>(stages ?? throw new ArgumentNullException(nameof(stages))).AsReadOnly();
@@ -160,6 +228,11 @@ namespace Dnf.Play
             ChainFromFrame = chainFromFrame;
             SlideFollowsHeldDirection = slideFollowsHeldDirection;
             Objects = new List<SkillObjectSpec>(objects ?? Array.Empty<SkillObjectSpec>()).AsReadOnly();
+            Hop = hop;
+            if (hop != null && Stages.Count < 2)
+            {
+                throw new ArgumentException("蓄力跳跃的配方要有蓄力与跳跃两段", nameof(stages));
+            }
         }
 
         public int SkillId { get; }
@@ -188,6 +261,12 @@ namespace Dnf.Play
 
         /// <summary>这个技能放出的被动对象(证据 E-135);没有为空表。</summary>
         public IReadOnlyList<SkillObjectSpec> Objects { get; }
+
+        /// <summary>
+        /// 蓄力跳跃类技能的参数(证据 E-138);不是这一类技能为 null。有它的配方第 0 段是蓄力姿势、第 1 段是跳跃,
+        /// 两段之间由会话按"松开或蓄满"自动衔接(再按技能键不接段)。
+        /// </summary>
+        public SkillHopSpec Hop { get; }
     }
 
     /// <summary>
@@ -277,6 +356,24 @@ namespace Dnf.Play
                     new SkillObjectSpec(objectId: 20028, stage: 0, frame: 6, damageRateColumn: 1, damageFixedColumn: 7, forwardX: 85, offsetY: 0, offsetZ: 82,
                         afterEffect: 1, afterEffectFlag: 1),
                 }),
+
+            // 蓄力跳跃类技能(状态 0x24,证据 E-138):第 0 段是蓄力姿势(动作取 [etc motion] 第 26 项,没有命中),第 1 段是跳跃(第 27 项,
+            // 一进来就放预载表第 0、1 个特效)。蓄力时长取 [static data] 第 0、1 个数,距离第 2、3、高度第 4、5、动画变速百分比第 6、7、命中窗口数第 8、9;
+            // 跳跃动画的第 2 帧开头是上升结束、第 4 帧开头落地、第 3 到第 5 帧是命中窗口;第一个窗口(窗口数大于 1 时)用 [etc attack info] 第 25 项,
+            // 重武装的窗口用第 26 项;伤害取 [level info] 的百分比第 0 列(没有固定值列)。落地震屏按窗口数分三档(见 RoomCombatSession.HopLandingShake)。
+            // 没做:跳跃特效按蓄力档位放大(渲染层没有特效缩放)、两个被动技能带来的落地冲击对象与额外伤害、特定职业的特效放大、
+            // 重武装计时器响的那一刻那条受保护代码里的判断(当作成立)、起手函数里的先决检查。
+            new SkillRecipe(65,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 26, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                    new SkillStageSpec(motionIndex: 27, attackInfoIndex: 25, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0,
+                        moreEffects: new[] { 1 }),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                hop: new SkillHopSpec(holdMinIndex: 0, holdMaxIndex: 1, distanceMinIndex: 2, distanceMaxIndex: 3, heightMinIndex: 4, heightMaxIndex: 5,
+                    speedMinIndex: 6, speedMaxIndex: 7, hitsMinIndex: 8, hitsMaxIndex: 9, riseFrame: 2, landFrame: 4, hitStartFrame: 3, hitEndFrame: 5,
+                    repeatAttackInfoIndex: 26)),
         });
     }
 }

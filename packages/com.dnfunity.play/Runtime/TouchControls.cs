@@ -171,13 +171,14 @@ namespace Dnf.Play
     /// <summary>触屏层一帧的输出:与键盘路径同一组输入(攻击、跳跃、技能键都是"刚按下"的边沿,每次按下只给出一帧)。</summary>
     public readonly struct TouchFrame
     {
-        public TouchFrame(int dirX, int dirY, bool attack, bool jump, SkillKeys skills)
+        public TouchFrame(int dirX, int dirY, bool attack, bool jump, SkillKeys skills, SkillKeys skillsHeld = SkillKeys.None)
         {
             DirX = dirX;
             DirY = dirY;
             Attack = attack;
             Jump = jump;
             Skills = skills;
+            SkillsHeld = skillsHeld;
         }
 
         /// <summary>水平方向:-1 左、0 无、1 右。</summary>
@@ -191,6 +192,9 @@ namespace Dnf.Play
         public bool Jump { get; }
 
         public SkillKeys Skills { get; }
+
+        /// <summary>此刻还按着的技能按钮(不是边沿;蓄力类技能用,证据 E-138)。</summary>
+        public SkillKeys SkillsHeld { get; }
     }
 
     /// <summary>
@@ -448,7 +452,11 @@ namespace Dnf.Play
             if (_buttonEdge[(int)TouchButton.SkillA]) { skills |= SkillKeys.A; }
             if (_buttonEdge[(int)TouchButton.SkillS]) { skills |= SkillKeys.S; }
             if (_buttonEdge[(int)TouchButton.SkillD]) { skills |= SkillKeys.D; }
-            var frame = new TouchFrame(dirX, dirY, _buttonEdge[(int)TouchButton.Attack], _buttonEdge[(int)TouchButton.Jump], skills);
+            SkillKeys held = SkillKeys.None;
+            if (IsPressed(TouchButton.SkillA)) { held |= SkillKeys.A; }
+            if (IsPressed(TouchButton.SkillS)) { held |= SkillKeys.S; }
+            if (IsPressed(TouchButton.SkillD)) { held |= SkillKeys.D; }
+            var frame = new TouchFrame(dirX, dirY, _buttonEdge[(int)TouchButton.Attack], _buttonEdge[(int)TouchButton.Jump], skills, held);
             _buttonEdge[(int)TouchButton.Attack] = false;
             _buttonEdge[(int)TouchButton.Jump] = false;
             _buttonEdge[(int)TouchButton.SkillA] = false;

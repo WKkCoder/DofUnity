@@ -1153,6 +1153,21 @@ public class DungeonSessionTests
     }
 
     [Fact]
+    public void TheHeldSkillKeysAreForwardedToTheCurrentRoomEveryStepAndClearedWhenReleased()
+    {
+        // 蓄力类技能每步查"技能键还按着没有"(证据 E-138):副本会话把外面写进来的按着的集合转给当前房间的战斗会话
+        using var d = new Dungeon(WalledSingleLayout(), (cx, cy) => new[] { (700, 100) });
+        DungeonSession s = d.Session;
+        Assert.Equal(SkillKeys.None, d.Rooms[(0, 0)].SkillsHeld);
+        s.SkillsHeld = SkillKeys.A | SkillKeys.D;
+        s.Update(10, 0, 0, false, false);
+        Assert.Equal(SkillKeys.A | SkillKeys.D, d.Rooms[(0, 0)].SkillsHeld);
+        s.SkillsHeld = SkillKeys.None;
+        s.Update(10, 0, 0, false, false, SkillKeys.None);
+        Assert.Equal(SkillKeys.None, d.Rooms[(0, 0)].SkillsHeld);
+    }
+
+    [Fact]
     public void TheSettlementStartsThreeSecondsAfterTheBossIsClearedAndSwapsTheMiniMapForTheDimmedSceneTheCampAndTheMenu()
     {
         using var d = new Dungeon(TwoRoomBossLayout(), (cx, cy) => None());

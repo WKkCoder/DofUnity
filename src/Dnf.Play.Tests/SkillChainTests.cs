@@ -111,14 +111,25 @@ public class SkillChainTests
                 Assert.True(st.MotionIndex >= 0 && st.EffectFrame >= 0 && st.EffectIndex >= -1 && st.CastHoldFrames >= 0);
                 if (st.HasOwnStrike)
                 {
-                    Assert.True(st.DamageRateColumn >= 0 && st.DamageFixedColumn >= 0);
+                    // 蓄力跳跃类技能的伤害没有固定值列(只取百分比列)
+                    Assert.True(st.DamageRateColumn >= 0 && (st.DamageFixedColumn >= 0 || r.Hop != null));
                 }
                 else
                 {
                     // 没有自己命中的段(伤害在放出的被动对象上):三个下标都是 -1,配方必须真的放对象
-                    Assert.True(st.AttackInfoIndex == -1 && st.DamageRateColumn == -1 && st.DamageFixedColumn == -1 && r.Objects.Count > 0);
+                    // (蓄力跳跃类技能的第 0 段是蓄力姿势:没有命中也没有对象)
+                    Assert.True(st.AttackInfoIndex == -1 && st.DamageRateColumn == -1 && st.DamageFixedColumn == -1 && (r.Objects.Count > 0 || r.Hop != null));
                 }
             });
+            if (r.Hop != null)
+            {
+                // 蓄力跳跃类:第 0 段蓄力姿势、第 1 段跳跃;下标非负,帧号先后合理
+                SkillHopSpec h = r.Hop;
+                Assert.True(r.Stages.Count == 2 && !r.Stages[0].HasOwnStrike && r.Stages[1].HasOwnStrike);
+                Assert.True(h.HoldMinIndex >= 0 && h.HoldMaxIndex >= 0 && h.DistanceMinIndex >= 0 && h.DistanceMaxIndex >= 0 && h.HeightMinIndex >= 0 && h.HeightMaxIndex >= 0
+                    && h.SpeedMinIndex >= 0 && h.SpeedMaxIndex >= 0 && h.HitsMinIndex >= 0 && h.HitsMaxIndex >= 0 && h.RepeatAttackInfoIndex >= 0);
+                Assert.True(0 < h.RiseFrame && h.RiseFrame < h.LandFrame && h.HitStartFrame < h.HitEndFrame && h.HitStartFrame >= 1);
+            }
             Assert.All(r.Objects, o => Assert.True(o.ObjectId > 0 && o.Stage >= 0 && o.Stage < r.Stages.Count && o.Frame >= 0
                 && o.DamageRateColumn >= 0 && o.DamageFixedColumn >= 0));
         }

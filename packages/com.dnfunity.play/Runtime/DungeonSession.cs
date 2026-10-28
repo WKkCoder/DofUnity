@@ -29,7 +29,7 @@ namespace Dnf.Play
     /// 没做 / 没量过:客户端"走进出口就换房间"的触发代码(没有读到,触发条件是推断)、主角对象编号的来源(<see cref="HeroObjectId"/>)、淡入期间是否接受操作(现在接受)、
     /// 转场时怪物是否冻结(现在不冻结)、清房时站姿切换的确切时刻、结算的时机与过程(清空到结算菜单之间的 3 秒是占位,掉落、评分、经验结算没读到)、掉落物。
     /// </summary>
-    public sealed class DungeonSession : ISkillSession, ISoundSource, IRunSession, IItemSession
+    public sealed class DungeonSession : ISkillHoldSession, ISoundSource, IRunSession, IItemSession
     {
         /// <summary>
         /// 没有碰撞体的左右出口的触发范围:主角离出口的横向距离不超过它(像素;近似,没有量过;真实数据里左右出口都有碰撞体)。
@@ -639,6 +639,11 @@ namespace Dnf.Play
             Update(deltaMs, dirX, dirY, attackPressed, jumpPressed, SkillKeys.None);
         }
 
+        /// <summary>
+        /// 这一帧还按着的技能键(蓄力类技能用,证据 E-138);每一小步前转给当前房间的战斗会话。视图层或时间表在每次更新之前写入,不写就当全都松开。
+        /// </summary>
+        public SkillKeys SkillsHeld { get; set; }
+
         /// <summary>同上,多一组技能键(A、S、D 的"刚按下"边沿,同样只在第一小步里生效);技能放在当前房间的战斗会话里(证据 E-076)。</summary>
         public void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed, SkillKeys skillsPressed)
         {
@@ -662,6 +667,7 @@ namespace Dnf.Play
         {
             bool inTransition = _phase != Phase.None;
             CellState cell = _cells[CellY * Maze.Cols + CellX];
+            cell.Session.SkillsHeld = SkillsHeld;
             cell.Session.Update(stepMs, dirX, dirY, attackPressed, jumpPressed, skillsPressed);
             ForwardSounds(cell.Session);
             _clockMs += stepMs;

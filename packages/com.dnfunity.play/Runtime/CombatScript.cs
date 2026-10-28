@@ -10,6 +10,8 @@ namespace Dnf.Play
     /// 时间表是逗号分隔的 "秒:动作":动作是 none、left、right、up、down(可用 + 组合),再加上 attack、jump 表示在那一刻按一下攻击键或跳跃键(只按一次的边沿),
     /// a、s、d、f、g、h 表示按一下技能快捷键 A S D F G H(例如 "1:a" 在第 1 秒放 A 槽的技能);
     /// 方向保持到下一项改变为止,例如 "0.5:left,2:left+attack,3:none"。
+    /// 蓄力类技能要按住技能键:holda、holds、holdd、holdf、holdg、holdh 表示从这一项起按住对应的键、直到下一项改变(和方向一样,
+    /// 每一项都重写"按着哪些键",所以 none 就是全部松开);例如 "1:f+holdf,1.4:none" 在第 1 秒按下 F 键并按住 0.4 秒(证据 E-138)。
     /// 双击方向键奔跑就写成"按、松、按":"0:right,0.1:none,0.2:right"(两次按下相隔 0.2 秒)。
     /// 两种用法:<see cref="Poll"/> 按任意时刻读取按键状态(实时运行);<see cref="Step"/> 以固定的 1/60 秒步长推进一个会话(逐帧确定的模拟,
     /// 与命令行 combat-check 同一份代码,用来对拍两条绘制路径)。
@@ -30,17 +32,22 @@ namespace Dnf.Play
             public bool JumpFired;
             public SkillKeys Skills;
             public SkillKeys SkillsFired;
+            public SkillKeys Held;
         }
 
         private readonly List<Key> _keys = new List<Key>();
         private int _dirX;
         private int _dirY;
+        private SkillKeys _held;
 
         /// <summary><see cref="Step"/> 已经模拟到的时刻(毫秒)。</summary>
         public double TimeMs { get; private set; }
 
         /// <summary>没有任何一项。</summary>
         public bool IsEmpty => _keys.Count == 0;
+
+        /// <summary>最近一次读取时按着的技能键(时间表里的 holda 到 holdh,证据 E-138);蓄力类技能每步查它。</summary>
+        public SkillKeys HeldSkills => _held;
 
         /// <summary>解析时间表;空串得到空的时间表。格式不对抛 <see cref="FormatException"/>。</summary>
         public static CombatScript Parse(string text)
@@ -74,6 +81,12 @@ namespace Dnf.Play
                         case "f": key.Skills |= SkillKeys.F; break;
                         case "g": key.Skills |= SkillKeys.G; break;
                         case "h": key.Skills |= SkillKeys.H; break;
+                        case "holda": key.Held |= SkillKeys.A; break;
+                        case "holds": key.Held |= SkillKeys.S; break;
+                        case "holdd": key.Held |= SkillKeys.D; break;
+                        case "holdf": key.Held |= SkillKeys.F; break;
+                        case "holdg": key.Held |= SkillKeys.G; break;
+                        case "holdh": key.Held |= SkillKeys.H; break;
                         case "none": break;
                         default: throw new FormatException("时间表里不认识的动作 " + word);
                     }
@@ -115,6 +128,7 @@ namespace Dnf.Play
                 {
                     _dirX = k.DirX;
                     _dirY = k.DirY;
+                    _held = k.Held;
                     if (k.Attack && !k.AttackFired)
                     {
                         k.AttackFired = true;
@@ -146,6 +160,10 @@ namespace Dnf.Play
                 throw new ArgumentNullException(nameof(session));
             }
             bool attack = Poll(TimeMs, out int dirX, out int dirY, out bool jump, out SkillKeys skills);
+            if (session is ISkillHoldSession withHold)
+            {
+                withHold.SkillsHeld = _held;
+            }
             if (session is ISkillSession withSkills)
             {
                 withSkills.Update(StepMs, dirX, dirY, attack, jump, skills);

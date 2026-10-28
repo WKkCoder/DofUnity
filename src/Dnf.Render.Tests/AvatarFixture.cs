@@ -110,6 +110,39 @@ internal sealed class AvatarFixture : IDisposable
     public const string WaveHitSound = "TEST_WAVE_HIT";
 
     /// <summary>
+    /// 蓄力跳跃类技能(M45,证据 E-138)的合成数据:技能编号 <see cref="HopSkill"/>,[etc motion] 第 5、6 项是蓄力姿势 <see cref="HopReadyAni"/>(一帧 500 毫秒、没有攻击框)
+    /// 与跳跃 <see cref="HopAni"/>(七帧 × 100 毫秒,第 3 到 5 帧各带一个攻击框 <see cref="HopStrikeBox"/>);
+    /// [etc attack info] 第 3、4 项是第一个命中窗口与重武装窗口的攻击信息(<see cref="HopFirstAtk"/> 击退 <see cref="HopFirstPushAside"/>、不击倒,
+    /// <see cref="HopRepeatAtk"/> 击倒、击退 <see cref="HopRepeatPushAside"/>);.skl 的 [static data] 是十个数
+    /// (蓄力最短 <see cref="HopHoldMin"/>、最长 <see cref="HopHoldMax"/> 毫秒,距离 <see cref="HopDistanceMin"/> 到 <see cref="HopDistanceMax"/>,高度 <see cref="HopHeightMin"/> 到 <see cref="HopHeightMax"/>,
+    /// 变速百分比 <see cref="HopSpeedMin"/> 到 <see cref="HopSpeedMax"/>,命中窗口数 <see cref="HopHitsMin"/> 到 <see cref="HopHitsMax"/>),
+    /// [level info] 一列 (第 1 级 <see cref="HopRate1"/>,第 2 级 <see cref="HopRate2"/>),消耗魔法 10、冷却 3500;预载特效两个。数全是测试用的。
+    /// </summary>
+    public const int HopSkill = 904;
+    public const string HopReadyAni = "character/test/animation/hopready.ani";
+    public const string HopAni = "character/test/animation/hop.ani";
+    public const string HopFirstAtk = "character/test/attackinfo/hopfirst.atk";
+    public const string HopRepeatAtk = "character/test/attackinfo/hoprepeat.atk";
+    public const int HopFirstPushAside = 90;
+    public const int HopRepeatPushAside = 220;
+    public const int HopHoldMin = 100;
+    public const int HopHoldMax = 500;
+    public const int HopDistanceMin = 100;
+    public const int HopDistanceMax = 300;
+    public const int HopHeightMin = 60;
+    public const int HopHeightMax = 120;
+    public const int HopSpeedMin = 100;
+    public const int HopSpeedMax = 200;
+    public const int HopHitsMin = 1;
+    public const int HopHitsMax = 3;
+    public const int HopRate1 = 180;
+    public const int HopRate2 = 260;
+    public const int HopMotionMs = 700;
+
+    /// <summary>跳跃动画的攻击框:又宽又高(x 从 +20 起宽 300,y 从 −10 起深 20,z 从 −100 起高 200),空中的主角也打得到地上的怪物、被打退的怪物也还在框里。</summary>
+    public static readonly (ushort Type, int[] Values) HopStrikeBox = ((ushort)15, new[] { 20, -10, -100, 300, 20, 200 });
+
+    /// <summary>
     /// 鬼斩的两层特效(角色目录下 effect/animation/):都是 350 毫秒——空帧 150、图 50、图 50、空帧 100(原版的斩击光影也是先空一段再出图);
     /// 第二层每帧带图形特效 2(加法混合)。图用皮肤 IMG 的第 0、1 帧,帧偏移 (-5, -8)。
     /// </summary>
@@ -726,14 +759,24 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[skill]").Int(181, 2, HardAttackSkill, 1, UpperSlashSkill, UpperSlashLevel, BackStepSkill, 1, 174, 1)
                 // 技能动作与攻击信息(两个表的下标不对应:护身动作没有攻击信息,鬼斩在动作表里是第 1 项、在攻击信息表里是第 0 项)
                 .Tag("[etc motion]").Str("Animation/Guard.ani").Str("Animation/HardAttack.ani").Str("Animation/ChainA.ani").Str("Animation/ChainB.ani").Str("Animation/WaveCast.ani")
+                .Str("Animation/HopReady.ani").Str("Animation/Hop.ani")
                 .Tag("[etc attack info]").Str("AttackInfo/HardAttack.atk").Str("AttackInfo/ChainA.atk").Str("AttackInfo/ChainB.atk")
+                .Str("AttackInfo/HopFirst.atk").Str("AttackInfo/HopRepeat.atk")
                 .Tag("[attack motion]").Str("animation/attack1.ani").Str("Animation/Attack2.ani").Str("animation/attack3.ani").Build()),
             // 技能目录:职业 0 → ActionChrPath;三个主动技能与一个被动技能的 .skl(数是合成的)
             ("character/character.lst", NewScript().Int(0).Str("test/action.chr").Build()),
             ("skill/skilllist.lst", NewScript().Int(0).Str("testskill.lst").Build()),
             ("skill/testskill.lst", NewScript()
                 .Int(181).Str("test/passive.skl").Int(HardAttackSkill).Str("test/hardattack.skl").Int(UpperSlashSkill).Str("test/upperslash.skl")
-                .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Int(ChainSkill).Str("test/chain.skl").Int(WaveSkill).Str("test/wave.skl").Build()),
+                .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Int(ChainSkill).Str("test/chain.skl").Int(WaveSkill).Str("test/wave.skl").Int(HopSkill).Str("test/hop.skl").Build()),
+            // 蓄力跳跃类技能:十个 [static data](蓄力、距离、高度、变速、窗口数的最小与最大)与一列 [level info]
+            ("skill/test/hop.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[command]").Str("SKILL").Tag("[maximum level]").Int(10)
+                .Tag("[consume MP]").Int(10, 10).Tag("[cool time]").Int(3500, 3500)
+                .Tag("[static data]").Int(HopHoldMin, HopHoldMax, HopDistanceMin, HopDistanceMax, HopHeightMin, HopHeightMax, HopSpeedMin, HopSpeedMax, HopHitsMin, HopHitsMax)
+                .Tag("[level info]").Int(1, HopRate1, HopRate2).Build()),
+            (HopFirstAtk, NewScript().Tag("[damage reaction]").Tag("[damage]").Tag("[push aside]").Int(HopFirstPushAside).Build()),
+            (HopRepeatAtk, NewScript().Tag("[damage reaction]").Tag("[down]").Tag("[push aside]").Int(HopRepeatPushAside).Build()),
             // 波系技能:三列 (固定值、大小比率、百分比),[casting time] 与三个 [static data]
             ("skill/test/wave.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Str("SKILL").Tag("[maximum level]").Int(10)
@@ -755,14 +798,16 @@ internal sealed class AvatarFixture : IDisposable
             (ChainBAtk, NewScript().Tag("[damage reaction]").Tag("[down]").Tag("[push aside]").Int(ChainBPushAside).Build()),
             // 技能预载脚本(与原版 sqr/common.nut 同形):常量、职业函数、按技能编号分支、依次预载特效;前面放一个别的技能的分支做干扰
             ("sqr/common.nut", Encoding.ASCII.GetBytes(
-                "SKILL_OTHER_TEST <- 902;\r\nSKILL_CHAIN_TEST <- 901;\r\nSKILL_WAVE_TEST <- 903;\r\n"
+                "SKILL_OTHER_TEST <- 902;\r\nSKILL_CHAIN_TEST <- 901;\r\nSKILL_WAVE_TEST <- 903;\r\nSKILL_HOP_TEST <- 904;\r\n"
                 + "function sq_LoadSkillEffect_Swordman(obj, skillIndex)\r\n{\r\n"
                 + "\tif (skillIndex == SKILL_OTHER_TEST)\r\n\t{\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Other.ani\");\r\n\t}\r\n"
                 + "\telse if (skillIndex == SKILL_CHAIN_TEST)\r\n\t{\r\n\t\t// comment\r\n"
                 + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain1.ani\");\r\n"
                 + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain2.ani\");\r\n\t}\r\n"
                 + "\telse if (skillIndex == SKILL_WAVE_TEST)\r\n\t{\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/WaveSlash.ani\");\r\n"
-                + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/WaveSlash2.ani\");\r\n\t}\r\n}\r\n")),
+                + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/WaveSlash2.ani\");\r\n\t}\r\n"
+                + "\telse if (skillIndex == SKILL_HOP_TEST)\r\n\t{\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain1.ani\");\r\n"
+                + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain2.ani\");\r\n\t}\r\n}\r\n")),
             ("skill/test/passive.skl", NewScript().Tag("[type]").Str("[passive]").Build()),
             ("skill/test/hardattack.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Str("UP").Tag("[maximum level]").Int(10)
@@ -864,6 +909,10 @@ internal sealed class AvatarFixture : IDisposable
             (WaveEffect2, BuildKeyedEffectAni()),
             (WaveCastAni, BuildBoxAni((0, 10000, null), (1, 50, null), (0, 50, null), (1, 50, null),
                 (0, 50, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }), (1, 50, null))),
+            // 蓄力跳跃类技能:蓄力姿势一帧 500 毫秒;跳跃七帧 × 100 毫秒,第 3 到 5 帧各带一个攻击框
+            (HopReadyAni, BuildBoxAni((0, 500, null))),
+            (HopAni, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, null),
+                (1, 100, new[] { HopStrikeBox }), (0, 100, new[] { HopStrikeBox }), (1, 100, new[] { HopStrikeBox }), (0, 100, null))),
             (ChainAAni, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }), (1, 100, null))),
             (ChainBAni, BuildBoxAni((0, 100, null), (1, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }), (0, 100, null))),
             (LevelUpEffect, BuildEffectAni(false)),

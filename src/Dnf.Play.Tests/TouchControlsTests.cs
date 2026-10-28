@@ -217,8 +217,10 @@ public class TouchControlsTests
 
         TouchFrame f = c.Poll();
         Assert.Equal((1, 0, true, true, SkillKeys.A), (f.DirX, f.DirY, f.Attack, f.Jump, f.Skills));
+        Assert.Equal(SkillKeys.A, f.SkillsHeld);
         f = c.Poll();                                              // 按住不连发;摇杆还在
         Assert.Equal((1, 0, false, false, SkillKeys.None), (f.DirX, f.DirY, f.Attack, f.Jump, f.Skills));
+        Assert.Equal(SkillKeys.A, f.SkillsHeld);                   // 技能按钮没有边沿了,但"按着"一直是真的(蓄力类技能每帧查它,证据 E-138)
 
         c.Up(2);
         Assert.False(c.IsPressed(TouchButton.Attack));
@@ -231,6 +233,9 @@ public class TouchControlsTests
         c.Down(5, ss.X, ss.Y);
         c.Down(6, sd.X, sd.Y);
         Assert.Equal(SkillKeys.S | SkillKeys.D, c.Poll().Skills);
+        c.Up(4);                                                   // 抬起 A:按着的集合只剩 S 与 D
+        TouchFrame later = c.Poll();
+        Assert.Equal((SkillKeys.None, SkillKeys.S | SkillKeys.D), (later.Skills, later.SkillsHeld));
     }
 
     [Fact]

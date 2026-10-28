@@ -80,6 +80,12 @@ namespace Dnf.Play
         /// <summary>配方技能每一段命中用的攻击信息与伤害数,与 <see cref="SkillRecipe.Stages"/> 一一对应;不是配方技能为 null。</summary>
         public IReadOnlyList<HeroStrikeInfo> StageStrikes { get; internal set; }
 
+        /// <summary>
+        /// 蓄力跳跃类技能(<see cref="SkillRecipe.Hop"/>)重武装的命中窗口用的攻击信息与伤害数(证据 E-138);窗口数为 1 时唯一的窗口也用它。
+        /// 其它技能为 null。
+        /// </summary>
+        public HeroStrikeInfo? HopRepeatStrike { get; internal set; }
+
         /// <summary>配方技能预载的特效动画(PVF 路径,按 <see cref="SkillStageSpec.EffectIndex"/> 取);没有为空。</summary>
         public IReadOnlyList<string> StageEffects { get; internal set; } = Array.Empty<string>();
 
@@ -251,6 +257,13 @@ namespace Dnf.Play
                         : new HeroStrikeInfo(0, 0, false));
                 }
                 slot.StageStrikes = strikes;
+                if (recipe.Hop != null)
+                {
+                    // 蓄力跳跃类技能:重武装窗口的攻击信息取 [etc attack info] 的另一项,伤害数用跳跃段的两列(证据 E-138)
+                    SkillStageSpec jump = recipe.Stages[1];
+                    slot.HopRepeatStrike = HeroStrikeInfo.Read(data, chr.CustomAttackInfoPath(recipe.Hop.RepeatAttackInfoIndex))
+                        .WithSkillDamage(def.GetLevel(slot.Level, jump.DamageRateColumn, false), def.GetLevel(slot.Level, jump.DamageFixedColumn, false));
+                }
                 // 放出的被动对象:攻击信息取对象 .obj 的 [attack info],伤害数取 [level info] 当前等级的两列(证据 E-135)
                 var objectStrikes = new List<HeroStrikeInfo>();
                 foreach (SkillObjectSpec o in recipe.Objects)
@@ -453,6 +466,10 @@ namespace Dnf.Play
             {
                 return null;
             }
+            if (recipe.Hop != null)
+            {
+                return null;           // 蓄力跳跃类技能:两段之间按"松开或蓄满"自动衔接,再按技能键不接段(证据 E-138)
+            }
             int next = hero.SkillStage + 1;
             if (next >= recipe.Stages.Count || hero.CurrentFrame < recipe.ChainFromFrame)
             {
@@ -471,9 +488,47 @@ namespace Dnf.Play
             SkillStageSpec spec = slot.Recipe.Stages[stage];
             Slide(slot, hero, heldX, heldY, out double speed, out double accel);
             int hold = CastHoldMs(slot, spec, hero);
+            if (!chain && stage == 0 && slot.Recipe.Hop != null)
+            {
+                hold = HopHoldMs(slot);
+            }
             return chain
                 ? hero.ChainSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame)
                 : hero.BeginSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame);
+        }
+
+        /// <summary>
+        /// 蓄力姿势的动画至少要播多久(毫秒):最长蓄力时间再加一秒余量——姿势动画的第 0 帧停留不能比蓄力先结束,
+        /// 蓄力什么时候结束由会话看按键决定(<see cref="BeginHop"/>)。
+        /// </summary>
+        internal static int HopHoldMs(HeroSkillSlot slot)
+        {
+            SkillHopSpec hop = slot.Recipe.Hop;
+            int max = slot.Def == null ? 0 : slot.Def.GetStatic(hop.HoldMaxIndex, false);
+            return Math.Max(0, max) + 1000;
+        }
+
+        /// <summary>
+        /// 蓄力跳跃类技能出招(证据 E-138):按蓄力档位 <paramref name="charge"/>(0 到 100)在 [static data] 的各对数之间插值出距离、高度、
+        /// 动画变速与命中窗口数,把蓄力姿势换成跳跃段(新的一击、命中窗口重新数),跳跃由 <see cref="TownHero"/> 按动画时间脚本化。
+        /// 主角不在放这个技能的蓄力段、或读不到跳跃动画时返回 false。
+        /// </summary>
+        internal static bool BeginHop(HeroSkillSlot slot, TownHero hero, int charge)
+        {
+            SkillRecipe recipe = slot.Recipe;
+            SkillHopSpec hop = recipe?.Hop;
+            if (hop == null || slot.Def == null || hero.SkillStage != 0)
+            {
+                return false;
+            }
+            SkillDef def = slot.Def;
+            int distance = SkillHopPlan.IntLerp(def.GetStatic(hop.DistanceMinIndex, false), def.GetStatic(hop.DistanceMaxIndex, false), charge, 100);
+            int height = SkillHopPlan.IntLerp(def.GetStatic(hop.HeightMinIndex, false), def.GetStatic(hop.HeightMaxIndex, false), charge, 100);
+            int hits = SkillHopPlan.IntLerp(def.GetStatic(hop.HitsMinIndex, false), def.GetStatic(hop.HitsMaxIndex, false), charge, 100);
+            float rate = SkillHopPlan.FloatLerp(def.GetStatic(hop.SpeedMinIndex, false) * 0.01f, def.GetStatic(hop.SpeedMaxIndex, false) * 0.01f, charge, 100);
+            var plan = new SkillHopPlan(distance, height, hits, hop.RiseFrame, hop.LandFrame, hop.HitStartFrame, hop.HitEndFrame);
+            SkillStageSpec jump = recipe.Stages[1];
+            return hero.ChainSkillMotion(slot.SkillId, jump.MotionIndex, 0.0, 0.0, -1, jump.EndFrame, plan, rate);
         }
 
         /// <summary>

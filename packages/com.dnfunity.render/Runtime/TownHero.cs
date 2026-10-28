@@ -417,6 +417,18 @@ namespace Dnf.Render
         private double _skillSlideV;
         private double _skillEndMs = -1.0;
 
+        // 蓄力跳跃类技能(M45,证据 E-138):动画速度系数、脚本跳跃与命中窗口重武装的进度
+        private double _skillRateScale = 1.0;
+        private SkillHopPlan _hop;
+        private double _hopStartX;
+        private int _hopRiseEndMs;
+        private int _hopLandMs;
+        private int _hopNextRearmMs;
+        private int _hopInterval;
+        private int _hopRearmsMax;
+        private int _hopRearmsDone;
+        private bool _hopLanded;
+
         // 受击:[damage motion 1]、[damage motion 2](没写就是 null,对应的受击不生效),当前播的那一段,硬直与击退的进度
         private AniFile _damage1;
         private string _damage1Path;
@@ -624,6 +636,27 @@ namespace Dnf.Render
         /// <summary>从开始玩起累计挥出的次数(每开始一击加 1)。命中判定用它给"同一击只打中同一目标一次"去重。</summary>
         public long SwingNumber { get; private set; }
 
+        /// <summary>
+        /// 命中窗口重武装的累计次数(蓄力跳跃类技能:计时器每到点加 1,证据 E-138)。命中判定看到它变了,就清掉"这一击已打中的目标",
+        /// 让同一个目标在新的窗口里再挨一下。其它技能永远不变。
+        /// </summary>
+        public long HitRearmNumber { get; private set; }
+
+        /// <summary>这次脚本跳跃里已经重武装的次数(第一个窗口是 0);不在放脚本跳跃的技能时为 0。</summary>
+        public int HopRearmsDone => Motion == HeroMotion.Skill && _hop != null ? _hopRearmsDone : 0;
+
+        /// <summary>这次脚本跳跃一共的命中窗口数 N(第一个窗口加上 N−1 次重武装);不在放脚本跳跃的技能时为 0。</summary>
+        public int HopHits => Motion == HeroMotion.Skill && _hop != null ? _hop.Hits : 0;
+
+        /// <summary>脚本跳跃的落地计数(每落地一次加 1,永远递增);会话据此放落地的震屏。</summary>
+        public int HopLandings { get; private set; }
+
+        /// <summary>最近一次落地的那次跳跃的命中窗口数(落地那一步技能可能同时结束,所以单独记一份)。</summary>
+        public int HopLandingHits { get; private set; }
+
+        /// <summary>正在放脚本跳跃的技能而且还没落地。</summary>
+        public bool HopAirborne => Motion == HeroMotion.Skill && _hop != null && !_hopLanded;
+
         /// <summary>是否正在挥击(连招、奔跑攻击、空中攻击或技能)。</summary>
         public bool IsAttacking => Motion == HeroMotion.Attack || Motion == HeroMotion.DashAttack || Motion == HeroMotion.JumpAttack || Motion == HeroMotion.Skill;
 
@@ -693,7 +726,7 @@ namespace Dnf.Render
         }
 
         /// <summary>当前这一击已经过去的动画毫秒数(已乘播放倍率)。</summary>
-        public long AttackAnimationMs => (long)(_motionMs * AttackAnimationRate);
+        public long AttackAnimationMs => (long)(_motionMs * AttackAnimationRate * (Motion == HeroMotion.Skill ? _skillRateScale : 1.0));
 
         /// <summary>当前动作已经播放的毫秒数(状态一变就从 0 重新数)。</summary>
         public long MotionMs => (long)_motionMs;
@@ -1035,8 +1068,7 @@ namespace Dnf.Render
             {
                 return -1.0;
             }
-            double rate = AttackAnimationRate > 0.0 ? AttackAnimationRate : 1.0;
-            return Math.Ceiling(m.Timeline.StartMs(endFrame) / rate);
+            return Math.Ceiling(m.Timeline.StartMs(endFrame) / SkillRate);
         }
 
         /// <summary>同一段动画换上"第 0 帧停留 <paramref name="holdFirstFrameMs"/> 毫秒"的时间线;不需要换(小于 0)或没有动画时原样返回。</summary>
@@ -1089,8 +1121,11 @@ namespace Dnf.Render
         /// 新动画从头播,按 <paramref name="slideSpeed"/>、<paramref name="slideAccel"/> 重新起滑,算新的一击(<see cref="SwingNumber"/> 加 1,
         /// 命中判定重新数帧、同一个目标又能被打一次),<see cref="SkillStage"/> 加 1。
         /// 不在放这个技能的主体阶段(没在放、放的是别的技能、还在起手阶段),或者读不到动画时返回 false,不改变状态。
+        /// <paramref name="hop"/> 不为空时这一段是脚本跳跃(蓄力跳跃类技能,证据 E-138):位移由动画时间脚本化,命中窗口由计时器重武装;
+        /// <paramref name="rateScale"/> 是这一段动画的变速系数(乘在攻击速度的播放倍率上),技能结束或换段时恢复 1。
         /// </summary>
-        public bool ChainSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel, int holdFirstFrameMs = -1, int endFrame = -1)
+        public bool ChainSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel, int holdFirstFrameMs = -1, int endFrame = -1,
+            SkillHopPlan hop = null, double rateScale = 1.0)
         {
             if (Motion != HeroMotion.Skill || SkillId != skillId || _skillWindupStage >= 0 || _skillMotion == null)
             {
@@ -1103,6 +1138,7 @@ namespace Dnf.Render
             }
             _skillMotion = m;
             _skillThen = m;
+            _skillRateScale = rateScale > 0.0 ? rateScale : 1.0;
             _skillEndMs = EndMsOf(m, endFrame);
             _skillSlideV0 = slideSpeed;
             _skillSlideAccel = slideAccel;
@@ -1110,6 +1146,7 @@ namespace Dnf.Render
             _motionMs = 0;
             _skillStage++;
             SwingNumber++;
+            StartHop(m, hop);
             return true;
         }
 
@@ -1187,6 +1224,8 @@ namespace Dnf.Render
             _skillSlideAccel = slideAccel;
             _skillSlideV = windupStage < 0 ? slideSpeed : 0.0;
             _skillEndMs = -1.0;
+            _skillRateScale = 1.0;
+            _hop = null;
             _motionMs = 0;
             _attackQueued = false;
             SwingNumber++;
@@ -1233,6 +1272,8 @@ namespace Dnf.Render
             _skillSlideV0 = 0;
             _skillSlideAccel = 0;
             _skillSlideV = 0;
+            _skillRateScale = 1.0;
+            _hop = null;
             _motionMs = motionMs < 0 ? 0 : motionMs;
             _attackQueued = false;
             ResetAir();
@@ -1278,20 +1319,107 @@ namespace Dnf.Render
                 X = MoveAxis(X, (FacingLeft ? -1.0 : 1.0) * distance, true);
             }
             _skillSlideV = SlideSpeedAt(_skillSlideV0, _skillSlideAccel, t1);
+            if (_hop != null)
+            {
+                StepHop((int)_motionMs);
+            }
             if (_motionMs >= duration)
             {
                 FinishSkill();
             }
         }
 
+        /// <summary>
+        /// 开始(或清除)脚本跳跃(证据 E-138):记下起跳位置,把动画的关键帧折成墙钟毫秒(按这一段的播放倍率,与客户端的"帧起始时刻按动画速度折算"一致),
+        /// 排好命中窗口的重武装计时:从命中起始帧开始,每隔 (命中结束帧 − 命中起始帧) / N 响一次,共 N − 1 次。
+        /// </summary>
+        private void StartHop(EtcMotion m, SkillHopPlan hop)
+        {
+            _hop = hop;
+            _hopLanded = false;
+            _hopRearmsDone = 0;
+            _hopRearmsMax = 0;
+            if (hop == null)
+            {
+                return;
+            }
+            _hopStartX = X;
+            double rate = SkillRate;
+            _hopRiseEndMs = HopFrameMs(m, hop.RiseFrame, rate);
+            _hopLandMs = HopFrameMs(m, hop.LandFrame, rate);
+            int hitStart = HopFrameMs(m, hop.HitStartFrame, rate);
+            int hitEnd = HopFrameMs(m, hop.HitEndFrame, rate);
+            int hits = hop.Hits < 1 ? 1 : hop.Hits;
+            _hopInterval = (hitEnd - hitStart) / hits;
+            _hopRearmsMax = hits - 1;
+            _hopNextRearmMs = hitStart + _hopInterval;
+        }
+
+        private static int HopFrameMs(EtcMotion m, int frame, double rate)
+        {
+            return (int)(m.Timeline.StartMs(frame) * 100.0 / (rate * 100.0));
+        }
+
+        /// <summary>
+        /// 脚本跳跃这一步(证据 E-138),<paramref name="e"/> 是这一段动画已经过去的墙钟毫秒:
+        /// 先看重武装计时器(到点就让命中判定重新来一轮,一步最多响一次),再按时间摆位置——
+        /// 上升段(到上升结束帧开头)水平走全程的 <see cref="SkillHopPlan.NearShare"/>、高度走缓出弧到最大高度;
+        /// 下落段(到落地帧开头)走完余下的水平距离、高度按缓入弧回到 0;落地那一步高度归零、记一次落地,之后不再摆位置。
+        /// 水平位置受可走区域与障碍限制(客户端取带碰撞的位置),高度是整数像素。
+        /// </summary>
+        private void StepHop(int e)
+        {
+            if (_hopRearmsDone < _hopRearmsMax && e >= _hopNextRearmMs)
+            {
+                _hopRearmsDone++;
+                _hopNextRearmMs += _hopInterval;
+                HitRearmNumber++;
+            }
+            if (_hopLanded)
+            {
+                return;
+            }
+            int near = (int)((float)_hop.Distance * SkillHopPlan.NearShare);
+            int dx;
+            int z;
+            if (e < _hopRiseEndMs)
+            {
+                dx = SkillHopPlan.IntLerp(0, near, e, _hopRiseEndMs);
+                z = SkillHopPlan.EasedLerp(0, _hop.Height, e, _hopRiseEndMs, true);
+            }
+            else if (e < _hopLandMs)
+            {
+                dx = SkillHopPlan.IntLerp(near, _hop.Distance, e - _hopRiseEndMs, _hopLandMs - _hopRiseEndMs);
+                z = SkillHopPlan.EasedLerp(_hop.Height, 0, e - _hopRiseEndMs, _hopLandMs - _hopRiseEndMs, false);
+            }
+            else
+            {
+                Z = 0;
+                _hopLanded = true;
+                HopLandingHits = _hop.Hits;
+                HopLandings++;
+                return;
+            }
+            double target = _hopStartX + (FacingLeft ? -dx : dx);
+            X = MoveAxis(X, target - X, true);
+            Z = z;
+        }
+
         private double EtcDurationMs(EtcMotion m)
         {
-            double rate = AttackAnimationRate > 0.0 ? AttackAnimationRate : 1.0;
-            return Math.Ceiling(m.Timeline.TotalMilliseconds / rate);
+            return Math.Ceiling(m.Timeline.TotalMilliseconds / SkillRate);
         }
+
+        /// <summary>放技能时动画的播放倍率:攻击速度的倍率再乘技能自己给的系数(蓄力跳跃类技能的跳跃段按蓄力档位变速,证据 E-138)。</summary>
+        private double SkillRate => (AttackAnimationRate > 0.0 ? AttackAnimationRate : 1.0) * _skillRateScale;
 
         private void FinishSkill()
         {
+            if (_hop != null)
+            {
+                Z = 0;               // 脚本跳跃的技能结束时一定落回地面(状态提前结束的保险)
+                _hop = null;
+            }
             Motion = HeroMotion.Rest;
             AttackStage = 0;
             SkillId = 0;
@@ -1299,6 +1427,7 @@ namespace Dnf.Render
             _skillWindupStage = -1;
             _skillMotion = null;
             _skillSlideV = 0.0;
+            _skillRateScale = 1.0;
             _attackQueued = false;
             _motionMs = 0;
         }
@@ -1538,9 +1667,9 @@ namespace Dnf.Render
         /// </summary>
         public bool BeginHurt(double stunMs, double pushPixels, double pushMs, bool pushToLeft)
         {
-            if ((IsAirborne && Z > 0) || IsDown || !CanBeHurt)
+            if (((IsAirborne || Motion == HeroMotion.Skill) && Z > 0) || IsDown || !CanBeHurt)
             {
-                return false;
+                return false;           // 脚本跳跃的技能在空中时也一样(只有倒地流程能打断,E-138)
             }
             if (IsAirborne)
             {
@@ -2509,6 +2638,112 @@ namespace Dnf.Render
     public interface ISkillSession : IActionSession
     {
         void Update(double deltaMs, int dirX, int dirY, bool attackPressed, bool jumpPressed, SkillKeys skillsPressed);
+    }
+
+    /// <summary>
+    /// 还要知道技能键"此刻是不是按着"的会话(蓄力类技能,证据 E-138:状态码每帧查快捷键是否还按住,松开或蓄满才出招)。
+    /// 视图层(或时间表)在每次 <see cref="ISkillSession.Update(double, int, int, bool, bool, SkillKeys)"/> 之前把这一帧还按着的技能键写进来;不写就当全都松开。
+    /// </summary>
+    public interface ISkillHoldSession : ISkillSession
+    {
+        SkillKeys SkillsHeld { get; set; }
+    }
+
+    /// <summary>
+    /// 脚本跳跃的参数(蓄力跳跃类技能,证据 E-138):水平距离 <see cref="Distance"/> 与最大高度 <see cref="Height"/>(像素),
+    /// 这一段动画里的几个关键帧(上升结束 <see cref="RiseFrame"/>、落地 <see cref="LandFrame"/>、命中起止 <see cref="HitStartFrame"/> 与 <see cref="HitEndFrame"/>),
+    /// 以及命中窗口数 <see cref="Hits"/>。位移完全由动画时间脚本化、不走跳跃物理:
+    /// 上升段水平走 <see cref="NearShare"/> 的距离、高度走缓出弧,下落段走完余下的距离、高度走缓入弧回到 0(见 <see cref="TownHero"/>)。
+    /// 三个插值函数是客户端的取整规则(逐个照读码复刻,E-138)。
+    /// </summary>
+    public sealed class SkillHopPlan
+    {
+        /// <summary>上升段走掉的水平距离占全程的比例(客户端常量)。</summary>
+        public const float NearShare = 0.8f;
+
+        public SkillHopPlan(int distance, int height, int hits, int riseFrame, int landFrame, int hitStartFrame, int hitEndFrame)
+        {
+            Distance = distance;
+            Height = height;
+            Hits = hits < 1 ? 1 : hits;
+            RiseFrame = riseFrame;
+            LandFrame = landFrame;
+            HitStartFrame = hitStartFrame;
+            HitEndFrame = hitEndFrame;
+        }
+
+        public int Distance { get; }
+        public int Height { get; }
+        public int Hits { get; }
+        public int RiseFrame { get; }
+        public int LandFrame { get; }
+        public int HitStartFrame { get; }
+        public int HitEndFrame { get; }
+
+        /// <summary>夹住的整数线性插值(0x11b98c0):x ≥ range 取 b,x ≤ 0 取 a,否则按单精度算 (b − a) × x / range + a 后向零取整。</summary>
+        public static int IntLerp(int a, int b, int x, int range)
+        {
+            if (x >= range)
+            {
+                return (int)(float)b;
+            }
+            if (x <= 0)
+            {
+                return (int)(float)a;
+            }
+            float d = (float)b - (float)a;
+            d *= x;
+            d /= range;
+            d += a;
+            return (int)d;
+        }
+
+        /// <summary>夹住的单精度线性插值(0x125a7a0):边界同 <see cref="IntLerp"/>,中间 (b − a) × x / range + a,不取整。</summary>
+        public static float FloatLerp(float a, float b, int x, int range)
+        {
+            if (x >= range)
+            {
+                return b;
+            }
+            if (x <= 0)
+            {
+                return a;
+            }
+            float d = b - a;
+            d *= x;
+            d /= range;
+            return d + a;
+        }
+
+        /// <summary>
+        /// 带缓动的整数插值(0x11b9ef0):x ≥ range 取 b,x ≤ 0 取 a;缓出(<paramref name="easeOut"/> 为真)是从 a 出发的 a + (b − a)(2s − s²),s = x / range;
+        /// 缓入是对称的 a + (b − a) s²。结果向零取整。
+        /// </summary>
+        public static int EasedLerp(int a, int b, int x, int range, bool easeOut)
+        {
+            if (x >= range)
+            {
+                return b;
+            }
+            if (x <= 0)
+            {
+                return a;
+            }
+            float start = a;
+            float end = b;
+            int xp = x;
+            if (!easeOut)
+            {
+                start = b;
+                end = a;
+                xp = range - x;
+            }
+            float delta = Math.Abs(end - start);
+            float linear = delta * 2f / range;
+            float curve = -(linear / range);
+            float v = xp * (curve * 0.5f * xp + linear);
+            return (int)(end <= start ? start - v : start + v);
+        }
     }
 
     /// <summary>
