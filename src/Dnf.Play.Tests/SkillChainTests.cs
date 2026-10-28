@@ -108,9 +108,19 @@ public class SkillChainTests
             Assert.True(r.Stages.Count >= 1 && r.ChainFromFrame >= 1);
             Assert.All(r.Stages, st =>
             {
-                Assert.True(st.MotionIndex >= 0 && st.AttackInfoIndex >= 0 && st.DamageRateColumn >= 0 && st.DamageFixedColumn >= 0);
-                Assert.True(st.EffectFrame >= 0 && st.EffectIndex >= -1);
+                Assert.True(st.MotionIndex >= 0 && st.EffectFrame >= 0 && st.EffectIndex >= -1 && st.CastHoldFrames >= 0);
+                if (st.HasOwnStrike)
+                {
+                    Assert.True(st.DamageRateColumn >= 0 && st.DamageFixedColumn >= 0);
+                }
+                else
+                {
+                    // 没有自己命中的段(伤害在放出的被动对象上):三个下标都是 -1,配方必须真的放对象
+                    Assert.True(st.AttackInfoIndex == -1 && st.DamageRateColumn == -1 && st.DamageFixedColumn == -1 && r.Objects.Count > 0);
+                }
             });
+            Assert.All(r.Objects, o => Assert.True(o.ObjectId > 0 && o.Stage >= 0 && o.Stage < r.Stages.Count && o.Frame >= 0
+                && o.DamageRateColumn >= 0 && o.DamageFixedColumn >= 0));
         }
         Assert.Throws<ArgumentException>(() => new SkillRecipe(1, new SkillStageSpec[0], 0, 0, 0, 0, 1));
     }

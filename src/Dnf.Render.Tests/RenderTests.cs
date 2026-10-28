@@ -59,6 +59,35 @@ public class AniTimelineTests
     }
 
     [Fact]
+    public void TheHoldOverloadReplacesOnlyTheFirstFramesDelay()
+    {
+        // 第 0 帧是 10000 毫秒的蓄力占位,换成 150 毫秒:后面的帧时长不动,总时长跟着变(波系技能的施法蓄力,证据 E-135)
+        AniFile ani = Ani(false, 10000, 50, 50, 50, 50);
+        var plain = new AniTimeline(ani);
+        var held = new AniTimeline(ani, 150);
+        Assert.Equal(10200, plain.TotalMilliseconds);
+        Assert.Equal(350, held.TotalMilliseconds);
+        Assert.Equal(new[] { 0, 0, 1, 1, 2, 3, 4, 4 }, new[] { held.FrameAt(0), held.FrameAt(149), held.FrameAt(150), held.FrameAt(199), held.FrameAt(200), held.FrameAt(250), held.FrameAt(300), held.FrameAt(5000) });
+        Assert.Equal(new long[] { 0, 150, 200, 250, 300 }, Enumerable.Range(0, 5).Select(held.StartMs).ToArray());
+        // 不换(负数)与第一个构造函数一样
+        var same = new AniTimeline(ani, -1);
+        Assert.Equal(plain.TotalMilliseconds, same.TotalMilliseconds);
+        Assert.Equal(plain.FrameAt(9999), same.FrameAt(9999));
+    }
+
+    [Fact]
+    public void AZeroHoldSkipsTheFirstFrameAndFrameLengthsAreReported()
+    {
+        AniFile ani = Ani(false, 10000, 50, 70);
+        var held = new AniTimeline(ani, 0);
+        Assert.Equal(120, held.TotalMilliseconds);
+        Assert.Equal(1, held.FrameAt(0));                      // 时长为 0 的帧不会被选中
+        Assert.Equal(new long[] { 0, 50, 70, 0, 0 }, new[] { held.FrameLengthMs(0), held.FrameLengthMs(1), held.FrameLengthMs(2), held.FrameLengthMs(3), held.FrameLengthMs(-1) });
+        var plain = new AniTimeline(ani);
+        Assert.Equal(new long[] { 10000, 50, 70 }, new[] { plain.FrameLengthMs(0), plain.FrameLengthMs(1), plain.FrameLengthMs(2) });
+    }
+
+    [Fact]
     public void NoFramesGivesMinusOne()
     {
         var t = new AniTimeline(AniFile.Parse(TestData.BuildAni(new[] { "A.img" }, Array.Empty<(ushort, byte[])>(), Array.Empty<TestData.AniFrameSpec>())));

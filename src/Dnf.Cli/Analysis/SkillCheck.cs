@@ -269,12 +269,15 @@ internal static class SkillCheck
                 + ",快捷栏排了 " + filled + " 格(学会的主动技能 " + activeLearned + " 个)");
         }
 
-        // 6. 技能配方(M37,证据 E-129):配方表里的每个技能在真实数据里都读得通——技能在目录里且是主动技能、[static data] 与 [level info] 的列数够用、
-        // 角色的 [etc motion] 与 [etc attack info] 的下标落在表内且文件在库里、特效列表够长且每个动画文件都在库里、要求的技能在目录里、1 级的逐段伤害数读得出
+        // 6. 技能配方(M37,证据 E-129;M42 补对象与蓄力,证据 E-135):配方表里的每个技能在真实数据里都读得通——技能在目录里且是主动技能、[static data] 与 [level info] 的列数够用、
+        // 角色的 [etc motion] 与 [etc attack info] 的下标落在表内且文件在库里、特效列表够长且每个动画文件都在库里、要求的技能在目录里、1 级的逐段伤害数读得出;
+        // 放被动对象的配方:.obj 读得到、基础动画在库里且有攻击框、攻击信息在库里、放出的帧不越界、两个伤害列读出来是正数;有蓄力的段:第 0 帧确实是长停留、各级的蓄力不为负
         SkillEffectTable effects = SkillEffectTable.Load(data, SkillEffectTable.SwordmanJob);
         bool InLibrary(string? path) => path != null && assets.Pvf.TryGetEntry(path, out _);
         int recipeCount = 0;
         int recipeStages = 0;
+        int recipeObjects = 0;
+        int recipeHolds = 0;
         var recipeProblems = new List<string>();
         foreach (SkillRecipe recipe in SkillRecipes.Default.All)
         {
@@ -292,7 +295,8 @@ internal static class SkillCheck
             {
                 recipeProblems.Add(label + ":[static data] 只有 " + def.StaticData.Length + " 个数,配方要 " + needStatic + " 个");
             }
-            int needColumns = recipe.Stages.Max(st => Math.Max(st.DamageRateColumn, st.DamageFixedColumn)) + 1;
+            int needColumns = Math.Max(recipe.Stages.Max(st => Math.Max(st.DamageRateColumn, st.DamageFixedColumn)),
+                recipe.Objects.Count == 0 ? -1 : recipe.Objects.Max(o => Math.Max(o.DamageRateColumn, o.DamageFixedColumn))) + 1;
             if (def.LevelInfo.Columns < needColumns || !def.LevelInfo.IsConsistent)
             {
                 recipeProblems.Add(label + ":[level info] 只有 " + def.LevelInfo.Columns + " 列,配方要 " + needColumns + " 列");
@@ -305,9 +309,13 @@ internal static class SkillCheck
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:动作读不到");
                 }
-                if (!InLibrary(chr.CustomAttackInfoPath(st.AttackInfoIndex)))
+                if (st.HasOwnStrike && !InLibrary(chr.CustomAttackInfoPath(st.AttackInfoIndex)))
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:攻击信息读不到");
+                }
+                if (!st.HasOwnStrike && recipe.Objects.Count == 0)
+                {
+                    recipeProblems.Add(label + " 第 " + i + " 段:没有自己的命中,配方却没有放对象");
                 }
                 if (st.EffectIndex >= 0 && (st.EffectIndex >= effectPaths.Count || !InLibrary(PvfPath.ResolveRelativeTo(chr.Path, effectPaths[st.EffectIndex]))))
                 {
@@ -317,9 +325,83 @@ internal static class SkillCheck
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:要求的技能不在目录里");
                 }
-                if (def.GetLevel(1, st.DamageRateColumn, false) <= 0)
+                if (st.HasOwnStrike && def.GetLevel(1, st.DamageRateColumn, false) <= 0)
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:1 级的百分比伤害读出来不是正数");
+                }
+                if (st.CastHoldFrames > 0)
+                {
+                    recipeHolds++;
+                    AniFile? cast = assets.LoadAni(chr.CustomAnimationPath(st.MotionIndex) ?? "");
+                    int frames = cast == null ? 0 : cast.Frames.Length;
+                    int firstDelay = 0;
+                    int following = 0;
+                    if (cast != null && frames > st.CastHoldFrames)
+                    {
+                        cast.Frames[0].TryGetDelayMs(out firstDelay);
+                        for (int f = 1; f <= st.CastHoldFrames; f++)
+                        {
+                            cast.Frames[f].TryGetDelayMs(out int d);
+                            following += d;
+                        }
+                    }
+                    if (cast == null || frames <= st.CastHoldFrames)
+                    {
+                        recipeProblems.Add(label + " 第 " + i + " 段:蓄力要减 " + st.CastHoldFrames + " 帧,动画只有 " + frames + " 帧");
+                    }
+                    else if (firstDelay < 1000)
+                    {
+                        recipeProblems.Add(label + " 第 " + i + " 段:有蓄力,第 0 帧的停留却只有 " + firstDelay + " 毫秒(不像蓄力占位)");
+                    }
+                    int negative = 0;
+                    for (int lv = 1; lv <= Math.Max(1, def.MaximumLevel); lv++)
+                    {
+                        if (def.Interpolate(def.CastingTime, lv) - following < 0)
+                        {
+                            negative++;
+                        }
+                    }
+                    if (negative > 0)
+                    {
+                        recipeProblems.Add(label + " 第 " + i + " 段:有 " + negative + " 个等级的施法时间不够减(蓄力会取 0)");
+                    }
+                }
+            }
+            for (int i = 0; i < recipe.Objects.Count; i++)
+            {
+                SkillObjectSpec o = recipe.Objects[i];
+                recipeObjects++;
+                Dnf.Game.PassiveObjectDef? objectDef = data.GetPassiveObject(o.ObjectId);
+                if (objectDef == null)
+                {
+                    recipeProblems.Add(label + " 对象 " + i + ":.obj 读不到");
+                    continue;
+                }
+                if (objectDef.BasicActionPath != null)
+                {
+                    recipeProblems.Add(label + " 对象 " + i + ":是 .act 驱动的新式对象(这条路径只放老式对象)");
+                }
+                AniFile? objectAni = objectDef.BasicMotionPath == null ? null : assets.LoadAni(objectDef.BasicMotionPath);
+                if (objectAni == null || objectAni.Frames.Length == 0)
+                {
+                    recipeProblems.Add(label + " 对象 " + i + ":基础动画读不到");
+                }
+                else if (!objectAni.Frames.Any(fr => fr.Boxes.Any(b => b.Type == AniBoxType.Attack)))
+                {
+                    recipeProblems.Add(label + " 对象 " + i + ":基础动画没有任何攻击框");
+                }
+                if (!InLibrary(objectDef.AttackInfoPath))
+                {
+                    recipeProblems.Add(label + " 对象 " + i + ":攻击信息读不到");
+                }
+                AniFile? motion = assets.LoadAni(chr.CustomAnimationPath(recipe.Stages[Math.Min(o.Stage, recipe.Stages.Count - 1)].MotionIndex) ?? "");
+                if (motion == null || o.Frame >= motion.Frames.Length)
+                {
+                    recipeProblems.Add(label + " 对象 " + i + ":放出的帧 " + o.Frame + " 超出施法动作的帧数 " + (motion == null ? 0 : motion.Frames.Length));
+                }
+                if (def.GetLevel(1, o.DamageRateColumn, false) <= 0 || def.GetLevel(1, o.DamageFixedColumn, false) <= 0)
+                {
+                    recipeProblems.Add(label + " 对象 " + i + ":1 级的两个伤害列读出来不是正数");
                 }
             }
         }
@@ -328,7 +410,8 @@ internal static class SkillCheck
             Console.WriteLine("    " + line);
         }
         Report(recipeCount == SkillRecipes.Default.Count && recipeProblems.Count == 0,
-            "技能配方 " + recipeCount + " 个(共 " + recipeStages + " 段)在真实数据里都读得通(动作、攻击信息、特效、[static data]、[level info] 列;问题 " + recipeProblems.Count + " 条)");
+            "技能配方 " + recipeCount + " 个(共 " + recipeStages + " 段、放对象 " + recipeObjects + " 个、带蓄力 " + recipeHolds + " 段)在真实数据里都读得通"
+            + "(动作、攻击信息、特效、对象、蓄力、[static data]、[level info] 列;问题 " + recipeProblems.Count + " 条)");
         Console.WriteLine(bad == 0 ? "skill-check 全部通过" : "skill-check 有 " + bad + " 项失败");
         return bad == 0 ? 0 : 1;
     }

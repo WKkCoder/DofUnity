@@ -281,6 +281,73 @@ public class HeroSkillMotionTests
         Assert.Equal((0, "chaina.ani", swings), (hero.SkillStage, hero.SkillMotionName, hero.SwingNumber));
     }
 
+    // ---- 施法蓄力(证据 E-135) ----
+
+    [Fact]
+    public void ACastHoldReplacesTheFirstFramesLongPauseAndTheRestOfTheMotionRunsNormally()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TownHero hero = NewHero(assets);
+        int cast = hero.EtcMotionIndexOf("wavecast.ani");
+        Assert.True(cast >= 0);
+        Assert.Equal(new[] { 10000, 50, 50, 50, 50, 50 }, Enumerable.Range(0, 6).Select(f => hero.EtcFrameDelayMs(cast, f)).ToArray());
+        Assert.Equal(0, hero.EtcFrameDelayMs(cast, 6));                // 越界
+        Assert.Equal(0, hero.EtcFrameDelayMs(99, 1));                  // 没有这一项
+        Assert.Equal(10250.0, hero.EtcMotionDurationMs(cast));         // 不换时间线时整段含蓄力占位
+
+        // 蓄力 150 毫秒:149 毫秒还在第 0 帧,150 毫秒放行到第 1 帧;整段 150 + 5×50 = 400 毫秒
+        Assert.True(hero.BeginSkillMotion(AvatarFixture.WaveSkill, cast, 160, -320, 150));
+        Assert.Equal((HeroMotion.Skill, 0), (hero.Motion, hero.CurrentFrame));
+        hero.Update(149, 0, 0);
+        Assert.Equal(0, hero.CurrentFrame);
+        hero.Update(1, 0, 0);
+        Assert.Equal(1, hero.CurrentFrame);
+        hero.Update(100, 0, 0);
+        Assert.Equal(3, hero.CurrentFrame);                            // 250 毫秒:第 3 帧起点
+        hero.Update(149, 0, 0);
+        Assert.Equal((HeroMotion.Skill, 5), (hero.Motion, hero.CurrentFrame));
+        hero.Update(1, 0, 0);
+        Assert.Equal((HeroMotion.Rest, 0), (hero.Motion, hero.SkillId));
+    }
+
+    [Fact]
+    public void ThePlainOverloadKeepsTheLongPauseAndASlideRunsDuringTheHold()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TownHero hero = NewHero(assets);
+        int cast = hero.EtcMotionIndexOf("wavecast.ani");
+
+        // 不给蓄力:第 0 帧停 10 秒(原样)
+        Assert.True(hero.BeginSkillMotion(AvatarFixture.WaveSkill, cast, 0, 0));
+        hero.Update(5000, 0, 0);
+        Assert.Equal((HeroMotion.Skill, 0), (hero.Motion, hero.CurrentFrame));
+
+        // 给了蓄力:起滑从进入动作那一刻算,蓄力期间照样滑(速度按时间衰减,与蓄力无关)
+        TownHero slider = NewHero(assets);
+        Assert.True(slider.BeginSkillMotion(AvatarFixture.WaveSkill, cast, 160, -320, 150));
+        slider.Update(100, 0, 0);
+        Assert.Equal(100 + TownHero.SlideDistance(160, -320, 0, 100), slider.X, 6);
+        Assert.Equal(0, slider.CurrentFrame);
+
+        // 蓄力为 0:第 0 帧不占时间,一开始就在第 1 帧
+        TownHero none = NewHero(assets);
+        Assert.True(none.BeginSkillMotion(AvatarFixture.WaveSkill, cast, 0, 0, 0));
+        Assert.Equal(1, none.CurrentFrame);
+
+        // 换段也能带蓄力
+        TownHero chained = NewHero(assets);
+        int a = chained.EtcMotionIndexOf("chaina.ani");
+        Assert.True(chained.BeginSkillMotion(AvatarFixture.ChainSkill, a, 0, 0));
+        Assert.True(chained.ChainSkillMotion(AvatarFixture.ChainSkill, cast, 0, 0, 80));
+        Assert.Equal("wavecast.ani", chained.SkillMotionName);
+        chained.Update(79, 0, 0);
+        Assert.Equal(0, chained.CurrentFrame);
+        chained.Update(1, 0, 0);
+        Assert.Equal(1, chained.CurrentFrame);
+    }
+
     [Fact]
     public void TheSkillStageIsZeroOutsideSkillsAndRestartsWithEachNewSkill()
     {

@@ -80,6 +80,25 @@ internal sealed class AvatarFixture : IDisposable
     public const int ChainMotionBMs = 300;
 
     /// <summary>
+    /// 波系技能(M42,证据 E-135)的合成数据:技能编号 <see cref="WaveSkill"/>,[etc motion] 第 4 项是施法动作 <see cref="WaveCastAni"/>(六帧:第 0 帧停 10000 毫秒是蓄力占位,
+    /// 第 1 到 5 帧各 50 毫秒;第 4 帧带一个攻击框,用来检查"施法动作自己不命中");.skl 的 [casting time] 是 <see cref="WaveCastMs"/>,
+    /// [static data] 是 (250, 160, −320),[level info] 三列 (第 1 级 11、100、222,第 2 级 12、101、333),消耗魔法 15、冷却 2500。
+    /// 预载特效 <see cref="WaveEffect"/> 登记在 <c>sqr/common.nut</c>。放出的被动对象 <see cref="WaveObjectId"/>(.obj <see cref="WaveObj"/>,老式:只有 [basic motion] 与 [attack info])
+    /// 的动画 <see cref="WaveObjAni"/> 四帧各 50 毫秒、不循环,第 0、1 帧各有一个攻击框(x 从 +20 起宽 120,y 从 −20 起深 40,z 从 0 起高 100);攻击信息 <see cref="WaveObjAtk"/>:
+    /// 击倒、击退 <see cref="WavePushAside"/>、命中声 <see cref="WaveHitSound"/>、魔法攻击。数全是测试用的。
+    /// </summary>
+    public const int WaveSkill = 903;
+    public const string WaveCastAni = "character/test/animation/wavecast.ani";
+    public const string WaveEffect = "character/test/effect/animation/waveslash.ani";
+    public const int WaveObjectId = 9301;
+    public const string WaveObj = "passiveobject/hero/wave.obj";
+    public const string WaveObjAni = "passiveobject/hero/animation/wave.ani";
+    public const string WaveObjAtk = "passiveobject/hero/attackinfo/wave.atk";
+    public const int WavePushAside = 260;
+    public const int WaveCastMs = 300;
+    public const string WaveHitSound = "TEST_WAVE_HIT";
+
+    /// <summary>
     /// 鬼斩的两层特效(角色目录下 effect/animation/):都是 350 毫秒——空帧 150、图 50、图 50、空帧 100(原版的斩击光影也是先空一段再出图);
     /// 第二层每帧带图形特效 2(加法混合)。图用皮肤 IMG 的第 0、1 帧,帧偏移 (-5, -8)。
     /// </summary>
@@ -292,6 +311,9 @@ internal sealed class AvatarFixture : IDisposable
 
     /// <summary>受击框(类型 14):x 从 −10 起宽 40(故意不对称,朝向才看得出镜像),y 从 −6 起深 12,z 从 0 起高 60。</summary>
     public static readonly (ushort Type, int[] Values) BlobHurtBox = ((ushort)14, new[] { -10, -6, 0, 40, 12, 60 });
+
+    /// <summary>波系对象每个攻击帧的攻击框:x 从 +20 起宽 120,y 从 −20 起深 40,z 从 0 起高 100(见 <see cref="WaveObjectId"/>)。</summary>
+    public static readonly (ushort Type, int[] Values) WaveObjBox = ((ushort)15, new[] { 20, -20, 0, 120, 40, 100 });
 
     /// <summary>每个 IMG 的第 k 帧,红色通道 = 基色 + k,用来判断精灵取的是哪个 IMG 帧。</summary>
     public static readonly (int R, int G, int B) SkinColor = (200, 10, 10);
@@ -692,7 +714,7 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[initial value]")
                 .Tag("[skill]").Int(181, 2, HardAttackSkill, 1, UpperSlashSkill, UpperSlashLevel, BackStepSkill, 1, 174, 1)
                 // 技能动作与攻击信息(两个表的下标不对应:护身动作没有攻击信息,鬼斩在动作表里是第 1 项、在攻击信息表里是第 0 项)
-                .Tag("[etc motion]").Str("Animation/Guard.ani").Str("Animation/HardAttack.ani").Str("Animation/ChainA.ani").Str("Animation/ChainB.ani")
+                .Tag("[etc motion]").Str("Animation/Guard.ani").Str("Animation/HardAttack.ani").Str("Animation/ChainA.ani").Str("Animation/ChainB.ani").Str("Animation/WaveCast.ani")
                 .Tag("[etc attack info]").Str("AttackInfo/HardAttack.atk").Str("AttackInfo/ChainA.atk").Str("AttackInfo/ChainB.atk")
                 .Tag("[attack motion]").Str("animation/attack1.ani").Str("Animation/Attack2.ani").Str("animation/attack3.ani").Build()),
             // 技能目录:职业 0 → ActionChrPath;三个主动技能与一个被动技能的 .skl(数是合成的)
@@ -700,7 +722,19 @@ internal sealed class AvatarFixture : IDisposable
             ("skill/skilllist.lst", NewScript().Int(0).Str("testskill.lst").Build()),
             ("skill/testskill.lst", NewScript()
                 .Int(181).Str("test/passive.skl").Int(HardAttackSkill).Str("test/hardattack.skl").Int(UpperSlashSkill).Str("test/upperslash.skl")
-                .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Int(ChainSkill).Str("test/chain.skl").Build()),
+                .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Int(ChainSkill).Str("test/chain.skl").Int(WaveSkill).Str("test/wave.skl").Build()),
+            // 波系技能:三列 (固定值、大小比率、百分比),[casting time] 与三个 [static data]
+            ("skill/test/wave.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[command]").Str("SKILL").Tag("[maximum level]").Int(10)
+                .Tag("[consume MP]").Int(15, 15).Tag("[cool time]").Int(2500, 2500).Tag("[casting time]").Int(WaveCastMs, WaveCastMs)
+                .Tag("[static data]").Int(250, 160, -320)
+                .Tag("[level info]").Int(3, 11, 100, 222, 12, 101, 333).Build()),
+            (WaveObj, NewScript().Tag("[basic motion]").Str("animation/wave.ani").Tag("[attack info]").Str("attackinfo/wave.atk").Build()),
+            (WaveObjAtk, NewScript()
+                .Tag("[attack type]").Tag("[magic]").Tag("[damage reaction]").Tag("[down]").Tag("[push aside]").Int(WavePushAside)
+                .Tag("[hit wav]").Str(WaveHitSound).Build()),
+            (WaveObjAni, BuildBlobBoxesAni(false,
+                (0, 50, new[] { WaveObjBox }), (1, 50, new[] { WaveObjBox }), (2, 50, new (ushort Type, int[] Values)[0]), (3, 50, new (ushort Type, int[] Values)[0]))),
             ("skill/test/chain.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Str("SKILL").Tag("[maximum level]").Int(10)
                 .Tag("[consume MP]").Int(20, 20).Tag("[cool time]").Int(3000, 3000).Tag("[static data]").Int(200, -400, 100, -100)
@@ -710,12 +744,13 @@ internal sealed class AvatarFixture : IDisposable
             (ChainBAtk, NewScript().Tag("[damage reaction]").Tag("[down]").Tag("[push aside]").Int(ChainBPushAside).Build()),
             // 技能预载脚本(与原版 sqr/common.nut 同形):常量、职业函数、按技能编号分支、依次预载特效;前面放一个别的技能的分支做干扰
             ("sqr/common.nut", Encoding.ASCII.GetBytes(
-                "SKILL_OTHER_TEST <- 902;\r\nSKILL_CHAIN_TEST <- 901;\r\n"
+                "SKILL_OTHER_TEST <- 902;\r\nSKILL_CHAIN_TEST <- 901;\r\nSKILL_WAVE_TEST <- 903;\r\n"
                 + "function sq_LoadSkillEffect_Swordman(obj, skillIndex)\r\n{\r\n"
                 + "\tif (skillIndex == SKILL_OTHER_TEST)\r\n\t{\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Other.ani\");\r\n\t}\r\n"
                 + "\telse if (skillIndex == SKILL_CHAIN_TEST)\r\n\t{\r\n\t\t// comment\r\n"
                 + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain1.ani\");\r\n"
-                + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain2.ani\");\r\n\t}\r\n}\r\n")),
+                + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain2.ani\");\r\n\t}\r\n"
+                + "\telse if (skillIndex == SKILL_WAVE_TEST)\r\n\t{\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/WaveSlash.ani\");\r\n\t}\r\n}\r\n")),
             ("skill/test/passive.skl", NewScript().Tag("[type]").Str("[passive]").Build()),
             ("skill/test/hardattack.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Str("UP").Tag("[maximum level]").Int(10)
@@ -803,6 +838,9 @@ internal sealed class AvatarFixture : IDisposable
             (HardAttackEffect2, BuildEffectAni(true)),
             (ChainEffect1, BuildEffectAni(false)),
             (ChainEffect2, BuildEffectAni(true)),
+            (WaveEffect, BuildEffectAni(false)),
+            (WaveCastAni, BuildBoxAni((0, 10000, null), (1, 50, null), (0, 50, null), (1, 50, null),
+                (0, 50, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }), (1, 50, null))),
             (ChainAAni, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }), (1, 100, null))),
             (ChainBAni, BuildBoxAni((0, 100, null), (1, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }), (0, 100, null))),
             (LevelUpEffect, BuildEffectAni(false)),
@@ -888,7 +926,7 @@ internal sealed class AvatarFixture : IDisposable
                 .Int(PillarObjectId).Str("MapObject/BreakableObject/Pillar.obj")
                 .Int(GrassObjectId).Str("MapObject/BreakableObject/Grass.obj")
                 .Int(GhostObjectId).Str("MapObject/BreakableObject/Ghost.obj")
-                .Int(RockObjectId).Str("MapObject/Obstacle/Rock.obj").Build()),
+                .Int(RockObjectId).Str("MapObject/Obstacle/Rock.obj").Int(WaveObjectId).Str("hero/wave.obj").Build()),
             (BreakableDir + "/crate.obj", NewScript()
                 .Tag("[width]").Int(30, 20).Tag("[layer]").Str("[normal]").Tag("[pass type]").Str("[do not pass]")
                 .Tag("[basic motion]").Str("animation/stand.ani")

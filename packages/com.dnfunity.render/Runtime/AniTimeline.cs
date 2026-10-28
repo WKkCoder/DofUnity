@@ -43,7 +43,16 @@ namespace Dnf.Render
         public long TotalMilliseconds { get; }
         public bool Loops { get; }
 
-        public AniTimeline(AniFile ani)
+        public AniTimeline(AniFile ani) : this(ani, -1)
+        {
+        }
+
+        /// <summary>
+        /// 与 <see cref="AniTimeline(AniFile)"/> 相同,只是第 0 帧的时长换成 <paramref name="firstFrameDelayMs"/>(毫秒,小于 0 不换)。
+        /// 波系技能的施法动作第 0 帧写着一个很长的停留(约 10 秒),它是"蓄力"的占位:代码按施法时间算出真正要停多久再放行(证据 E-135,静态读码);
+        /// 这里把那个停留换成算出来的值,后面的帧时长不动。
+        /// </summary>
+        public AniTimeline(AniFile ani, int firstFrameDelayMs)
         {
             if (ani == null)
             {
@@ -57,7 +66,11 @@ namespace Dnf.Render
             for (int i = 0; i < FrameCount; i++)
             {
                 _starts[i] = t;
-                if (ani.Frames[i].TryGetDelayMs(out int ms) && ms > 0)
+                if (i == 0 && firstFrameDelayMs >= 0)
+                {
+                    t += firstFrameDelayMs;
+                }
+                else if (ani.Frames[i].TryGetDelayMs(out int ms) && ms > 0)
                 {
                     t += ms;
                 }
@@ -65,6 +78,12 @@ namespace Dnf.Render
             }
             TotalMilliseconds = t;
             Loops = ani.Loops;
+        }
+
+        /// <summary>第 <paramref name="frame"/> 帧自己的时长(毫秒);帧号越界或没有时长属性为 0。</summary>
+        public long FrameLengthMs(int frame)
+        {
+            return (uint)frame < (uint)FrameCount ? _ends[frame] - _starts[frame] : 0;
         }
 
         /// <summary>第 <paramref name="frame"/> 帧的起始时刻(毫秒,从动画开始算);帧号越界时夹在 [0, 最后一帧]。</summary>

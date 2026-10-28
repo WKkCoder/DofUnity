@@ -83,6 +83,25 @@ namespace Dnf.Play
         /// <summary>配方技能预载的特效动画(PVF 路径,按 <see cref="SkillStageSpec.EffectIndex"/> 取);没有为空。</summary>
         public IReadOnlyList<string> StageEffects { get; internal set; } = Array.Empty<string>();
 
+        /// <summary>
+        /// 配方技能放出的被动对象命中用的攻击信息与伤害数,与 <see cref="SkillRecipe.Objects"/> 一一对应
+        /// (攻击信息取对象 .obj 的 [attack info],伤害数取 .skl [level info] 当前等级的两列,证据 E-135);没有为空表。
+        /// </summary>
+        public IReadOnlyList<HeroStrikeInfo> ObjectStrikes { get; internal set; } = Array.Empty<HeroStrikeInfo>();
+
+        /// <summary>
+        /// 第 <paramref name="stage"/> 段主角的身体有没有自己的命中:配方技能看这一段的攻击信息下标(波系技能的施法动作没有,伤害全在放出的对象上);
+        /// 别的技能(没有配方)有。
+        /// </summary>
+        public bool StageHasOwnStrike(int stage)
+        {
+            if (Recipe == null || Recipe.Stages.Count == 0)
+            {
+                return true;
+            }
+            return Recipe.Stages[Math.Max(0, Math.Min(stage, Recipe.Stages.Count - 1))].HasOwnStrike;
+        }
+
         /// <summary>第 <paramref name="stage"/> 段命中用的攻击信息:配方技能取这一段的(段号越界取最后一段),别的技能取 <see cref="Strike"/>。</summary>
         public HeroStrikeInfo? StrikeAt(int stage)
         {
@@ -226,10 +245,21 @@ namespace Dnf.Play
                 var strikes = new List<HeroStrikeInfo>();
                 foreach (SkillStageSpec stage in recipe.Stages)
                 {
-                    strikes.Add(HeroStrikeInfo.Read(data, chr.CustomAttackInfoPath(stage.AttackInfoIndex))
-                        .WithSkillDamage(def.GetLevel(slot.Level, stage.DamageRateColumn, false), def.GetLevel(slot.Level, stage.DamageFixedColumn, false)));
+                    strikes.Add(stage.HasOwnStrike
+                        ? HeroStrikeInfo.Read(data, chr.CustomAttackInfoPath(stage.AttackInfoIndex))
+                            .WithSkillDamage(def.GetLevel(slot.Level, stage.DamageRateColumn, false), def.GetLevel(slot.Level, stage.DamageFixedColumn, false))
+                        : new HeroStrikeInfo(0, 0, false));
                 }
                 slot.StageStrikes = strikes;
+                // 放出的被动对象:攻击信息取对象 .obj 的 [attack info],伤害数取 [level info] 当前等级的两列(证据 E-135)
+                var objectStrikes = new List<HeroStrikeInfo>();
+                foreach (SkillObjectSpec o in recipe.Objects)
+                {
+                    Dnf.Game.PassiveObjectDef objectDef = data.GetPassiveObject(o.ObjectId);
+                    objectStrikes.Add(HeroStrikeInfo.Read(data, objectDef?.AttackInfoPath)
+                        .WithSkillDamage(def.GetLevel(slot.Level, o.DamageRateColumn, false), def.GetLevel(slot.Level, o.DamageFixedColumn, false)));
+                }
+                slot.ObjectStrikes = objectStrikes;
                 var paths = new List<string>();
                 foreach (string rel in effects == null ? Array.Empty<string>() : (IReadOnlyList<string>)effects.EffectsOf(def.Id))
                 {
@@ -440,9 +470,28 @@ namespace Dnf.Play
         {
             SkillStageSpec spec = slot.Recipe.Stages[stage];
             Slide(slot, hero, heldX, heldY, out double speed, out double accel);
+            int hold = CastHoldMs(slot, spec, hero);
             return chain
-                ? hero.ChainSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel)
-                : hero.BeginSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel);
+                ? hero.ChainSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold)
+                : hero.BeginSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold);
+        }
+
+        /// <summary>
+        /// 施法蓄力要停多久(毫秒,动画时间):施法时间(.skl [casting time] 按等级取)减去动作第 1 到第 n 帧的时长,不小于 0(证据 E-135,静态读码);
+        /// 客户端最后还按施法速度(千分比)缩放,这里没有施法速度属性,按 1000 算。这一段没有蓄力返回 -1(动画照帧时长走)。
+        /// </summary>
+        internal static int CastHoldMs(HeroSkillSlot slot, SkillStageSpec spec, TownHero hero)
+        {
+            if (spec.CastHoldFrames <= 0)
+            {
+                return -1;
+            }
+            int castMs = slot.Def == null ? 0 : slot.Def.Interpolate(slot.Def.CastingTime, slot.Level);
+            for (int frame = 1; frame <= spec.CastHoldFrames; frame++)
+            {
+                castMs -= hero.EtcFrameDelayMs(spec.MotionIndex, frame);
+            }
+            return Math.Max(0, castMs);
         }
 
         /// <summary>

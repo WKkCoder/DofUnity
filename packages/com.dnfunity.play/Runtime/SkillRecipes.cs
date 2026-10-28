@@ -1,16 +1,18 @@
 using System;
 using System.Collections.Generic;
 
-// 证据:E-129(客户端原生技能状态码的读码结果:技能起手函数、状态进入块、逐帧块里的连击判定)。
+// 证据:E-129(客户端原生技能状态码的读码结果:技能起手函数、状态进入块、逐帧块里的连击判定);E-135(波系技能状态 0x18:施法蓄力与主角放出的被动对象)。
 namespace Dnf.Play
 {
     /// <summary>
     /// 多段技能里的一段(证据 E-129)。下标是客户端状态码里写死的常量,指的是角色脚本与技能脚本里按序排的表,不是数据值:
     /// 动作取 [etc motion] 的第几项,攻击信息取 [etc attack info] 的第几项,伤害取 .skl [level info] 当前等级的哪两列(百分比列、固定值列)。
+    /// 攻击信息下标为 -1 的段没有自己的命中(主角的身体不打人,伤害由它放出的被动对象结算,<see cref="SkillObjectSpec"/>,证据 E-135),这时两个伤害列也填 -1。
     /// </summary>
     public sealed class SkillStageSpec
     {
-        public SkillStageSpec(int motionIndex, int attackInfoIndex, int damageRateColumn, int damageFixedColumn, int effectIndex, int effectFrame, int requiresSkill = 0)
+        public SkillStageSpec(int motionIndex, int attackInfoIndex, int damageRateColumn, int damageFixedColumn, int effectIndex, int effectFrame, int requiresSkill = 0,
+            int castHoldFrames = 0)
         {
             MotionIndex = motionIndex;
             AttackInfoIndex = attackInfoIndex;
@@ -19,6 +21,7 @@ namespace Dnf.Play
             EffectIndex = effectIndex;
             EffectFrame = effectFrame;
             RequiresSkill = requiresSkill;
+            CastHoldFrames = castHoldFrames < 0 ? 0 : castHoldFrames;
         }
 
         /// <summary>[etc motion] 里的下标:这一段播的技能动作。</summary>
@@ -41,6 +44,60 @@ namespace Dnf.Play
 
         /// <summary>进入这一段要求学会的技能(编号);0 表示没有要求。</summary>
         public int RequiresSkill { get; }
+
+        /// <summary>
+        /// 施法蓄力(证据 E-135):大于 0 时这一段动作的第 0 帧是蓄力占位(帧里写着很长的停留),按"施法时间减去第 1 到第 n 帧的时长"算出要停多久再放行
+        /// (n 就是这个数,波系技能是 3);0 表示动画照帧时长走,没有蓄力。
+        /// </summary>
+        public int CastHoldFrames { get; }
+
+        /// <summary>这一段有自己的命中(攻击信息下标非负);没有的段主角的身体不打人。</summary>
+        public bool HasOwnStrike => AttackInfoIndex >= 0;
+    }
+
+    /// <summary>
+    /// 技能放出的被动对象(证据 E-135):主角自己放出去、打怪物的老式对象(.obj 只有 [basic motion] 与 [attack info],没有 .act)。
+    /// 编号是客户端状态码里写死的被动对象编号(passiveobject.lst 的键);动画播到 <see cref="Frame"/> 帧时放一次,放在主角前方 <see cref="ForwardX"/> 像素、
+    /// 朝向与主角一致;伤害取 .skl [level info] 当前等级的 <see cref="DamageRateColumn"/>(百分比)与 <see cref="DamageFixedColumn"/>(固定值)两列,
+    /// 命中用对象自己 .obj 的 [attack info]。
+    /// </summary>
+    public sealed class SkillObjectSpec
+    {
+        public SkillObjectSpec(int objectId, int stage, int frame, int damageRateColumn, int damageFixedColumn, int forwardX = 0, int offsetY = 0, int offsetZ = 0)
+        {
+            ObjectId = objectId;
+            Stage = stage;
+            Frame = frame < 0 ? 0 : frame;
+            DamageRateColumn = damageRateColumn;
+            DamageFixedColumn = damageFixedColumn;
+            ForwardX = forwardX;
+            OffsetY = offsetY;
+            OffsetZ = offsetZ;
+        }
+
+        /// <summary>被动对象编号(passiveobject.lst 的键)。</summary>
+        public int ObjectId { get; }
+
+        /// <summary>在配方的第几段放(从 0 数);越界按最后一段。</summary>
+        public int Stage { get; }
+
+        /// <summary>这一段的动画播到第几帧(从 0 数)时放;一次挥击只放一次。</summary>
+        public int Frame { get; }
+
+        /// <summary>.skl [level info] 里对象伤害的百分比列。</summary>
+        public int DamageRateColumn { get; }
+
+        /// <summary>.skl [level info] 里对象伤害的固定值列。</summary>
+        public int DamageFixedColumn { get; }
+
+        /// <summary>放在主角世界 x 的前方多少像素(朝左往左,朝右往右)。</summary>
+        public int ForwardX { get; }
+
+        /// <summary>y(纵深)方向的偏移。</summary>
+        public int OffsetY { get; }
+
+        /// <summary>离地高度的偏移。</summary>
+        public int OffsetZ { get; }
     }
 
     /// <summary>
@@ -52,7 +109,7 @@ namespace Dnf.Play
     public sealed class SkillRecipe
     {
         public SkillRecipe(int skillId, IEnumerable<SkillStageSpec> stages, int slideSpeedIndex, int slideAccelIndex, int forwardSpeedIndex, int forwardAccelIndex,
-            int chainFromFrame, bool slideFollowsHeldDirection = true)
+            int chainFromFrame, bool slideFollowsHeldDirection = true, IEnumerable<SkillObjectSpec> objects = null)
         {
             SkillId = skillId;
             Stages = new List<SkillStageSpec>(stages ?? throw new ArgumentNullException(nameof(stages))).AsReadOnly();
@@ -66,6 +123,7 @@ namespace Dnf.Play
             ForwardAccelIndex = forwardAccelIndex;
             ChainFromFrame = chainFromFrame;
             SlideFollowsHeldDirection = slideFollowsHeldDirection;
+            Objects = new List<SkillObjectSpec>(objects ?? Array.Empty<SkillObjectSpec>()).AsReadOnly();
         }
 
         public int SkillId { get; }
@@ -91,6 +149,9 @@ namespace Dnf.Play
         /// false 时不看方向键,每一段都按基础的两个数朝着主角的朝向滑(状态进入块里没有读按住的方向)。
         /// </summary>
         public bool SlideFollowsHeldDirection { get; }
+
+        /// <summary>这个技能放出的被动对象(证据 E-135);没有为空表。</summary>
+        public IReadOnlyList<SkillObjectSpec> Objects { get; }
     }
 
     /// <summary>
@@ -146,6 +207,21 @@ namespace Dnf.Play
                     new SkillStageSpec(motionIndex: 5, attackInfoIndex: 7, damageRateColumn: 1, damageFixedColumn: 4, effectIndex: 2, effectFrame: 0),
                 },
                 slideSpeedIndex: 0, slideAccelIndex: 1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: 3, slideFollowsHeldDirection: false),
+
+            // 波系技能的第一个(状态 0x18,证据 E-135):施放动作是 [etc motion] 第 9 项,第 0 帧是蓄力占位(施法时间减去第 1 到 3 帧时长后放行),
+            // 蓄力一放行就在主角身上放预载表第 0 个特效(进状态时建好、放行时挂上);动画播到第 3 帧放一个被动对象(编号在下面的对象表里;主角脚下、朝向同主角),
+            // 对象伤害取 [level info] 的百分比第 2 列、固定值第 0 列;[static data] 第 1、2 个数是起滑速度与加速度,不看方向键。
+            // 主角自己的动画不命中(状态里没有设攻击信息);对象的大小比率(第 1 列)与施法速度还没做。
+            new SkillRecipe(20,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 9, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: 0, effectFrame: 1, castHoldFrames: 3),
+                },
+                slideSpeedIndex: 1, slideAccelIndex: 2, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: 1, slideFollowsHeldDirection: false,
+                objects: new[]
+                {
+                    new SkillObjectSpec(objectId: 20001, stage: 0, frame: 3, damageRateColumn: 2, damageFixedColumn: 0),
+                }),
         });
     }
 }

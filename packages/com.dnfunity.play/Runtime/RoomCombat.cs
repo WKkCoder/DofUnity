@@ -441,6 +441,11 @@ namespace Dnf.Play
         private ActWorld _actWorld;
         private HeroActEntity _heroEntity;
 
+        // 主角技能放出去的被动对象(证据 E-135):老式对象,打怪物;这一次挥击已经放过哪几个(按配方对象表的下标记位)
+        private readonly List<HeroObject> _heroObjects = new List<HeroObject>();
+        private long _objectSwing = -1;
+        private ulong _objectsDone;
+
         // 金币掉落(证据 E-116):表为 null 时杀怪不掉东西(旧行为)
         private readonly List<FieldDrop> _drops = new List<FieldDrop>();
         private readonly List<GainPopup> _gains = new List<GainPopup>();
@@ -549,6 +554,18 @@ namespace Dnf.Play
 
         /// <summary>怪物的 .act 脚本放出来、还在场上的被动对象(证据 E-130)。</summary>
         public IReadOnlyList<PassiveObject> Passives => _passives;
+
+        /// <summary>主角的技能放出来、还在场上的被动对象(证据 E-135)。</summary>
+        public IReadOnlyList<HeroObject> HeroObjects => _heroObjects;
+
+        /// <summary>从开始玩起主角的技能一共放出过多少个被动对象(含已经消失的)。</summary>
+        public int HeroObjectsSpawned { get; private set; }
+
+        /// <summary>其中打中怪物的次数(一个对象对一个怪物只算一次)。</summary>
+        public int HeroObjectHits { get; private set; }
+
+        /// <summary>主角技能的被动对象同时最多的个数:保险值(推断)。</summary>
+        public const int MaxHeroObjects = 32;
 
         /// <summary>从开始玩起脚本一共放出过多少个被动对象(含已经消失的)。</summary>
         public int PassivesSpawned { get; private set; }
@@ -1493,15 +1510,19 @@ namespace Dnf.Play
                 m.Update(deltaMs, hero.X, hero.Y, heroAlive, hero.Walk, heroBoxes);
             }
             UpdatePassives(deltaMs);
+            UpdateHeroObjects(deltaMs);
             FlushSummons();
             CollectThrown();
             EmitMonsterCues();
             ResolveHits();
+            ResolveHeroObjectHits();
             ResolveMonsterHits();
             ResolveProjectileHits();
             ResolvePassiveHits();
             _projectiles.RemoveAll(p => p.Finished);
             _passives.RemoveAll(p => p.Finished);
+            _heroObjects.RemoveAll(o => o.Finished);
+            SpawnSkillObjects(hero);       // 这一步新放的对象从下一步起才走
             SyncStance();
             EmitCooldownCues();
             for (int i = _popups.Count - 1; i >= 0; i--)
@@ -1700,7 +1721,7 @@ namespace Dnf.Play
         private void ResolveHits()
         {
             TownHero hero = _room.Hero;
-            if (!hero.IsAttacking)
+            if (!hero.IsAttacking || OwnStrikeless(hero))
             {
                 _evalSwing = -1;
                 return;
@@ -1754,6 +1775,117 @@ namespace Dnf.Play
                 {
                     _hitBreakablesThisSwing.Add(b);
                     StrikeBreakable(hero, b);
+                }
+            }
+        }
+
+        /// <summary>主角此刻放的是有配方的技能、而且这一段主角自己的动画不命中(伤害全在放出的被动对象上,证据 E-135)。</summary>
+        private bool OwnStrikeless(TownHero hero)
+        {
+            if (hero.AttackKind != HeroAttackKind.Skill)
+            {
+                return false;
+            }
+            HeroSkillSlot slot = Skills.SlotOfSkill(hero.SkillId);
+            return slot != null && !slot.StageHasOwnStrike(hero.SkillStage);
+        }
+
+        /// <summary>
+        /// 技能放被动对象(证据 E-135):配方里的对象表按段与帧放——这一段的动画播到指定帧就在主角前方放一个,朝向跟主角,
+        /// 一次挥击(<see cref="TownHero.SwingNumber"/>)里每个对象只放一次;没接上 .act 程序库(拿不到对象模板)、读不到对象或场上已满时不放。
+        /// </summary>
+        private void SpawnSkillObjects(TownHero hero)
+        {
+            if (hero.Motion != HeroMotion.Skill)
+            {
+                _objectSwing = -1;
+                return;
+            }
+            HeroSkillSlot slot = Skills.SlotOfSkill(hero.SkillId);
+            SkillRecipe recipe = slot?.Recipe;
+            if (recipe == null || recipe.Objects.Count == 0)
+            {
+                return;
+            }
+            if (_objectSwing != hero.SwingNumber)
+            {
+                _objectSwing = hero.SwingNumber;
+                _objectsDone = 0;
+            }
+            int stage = Math.Min(hero.SkillStage, recipe.Stages.Count - 1);
+            for (int i = 0; i < recipe.Objects.Count && i < 64; i++)
+            {
+                SkillObjectSpec spec = recipe.Objects[i];
+                ulong bit = 1UL << i;
+                if ((_objectsDone & bit) != 0 || Math.Min(spec.Stage, recipe.Stages.Count - 1) != stage || hero.CurrentFrame < spec.Frame)
+                {
+                    continue;
+                }
+                _objectsDone |= bit;
+                PassiveTemplate template = _acts?.Passive(spec.ObjectId);
+                if (template == null || _heroObjects.Count >= MaxHeroObjects || i >= slot.ObjectStrikes.Count)
+                {
+                    continue;
+                }
+                double x = hero.X + (hero.FacingLeft ? -spec.ForwardX : spec.ForwardX);
+                _heroObjects.Add(new HeroObject(template, slot.ObjectStrikes[i], slot.SkillId, x, hero.Y + spec.OffsetY, hero.Z + spec.OffsetZ, hero.FacingLeft));
+                HeroObjectsSpawned++;
+            }
+        }
+
+        /// <summary>主角的被动对象各走一步(按墙钟,不受主角的命中停顿冻结:对象有自己的时间)。</summary>
+        private void UpdateHeroObjects(double deltaMs)
+        {
+            for (int i = 0; i < _heroObjects.Count; i++)
+            {
+                _heroObjects[i].Update(deltaMs);
+            }
+        }
+
+        /// <summary>
+        /// 主角的被动对象打怪物与可破坏物件:对象自上次以来新到的各帧的攻击框与受击框相交就算打中,同一个对象对同一个目标只打一次。
+        /// 结算走同一条伤害路径(<see cref="Strike(TownHero, MonsterActor, Aabb, HeroStrikeInfo, bool, bool)"/>),击退方向取对象的朝向,不定住主角。
+        /// </summary>
+        private void ResolveHeroObjectHits()
+        {
+            if (_heroObjects.Count == 0)
+            {
+                return;
+            }
+            TownHero hero = _room.Hero;
+            for (int n = 0; n < _heroObjects.Count; n++)
+            {
+                HeroObject o = _heroObjects[n];
+                List<Aabb> boxes = o.TakeAttackBoxes();
+                if (boxes.Count == 0)
+                {
+                    continue;
+                }
+                foreach (MonsterActor m in _monsters)
+                {
+                    if (!m.IsAlive || !o.CanHit(m))
+                    {
+                        continue;
+                    }
+                    if (TryHit(boxes, m.DamageBoxes(), out Aabb hit))
+                    {
+                        o.MarkHit(m);
+                        HeroObjectHits++;
+                        Strike(hero, m, hit, o.Strike, o.FacingLeft, false);
+                    }
+                }
+                for (int i = 0; i < _breakables.Count; i++)
+                {
+                    BreakableObject b = _breakables[i];
+                    if (b.Destroyed || !o.CanHit(b))
+                    {
+                        continue;
+                    }
+                    if (TryHit(boxes, b.HurtBoxes, out _))
+                    {
+                        o.MarkHit(b);
+                        StrikeBreakable(b, o.Strike, false);
+                    }
                 }
             }
         }
@@ -1814,7 +1946,15 @@ namespace Dnf.Play
 
         private void Strike(TownHero hero, MonsterActor monster, Aabb hit)
         {
-            HeroStrikeInfo info = CurrentStrikeInfo(hero);
+            Strike(hero, monster, hit, CurrentStrikeInfo(hero), hero.FacingLeft, true);
+        }
+
+        /// <summary>
+        /// 一次命中的结算。<paramref name="facingLeft"/> 是击退的方向(主角自己的挥击取主角朝向,放出去的对象取对象朝向);
+        /// <paramref name="freezeHero"/> 为假时(被动对象打中)只定住怪物、不定住主角(推断:客户端的对象与主角各有各的停顿,E-135)。
+        /// </summary>
+        private void Strike(TownHero hero, MonsterActor monster, Aabb hit, HeroStrikeInfo info, bool facingLeft, bool freezeHero)
+        {
             // 伤害:有攻击面板与公式常量就走原版公式(证据 E-110),打完在怪物身上记下攻击者(下一击不再算额外命中);否则是占位伤害
             int damage;
             bool critical = false;
@@ -1836,14 +1976,14 @@ namespace Dnf.Play
             // 受击硬直与击退按客户端的公式算(证据 E-080);没有硬直表时 StunInput 无效,怪物走占位值。
             // 倒地(以及空中、倒地中又挨打)按客户端的开始处理算:体重缩放的击飞、z 抛物线、落地后颠一下再躺下(证据 E-082、E-083)
             _monsterHp?.SetTarget(monster, _hudClockMs);    // 先选中再结算:血条先取这一击之前的生命,这一击才会掉出一段闪光(证据 E-106)
-            bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, hero.FacingLeft, StunInput(info), DownInput(info));
+            bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, facingLeft, StunInput(info), DownInput(info));
             EmitHitCues(hero, info, monster, killed);
             int stun = HitStop.StunMs(info.HitValue, info.UseWeaponHitDelayRate, WeaponStunMs);
             if (stun > 0)
             {
                 // 攻击方与受击方定住同样久,已经在停顿的取剩余更长的那个(E-077)
                 monster.Pause(stun);
-                if (stun > _heroPauseMs)
+                if (freezeHero && stun > _heroPauseMs)
                 {
                     _heroPauseMs = stun;
                 }
@@ -1881,7 +2021,11 @@ namespace Dnf.Play
         /// </summary>
         private void StrikeBreakable(TownHero hero, BreakableObject b)
         {
-            HeroStrikeInfo info = CurrentStrikeInfo(hero);
+            StrikeBreakable(b, CurrentStrikeInfo(hero), true);
+        }
+
+        private void StrikeBreakable(BreakableObject b, HeroStrikeInfo info, bool freezeHero)
+        {
             BreakableOutcome outcome = b.Hit(_assets);
             ObjectsHit++;
             _sounds.Add(b.Data.HitSound, SoundCueKind.Effect);
@@ -1891,7 +2035,7 @@ namespace Dnf.Play
                 _sounds.Add(b.Data.DestroySound, SoundCueKind.Effect);
             }
             int stun = HitStop.StunMs(info.HitValue, info.UseWeaponHitDelayRate, WeaponStunMs);
-            if (stun > _heroPauseMs)
+            if (freezeHero && stun > _heroPauseMs)
             {
                 _heroPauseMs = stun;
             }
@@ -2838,6 +2982,14 @@ namespace Dnf.Play
                 }
             }
             foreach (PassiveObject o in _passives)
+            {
+                SceneSprite s = o.Sprite(_assets, projection);
+                if (s != null)
+                {
+                    extra.Add(s);
+                }
+            }
+            foreach (HeroObject o in _heroObjects)
             {
                 SceneSprite s = o.Sprite(_assets, projection);
                 if (s != null)

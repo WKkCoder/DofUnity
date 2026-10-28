@@ -978,6 +978,16 @@ namespace Dnf.Render
             return made;
         }
 
+        /// <summary>
+        /// [etc motion] 第 <paramref name="index"/> 项第 <paramref name="frame"/> 帧自己的时长(动画毫秒,不按播放倍率折算);读不到动画或帧号越界为 0。
+        /// 波系技能算蓄力用:施法时间减去第 1 到 3 帧的时长(证据 E-135)。
+        /// </summary>
+        public int EtcFrameDelayMs(int index, int frame)
+        {
+            EtcMotion m = EtcAt(index);
+            return m == null ? 0 : (int)m.Timeline.FrameLengthMs(frame);
+        }
+
         /// <summary>[etc motion] 第 <paramref name="index"/> 项的墙钟时长(毫秒,已按播放倍率折算,向上取整);读不到返回 0。</summary>
         public double EtcMotionDurationMs(int index)
         {
@@ -993,21 +1003,31 @@ namespace Dnf.Render
         /// <summary>
         /// 直接放一个技能:播 [etc motion] 第 <paramref name="etcIndex"/> 项,沿朝向以 <paramref name="slideSpeed"/>(像素/秒)起滑,
         /// 加速度 <paramref name="slideAccel"/>(像素/秒²,通常为负),速度减到 0 为止。读不到动画时返回 false,不改变状态。
-        /// 只在地面站立、行走、奔跑时能放。
+        /// 只在地面站立、行走、奔跑时能放。<paramref name="holdFirstFrameMs"/> 不小于 0 时,动画第 0 帧的停留换成这个毫秒数(施法蓄力,证据 E-135)。
         /// </summary>
-        public bool BeginSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel)
+        public bool BeginSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel, int holdFirstFrameMs = -1)
         {
             if (!CanBeginSkill)
             {
                 return false;
             }
-            EtcMotion m = EtcAt(etcIndex);
+            EtcMotion m = WithHold(EtcAt(etcIndex), holdFirstFrameMs);
             if (m == null)
             {
                 return false;
             }
             StartSkill(skillId, -1, 0, m, slideSpeed, slideAccel);
             return true;
+        }
+
+        /// <summary>同一段动画换上"第 0 帧停留 <paramref name="holdFirstFrameMs"/> 毫秒"的时间线;不需要换(小于 0)或没有动画时原样返回。</summary>
+        private static EtcMotion WithHold(EtcMotion m, int holdFirstFrameMs)
+        {
+            if (m == null || holdFirstFrameMs < 0)
+            {
+                return m;
+            }
+            return new EtcMotion { Ani = m.Ani, Path = m.Path, Timeline = new AniTimeline(m.Ani, holdFirstFrameMs) };
         }
 
         /// <summary>
@@ -1051,13 +1071,13 @@ namespace Dnf.Render
         /// 命中判定重新数帧、同一个目标又能被打一次),<see cref="SkillStage"/> 加 1。
         /// 不在放这个技能的主体阶段(没在放、放的是别的技能、还在起手阶段),或者读不到动画时返回 false,不改变状态。
         /// </summary>
-        public bool ChainSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel)
+        public bool ChainSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel, int holdFirstFrameMs = -1)
         {
             if (Motion != HeroMotion.Skill || SkillId != skillId || _skillWindupStage >= 0 || _skillMotion == null)
             {
                 return false;
             }
-            EtcMotion m = EtcAt(etcIndex);
+            EtcMotion m = WithHold(EtcAt(etcIndex), holdFirstFrameMs);
             if (m == null)
             {
                 return false;
