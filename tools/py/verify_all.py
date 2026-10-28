@@ -10,7 +10,7 @@
 
 用法(由 tools/verify-all.sh 调用;需要先 . tools/env.sh 并已构建 dnf):
   python3 tools/py/verify_all.py [--only 名字,名字] [--skip 名字,名字] [--out out/verify-all.json]
-名字:unit p1 atk act mob damage sq sweep flow dungeons actrun sound exp text oracle difficulty breakable skill(oracle 与 difficulty 的对拍部分需要 re/venv 里的 Unicorn 与本机的服务端二进制;dungeons 是全库副本扫描,非门槛项)
+名字:unit p1 atk act mob damage sq sweep flow dungeons actrun sound exp text oracle difficulty breakable skill status(oracle 与 difficulty 的对拍部分需要 re/venv 里的 Unicorn 与本机的服务端二进制;dungeons 是全库副本扫描,非门槛项)
 """
 import argparse
 import json
@@ -438,10 +438,44 @@ def check_skill():
                  bad + (0 if code == 0 else 1), sec, "只含个数;技能数据与数值只在本机 out/verify-all/skill.txt 里,不入库")]
 
 
+def check_status():
+    """异常状态(E-136):真数据的结构检查与运行期模拟(数值表读得到、公式自洽、怪物 .atk 的状态槽都挂得上主角、持续伤害每跳不超过服务端允许值且总量不超过伤害量、
+    时间步长不影响结果、状态到点解除),加上"服务端机器码 vs C# 重算"的压力对拍(共享公式库在 Unicorn 里跑原函数)。"""
+    rows = []
+    code, text, sec = sh(DNF + ["status-check"], "status.txt")
+    ok = len(re.findall(r"^\s*\[通过\]", text, re.M))
+    bad = len(re.findall(r"^\s*\[失败\]", text, re.M))
+    if ok + bad == 0:
+        rows.append(item("status", "异常状态的数据结构与运行期模拟", "全库读通", "E-136", 0, 1, sec, "没解析出检查项,见 out/verify-all/status.txt"))
+    else:
+        rows.append(item("status", "异常状态的数据结构与运行期模拟(数值表读得到、持续时间公式不出负数、同步种类对得上、怪物 .atk 状态槽的附加参数个数、"
+                         "每个槽挂到主角身上走完时间:每跳不超过服务端允许值、总量不超过伤害量、步长无关、状态到点摘除、减速百分数在范围内;等级差修正:同级原样、受害者越高概率与时长越不大、结果不为负)", "全库读通", "E-136",
+                         ok + bad, bad + (0 if code == 0 else 1), sec, "只含个数;原版数值只在本机 out/verify-all/status.txt 里,不入库"))
+    if not os.path.exists(VENV_PY):
+        rows.append(item("status-oracle", "异常状态公式 vs 原版机器码(模拟器)", "对拍:原版二进制", "E-136", 0, 1, 0, "缺 re/venv(Unicorn)"))
+        return rows
+    cases_file = os.path.join(WORK, "status_cases.txt")
+    os.makedirs(WORK, exist_ok=True)
+    c1, t1, s1 = sh([VENV_PY, "tools/py/active_status_oracle.py", "--stress", "20000", "--write-cases", cases_file], "status_oracle.txt")
+    m1 = re.search(r"压力用例 (\d+) 条", t1)
+    c2, t2, s2 = sh(DNF + ["status-check", "--cases", cases_file], "status_cs.txt")
+    m2 = re.search(r"一致 (\d+),不一致 (\d+)", t2)
+    if not m1 or not m2:
+        rows.append(item("status-oracle", "异常状态公式 vs 原版机器码(模拟器)", "对拍:原版二进制", "E-136", 0, 1, s1 + s2,
+                         "输出格式没解析出个数,见 out/verify-all/status_oracle.txt 与 status_cs.txt"))
+        return rows
+    cases = int(m2.group(1)) + int(m2.group(2))
+    diff = int(m2.group(2)) + (0 if c1 == 0 and c2 == 0 and cases == int(m1.group(1)) else 1)
+    rows.append(item("status-oracle", "异常状态公式(服务端 ELF 里 SDCActiveStatusSyncCommon 的等级插值、威力、附加参数、持续时间、毒与灼伤与出血的伤害、同步种类,"
+                     "在 Unicorn 里跑原函数 = C# 重算,逐条比较)", "对拍:原版二进制", "E-136", cases, diff, s1 + s2,
+                     "2 万个合成用例(合成的数值表与参数,x87 扩展精度逐位);原版函数只在模拟器里跑,不启动服务、不联网;C# 另有入库金标准单测"))
+    return rows
+
+
 CHECKS = [
     ("unit", check_unit), ("p1", check_p1), ("atk", check_atk), ("act", check_act), ("mob", check_mob),
     ("damage", check_damage), ("sq", check_sq), ("sweep", check_sweep), ("flow", check_flow), ("dungeons", check_dungeons), ("actrun", check_actrun), ("sound", check_sound),
-    ("exp", check_exp), ("text", check_text), ("oracle", check_oracle), ("difficulty", check_difficulty), ("breakable", check_breakable), ("skill", check_skill),
+    ("exp", check_exp), ("text", check_text), ("oracle", check_oracle), ("difficulty", check_difficulty), ("breakable", check_breakable), ("skill", check_skill), ("status", check_status),
 ]
 
 

@@ -238,6 +238,86 @@ public class HeroHurtTests
         Assert.Equal(HeroMotion.Rest, hero.Motion);
     }
 
+    [Fact]
+    public void HoldingTheHurtPoseStartsAPushlessHurtOrKeepsTheRunningOneAndCanBeShortened()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TownHero hero = NewHero(assets);
+
+        Assert.False(hero.HoldHurt(0, true));                           // 没有时长:什么也不做
+        Assert.Equal((HeroMotion.Rest, 0), (hero.Motion, hero.HurtCount));
+
+        Assert.True(hero.HoldHurt(300, true));                          // 不在受击里:开一次零硬直、不带击退的受击,留到 300 毫秒
+        Assert.Equal((HeroMotion.Hurt, 1, 0.0, 300.0), (hero.Motion, hero.HurtCount, hero.HurtSpanMs, hero.HurtHoldEndMs));
+        Assert.Equal(AvatarFixture.Damage1Ani, hero.CurrentAnimationPath);
+        Steps(hero, 10);                                                // 100 毫秒:硬直早到点了,留住的还没
+        Assert.Equal(HeroMotion.Hurt, hero.Motion);
+        Assert.True(hero.HoldHurt(500, false));                         // 在受击里:重新定成此刻起 500 毫秒之后(100 + 500),不重新计时、不换动作
+        Assert.Equal((1, 600.0, 100.0), (hero.HurtCount, hero.HurtHoldEndMs, hero.HurtClockMs));
+        Assert.Equal(AvatarFixture.Damage1Ani, hero.CurrentAnimationPath);
+        Assert.True(hero.HoldHurt(100, false));                         // 可以缩短(被摇脱):截止变成 100 + 100
+        Assert.Equal(200.0, hero.HurtHoldEndMs);
+
+        Steps(hero, 9, dirX: 1);                                        // 190 毫秒:按着方向键也走不动
+        Assert.Equal(HeroMotion.Hurt, hero.Motion);
+        Assert.Equal(300.0, hero.X);                                    // 没有击退
+        Steps(hero, 1);
+        Assert.Equal((HeroMotion.Rest, 0.0), (hero.Motion, hero.HurtHoldEndMs));
+    }
+
+    [Fact]
+    public void TheHoldAndTheStunAreIndependentAndBothMustRunOutAndANewHitReleasesTheHold()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TownHero hero = NewHero(assets);
+
+        hero.BeginHurt(300, 0, 0, true);
+        Assert.True(hero.HoldHurt(100, true));                          // 留得比硬直短:硬直决定
+        Steps(hero, 29);
+        Assert.Equal(HeroMotion.Hurt, hero.Motion);
+        Steps(hero, 1);
+        Assert.Equal(HeroMotion.Rest, hero.Motion);
+
+        hero.BeginHurt(100, 0, 0, true);
+        Assert.True(hero.HoldHurt(500, true));                          // 留得比硬直长:留住的决定
+        Steps(hero, 49);
+        Assert.Equal(HeroMotion.Hurt, hero.Motion);
+        Steps(hero, 1);
+        Assert.Equal(HeroMotion.Rest, hero.Motion);
+
+        hero.BeginHurt(100, 0, 0, true);
+        hero.HoldHurt(500, true);
+        hero.BeginHurt(100, 0, 0, true);                                // 新的一击放开留住的:调用方随后再留
+        Assert.Equal(0.0, hero.HurtHoldEndMs);
+        hero.HoldHurt(500, true);
+        Assert.False(hero.HoldHurt(0, true));                           // 不是正数就放开
+        Assert.Equal(0.0, hero.HurtHoldEndMs);
+        Steps(hero, 10);
+        Assert.Equal(HeroMotion.Rest, hero.Motion);
+    }
+
+    [Fact]
+    public void HoldingTheHurtPoseDoesNothingWithoutDamageMotionsOrOffTheGround()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        TownHero plain = NewHero(assets, AvatarFixture.ChrPath);
+        Assert.False(plain.HoldHurt(300, true));
+        Assert.Equal(HeroMotion.Rest, plain.Motion);
+
+        TownHero hero = NewHero(assets);
+        hero.Update(10, 0, 0, false, true);
+        for (int i = 0; i < 100 && hero.Z <= 0; i++)
+        {
+            hero.Update(10, 0, 0, false, false);
+        }
+        Assert.True(hero.Z > 0);
+        Assert.False(hero.HoldHurt(300, true));                         // 离地:下一次落地之后再接上
+        Assert.Equal(0, hero.HurtCount);
+    }
+
     /// <summary>x ≥ <see cref="From"/> 的地方是一堵墙。</summary>
     private sealed class Wall : IHeroBlocker
     {

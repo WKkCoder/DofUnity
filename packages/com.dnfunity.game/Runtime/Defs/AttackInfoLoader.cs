@@ -31,7 +31,7 @@ namespace Dnf.Game
         /// <summary>模块节没有遇到结束标签就到了文件末尾。</summary>
         public bool UnterminatedModuleSection { get; internal set; }
 
-        /// <summary>第 4 个及以后的 [active status](只有三个槽;原版在这里写日志,具体后续行为未读清,这里直接忽略并计数)。</summary>
+        /// <summary>第 4 个及以后的 [active status](只有三个槽;原版在这里写日志,具体后续行为未读清,这里把它的类型与数读完以保持标记流同步,值扔掉并计数)。</summary>
         public int StatusOverflow { get; internal set; }
 
         /// <summary>整个文件读下来没有任何不规整之处。</summary>
@@ -393,12 +393,13 @@ namespace Dnf.Game
 
         private static void ReadStatus(ScriptCursor c, AttackInfoData d, AttackInfoLoadReport r, ref int statusCount)
         {
-            if (statusCount >= AttackInfoData.StatusSlots)
+            // 超出三个槽的:照样把类型与数读完(标记流不能错位,否则后面的标签全被当成游离标记),读到的值扔掉(真实数据里 0 次)
+            bool overflow = statusCount >= AttackInfoData.StatusSlots;
+            if (overflow)
             {
                 r.StatusOverflow++;
-                return;
             }
-            ActiveStatusEntry slot = d.Statuses[statusCount];
+            ActiveStatusEntry slot = overflow ? new ActiveStatusEntry() : d.Statuses[statusCount];
             string text = c.ScanTypeOrStr();
             int kind = Array.IndexOf(StatusNames, text);
             slot.Kind = kind < 0 ? ActiveStatusKind.None : (ActiveStatusKind)kind;
@@ -412,7 +413,10 @@ namespace Dnf.Game
                 values[i] = ReadInt(c, r);
             }
             slot.Extra = values;
-            statusCount++;
+            if (!overflow)
+            {
+                statusCount++;
+            }
         }
 
         private static void ReadCatchObjects(ScriptCursor c, AttackInfoData d, AttackInfoLoadReport r)

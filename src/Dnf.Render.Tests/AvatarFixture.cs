@@ -56,6 +56,9 @@ internal sealed class AvatarFixture : IDisposable
     public const string HardAttackAni = "character/test/animation/hardattack.ani";
     public const string HardAttackAtk = "character/test/attackinfo/hardattack.atk";
     public const string SoundAtk = "character/test/attackinfo/sound.atk";
+
+    /// <summary>带三个(外加一个超出的)[active status] 槽与 [human active status rate] 的攻击信息(M43,合成)。</summary>
+    public const string StatusAtk = "character/test/attackinfo/status.atk";
     public const int HardAttackRate = 200;
     public const int HardAttackFixed = 40;
     public const int HardAttackPushAside = 150;
@@ -761,6 +764,15 @@ internal sealed class AvatarFixture : IDisposable
             (HardAttackAtk, NewScript().Tag("[damage reaction]").Tag("[down]").Tag("[push aside]").Int(HardAttackPushAside).Build()),
             // 只带一个命中声标签的攻击信息(合成):读取与保留 [hit wav] 的测试用
             (SoundAtk, NewScript().Tag("[hit wav]").Str("TEST_HIT_WAV").Build()),
+            // 带异常状态槽的攻击信息(合成,M43):眩晕 80%(1500 毫秒)、出血 100%(2000 毫秒,附加整数 300)、减速 30%(3000 毫秒,附加整数 40 与 20)、
+            // 第四个槽(超出三个,计数后忽略)和 [human active status rate] 50
+            (StatusAtk, NewScript()
+                .Tag("[damage bonus]").Int(StrikerDamageBonus)
+                .Tag("[active status]").Tag("[stun]").Float(80f).Int(0, 1500)
+                .Tag("[active status]").Tag("[bleeding]").Float(100f).Int(0, 2000, 300)
+                .Tag("[active status]").Tag("[slow]").Float(30f).Int(0, 3000, 40, 20)
+                .Tag("[active status]").Tag("[freeze]").Float(100f).Int(0, 1000)
+                .Tag("[human active status rate]").Float(50f).Build()),
             ("skill/test/upperslash.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Str("SKILL").Tag("[maximum level]").Int(10)
                 .Tag("[consume MP]").Int(UpperSlashMpStart, UpperSlashMpEnd).Tag("[cool time]").Int(UpperSlashCoolStart, UpperSlashCoolEnd).Tag("[static data]").Int(110, -200).Build()),

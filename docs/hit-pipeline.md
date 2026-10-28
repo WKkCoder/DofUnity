@@ -271,7 +271,7 @@ HP 与死亡由一组原生接口对应的虚槽读写(槽名来自 E-042 的原
 | `[weakness]` | 0xa4、0xb0 | `[attack myself]`、`[attack friend]`、`[attack enemy]` | 0x184、0x190、0x19c |
 | `[bounce]` | 0xbc | `[human damage rate]`、`[fort damage rate]`、`[monster damage rate]` | 0x294、0x2a0、0x2ac |
 
-没有写出偏移的几个标签(`[elemental property]`、`[active status]`、`[hit wav]`、`[catch object]`)走的是别的写法,没有逐个读;`+0x108` 与 `+0x114` 是 `[hit info]` 的整数项与浮点项(`+0x100`、`+0x10c` 两条受保护记录的值,值在记录起点 +8)——整数项是**命中停顿的毫秒数**,浮点项是命中延迟倍率;默认 −1 与 −1.0 表示"取武器表"(E-077;更正 E-057 的"最终伤害整数"与本节原先的说法)。
+没有写出偏移的几个标签(`[elemental property]`、`[active status]`、`[hit wav]`、`[catch object]`)走的是别的写法;其中 `[active status]` 在 M43 读了(E-136,见 `docs/flow.md` §30):槽按“种类、概率、状态等级、持续时间、按种类的附加数”读(服务端 `0x088c1e68`、客户端 `0x012d9d40`),每份攻击信息最多 3 个槽,受击方挂状态的链从 `0x008260f0` 进入;`[human active status rate]`(`+0x40`)只在对战一族玩法模式(4、5、7、9)且受害者是玩家时才去乘状态槽的概率、时长与附加参数,地下城里不用;其余没有逐个读;`+0x108` 与 `+0x114` 是 `[hit info]` 的整数项与浮点项(`+0x100`、`+0x10c` 两条受保护记录的值,值在记录起点 +8)——整数项是**命中停顿的毫秒数**,浮点项是命中延迟倍率;默认 −1 与 −1.0 表示"取武器表"(E-077;更正 E-057 的"最终伤害整数"与本节原先的说法)。
 
 默认值(观察,E-058;构造函数 `0x012b8910` 之后由"清空"函数 `0x012b83a0` 写,元素的默认构造 `0x00404100` = 受保护整数 0、`0x0042cf50` = 受保护 float 0.0):
 绝大多数字段是 0;不为 0 的是 `[damage reaction]` = 1、`[attack direction]` = 1、`[hit info]` 的第一个字段 = 5(未指定)、`+0x100` = -1、`+0x10c` = -1.0、`[human active status rate]` = 1.0、`[attack enemy]` = 1、`[max target hit number]` = -1(不限)、`[is hit number increasing]` = 1、

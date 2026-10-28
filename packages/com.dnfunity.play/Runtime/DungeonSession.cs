@@ -458,6 +458,15 @@ namespace Dnf.Play
         /// <summary>被打死的召唤物个数(不计入击杀数,证据 E-134)。</summary>
         public int SummonedKills => Sum(s => s.SummonedKills);
 
+        /// <summary>怪物的攻击挂到主角身上的异常状态总次数(含刷新,证据 E-136)。</summary>
+        public int StatusApplied => Sum(s => s.StatusApplied);
+
+        /// <summary>异常状态的概率没掷中的总次数。</summary>
+        public int StatusMissed => Sum(s => s.StatusMissed);
+
+        /// <summary>异常状态的持续伤害一共掉了多少血。</summary>
+        public long StatusTickDamage => SumLong(s => s.StatusTickDamage);
+
         /// <summary>
         /// 整座副本的声音提示队列(证据 E-089、E-090):每一步把当前房间会话发出的提示按时间顺序收进来,换房间时先放新房间的 <see cref="SoundCueKind.RoomEnter"/> 标记与地图声音
         /// (第一次进去还有怪物出场声);播放的一方每帧调 <see cref="DrainSounds"/> 取走。

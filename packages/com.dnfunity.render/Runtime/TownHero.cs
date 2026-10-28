@@ -429,6 +429,7 @@ namespace Dnf.Render
         private int _hurtCount;
         private double _hurtSpanMs;
         private double _hurtClockMs;
+        private double _hurtHoldEndMs;
         private int _hurtPushDir;
         private double _hurtPushTotal;
         private double _hurtPushDone;
@@ -1542,11 +1543,41 @@ namespace Dnf.Render
             _dashTrigger = false;
             _hurtSpanMs = stunMs < 0 ? 0 : stunMs;
             _hurtClockMs = 0;
+            _hurtHoldEndMs = 0;
             _hurtPushDir = pushToLeft ? -1 : 1;
             _hurtPushTotal = pushPixels < 0 ? 0 : pushPixels;
             _hurtPushDone = 0;
             _hurtPushMs = 0;
             _hurtPushEaseMs = pushMs;
+            return true;
+        }
+
+        /// <summary>异常状态把主角留在受击姿势里的截止时刻(受击秒表上的毫秒数,见 <see cref="HoldHurt"/>);没有被留住是 0。</summary>
+        public double HurtHoldEndMs => _hurtHoldEndMs;
+
+        /// <summary>
+        /// 异常状态(眩晕、冰冻等,M43)把主角留在受击姿势里直到"此刻起 <paramref name="spanMs"/> 毫秒之后":和 <see cref="BeginHurt"/> 给的硬直各算各的,
+        /// 两个都到点才回到站立。每次调用重新定,所以可以缩短(被摇脱、状态提前结束);<paramref name="spanMs"/> 不是正数就放开(返回 false)。
+        /// 已经在受击里不重放动作、不改击退;不在受击里就开一次零硬直、不带击退的受击(<see cref="BeginHurt"/>,朝向 <paramref name="pushToLeft"/> 只用来分左右)。
+        /// 离地、倒地中或没有受击动作时什么也不做并返回 false(落地、起身之后下一次调用再接上)。新的一击(<see cref="BeginHurt"/>)会放开它,调用方随后再留。
+        /// </summary>
+        public bool HoldHurt(double spanMs, bool pushToLeft)
+        {
+            if (spanMs <= 0)
+            {
+                _hurtHoldEndMs = 0;
+                return false;
+            }
+            if (Motion == HeroMotion.Hurt)
+            {
+                _hurtHoldEndMs = _hurtClockMs + spanMs;
+                return true;
+            }
+            if (!BeginHurt(0, 0, 0, pushToLeft))
+            {
+                return false;
+            }
+            _hurtHoldEndMs = spanMs;       // 刚开始,秒表是 0
             return true;
         }
 
@@ -1559,6 +1590,7 @@ namespace Dnf.Render
             }
             Motion = HeroMotion.Rest;
             _motionMs = 0;
+            _hurtHoldEndMs = 0;
         }
 
         /// <summary>
@@ -1596,10 +1628,11 @@ namespace Dnf.Render
                     PushedRight = false;
                 }
             }
-            if (_hurtClockMs >= _hurtSpanMs)
+            if (_hurtClockMs >= _hurtSpanMs && _hurtClockMs >= _hurtHoldEndMs)
             {
                 Motion = HeroMotion.Rest;
                 _motionMs = 0;
+                _hurtHoldEndMs = 0;
             }
         }
 

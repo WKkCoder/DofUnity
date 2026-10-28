@@ -177,6 +177,18 @@ namespace Dnf.Game
             return (int)signed;
         }
 
+        /// <summary>取相反数(FCHS;精确)。</summary>
+        public static X87Value Negate(X87Value value)
+        {
+            return new X87Value(-value.Mantissa, value.Exponent);
+        }
+
+        /// <summary>a - b:取反后精确相加,再按 64 位有效位舍入(FSUBP)。</summary>
+        public static X87Value Sub(X87Value a, X87Value b)
+        {
+            return Add(a, Negate(b));
+        }
+
         /// <summary>
         /// FISTP qword(舍入控制临时设成截断):向零取整成 64 位有符号整数;超出范围得 long.MinValue(整数不确定值)。
         /// (击杀经验的两次取整都是 qword 版,证据 E-111。)

@@ -588,6 +588,21 @@ namespace Dnf.Game
             }
         }
 
+        private ActiveStatusTable _activeStatuses;
+
+        /// <summary>异常状态数值表(etc/activestatustable_ex.etc,证据 E-136);缺文件是全 0 的空表。</summary>
+        public ActiveStatusTable ActiveStatuses
+        {
+            get
+            {
+                if (_activeStatuses == null)
+                {
+                    _activeStatuses = ActiveStatusTable.Parse(ReadScript(ActiveStatusTable.Path));
+                }
+                return _activeStatuses;
+            }
+        }
+
         /// <summary>角色的等级成长(.chr 的 [initial value] 与 [growtype N] 块);<paramref name="chr"/> 为 null 返回没有数据的成长。</summary>
         public CharacterGrowth GetGrowth(CharacterDef chr)
         {

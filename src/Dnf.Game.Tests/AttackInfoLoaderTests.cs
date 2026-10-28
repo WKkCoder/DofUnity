@@ -337,6 +337,20 @@ public sealed class AttackInfoLoaderTests
     }
 
     [Fact]
+    public void AFourthActiveStatusStillConsumesItsValuesSoTheTagsAfterItStayInSync()
+    {
+        (AttackInfoData d, AttackInfoLoadReport r) = new Atk()
+            .Tag("[active status]").Tag("[stun]").Int(1).Int(0).Int(10)
+            .Tag("[active status]").Tag("[stun]").Int(2).Int(0).Int(20)
+            .Tag("[active status]").Tag("[stun]").Int(3).Int(0).Int(30)
+            .Tag("[active status]").Tag("[bleeding]").Int(4).Int(0).Int(40).Int(77)
+            .Tag("[lift up]").Int(9)
+            .Load();
+        Assert.Equal((1, 9, 0, false), (r.StatusOverflow, d.LiftUp, r.UnknownTags, r.StoppedAtStrayToken));
+        Assert.Equal((3f, ActiveStatusKind.Stun, 30), (d.Statuses[2].Probability, d.Statuses[2].Kind, d.Statuses[2].Duration));   // 第四个没有覆盖第三个
+    }
+
+    [Fact]
     public void UnknownStatusNameGivesNoneButStillConsumesTheThreeNumbers()
     {
         (AttackInfoData d, AttackInfoLoadReport r) = new Atk().Tag("[active status]").Tag("[stunn]").Int(1).Int(2).Int(3).Tag("[lift up]").Int(4).Load();

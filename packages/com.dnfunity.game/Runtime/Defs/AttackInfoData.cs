@@ -90,16 +90,30 @@ namespace Dnf.Game
     {
         public ActiveStatusKind Kind { get; internal set; } = ActiveStatusKind.None;
 
-        /// <summary>概率(按文件写的数,单位未验证;样本里常见 10、100 一类)。</summary>
+        /// <summary>
+        /// 命中后挂上的概率,单位百分比;写成浮点 1000 表示"必中"(客户端 0x008184e0 与 0x0081efc0 对这个值有特判;证据 E-136)。
+        /// 受害者有抗性时再乘 (1 − 抗性),状态等级不为 0 时还要按受害者等级差修正(<see cref="ActiveStatusFormulas.LevelAdjustedProbability"/>)。
+        /// </summary>
         public float Probability { get; internal set; }
 
+        /// <summary>
+        /// 第二个整数:状态等级(服务端读槽函数 0x088c1e68 与客户端读槽函数 0x012d9d40 都把它放在概率与持续时间之间)。
+        /// 与受害者等级相比,决定概率、持续时间与部分附加参数的等级差修正;0 表示不修正(客户端的挂状态入口对 0 直接拒绝,
+        /// 这里把 0 当成"没写等级"照常挂上,是推断,见 E-136)。
+        /// </summary>
         public int Level { get; internal set; }
 
-        /// <summary>第三个数,样本里是毫秒一类的大数,按"持续时间"理解(推断)。</summary>
+        /// <summary>第三个整数:持续时间,毫秒(读槽函数里它在概率与等级之后,走 +0x234 一列;为 0 时用数值表里的默认秒数,证据 E-136)。</summary>
         public int Duration { get; internal set; }
 
         /// <summary>个别类型后面跟着的附加整数(中毒、灼伤、出血等的伤害参数),个数由类型决定。</summary>
         public int[] Extra { get; internal set; } = Array.Empty<int>();
+
+        /// <summary>手工造一个槽(单元测试与合成数据用;加载器自己用属性赋值)。</summary>
+        public static ActiveStatusEntry Create(ActiveStatusKind kind, float probability, int level, int duration, params int[] extra)
+        {
+            return new ActiveStatusEntry { Kind = kind, Probability = probability, Level = level, Duration = duration, Extra = extra ?? Array.Empty<int>() };
+        }
     }
 
     /// <summary>
@@ -147,7 +161,10 @@ namespace Dnf.Game
         /// <summary>[weapon damage apply]:默认 false。</summary>
         public bool WeaponDamageApply { get; internal set; }
 
-        /// <summary>[human active status rate]:文件里的数除以 100 得到的比例,默认 1.0。</summary>
+        /// <summary>
+        /// [human active status rate]:文件里的数除以 100 得到的比例,默认 1.0。客户端只在对战一族的玩法(玩法模式 4、5、7、9)且受害者是玩家时,
+        /// 拿它乘 [active status] 槽的概率、持续时间与附加参数(0x008260f0 里的判断 0x0075c6d0);副本里不起作用(证据 E-136)。
+        /// </summary>
         public float HumanActiveStatusRate { get; internal set; } = 1f;
 
         public DamageReaction Reaction { get; internal set; } = DamageReaction.Damage;

@@ -80,6 +80,23 @@ namespace Dnf.Play
         /// </summary>
         public bool ReactionNone { get; }
 
+        private readonly ActiveStatusEntry[] _statuses;
+
+        /// <summary>
+        /// 这一击带的异常状态槽(.atk 的 [active status],最多三个,没写的槽不在里面;M43,证据 E-136)。
+        /// 命中受击方之后按 <see cref="ActiveStatusSet.Apply"/> 的规则各掷一次概率。
+        /// </summary>
+        public IReadOnlyList<ActiveStatusEntry> Statuses => _statuses ?? Array.Empty<ActiveStatusEntry>();
+
+        // 内部存"比率 − 1":default(HeroStrikeInfo) 里是 0,正好对应缺省的 1
+        private readonly float _humanStatusRateDelta;
+
+        /// <summary>
+        /// [human active status rate](百分数换成小数,缺省 1)。原版只在决斗类游戏模式里、受害者是人类时才用它去乘异常状态的概率、时长与附加参数
+        /// (客户端受击方处理 0x008260f0 里先问模式,集合与 sq_isPVPMode 的决斗模式同族);地下城里不用,所以运行期不读它,这里只存着(E-136)。
+        /// </summary>
+        public float HumanActiveStatusRate => 1f + _humanStatusRateDelta;
+
         // 攻击信息读出来的伤害输入(没有 .atk 的手填写法为 null)
         private readonly HitInput _source;
 
@@ -100,9 +117,11 @@ namespace Dnf.Play
         public HeroStrikeInfo(int damageBonus, int pushAside, bool knockDown, int skillRatePercent = 0, int skillFixed = 0,
             int hitValue = -1, bool useWeaponHitDelayRate = false, float hitScale = -1f, int knockBackType = 0, bool noKnockBack = false,
             int forceHitStunMs = 0, bool magical = false, int liftUp = 0, bool bounce = false, bool ignoreWeight = false, bool reactionDamage = false,
-            string hitWav = null, bool reactionNone = false, HitInput source = null)
+            string hitWav = null, bool reactionNone = false, HitInput source = null, ActiveStatusEntry[] statuses = null, float humanActiveStatusRate = 1f)
         {
             _source = source;
+            _statuses = statuses != null && statuses.Length > 0 ? statuses : null;
+            _humanStatusRateDelta = humanActiveStatusRate - 1f;
             ReactionNone = reactionNone;
             HitWav = string.IsNullOrEmpty(hitWav) ? null : hitWav;
             DamageBonus = damageBonus;
@@ -134,14 +153,29 @@ namespace Dnf.Play
                     info.HitScale, info.KnockBackType, info.HitType == HitKind.Burn, info.ForceHitStunTime, info.AttackType == AttackKind.Magic,
                     info.LiftUp, info.Bounce != 0, info.IgnoreWeight != 0,
                     info.Reaction == DamageReaction.Damage || info.Reaction == DamageReaction.DamageExceptHuman, info.HitWav,
-                    info.Reaction == DamageReaction.None, HitInput.From(info));
+                    info.Reaction == DamageReaction.None, HitInput.From(info), StatusSlots(info), info.HumanActiveStatusRate);
+        }
+
+        /// <summary>攻击信息里真正写了的异常状态槽(种类不是"没有");一个也没有返回 null。</summary>
+        private static ActiveStatusEntry[] StatusSlots(AttackInfoData info)
+        {
+            List<ActiveStatusEntry> list = null;
+            foreach (ActiveStatusEntry s in info.Statuses)
+            {
+                if (s.Kind != ActiveStatusKind.None)
+                {
+                    (list ?? (list = new List<ActiveStatusEntry>())).Add(s);
+                }
+            }
+            return list?.ToArray();
         }
 
         /// <summary>同一份攻击信息,换上技能伤害的两个数。</summary>
         public HeroStrikeInfo WithSkillDamage(int ratePercent, int fixedDamage)
         {
             return new HeroStrikeInfo(DamageBonus, PushAside, KnockDown, ratePercent, fixedDamage, HitValue, UseWeaponHitDelayRate,
-                HitScale, KnockBackType, NoKnockBack, ForceHitStunMs, Magical, LiftUp, Bounce, IgnoreWeight, ReactionDamage, HitWav, ReactionNone, _source);
+                HitScale, KnockBackType, NoKnockBack, ForceHitStunMs, Magical, LiftUp, Bounce, IgnoreWeight, ReactionDamage, HitWav, ReactionNone, _source,
+                _statuses, HumanActiveStatusRate);
         }
     }
 
@@ -282,6 +316,18 @@ namespace Dnf.Play
 
         /// <summary>主角被打死后停在受击姿势上的"硬直"(毫秒):实际上是永远。</summary>
         public const double DeadHoldMs = 1.0e12;
+    }
+
+    /// <summary>
+    /// 异常状态里原版规则没读到的数(M43,证据 E-136):都是占位,只在这里集中放着,换成读到的值时只改这里。
+    /// </summary>
+    public static class HeroStatusTuning
+    {
+        /// <summary>
+        /// 摇脱:被冰冻、眩晕、石化时,方向键每换一次方向缩短多少毫秒。服务端的 ACTIVESTATUS_SHAKABLE 表只说这三种能摇脱,
+        /// "每按一下缩短多少"在客户端的受保护区域里没读到,这个数是占位。
+        /// </summary>
+        public const double ShakeStepMs = 120.0;
     }
 
     /// <summary>
@@ -514,6 +560,23 @@ namespace Dnf.Play
 
         /// <summary>复活后还剩的无敌毫秒(墙钟,每一小步递减)。</summary>
         private double _invincibleMs;
+
+        /// <summary>主角身上的异常状态(M43,证据 E-136);没装数值表(<see cref="UseStatuses"/>)时为 null,怪物招式带的状态不起作用。</summary>
+        private ActiveStatusSet _heroStatus;
+
+        /// <summary>异常状态概率用的随机数,与伤害、物理、动作脚本的随机数都分开,免得改变它们的序列。</summary>
+        private readonly Random _statusRandom;
+
+        private readonly List<ActiveStatusTick> _statusTicks = new List<ActiveStatusTick>();
+
+        /// <summary>上一小步的方向键(摇脱按"换方向"算一下)。</summary>
+        private int _statusLastDirX;
+
+        /// <summary>异常状态里减速已经乘在主角速度系数上的倍率(1 = 没减速)。</summary>
+        private double _statusSlowRate = 1.0;
+
+        /// <summary>失去控制的状态正把主角留在受击姿势里(要在状态结束时放开,<see cref="TownHero.HoldHurt"/>)。</summary>
+        private bool _statusHeld;
 
         /// <summary>怪物出招语音掷骰的种子(客户端的线性同余随机数,<see cref="ClientRandom"/>),与其余随机数分开。</summary>
         private uint _voiceSeed;
@@ -897,6 +960,28 @@ namespace Dnf.Play
         /// <summary>主角此刻无敌:怪物的攻击与投射物都打不到他(攻击框照常走完、不会攒到无敌结束后一起结算)。</summary>
         public bool HeroInvincible => _invincibleMs > 0;
 
+        /// <summary>
+        /// 主角身上的异常状态(M43,证据 E-136):怪物、投射物、被动对象的攻击信息带的 [active status] 命中之后按概率挂上;
+        /// 失去控制(冰冻、眩晕、石化、睡眠、束缚)时输入作废、主角留在受击姿势里,持续伤害(中毒、感电、石化、灼伤、出血)按间隔掉血,减速降低移动速度。
+        /// 没装数值表(<see cref="UseStatuses"/>)时为 null。
+        /// </summary>
+        public ActiveStatusSet HeroStatus => _heroStatus;
+
+        /// <summary>装上异常状态数值表(<c>GameData.ActiveStatuses</c>),之后命中主角的状态才起作用;传 null 关掉。</summary>
+        public void UseStatuses(ActiveStatusTable table)
+        {
+            _heroStatus = table == null ? null : new ActiveStatusSet(table);
+        }
+
+        /// <summary>这个房间里挂到主角身上的异常状态次数(含刷新)。</summary>
+        public int StatusApplied => _heroStatus == null ? 0 : _heroStatus.AppliedCount;
+
+        /// <summary>概率没掷中的次数。</summary>
+        public int StatusMissed => _heroStatus == null ? 0 : _heroStatus.MissedCount;
+
+        /// <summary>异常状态的持续伤害一共掉了多少血。</summary>
+        public long StatusTickDamage => _heroStatus == null ? 0 : _heroStatus.TickDamageTotal;
+
         /// <summary>复活时放在主角身上的特效动画(<c>UseCoin.ani</c>;客户端用币的特效函数 0x00865b50 加载它,放约 1 秒,挂在主角身上是推断)。</summary>
         public const string ReviveEffectPath = "Common/Etc/Animation/UseCoin.ani";
 
@@ -1039,6 +1124,7 @@ namespace Dnf.Play
             _random = new Random(seed);
             _physicsRandom = new Random(unchecked(seed * 31 + 17));
             _numberRandom = new Random(unchecked(seed * 53 + 41));
+            _statusRandom = new Random(unchecked(seed * 197 + 83));
             _heroDown = new HeroKnockdown(_room.Hero);
             _voiceSeed = unchecked((uint)seed * 2246822519u + 3266489917u);
             SyncStance();
@@ -1287,6 +1373,7 @@ namespace Dnf.Play
                 hasWeapon ? weapon.DelayRate : -1f, stunTable, vitals, vitals != null ? MonsterDamage.LoadConstants(assets) : null, weaponSound, heroPanel,
                 progress, expWeight, difficulty);
             session.Character = chr;
+            session.UseStatuses(data.ActiveStatuses);                                // 怪物招式带的异常状态(M43,E-136)
             // 脚本召唤([SUMMON MONSTER],E-134):造怪走同一个构造器,等级夹到难度表这一档的行数以内;要在 AttachActs 之前装,预读才知道读哪些怪物
             session.UseSummons((code, level, index) => builder.Build(index, new RoomMonsterSpawn(code, 0, 0, 0, 0, 0, 0, 0, "[fixed]", "[normal]"),
                 builder.ClampSummonLevel(level)), code => builder.CanBuild(code));
@@ -1435,6 +1522,28 @@ namespace Dnf.Play
                 _bufferedAttack = false;
                 _bufferedJump = false;
                 _bufferedSkills = SkillKeys.None;
+            }
+
+            // 异常状态(M43,E-136):死了清空;活着时走时间、掉持续伤害、换减速的速度,失去控制时这一步的输入作废
+            if (_heroStatus != null)
+            {
+                if (HeroDead)
+                {
+                    _heroStatus.Clear();
+                    _statusHeld = false;
+                    ApplyHeroSlow(_room.Hero);
+                }
+                else if (UpdateHeroStatus(deltaMs, dirX))
+                {
+                    dirX = 0;
+                    dirY = 0;
+                    attackPressed = false;
+                    jumpPressed = false;
+                    skillsPressed = SkillKeys.None;
+                    _bufferedAttack = false;
+                    _bufferedJump = false;
+                    _bufferedSkills = SkillKeys.None;
+                }
             }
 
             // 命中停顿(证据 E-077):主角被定住时,他自己、他的技能特效的时间都不走;冷却、伤害数字、连击计时是墙钟,照常走。
@@ -2863,6 +2972,7 @@ namespace Dnf.Play
             HeroDamageTaken += damage;
             _heroDown.NoteDamage(damage, Vitals.HpMax);
             ReactHero(info, attackerFacingLeft, hero, killed);
+            ApplyHeroStatuses(info, attackerFacingLeft, hero, killed);
             // 声音:攻击信息的命中声,加主角的受击或死亡语音(客户端有"职业 → (受击, 死亡)"的全局表,证据 E-089)
             _sounds.Add(info.HitWav, SoundCueKind.Effect);
             _sounds.Add(killed ? SwordmanVoice.Die : SwordmanVoice.Hurt, SoundCueKind.Voice);
@@ -2925,6 +3035,113 @@ namespace Dnf.Play
                 return;
             }
             hero.BeginHurt(stunMs, knockPixels, knockMs, attackerFacingLeft);
+        }
+
+        /// <summary>
+        /// 命中主角的这一击带的异常状态(M43,证据 E-136):先让睡着的主角被打醒(<see cref="ActiveStatusSet.NotifyHit"/>),
+        /// 被打死就清空,否则每个槽各掷一次概率(<see cref="ActiveStatusSet.Apply"/>:概率与受害者等级、状态等级之差);
+        /// 挂上(或刷新)了失去控制的状态,主角留在受击姿势里直到它结束(<see cref="TownHero.HoldHurt"/>)。
+        /// </summary>
+        private void ApplyHeroStatuses(HeroStrikeInfo info, bool attackerFacingLeft, TownHero hero, bool killed)
+        {
+            if (_heroStatus == null)
+            {
+                return;
+            }
+            _heroStatus.NotifyHit();
+            if (killed)
+            {
+                _heroStatus.Clear();
+                return;
+            }
+            IReadOnlyList<ActiveStatusEntry> slots = info.Statuses;
+            int heroLevel = Vitals != null ? Vitals.Level : 0;
+            for (int i = 0; i < slots.Count; i++)
+            {
+                _heroStatus.Apply(slots[i], heroLevel, _statusRandom.NextDouble());
+            }
+            // 这一击的受击(BeginHurt)放开了之前的留住;身上还有失去控制的状态就接着留(新挂上的、刷新的、原来就有的都一样)
+            if (_heroStatus.ControlLocked)
+            {
+                _statusHeld = hero.HoldHurt(_heroStatus.LockRemainingMs, attackerFacingLeft) || _statusHeld;
+            }
+        }
+
+        /// <summary>
+        /// 异常状态每一小步的推进:摇脱(占位规则:被冰冻、眩晕、石化时方向键每换一次方向缩短 <see cref="HeroStatusTuning.ShakeStepMs"/> 毫秒)、走时间并按跳掉血、
+        /// 减速换速度系数、失去控制时让主角留在受击姿势里。返回主角此刻是否失去控制(调用方据此作废这一步的输入)。
+        /// </summary>
+        private bool UpdateHeroStatus(double deltaMs, int dirX)
+        {
+            TownHero hero = _room.Hero;
+            if (_heroStatus.Count > 0 && dirX != 0 && dirX != _statusLastDirX)
+            {
+                _heroStatus.Shake(HeroStatusTuning.ShakeStepMs);
+            }
+            _statusLastDirX = dirX;
+            _statusTicks.Clear();
+            _heroStatus.Advance(deltaMs, _statusTicks);
+            foreach (ActiveStatusTick tick in _statusTicks)
+            {
+                if (HeroDead)
+                {
+                    break;
+                }
+                HeroTakeStatusDamage(tick, hero);
+            }
+            ApplyHeroSlow(hero);
+            bool locked = _heroStatus.ControlLocked && !HeroDead;
+            if (locked)
+            {
+                _statusHeld = hero.HoldHurt(_heroStatus.LockRemainingMs, !hero.FacingLeft) || _statusHeld;
+            }
+            else if (_statusHeld)
+            {
+                hero.HoldHurt(0, false);                  // 状态结束(或被摇脱):放开受击姿势,硬直自己的时间到了就回到站立
+                _statusHeld = false;
+            }
+            return locked;
+        }
+
+        /// <summary>
+        /// 一跳持续伤害:扣血、飘红字、记累计伤害;不触发受击反应(没有"被谁打中"),也不计受击次数;被这一跳打死就清空状态、放死亡语音、
+        /// 让主角倒下(<see cref="ReactHero"/> 的"[damage reaction] 为 none"那一支)。怪物伤害倍率的测试旋钮也乘在上面。
+        /// </summary>
+        private void HeroTakeStatusDamage(ActiveStatusTick tick, TownHero hero)
+        {
+            if (Vitals == null || !Vitals.IsAlive || tick.Damage <= 0)
+            {
+                return;
+            }
+            int damage = tick.Damage;
+            if (MonsterDamageScale > 1)
+            {
+                damage = (int)Math.Min(int.MaxValue, (long)damage * MonsterDamageScale);
+            }
+            bool killed = Vitals.Damage(damage);
+            HeroDamageTaken += damage;
+            List<Aabb> boxes = HeroHurtBoxes.At(hero);
+            AddNumber(damage, DamageNumberFlags.VictimIsHero, boxes.Count > 0 ? boxes[0] : default(Aabb), hero.Y);
+            if (killed)
+            {
+                _heroStatus.Clear();
+                _sounds.Add(SwordmanVoice.Die, SoundCueKind.Voice);
+                ReactHero(new HeroStrikeInfo(0, 0, false, reactionNone: true), !hero.FacingLeft, hero, true);
+            }
+        }
+
+        /// <summary>减速:把"移动速度减少百分数"换成主角速度系数上的倍率(按相对变化乘,不覆盖别处对系数的修改);没有减速时倍率回到 1。</summary>
+        private void ApplyHeroSlow(TownHero hero)
+        {
+            double rate = 1.0 - _heroStatus.MoveSlowPercent / 100.0;
+            if (Math.Abs(rate - _statusSlowRate) < 1e-9)
+            {
+                return;
+            }
+            double scale = rate / _statusSlowRate;
+            hero.SpeedFactorX *= scale;
+            hero.SpeedFactorY *= scale;
+            _statusSlowRate = rate;
         }
 
         /// <summary>这一击的倒地输入(证据 E-083):攻击信息的抬升、弹起、不受体重,外加两个抖动用的随机数。</summary>

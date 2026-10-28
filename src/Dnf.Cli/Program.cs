@@ -347,6 +347,9 @@ namespace Dnf.Cli
             "  dnf difficulty-check [--dungeon <副本定义>] [--seed N] | --cases <用例文件>\n" +
             "      副本难度(证据 E-125):读难度加成表、全部副本自带的 [monster difficulty bonus] 与难度 3 清单,检查结构;再把 --dungeon 副本以难度 0 到 4 各造一遍,比较第一个房间里每只怪物的最大生命只升不降\n" +
             "      (数值来自本机的数据,只打印在终端,不要抄进入库的文件)。--cases 读 mob_difficulty_oracle.py --write-cases 的输出,用 C# 重算并与原版函数在模拟器里的结果逐槽比较(不需要数据目录)。dungeon-check、flow-check 的 --difficulty N(0 到 4,不检查通关记录)让整局按这个难度打;flow-check 的 --raise-difficulty 让自动机在选择界面把难度调到当前能选的最高一档。\n" +
+            "  dnf status-check | --cases <用例文件>\n" +
+            "      异常状态(M43,证据 E-136):读异常状态数值表与全部怪物 .atk 的 [active status] 槽,检查结构(表的标签、附加参数个数、持续时间公式不出负数、同步种类);数值来自本机的数据,只打印汇总数,不要抄进入库的文件。\n" +
+            "      --cases 读 tools/py/active_status_oracle.py --write-cases 的输出,用 C# 重算并与原版函数在模拟器里的输出逐条比较(不需要数据目录)。\n" +
             "  dnf breakable-check [--dungeon <副本定义>] [--seed N] [--rooms N] [--pick]\n" +
             "  dnf skill-check [--level N]\n" +
             "      学技能(M35,证据 E-127):读主角职业的技能目录与六个成长类型的白送技能,检查每个技能到最高级都有花费(补齐规则)、前置技能都在且没有环;再对每个成长类型给无限点数从白送状态学到当前等级的上限,\n" +
@@ -839,6 +842,10 @@ namespace Dnf.Cli
                     return SkillCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "gate-body-check":
                     return GateBodyCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "status-check":
+                    return opts.CasesFile != null
+                        ? StatusCheck.RunCases(opts)
+                        : StatusCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "difficulty-check":
                     return opts.CasesFile != null
                         ? DifficultyCheck.RunCases(opts)
