@@ -142,6 +142,10 @@ namespace Dnf.Play
         // 默认 AI 的出招决策(证据 E-100、E-101):有 [attack kind] 记录时由 MonsterAttackChooser 决定出哪一招、什么时候出;没有时走旧的"够得着就出招 + 冷却"占位
         private MonsterAttackChooser _chooser;
         private MonsterBrain _brain;
+        private int _stuckX = int.MinValue;                   // 卡住检测:上一次看到的整数位置与"位置最后一次变过"的时刻(E-148)
+        private int _stuckY = int.MinValue;
+        private long _stuckStampMs;
+        private long _lastBrainThinkMs = long.MinValue / 2;
         private double _aiClockMs;
         private int _attackIndex;
         private HeroStrikeInfo _strike;
@@ -260,10 +264,10 @@ namespace Dnf.Play
         public bool SuperArmorOnAttack { get; set; }
 
         /// <summary>
-        /// 现在带着霸体(档位 1):有 <see cref="SuperArmorOnAttack"/> 而且正在出招。客户端进入出招状态(STATE_ATTACK = 8)时打开、离开时关闭,
-        /// 所以出招之外(待机、走路、受击、倒地)没有;已经死了也没有。
+        /// 现在带着霸体(档位 1):有 <see cref="SuperArmorOnAttack"/> 而且正在出招(客户端进入出招状态 STATE_ATTACK = 8 时打开、离开时关闭),
+        /// 或者强悍、凶猛类别的怪物处在靠近模式里(<see cref="MonsterBrain.ApproachSuperArmor"/>,E-148);已经死了没有。
         /// </summary>
-        public bool IsSuperArmored => SuperArmorOnAttack && IsAlive && Phase == MonsterPhase.Attack;
+        public bool IsSuperArmored => IsAlive && ((SuperArmorOnAttack && Phase == MonsterPhase.Attack) || (_brain != null && _brain.ApproachSuperArmor));
 
         /// <summary>血量归零之后到消失之前,精灵画成纯白剪影(白闪;腾空的尸体也是白的,证据 E-084 的基线逐帧)。</summary>
         public bool DeathSilhouette => !IsAlive && Phase != MonsterPhase.Gone;
@@ -624,6 +628,7 @@ namespace Dnf.Play
                 _actRunner.OnAttackSuccess(victim);
             }
             FamilyOnAttackSuccess(victim);
+            _brain?.NotifyHitHero();                           // 绕背冲刺或靠近途中打中了主角:转追击(E-148)
         }
 
         /// <summary>
@@ -1684,6 +1689,30 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>
+        /// 卡住检测(0x0088a4c0):整数位置变了就重新计时;不在走路的动作里也重新计时;在走路的动作里位置超过 <see cref="MonsterBrain.StuckMs"/> 毫秒没变,
+        /// 就通知大脑转反向模式。两次思考隔得久(中间出过招、受过击)不算——客户端那时的动作不是走路,时刻一直在刷新。
+        /// </summary>
+        private void TrackStuck()
+        {
+            long now = AiClockMs;
+            int px = (int)Math.Floor(X), py = (int)Math.Floor(Y);
+            bool gap = now - _lastBrainThinkMs > 250;
+            _lastBrainThinkMs = now;
+            if (gap || px != _stuckX || py != _stuckY || Phase != MonsterPhase.Walk)
+            {
+                _stuckX = px;
+                _stuckY = py;
+                _stuckStampMs = now;
+                return;
+            }
+            if (now - _stuckStampMs > MonsterBrain.StuckMs)
+            {
+                _stuckStampMs = now;
+                _brain.NotifyStuck();
+            }
+        }
+
         private void FillAiView(double heroX, double heroY)
         {
             MonsterAiView v = _aiView;
@@ -1702,19 +1731,21 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 装了走位大脑(<see cref="MonsterBrain"/>)时待机与行走的决策(证据 E-114):
-        /// 先让大脑推进(找目标、切模式、到点选方向);站着时按 [attack kind] 的节奏出招——出招决策逐个敌对角色判断射程,与怪物有没有目标、
-        /// 是不是敌对模式无关;没有 [attack kind] 的怪物走旧的"够得着 + 冷却"。不出招就按大脑选的方向走(横向朝哪边就面朝哪边),方向一直保持到大脑下一次选择;
-        /// 敌对而且站着(已走到主角所在的格子)时面朝主角(推断:出招前转身)。
+        /// 装了走位大脑(<see cref="MonsterBrain"/>)时待机与行走的决策(证据 E-114、E-148):
+        /// 先让大脑推进(找目标、切模式、到点选方向);站着<b>或走着</b>时按 [attack kind] 的节奏出招——客户端的出招决策(0x0088d7a0)只要求状态号是 0,
+        /// 而怪物走路用的就是状态 0(STATE_STAND;没有"走路"状态),所以边走边出招;决策逐个敌对角色判断射程,与怪物有没有目标、
+        /// 是不是敌对模式无关;没有 [attack kind] 的怪物走旧的"够得着 + 冷却"(只在站着时)。不出招就按大脑选的方向走(横向朝哪边就面朝哪边),方向一直保持到大脑下一次选择;
+        /// 盯着目标(敌对、绕背、靠近、追击、迟疑)而且站着时面朝主角(推断:出招前转身)。走路的动作里位置一秒没变就通知大脑"被挡住"(0x0088a4c0)。
         /// </summary>
         private void ThinkWithBrain(double deltaMs, double heroX, double heroY, bool heroPresent, IWalkArea walk, IReadOnlyList<Aabb> heroBoxes)
         {
+            TrackStuck();
             _brain.Update(AiClockMs, heroPresent, X, Y, heroX, heroY);
             if (_chooser != null)
             {
                 if (_brain.IsHostile)
                 {
-                    _chooser.EnterHostile();                   // 进入敌对模式时射程里的概率乘 1.3,离开时还原
+                    _chooser.EnterHostile();                   // 进入敌对模式(9、10)时射程里的概率乘 1.3,离开时还原
                 }
                 else
                 {
@@ -1725,11 +1756,11 @@ namespace Dnf.Play
             double dy = heroY - Y;
             if (heroPresent)
             {
-                if (!_brain.Moving && _brain.IsHostile && _brain.HasTarget && Math.Abs(dx) > 1.0)
+                if (!_brain.Moving && _brain.IsEngaged && Math.Abs(dx) > 1.0)
                 {
                     FacingLeft = dx < 0;
                 }
-                if (Phase == MonsterPhase.Wait)
+                if (Phase == MonsterPhase.Wait || (Phase == MonsterPhase.Walk && _chooser != null))
                 {
                     if (_chooser != null)
                     {
@@ -1800,13 +1831,13 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 走一步。脚本驱动的怪物(M36)已经站在可走区之外时(出生点落在墙里,常见于首领从屏幕外登场)不受可走区限制,走到区里为止,
-        /// 否则它哪一步都迈不出去,房间永远清不掉(推断,E-128;与上面对障碍物的处理一致)。旧式怪物保持原样:出生在区外就原地不动。
+        /// 走一步。脚本驱动的怪物(M36)与默认 AI 走位大脑的怪物已经站在可走区之外时(出生点落在墙里,常见于首领从屏幕外登场)不受可走区限制,
+        /// 走到区里为止,否则它哪一步都迈不出去,房间永远清不掉(推断,E-128、E-148;与上面对障碍物的处理一致)。没有这两种驱动的旧式怪物保持原样:出生在区外就原地不动。
         /// </summary>
         private void TryMove(double stepX, double stepY, IWalkArea walk)
         {
             bool ignoreBlocker = Blocker != null && Blocker.BlockedBy(X, Y) != null;
-            bool ignoreWalk = _script != null && walk != null && !walk.IsUnrestricted && !walk.Contains(X, Y);
+            bool ignoreWalk = (_script != null || _brain != null) && walk != null && !walk.IsUnrestricted && !walk.Contains(X, Y);
             if (stepX != 0 && CanStandAt(X + stepX, Y, walk, ignoreBlocker, ignoreWalk))
             {
                 X += stepX;

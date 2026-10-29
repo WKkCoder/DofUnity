@@ -176,6 +176,22 @@ internal static class DungeonCheck
                 Console.WriteLine("  [跟踪 " + Sec(t) + "s] 格 (" + session.CellX + "," + session.CellY + ") 主角 (" + F(session.Hero.X) + "," + F(session.Hero.Y)
                     + ") 怪物剩 " + session.Current.AliveCount + "/" + session.Current.Monsters.Count + " 命中 " + session.Hits
                     + (nearest == null ? string.Empty : "  最近 #" + nearest.Index + " (" + F(nearest.X) + "," + F(nearest.Y) + ") " + nearest.Phase));
+                var alive = new System.Text.StringBuilder();
+                foreach (MonsterActor m in session.Current.Monsters)
+                {
+                    if (m.IsAlive)
+                    {
+                        alive.Append(" #").Append(m.Index).Append('(').Append(F(m.X)).Append(',').Append(F(m.Y)).Append(')').Append(m.Phase.ToString()[0]);
+                        if (m.Brain != null)
+                        {
+                            alive.Append(':').Append((int)m.Brain.Mode);
+                        }
+                    }
+                }
+                if (alive.Length > 0)
+                {
+                    Console.WriteLine("    [活着的怪物]" + alive);
+                }
             }
             while (shotIndex < shotTimes.Count && shotTimes[shotIndex] * 1000.0 <= t)
             {
@@ -194,6 +210,11 @@ internal static class DungeonCheck
         Console.WriteLine("脚本跨招开关(E-145):落到存在的招与触发器 " + session.ActSwitchApplied + " 次,落空 " + session.ActSwitchMissed + " 次,指向未接线的动作族 " + session.ActSwitchUnhosted + " 次");
         Console.WriteLine("脚本非出招动作族(E-146):进过的房间里装了站立、行走、受击、倒地、过程或最后一幕触发器的怪物 " + session.FamilyActMonsters + " 只,运行器启动 " + session.FamilyRunsStarted
             + " 次,[SET ACTION] 落实 " + session.FamilySetActionApplied + " 次、没落实 " + session.FamilySetActionUnhosted + " 次");
+        session.CountMonsterAi(out int aiScripted, out int aiBrain, out int aiPlaceholder);
+        Console.WriteLine("怪物构成(E-147):进过的房间里共 " + (aiScripted + aiBrain + aiPlaceholder) + " 只,.ai 脚本指挥 " + aiScripted + " 只,默认 AI 走位大脑 " + aiBrain
+            + " 只,默认 AI 占位 " + aiPlaceholder + " 只");
+        Console.WriteLine("脚本没做的行为(E-147,实际执行次数):" + TagTable(session.UnsupportedBehaviorCounts));
+        Console.WriteLine("脚本读不懂的触发器标签(E-147,运行器每次开始算一次):" + TagTable(session.UnsupportedTriggerCounts));
         Console.WriteLine("召唤(E-134):脚本召唤出怪物 " + session.SummonsSpawned + " 只,被拒绝 " + session.SummonsRefused + " 次,召唤物被打死 " + session.SummonedKills + " 只");
         Console.WriteLine("异常状态(E-136):" + (session.Vitals != null
             ? "挂到主角身上 " + session.StatusApplied + " 次,概率没中 " + session.StatusMissed + " 次,持续伤害共 " + session.StatusTickDamage + " 点,脚本 [ACTIVE STATUS](E-144)发起的请求 " + session.ActStatusRequests + " 次"
@@ -483,6 +504,23 @@ internal static class DungeonCheck
     private static string F(double v) => v.ToString("F1", CultureInfo.InvariantCulture);
 
     private static string Sec(double ms) => (ms / 1000.0).ToString("F2", CultureInfo.InvariantCulture);
+
+    /// <summary>标签 → 次数的表,按次数从多到少排成"标签=次数; 标签=次数";空表写"无"。标签只是结构名(没有原版内容),可以整张打出来。</summary>
+    private static string TagTable(Dictionary<string, int> table)
+    {
+        if (table.Count == 0)
+        {
+            return "无";
+        }
+        var list = new List<KeyValuePair<string, int>>(table);
+        list.Sort((a, b) => b.Value != a.Value ? b.Value.CompareTo(a.Value) : string.CompareOrdinal(a.Key, b.Key));
+        var parts = new List<string>();
+        foreach (KeyValuePair<string, int> kv in list)
+        {
+            parts.Add(kv.Key + "=" + kv.Value);
+        }
+        return string.Join("; ", parts);
+    }
 
     private static CombatScript ParsePlay(string? text)
     {

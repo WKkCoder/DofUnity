@@ -127,6 +127,22 @@ namespace Dnf.Game.Act
         /// 场景可以拒绝(数据缺失、同时存活的召唤物太多、落点找不到)。
         /// </summary>
         void SummonMonster(IActEntity master, int index, int level, float x, float y, float z, bool facingLeft, int lifetimeMs);
+
+        /// <summary>
+        /// 运行器执行到一条还没做的行为(按空操作处理)时通报一次,<paramref name="tag"/> 是行为标签(E-147)。
+        /// 场景拿它统计"实际打到的没做行为",只用来排优先级,不影响运行;默认什么都不做。
+        /// </summary>
+        void NoteUnsupportedBehavior(string tag)
+        {
+        }
+
+        /// <summary>
+        /// 运行器每次(重新)开始时,脚本里每个"读不懂"的触发器的每种读不懂的标签通报一次(带这种标签的触发器永远不触发,E-147)。
+        /// 一次开始 = 一次出招、一次出生或一次进入某个动作族,所以数字按"这个触发器本来该有机会跑几回"加权;默认什么都不做。
+        /// </summary>
+        void NoteUnsupportedTrigger(string tag)
+        {
+        }
     }
 
     /// <summary>
@@ -161,6 +177,7 @@ namespace Dnf.Game.Act
         private readonly float[] _clock;
         private readonly ActRecordKind[] _event;
         private readonly bool[] _inert;
+        private readonly string[] _unsupportedTriggerTags;
         private readonly List<IActEntity> _set = new List<IActEntity>();
         private readonly List<IActEntity> _targets = new List<IActEntity>();
         private readonly Dictionary<string, int> _vars = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -194,6 +211,7 @@ namespace Dnf.Game.Act
             _clock = new float[n];
             _event = new ActRecordKind[n];
             _inert = new bool[n];
+            List<string> unsupportedTags = null;
             for (int i = 0; i < n; i++)
             {
                 ActTrigger t = program.Triggers[i];
@@ -213,8 +231,17 @@ namespace Dnf.Game.Act
                 if (!t.Supported)
                 {
                     _inert[i] = true;
+                    if (unsupportedTags == null)
+                    {
+                        unsupportedTags = new List<string>();
+                    }
+                    foreach (string tag in t.UnsupportedTags)
+                    {
+                        unsupportedTags.Add(tag);
+                    }
                 }
             }
+            _unsupportedTriggerTags = unsupportedTags == null ? Array.Empty<string>() : unsupportedTags.ToArray();
             Begin();
         }
 
@@ -284,6 +311,10 @@ namespace Dnf.Game.Act
             _victim = null;
             _attacker = null;
             _delayed.Clear();      // 排队的延迟行为随动作重来作废(推断);变量不清,留到下一次(E-132)
+            foreach (string tag in _unsupportedTriggerTags)
+            {
+                _host.NoteUnsupportedTrigger(tag);
+            }
         }
 
         /// <summary>变量当前值([DIM] 赋的;没赋过读 0,推断);测试与审计用。</summary>
@@ -894,7 +925,8 @@ namespace Dnf.Game.Act
                         }
                         break;
                     default:
-                        break;     // 没做的行为按空操作处理(ActBehaviorGroup.UnsupportedTags 供审计)
+                        _host.NoteUnsupportedBehavior(b.Tag);     // 没做的行为按空操作处理(ActBehaviorGroup.UnsupportedTags 供审计;实际打到几次由场景统计,E-147)
+                        break;
                 }
                 if (_aborted)
                 {

@@ -486,6 +486,49 @@ namespace Dnf.Play
 
         public int FamilySetActionUnhosted => Sum(s => s.FamilySetActionUnhosted);
 
+        /// <summary>整座副本进过的房间里的怪物按"谁来指挥"分类的个数(脚本、默认 AI 走位大脑、默认 AI 占位;各房间之和,证据 E-147)。</summary>
+        public void CountMonsterAi(out int scripted, out int brain, out int placeholder)
+        {
+            scripted = 0;
+            brain = 0;
+            placeholder = 0;
+            foreach (CellState c in _cells)
+            {
+                if (c.Session == null)
+                {
+                    continue;
+                }
+                c.Session.CountMonsterAi(out int a, out int b, out int p);
+                scripted += a;
+                brain += b;
+                placeholder += p;
+            }
+        }
+
+        /// <summary>整座副本里脚本运行器实际执行到的、还没做的行为:标签 → 次数(各房间之和,证据 E-147)。</summary>
+        public Dictionary<string, int> UnsupportedBehaviorCounts => Merge(s => s.UnsupportedBehaviorCounts);
+
+        /// <summary>整座副本里脚本运行器每次开始时带着的、读不懂的触发器标签:标签 → 次数(各房间之和,证据 E-147)。</summary>
+        public Dictionary<string, int> UnsupportedTriggerCounts => Merge(s => s.UnsupportedTriggerCounts);
+
+        private Dictionary<string, int> Merge(Func<RoomCombatSession, IReadOnlyDictionary<string, int>> f)
+        {
+            var total = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (CellState c in _cells)
+            {
+                if (c.Session == null)
+                {
+                    continue;
+                }
+                foreach (KeyValuePair<string, int> kv in f(c.Session))
+                {
+                    total.TryGetValue(kv.Key, out int n);
+                    total[kv.Key] = n + kv.Value;
+                }
+            }
+            return total;
+        }
+
         /// <summary>
         /// 整座副本的声音提示队列(证据 E-089、E-090):每一步把当前房间会话发出的提示按时间顺序收进来,换房间时先放新房间的 <see cref="SoundCueKind.RoomEnter"/> 标记与地图声音
         /// (第一次进去还有怪物出场声);播放的一方每帧调 <see cref="DrainSounds"/> 取走。

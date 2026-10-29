@@ -44,8 +44,24 @@ ACTS = re.compile(r"脚本\(E-130\):进过的房间里出招带 \.act 触发器�
 SUMMONS = re.compile(r"召唤\(E-134\):脚本召唤出怪物 (\d+) 只,被拒绝 (\d+) 次,召唤物被打死 (\d+) 只")
 SWITCH = re.compile(r"脚本跨招开关\(E-145\):落到存在的招与触发器 (\d+) 次,落空 (\d+) 次,指向未接线的动作族 (\d+) 次")
 FAMILY = re.compile(r"脚本非出招动作族\(E-146\):进过的房间里装了站立、行走、受击、倒地、过程或最后一幕触发器的怪物 (\d+) 只,运行器启动 (\d+) 次,\[SET ACTION\] 落实 (\d+) 次、没落实 (\d+) 次")
+MIX = re.compile(r"怪物构成\(E-147\):进过的房间里共 (\d+) 只,\.ai 脚本指挥 (\d+) 只,默认 AI 走位大脑 (\d+) 只,默认 AI 占位 (\d+) 只")
+UNS_BEH = re.compile(r"脚本没做的行为\(E-147,实际执行次数\):(.*)")
+UNS_TRG = re.compile(r"脚本读不懂的触发器标签\(E-147,运行器每次开始算一次\):(.*)")
 STATUS = re.compile(r"异常状态\(E-136\):挂到主角身上 (\d+) 次,概率没中 (\d+) 次,持续伤害共 (\d+) 点(?:,脚本 \[ACTIVE STATUS\]\(E-144\)发起的请求 (\d+) 次)?")
 EXC = re.compile(r"(Unhandled exception|未处理的异常|System\.\w+Exception|Exception:|   at Dnf\.)")
+
+
+def parse_tag_table(text):
+    """把"标签=次数; 标签=次数"解析成字典;"无"是空表。"""
+    out = {}
+    text = text.strip()
+    if not text or text == "无":
+        return out
+    for part in text.split("; "):
+        tag, _, n = part.rpartition("=")
+        if tag and n.isdigit():
+            out[tag] = out.get(tag, 0) + int(n)
+    return out
 
 
 def list_dungeons():
@@ -106,6 +122,15 @@ def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=5000
     fm = FAMILY.search(text)
     if fm:
         rec["family_monsters"], rec["family_runs"], rec["family_set_applied"], rec["family_set_unhosted"] = (int(fm.group(i)) for i in range(1, 5))
+    mx = MIX.search(text)
+    if mx:
+        rec["mon_total"], rec["mon_scripted"], rec["mon_brain"], rec["mon_placeholder"] = (int(mx.group(i)) for i in range(1, 5))
+    ub = UNS_BEH.search(text)
+    if ub:
+        rec["unsup_beh"] = parse_tag_table(ub.group(1))
+    ut = UNS_TRG.search(text)
+    if ut:
+        rec["unsup_trg"] = parse_tag_table(ut.group(1))
     st = STATUS.search(text)
     if st:
         rec["status_applied"], rec["status_missed"], rec["status_tick_damage"] = (int(st.group(i)) for i in range(1, 4))
@@ -223,6 +248,23 @@ def main(argv):
     with_family = sum(1 for r in results if r.get("family_runs", 0) > 0)
     print("非出招动作族(只在本机,E-146):有宿主运行过的副本 %d 个;怪物 %d 只,运行器启动 %d 次,[SET ACTION] 落实 %d 次、没落实 %d 次"
           % (with_family, fam_sums["family_monsters"], fam_sums["family_runs"], fam_sums["family_set_applied"], fam_sums["family_set_unhosted"]))
+    mix = {}
+    for r in results:
+        d = r["dungeon"].split("/")[1]
+        row = mix.setdefault(d, [0, 0, 0, 0])
+        for i, k in enumerate(("mon_total", "mon_scripted", "mon_brain", "mon_placeholder")):
+            row[i] += r.get(k, 0)
+    tot_mix = [sum(row[i] for row in mix.values()) for i in range(4)]
+    print("怪物构成(只在本机,E-147):进过的房间里共 %d 只,.ai 脚本指挥 %d 只、默认 AI 走位大脑 %d 只、默认 AI 占位 %d 只" % tuple(tot_mix))
+    print("  按目录(总数/脚本/大脑/占位):" + ";".join("%s %d/%d/%d/%d" % (d, *row) for d, row in sorted(mix.items(), key=lambda kv: -kv[1][0]) if row[0] > 0))
+    for key, title in (("unsup_beh", "没做的行为(实际执行次数)"), ("unsup_trg", "读不懂的触发器标签(运行器启动次数)")):
+        total = {}
+        for r in results:
+            for tag, n in r.get(key, {}).items():
+                total[tag] = total.get(tag, 0) + n
+        top = sorted(total.items(), key=lambda kv: (-kv[1], kv[0]))
+        print("%s(只在本机,E-147):%d 种,合计 %d 次;前 14:%s"
+              % (title, len(top), sum(total.values()), "; ".join("%s=%d" % kv for kv in top[:14]) if top else "无"))
     if a.damage:
         with_status = sum(1 for r in results if r.get("status_applied", 0) > 0)
         with_act_status = sum(1 for r in results if r.get("act_status_requests", 0) > 0)

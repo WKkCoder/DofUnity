@@ -686,6 +686,32 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>
+        /// 房间里的怪物按"谁来指挥"分类的个数(E-147):脚本(.ai)指挥的、默认 AI 里装了走位大脑的、默认 AI 里走占位的(远程、单向移动、没有类别的)。
+        /// 只用来看哪些行为要靠推断的默认 AI,哪些由原版脚本直接决定。
+        /// </summary>
+        public void CountMonsterAi(out int scripted, out int brain, out int placeholder)
+        {
+            scripted = 0;
+            brain = 0;
+            placeholder = 0;
+            foreach (MonsterActor m in _monsters)
+            {
+                if (m.Script != null)
+                {
+                    scripted++;
+                }
+                else if (m.Brain != null)
+                {
+                    brain++;
+                }
+                else
+                {
+                    placeholder++;
+                }
+            }
+        }
+
         /// <summary>主角在 .act 脚本里的身份;没接上程序库时为 null。</summary>
         public IActEntity HeroEntity => _heroEntity;
 
@@ -1169,6 +1195,29 @@ namespace Dnf.Play
                 }
                 return n;
             }
+        }
+
+        private readonly Dictionary<string, int> _unsupportedBehaviors = new Dictionary<string, int>(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> _unsupportedTriggers = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// 脚本运行器实际执行到的、还没做的行为:标签 → 次数(E-147)。没做的行为按空操作处理,这张表只用来排"下一个做什么"的优先级。
+        /// </summary>
+        public IReadOnlyDictionary<string, int> UnsupportedBehaviorCounts => _unsupportedBehaviors;
+
+        /// <summary>
+        /// 脚本运行器每次开始时带着的、读不懂的触发器标签:标签 → 次数(出招、出生、进入动作族各算一次开始;带这种标签的触发器永远不触发,E-147)。
+        /// </summary>
+        public IReadOnlyDictionary<string, int> UnsupportedTriggerCounts => _unsupportedTriggers;
+
+        private static void Tally(Dictionary<string, int> table, string tag)
+        {
+            if (string.IsNullOrEmpty(tag))
+            {
+                tag = "?";
+            }
+            table.TryGetValue(tag, out int n);
+            table[tag] = n + 1;
         }
 
         /// <summary>复活时放在主角身上的特效动画(<c>UseCoin.ani</c>;客户端用币的特效函数 0x00865b50 加载它,放约 1 秒,挂在主角身上是推断)。</summary>
@@ -3379,6 +3428,16 @@ namespace Dnf.Play
             public void Shake(int strength, int durationMs)
             {
                 _session._shake.Start(strength, durationMs);
+            }
+
+            public void NoteUnsupportedBehavior(string tag)
+            {
+                Tally(_session._unsupportedBehaviors, tag);
+            }
+
+            public void NoteUnsupportedTrigger(string tag)
+            {
+                Tally(_session._unsupportedTriggers, tag);
             }
         }
 

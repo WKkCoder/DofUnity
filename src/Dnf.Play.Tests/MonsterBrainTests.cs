@@ -6,7 +6,7 @@ using Dnf.Render.Tests;
 namespace Dnf.Play.Tests;
 
 /// <summary>
-/// 怪物默认 AI 的走位大脑(证据 E-114):游荡、发现、迟滞、敌对、节拍、丢失目标、受击立刻找目标、原地不动、按类别决定用不用大脑,
+/// 怪物默认 AI 的走位大脑(证据 E-114、E-148):游荡、发现、迟滞、敌对、节拍、丢失目标、挨打不改变发现节奏、原地不动、按类别决定用不用大脑,
 /// 以及接进怪物演员之后的行为(不到迟滞不走、走起来的步速是 [move speed] × 斜率、视野之外永远没有目标)。
 /// 数全是合成的:视野、好战度、速度、位置都是测试自己定的,与原版数据无关;随机数用固定值或脚本序列替身。
 /// </summary>
@@ -214,16 +214,23 @@ public class MonsterBrainTests
     // ------------------------------------------------------------------ 受击
 
     [Fact]
-    public void DamageMakesTheMonsterSearchAtOnceAndSkipsTheNoticeDelay()
+    public void DamageDoesNotShortenTheFindIntervalNorTheNoticeDelay()
     {
+        // 客户端有个"受击后立刻找目标"的开关([targeting on damage]),没有任何怪物数据写它:挨打不改变发现与迟滞的节奏
         MonsterBrain b = NewBrain(Fixed(99));
         b.Update(0, true, 100, 100, 100 + 400, 100);                    // 没找到
-        b.Update(100, true, 100, 100, 300, 100);                        // 主角进了视野,但间隔没到
+        b.Update(100, true, 100, 100, 200, 100);                        // 主角进了视野(相距 100,不算"远处"),但间隔没到
         Assert.False(b.HasTarget);
         b.NotifyDamaged();
-        b.Update(150, true, 100, 100, 300, 100);
+        b.Update(150, true, 100, 100, 200, 100);
+        Assert.False(b.HasTarget);
+        b.Update(MonsterMoveRules.FindIntervalMs, true, 100, 100, 200, 100);
         Assert.True(b.HasTarget);
-        Assert.Equal(MonsterMoveMode.HostileMelee, b.Mode);             // 立刻敌对,不等迟滞
+        Assert.Equal(MonsterMoveMode.Wander, b.Mode);
+        b.Update(MonsterMoveRules.FindIntervalMs + MonsterBrain.NoticeDelayMs - 1, true, 100, 100, 200, 100);
+        Assert.Equal(MonsterMoveMode.Wander, b.Mode);
+        b.Update(MonsterMoveRules.FindIntervalMs + MonsterBrain.NoticeDelayMs, true, 100, 100, 200, 100);
+        Assert.Equal(MonsterMoveMode.HostileMelee, b.Mode);
     }
 
     [Fact]
@@ -241,14 +248,16 @@ public class MonsterBrainTests
     }
 
     [Fact]
-    public void DamageWhileAlreadyHavingATargetMakesItHostileAtOnce()
+    public void AHitFromCloseByDoesNotChangeTheModeAndDoesNotSkipTheNoticeDelay()
     {
         MonsterBrain b = NewBrain(Fixed(99));
-        b.Update(0, true, 100, 100, 300, 100);
+        b.Update(0, true, 100, 100, 200, 100);                          // 相距 100:找到目标,迟滞开始
         Assert.True(b.HasTarget);
         Assert.Equal(MonsterMoveMode.Wander, b.Mode);
         b.NotifyDamaged();
-        b.Update(100, true, 100, 100, 300, 100);
+        b.Update(100, true, 100, 100, 200, 100);
+        Assert.Equal(MonsterMoveMode.Wander, b.Mode);
+        b.Update(MonsterBrain.NoticeDelayMs, true, 100, 100, 200, 100);
         Assert.Equal(MonsterMoveMode.HostileMelee, b.Mode);
     }
 
@@ -323,7 +332,7 @@ public class MonsterBrainTests
         melee.Update(0, true, 100, 100, 100 + 420, 100);                // 上限 = 300 × 1.4 = 420
         Assert.True(melee.HasTarget);
         melee.Update(MonsterBrain.NoticeDelayMs, true, 100, 100, 100 + 420, 100);
-        Assert.Equal(MonsterMoveMode.HostileMelee, melee.Mode);
+        Assert.True(melee.Mode == MonsterMoveMode.HostileMelee || melee.Mode == MonsterMoveMode.Flank);   // 近战怪物发现之后一半几率先绕背
 
         MonsterBrain both = MonsterBrain.For(Def(250, -1, "[range combat]", "[melee combat]"), 1000, 1)!;
         both.Update(0, true, 100, 100, 300, 100);
@@ -339,12 +348,12 @@ public class MonsterBrainTests
     }
 
     [Fact]
-    public void MonstersWithoutTheCombatCategoriesOrWithOnesideMoveKeepThePlaceholder()
+    public void MonstersWithoutTheCombatCategoriesOrWithOnesideMoveKeepThePlaceholderAndRangedOnesGetABrain()
     {
         Assert.Null(MonsterBrain.For(null!, 1000, 1));
         Assert.Null(MonsterBrain.For(Def(), 1000, 1));                                       // 没有类别(脚本指挥)
         Assert.Null(MonsterBrain.For(Def(-1, -1, "[fixture]"), 1000, 1));                    // 只是摆设类别
-        Assert.Null(MonsterBrain.For(Def(250, -1, "[range combat]"), 1000, 1));              // 只有远程:模式 10 没读通,走占位
+        Assert.NotNull(MonsterBrain.For(Def(250, -1, "[range combat]"), 1000, 1));           // 只有远程:模式 10 读通了,有大脑
         Assert.Null(MonsterBrain.For(Def(-1, -1, "[melee combat]", "[oneside move]"), 1000, 1));
     }
 
@@ -423,10 +432,10 @@ public class MonsterBrainTests
     }
 
     [Fact]
-    public void AHitMakesTheMonsterTargetTheHeroAtOnceInsteadOfWaitingForTheNextSearch()
+    public void AHitDoesNotMakeAMonsterWithoutATargetTargetTheHeroEarly()
     {
         // 视野 30 → 上限 42。主角在 (300, 100) 朝右,怪物在 (360, 100)(相距 60:开头那次找目标找不到,下一次要等 1 秒);
-        // 主角往右走到相距不到 40,然后挥击打中怪物。没有这一击,最早在 1010 毫秒才找到、1710 毫秒才敌对
+        // 主角往右走到相距不到 40,然后挥击打中怪物。挨打不改变发现的节奏:最早在 1000 毫秒找到、1700 毫秒才敌对
         using var arena = new RoomCombatTests.Arena(new[] { (360, 100) }, monsterSpeed: 0, hp: 5000);
         MonsterActor m = Monster(arena);
         m.SetDefaultAi(NewBrain(Fixed(99), sight: 30));
@@ -444,13 +453,15 @@ public class MonsterBrainTests
         }
         Assert.Equal(1, arena.Session.Hits);
         Assert.True(m.AiClockMs < 1000);
-        for (int i = 0; i < 100 && !m.Brain.IsHostile; i++)
+        Assert.False(m.Brain.HasTarget);                                // 挨了打也没有马上找
+        for (int i = 0; i < 300 && !m.Brain.IsHostile; i++)
         {
             arena.Session.Update(10, 0, 0, false);
         }
         Assert.True(m.Brain.IsHostile);
-        Assert.True(m.AiClockMs < 1500, "不挨打的话最早在 1710 毫秒才会敌对");
+        Assert.True(m.AiClockMs >= 1700, "发现的节奏没变:1000 毫秒找到、再过 700 毫秒敌对,实际 " + m.AiClockMs);
     }
+
     [Fact]
     public void AStayMonsterNeverRollsForAnAttackWhileAnOrdinaryOneStrikesAfterTheLockout()
     {
@@ -500,13 +511,19 @@ public class MonsterBrainTests
     [Fact]
     public void AWanderingMonsterIsStoppedByTheRoomBlockerJustLikeTheHero()
     {
-        // 随机数 0:游荡一直朝左走(纵向被取消);视野 10 → 看不到主角;步速 100 像素/秒,走 3 秒本来会走到 x = −170
+        // 随机数 0:游荡一直朝左走(纵向被取消);视野 10 → 看不到主角;步速 100 像素/秒,走 3 秒本来会走到 x = −170。
+        // 被障碍挡住一秒以上之后会转反向模式退开(MonsterBrainModesTests),但任何时候都不会穿过障碍
         using var arena = new RoomCombatTests.Arena(new[] { (130, 100) }, monsterSpeed: 100);
         arena.Hero.Blocker = new LeftWall(100);
         MonsterActor m = Monster(arena);
         m.SetDefaultAi(NewBrain(Fixed(0), sight: 10));
-        arena.Steps(300);
-        Assert.InRange(m.X, 99.0, 101.0);                               // 停在障碍边上
+        double minX = double.MaxValue;
+        for (int i = 0; i < 300; i++)
+        {
+            arena.Steps(1);
+            minX = Math.Min(minX, m.X);
+        }
+        Assert.InRange(minX, 99.0, 101.0);                              // 走到障碍边上为止
         Assert.False(m.Brain.HasTarget);
     }
 
