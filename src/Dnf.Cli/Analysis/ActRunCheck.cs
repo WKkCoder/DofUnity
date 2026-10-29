@@ -50,6 +50,10 @@ internal static class ActRunCheck
         public int ActiveStatusSpill;
         public int ActiveStatusMissing;
 
+        /// <summary>[TRIGGER] 开关行为按作用的动作族分的条数(E-145;没写种类的是 Own)与读不懂的条数。</summary>
+        public readonly SortedDictionary<string, int> TriggerSwitchPools = new(StringComparer.Ordinal);
+        public int TriggerSwitchBroken;
+
         /// <summary>引用了含 [ACTIVE STATUS] 的行为组的触发器,按 [DO BEHAVIOR] 的目标选择器(目标是 [CHECKUP OBJECT] 的取最近一个 [WHICH] 的选择器)分的条数。</summary>
         public readonly SortedDictionary<string, int> ActiveStatusTargets = new(StringComparer.Ordinal);
 
@@ -154,6 +158,16 @@ internal static class ActRunCheck
                         SetActionTargets.TryGetValue(target, out int sa);
                         SetActionTargets[target] = sa + 1;
                     }
+                    if (b.Kind == ActBehaviorKind.TriggerSwitch)
+                    {
+                        string pool = b.TriggerPool.ToString();
+                        TriggerSwitchPools.TryGetValue(pool, out int tp);
+                        TriggerSwitchPools[pool] = tp + 1;
+                    }
+                    else if (b.Kind == ActBehaviorKind.Unsupported && b.Tag == "[TRIGGER]")
+                    {
+                        TriggerSwitchBroken++;
+                    }
                     if (b.Kind == ActBehaviorKind.ActiveStatus)
                     {
                         string status = b.Status.Kind.ToString();
@@ -195,6 +209,7 @@ internal static class ActRunCheck
             Console.WriteLine("  [ACTIVE STATUS] 读通 " + ActiveStatusKinds.Values.Sum() + " 条(按种类:" + Join(ActiveStatusKinds, 18) + "),读不通 " + ActiveStatusBroken
                 + " 条,整数多写 " + ActiveStatusSpill + " 个、少写 " + ActiveStatusMissing + " 个");
             Console.WriteLine("  引用含 [ACTIVE STATUS] 行为组的触发器,按目标选择器:" + Join(ActiveStatusTargets, 18));
+            Console.WriteLine("  [TRIGGER] 开关读通 " + TriggerSwitchPools.Values.Sum() + " 条(按作用的动作族:" + Join(TriggerSwitchPools, 12) + "),读不通 " + TriggerSwitchBroken + " 条");
             Console.WriteLine("  读不通的 [CREATE PASSIVEOBJECT] " + CreateBroken + " 条(缺 [INDEX] " + CreateNoIndex + ",缺 [POS] " + CreateNoPos + ")");
             Console.WriteLine("  读不懂的触发器标签(种数 " + UnsupportedTriggerTags.Count + ",按触发器条数):" + Join(UnsupportedTriggerTags, 25));
             Console.WriteLine("  读不懂的行为标签(种数 " + UnsupportedBehaviorTags.Count + ",按行为组个数):" + Join(UnsupportedBehaviorTags, 25));
@@ -206,7 +221,120 @@ internal static class ActRunCheck
             CreateBroken, CreateNoIndex, CreateNoPos,
             UnsupportedTriggerTags, UnsupportedBehaviorTags, BehaviorKinds, SetActionTargets,
             ActiveStatusKinds, ActiveStatusBroken, ActiveStatusSpill, ActiveStatusMissing, ActiveStatusTargets,
+            TriggerSwitchPools, TriggerSwitchBroken,
         };
+    }
+
+    /// <summary>
+    /// 跨招 [TRIGGER](E-145)按"怪物 × 出招列表"的汇总:每条按动作族写法的开关指到的招与触发器存不存在(出招序号就是 .mob 招式列表的下标,与 .ai 的 is attack action enable 同一套),
+    /// 初值关着的触发器有多少、其中多少被别的招的 [ON] 指到(静态可达)。
+    /// </summary>
+    private sealed class CrossSwitchTally
+    {
+        public int Monsters;
+        public int Switches;
+        public int ToAttack;
+        public int Resolved;
+        public int NoSlot;
+        public int OutOfRange;
+        public int OtherPools;
+        public int InitiallyOff;
+        public int InitiallyOffReachable;
+        public int ToAttackOn;
+        public int ToAttackOff;
+        public int ToAttackReset;
+
+        public void Print()
+        {
+            Console.WriteLine("  跨招 [TRIGGER](E-145,按怪物×出招列表):含跨招开关的怪物 " + Monsters + " 个,开关 " + Switches + " 条,其中指向出招 " + ToAttack + " 条(落到存在的招与触发器 " + Resolved
+                + " 条,没有这一招或没装触发器 " + NoSlot + ",触发器序号越界 " + OutOfRange + ";命令 [ON] " + ToAttackOn + "、[OFF] " + ToAttackOff + "、[RESET] " + ToAttackReset + "),指向其它动作族 " + OtherPools + " 条;初值关着的触发器 " + InitiallyOff + " 个,其中被别的招 [ON] 指到 " + InitiallyOffReachable + " 个");
+        }
+
+        public object ToJson() => new { Monsters, Switches, ToAttack, Resolved, NoSlot, OutOfRange, OtherPools, InitiallyOff, InitiallyOffReachable, ToAttackOn, ToAttackOff, ToAttackReset };
+    }
+
+    private static void CountCrossSlotSwitches(ActProgram?[] slots, CrossSwitchTally tally)
+    {
+        bool any = false;
+        var reachable = new HashSet<(int Slot, int Trigger)>();
+        for (int slot = 0; slot < slots.Length; slot++)
+        {
+            ActProgram? program = slots[slot];
+            if (program == null)
+            {
+                continue;
+            }
+            foreach (ActBehaviorGroup g in program.Behaviors)
+            {
+                foreach (ActBehavior b in g.Items)
+                {
+                    if (b.Kind != ActBehaviorKind.TriggerSwitch || b.TriggerPool == ActTriggerPool.Own)
+                    {
+                        continue;
+                    }
+                    any = true;
+                    tally.Switches++;
+                    if (b.TriggerPool != ActTriggerPool.Attack)
+                    {
+                        tally.OtherPools++;
+                        continue;
+                    }
+                    tally.ToAttack++;
+                    switch (b.Command)
+                    {
+                        case ActTriggerCommand.On:
+                            tally.ToAttackOn++;
+                            break;
+                        case ActTriggerCommand.Off:
+                            tally.ToAttackOff++;
+                            break;
+                        default:
+                            tally.ToAttackReset++;
+                            break;
+                    }
+                    ActProgram? target = (uint)b.TriggerSlot < (uint)slots.Length ? slots[b.TriggerSlot] : null;
+                    if (target == null || target.Triggers.Count == 0)
+                    {
+                        tally.NoSlot++;
+                    }
+                    else if ((uint)b.TriggerIndex >= (uint)target.Triggers.Count)
+                    {
+                        tally.OutOfRange++;
+                    }
+                    else
+                    {
+                        tally.Resolved++;
+                        if (b.Command == ActTriggerCommand.On)
+                        {
+                            reachable.Add((b.TriggerSlot, b.TriggerIndex));
+                        }
+                    }
+                }
+            }
+        }
+        if (any)
+        {
+            tally.Monsters++;
+        }
+        for (int slot = 0; slot < slots.Length; slot++)
+        {
+            ActProgram? program = slots[slot];
+            if (program == null)
+            {
+                continue;
+            }
+            foreach (ActTrigger t in program.Triggers)
+            {
+                if (!t.Enabled)
+                {
+                    tally.InitiallyOff++;
+                    if (reachable.Contains((slot, t.Index)))
+                    {
+                        tally.InitiallyOffReachable++;
+                    }
+                }
+            }
+        }
     }
 
     private static string Percent(long a, long b) => b == 0 ? "-" : (a * 100.0 / b).ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + "%";
@@ -257,6 +385,7 @@ internal static class ActRunCheck
         int monsters = 0, withAttackList = 0, withActFile = 0, withTriggers = 0, withRunnable = 0, allRunnable = 0, withSpawn = 0, missingActs = 0, actRefs = 0;
         var attackActs = new Dictionary<string, ActProgram>(StringComparer.OrdinalIgnoreCase);
         var spawnRoots = new SortedSet<int>();
+        var crossSwitch = new CrossSwitchTally();
         foreach (int id in data.MonsterIds())
         {
             MonsterDef? def = data.GetMonster(id);
@@ -272,8 +401,10 @@ internal static class ActRunCheck
             }
             withAttackList++;
             bool anyFile = false, anyTriggers = false, anyRunnable = false, anyBroken = false, anySpawn = false;
-            foreach (string raw in list)
+            var slots = new ActProgram?[list.Length];
+            for (int slotIndex = 0; slotIndex < list.Length; slotIndex++)
             {
+                string raw = list[slotIndex];
                 if (string.IsNullOrEmpty(raw))
                 {
                     continue;
@@ -286,6 +417,7 @@ internal static class ActRunCheck
                     missingActs++;
                     continue;
                 }
+                slots[slotIndex] = program;
                 anyFile = true;
                 attackActs[path] = program;
                 foreach (ActTrigger t in program.Triggers)
@@ -306,6 +438,7 @@ internal static class ActRunCheck
                     spawnRoots.Add(index);
                 }
             }
+            CountCrossSlotSwitches(slots, crossSwitch);
             withActFile += anyFile ? 1 : 0;
             withTriggers += anyTriggers ? 1 : 0;
             withRunnable += anyRunnable ? 1 : 0;
@@ -321,6 +454,7 @@ internal static class ActRunCheck
             monsterTally.Add(p);
         }
         monsterTally.Print("怪物出招的 .act");
+        crossSwitch.Print();
 
         // ---- 第一部分之二:怪物其余动作(待机、行走、受击、倒地、etc、proc、死亡……)的 .act;怪物脚本里"待机里藏着整套首领流程"的就在这里
         var otherKinds = new (string Title, string[] Tags)[]
@@ -551,6 +685,7 @@ internal static class ActRunCheck
             {
                 monsters, withAttackList, withActFile, withTriggers, withRunnable, allRunnable, withSpawn, missingActs, actRefs,
                 monsterActs = monsterTally.ToJson(),
+                crossSlotSwitches = crossSwitch.ToJson(),
                 reachedObjects = reached.Count, templates, missingObjects, objectsWithTriggers, objectsRunnable, objectsAllRunnable, objectsDepth2,
                 objectActs = objectTally.ToJson(),
                 allObjects = allIds.Length, readable, basicAct, oldStyle, etcActs, anyTrig, allRun, timeLimit, endOfAnim, neither,

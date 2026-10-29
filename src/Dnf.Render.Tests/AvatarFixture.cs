@@ -357,6 +357,10 @@ internal sealed class AvatarFixture : IDisposable
     /// summononce(帧 1 同 summon,随后 [TRIGGER] 0 [OFF] 把自己的触发器关掉:开关跨出招保留,只召唤一次)、
     /// restore(帧 1 [RESTORE] [HP] -50 [%]:每次出招扣掉自己最大生命的一半)。
     /// M51(证据 E-144)再加两只:status(帧 1 对攻击目标 [ACTIVE STATUS] [stun] 概率 100、等级 0、持续 2000 毫秒)与 statusmiss(同上,概率 0)。
+    /// M52(证据 E-145)按动作族写的 [TRIGGER]:xoff(第 0 招帧 1 把第 1 招的触发器 0 关掉;第 1 招帧 1 起 X 速度 100)、
+    /// xon(第 0 招帧 1 把第 1 招的触发器 0 打开再立即切第 1 招;第 1 招的触发器 0 出生时是关着的,帧 1 放 <see cref="ActShotId"/>)与对照 xonctl(同 xon 但不开它)、
+    /// xself(第 0 招帧 1 用 [ATTACK] 0 1 [ON] 点名自己这一招,打开帧 3 才放 <see cref="ActShotId"/> 的触发器 1)与对照 xselfctl(不开)、
+    /// xmiss(第 0 招帧 1 依次写三条落空的开关:没有的招、越界的触发器、[MOVE] 动作族)。
     /// </summary>
     public const int ActForeverId = 9206;
 
@@ -584,6 +588,12 @@ internal sealed class AvatarFixture : IDisposable
         ("restore", new[] { "ActRestore" }),
         ("status", new[] { "ActStatus" }),
         ("statusmiss", new[] { "ActStatusMiss" }),
+        ("xoff", new[] { "ActXOff", "ActXTarget" }),
+        ("xon", new[] { "ActXOn", "ActXLate" }),
+        ("xonctl", new[] { "ActXOnCtl", "ActXLate" }),
+        ("xself", new[] { "ActXSelf" }),
+        ("xselfctl", new[] { "ActXSelfCtl" }),
+        ("xmiss", new[] { "ActXMiss" }),
     };
 
     private IEnumerable<(string Name, byte[] Data)> ActScripts()
@@ -716,6 +726,45 @@ internal sealed class AvatarFixture : IDisposable
         yield return (BlobActionDir + "/actstatusmiss.act", ActWith(ThrowActAni)
             .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0, "[TARGET]")
             .Behavior(b => b.Tag("[ACTIVE STATUS]").Tag("[stun]").Float(0f).Int(0, 2000))
+            .Build());
+        // M52(证据 E-145):按动作族写的 [TRIGGER]。第 1 招的触发器 0 本来开着(xoff)或关着(xon),由第 0 招去改
+        yield return (BlobActionDir + "/actxoff.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[TRIGGER]").Tag("[ATTACK]").Int(1, 0).Tag("[OFF]"))
+            .Build());
+        yield return (BlobActionDir + "/actxtarget.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 100))
+            .Build());
+        yield return (BlobActionDir + "/actxon.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[TRIGGER]").Tag("[ATTACK]").Int(1, 0).Tag("[ON]").Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[NOW]"))
+            .Build());
+        yield return (BlobActionDir + "/actxonctl.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[NOW]"))
+            .Build());
+        yield return (BlobActionDir + "/actxlate.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ENABLE]").Tag("[OFF]").Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Create(ActShotId, ShotStartX, 0, ShotStartZ))
+            .Build());
+        yield return (BlobActionDir + "/actxself.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Trigger(r => r.Tag("[ENABLE]").Tag("[OFF]").Tag("[FRAME]").Int(3, 3), 1)
+            .Behavior(b => b.Tag("[TRIGGER]").Tag("[ATTACK]").Int(0, 1).Tag("[ON]"))
+            .Behavior(b => b.Create(ActShotId, ShotStartX, 0, ShotStartZ))
+            .Build());
+        yield return (BlobActionDir + "/actxselfctl.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Trigger(r => r.Tag("[ENABLE]").Tag("[OFF]").Tag("[FRAME]").Int(3, 3), 1)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 0))
+            .Behavior(b => b.Create(ActShotId, ShotStartX, 0, ShotStartZ))
+            .Build());
+        yield return (BlobActionDir + "/actxmiss.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[TRIGGER]").Tag("[ATTACK]").Int(5, 0).Tag("[OFF]")
+                .Tag("[TRIGGER]").Tag("[ATTACK]").Int(0, 7).Tag("[OFF]")
+                .Tag("[TRIGGER]").Tag("[MOVE]").Int(0).Tag("[OFF]"))
             .Build());
         foreach (int id in new[] { ActShotId, ActRepeatId, ActGraveId, ActSpawnerId, ActFallId })
         {

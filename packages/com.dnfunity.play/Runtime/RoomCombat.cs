@@ -1070,6 +1070,48 @@ namespace Dnf.Play
         /// <summary>脚本的 [ACTIVE STATUS] 对主角发起的挂状态请求次数(掷骰前,含没掷中的;E-144)。</summary>
         public int ActStatusRequests { get; private set; }
 
+        /// <summary>怪物脚本里按动作族写的 [TRIGGER] 开关(E-145)落到存在的招与触发器上的次数(按场上的怪物累计)。</summary>
+        public int ActSwitchApplied
+        {
+            get
+            {
+                int n = 0;
+                foreach (MonsterActor m in _monsters)
+                {
+                    n += m.ActSwitchApplied;
+                }
+                return n;
+            }
+        }
+
+        /// <summary>同上,指到的招或触发器不存在而落空的次数(客户端同样跳过)。</summary>
+        public int ActSwitchMissed
+        {
+            get
+            {
+                int n = 0;
+                foreach (MonsterActor m in _monsters)
+                {
+                    n += m.ActSwitchMissed;
+                }
+                return n;
+            }
+        }
+
+        /// <summary>同上,指向还没有 .act 触发器宿主的动作族([MOVE]、[STAY]、[DOWN]、[CUSTOM] 等)的次数。</summary>
+        public int ActSwitchUnhosted
+        {
+            get
+            {
+                int n = 0;
+                foreach (MonsterActor m in _monsters)
+                {
+                    n += m.ActSwitchUnhosted;
+                }
+                return n;
+            }
+        }
+
         /// <summary>复活时放在主角身上的特效动画(<c>UseCoin.ani</c>;客户端用币的特效函数 0x00865b50 加载它,放约 1 秒,挂在主角身上是推断)。</summary>
         public const string ReviveEffectPath = "Common/Etc/Animation/UseCoin.ani";
 

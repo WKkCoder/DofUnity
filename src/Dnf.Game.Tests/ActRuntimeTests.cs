@@ -131,6 +131,15 @@ public sealed partial class ActRuntimeTests
             Log.Add("status:" + entry.Kind);
             Statuses.Add((entry, source));
         }
+
+        /// <summary>M52(E-145):按动作族写的 [TRIGGER] 落到拥有者上的请求。</summary>
+        public List<(ActTriggerPool pool, int slot, int trigger, ActTriggerCommand command)> ActionTriggers { get; } = new();
+
+        public void SetActionTrigger(ActTriggerPool pool, int slot, int trigger, ActTriggerCommand command)
+        {
+            Log.Add("trigger:" + pool + ":" + slot + ":" + trigger + ":" + command);
+            ActionTriggers.Add((pool, slot, trigger, command));
+        }
     }
 
     private sealed class Host : IActHost

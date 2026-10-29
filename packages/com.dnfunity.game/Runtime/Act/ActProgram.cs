@@ -493,6 +493,25 @@ namespace Dnf.Game.Act
         Reset,
     }
 
+    /// <summary>
+    /// [TRIGGER] 行为作用在哪一族动作的触发器池上(客户端加载分支 0x0133b043 起、执行块 0x010b861b,E-145)。
+    /// 没写种类是当前这个 .act 自己(客户端种类码 3);写了种类就取行为拥有者的那一族动作:[ATTACK] n 与 [CUSTOM] n 先给动作序号再给触发器序号,
+    /// 其余([MOVE]、[STAY]、[SIT]、[DOWN]、[DEFAULT]、[PROC])每族只有一个动作,直接给触发器序号。
+    /// 客户端种类码:MOVE 4、STAY 8、SIT 0xa、ATTACK 0xb、DOWN 0xc、CUSTOM 0xd、DEFAULT 0xe、PROC 0xf;[DAMAGE](9)加载与执行两头的整数个数对不上,全库也没有这种写法,当读不懂。
+    /// </summary>
+    public enum ActTriggerPool : byte
+    {
+        Own,
+        Move,
+        Stay,
+        Sit,
+        Down,
+        Default,
+        Proc,
+        Attack,
+        Custom,
+    }
+
     /// <summary>行为组 [BEHAVIOR] 里的一条行为。字段按种类取用。</summary>
     public sealed class ActBehavior
     {
@@ -548,9 +567,15 @@ namespace Dnf.Game.Act
         // ---- [SET DIRECTION]
         public ActDirectionMode Direction { get; internal set; }
 
-        // ---- [TRIGGER] n [ON]/[OFF]/[RESET]
+        // ---- [TRIGGER] [种类 [动作序号]] n [ON]/[OFF]/[RESET]
         public int TriggerIndex { get; internal set; }
         public ActTriggerCommand Command { get; internal set; }
+
+        /// <summary>开关落在哪一族动作上;没写种类是 <see cref="ActTriggerPool.Own"/>(当前 .act 自己,E-145)。</summary>
+        public ActTriggerPool TriggerPool { get; internal set; }
+
+        /// <summary>[ATTACK] n、[CUSTOM] n 的动作序号;其余种类是 -1。</summary>
+        public int TriggerSlot { get; internal set; } = -1;
 
         // ---- [SET FRAME]
         public int Frame { get; internal set; }

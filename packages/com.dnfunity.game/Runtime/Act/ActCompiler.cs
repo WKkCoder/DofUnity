@@ -804,30 +804,7 @@ namespace Dnf.Game.Act
                 case "[SET DIRECTION]":
                     return ParseDirection(cur, tag);
                 case "[TRIGGER]":
-                {
-                    if (!cur.AtNumber)
-                    {
-                        return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };    // 按动作槽选容器的写法([MOVE]、[ATTACK] n 等),这一版不做
-                    }
-                    int n = cur.Int();
-                    string cmd = cur.TakeOpen();
-                    ActTriggerCommand command;
-                    switch (cmd)
-                    {
-                        case "[ON]":
-                            command = ActTriggerCommand.On;
-                            break;
-                        case "[OFF]":
-                            command = ActTriggerCommand.Off;
-                            break;
-                        case "[RESET]":
-                            command = ActTriggerCommand.Reset;
-                            break;
-                        default:
-                            return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
-                    }
-                    return new ActBehavior { Kind = ActBehaviorKind.TriggerSwitch, Tag = tag, TriggerIndex = n, Command = command };
-                }
+                    return ParseTriggerSwitch(cur, tag);
                 case "[SET FRAME]":
                     return new ActBehavior { Kind = ActBehaviorKind.SetFrame, Tag = tag, Frame = cur.Int() };
                 case "[SET DAMAGE BOX]":
@@ -907,6 +884,82 @@ namespace Dnf.Game.Act
                 default:
                     return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
             }
+        }
+
+        /// <summary>
+        /// [TRIGGER] [种类 [动作序号]] 触发器序号 [ON]/[OFF]/[RESET](客户端加载分支 0x0133b043 起,E-145)。
+        /// 没写种类:当前 .act 自己;[ATTACK]、[CUSTOM] 先写动作序号,其余种类每族只有一个动作。
+        /// 读不全(缺序号、不认得的种类或命令)的行当读不懂:客户端那边是载入报错。
+        /// </summary>
+        private static ActBehavior ParseTriggerSwitch(ActCursor cur, string tag)
+        {
+            var unsupported = new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
+            ActTriggerPool pool = ActTriggerPool.Own;
+            int slot = -1;
+            if (!cur.AtNumber)
+            {
+                switch (cur.TakeOpen())
+                {
+                    case "[MOVE]":
+                        pool = ActTriggerPool.Move;
+                        break;
+                    case "[STAY]":
+                        pool = ActTriggerPool.Stay;
+                        break;
+                    case "[SIT]":
+                        pool = ActTriggerPool.Sit;
+                        break;
+                    case "[DOWN]":
+                        pool = ActTriggerPool.Down;
+                        break;
+                    case "[DEFAULT]":
+                        pool = ActTriggerPool.Default;
+                        break;
+                    case "[PROC]":
+                        pool = ActTriggerPool.Proc;
+                        break;
+                    case "[ATTACK]":
+                        pool = ActTriggerPool.Attack;
+                        break;
+                    case "[CUSTOM]":
+                        pool = ActTriggerPool.Custom;
+                        break;
+                    default:
+                        return unsupported;
+                }
+                if (pool == ActTriggerPool.Attack || pool == ActTriggerPool.Custom)
+                {
+                    if (!cur.AtNumber)
+                    {
+                        return unsupported;
+                    }
+                    slot = cur.Int();
+                }
+                if (!cur.AtNumber)
+                {
+                    return unsupported;
+                }
+            }
+            int n = cur.Int();
+            ActTriggerCommand command;
+            switch (cur.TakeOpen())
+            {
+                case "[ON]":
+                    command = ActTriggerCommand.On;
+                    break;
+                case "[OFF]":
+                    command = ActTriggerCommand.Off;
+                    break;
+                case "[RESET]":
+                    command = ActTriggerCommand.Reset;
+                    break;
+                default:
+                    return unsupported;
+            }
+            return new ActBehavior
+            {
+                Kind = ActBehaviorKind.TriggerSwitch, Tag = tag, TriggerIndex = n, Command = command, TriggerPool = pool, TriggerSlot = slot,
+            };
         }
 
         /// <summary>

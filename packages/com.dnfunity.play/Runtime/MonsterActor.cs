@@ -467,6 +467,50 @@ namespace Dnf.Play
             return state[trigger];
         }
 
+        /// <summary>脚本的按动作族 [TRIGGER] 写法落到了存在的招与触发器上的次数(E-145;测试与审计用)。</summary>
+        public int ActSwitchApplied { get; private set; }
+
+        /// <summary>写法指到的招或触发器不存在(没有这一招、这一招没装触发器、序号越界)的次数:客户端同样跳过(触发器个数不大于序号就不动,E-145)。</summary>
+        public int ActSwitchMissed { get; private set; }
+
+        /// <summary>指向非出招动作族([MOVE]、[STAY]、[DOWN]、[CUSTOM] 等)的次数:怪物的这些动作还没有 .act 触发器宿主(M39-2b),只记数、不落实。</summary>
+        public int ActSwitchUnhosted { get; private set; }
+
+        /// <summary>
+        /// 脚本的 [TRIGGER] 按动作族写法(E-145):[ATTACK] 序号 触发器序号 [ON]/[OFF]/[RESET]。开关属于怪物的招式条目(每招一份,出招之间保留,E-134),
+        /// 所以直接写 <c>_actEnabled</c>;写的正是这一招(正在跑的运行器共用同一份数组)时复位也一并作用到运行器的计数与计时。
+        /// 别的招此刻没有运行器,下次出招从头开始,复位对它没有可见的效果。
+        /// </summary>
+        private void ActSwitchTrigger(ActTriggerPool pool, int slot, int trigger, ActTriggerCommand command)
+        {
+            if (pool != ActTriggerPool.Attack)
+            {
+                ActSwitchUnhosted++;
+                return;
+            }
+            bool[] state = _actEnabled != null && (uint)slot < (uint)_actEnabled.Length ? _actEnabled[slot] : null;
+            if (state == null || (uint)trigger >= (uint)state.Length)
+            {
+                ActSwitchMissed++;
+                return;
+            }
+            ActSwitchApplied++;
+            if (slot == _attackIndex && _actRunner != null)
+            {
+                _actRunner.ApplyTrigger(trigger, command);
+                return;
+            }
+            switch (command)
+            {
+                case ActTriggerCommand.On:
+                    state[trigger] = true;
+                    break;
+                case ActTriggerCommand.Off:
+                    state[trigger] = false;
+                    break;
+            }
+        }
+
         /// <summary>把怪物跑着的开关接给 .ai 脚本;没装触发器程序时撤掉,脚本回到 .act 里 [ENABLE] 的初值。</summary>
         private void BindScriptTriggers()
         {
@@ -1007,6 +1051,11 @@ namespace Dnf.Play
             public bool Teleport(float x, float y, float z)
             {
                 return _m.ActTeleport(x, y, z);
+            }
+
+            public void SetActionTrigger(ActTriggerPool pool, int slot, int trigger, ActTriggerCommand command)
+            {
+                _m.ActSwitchTrigger(pool, slot, trigger, command);
             }
         }
 

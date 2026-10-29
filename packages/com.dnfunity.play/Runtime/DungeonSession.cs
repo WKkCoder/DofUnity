@@ -470,6 +470,13 @@ namespace Dnf.Play
         /// <summary>脚本的 [ACTIVE STATUS] 对主角发起的挂状态请求总次数(掷骰前,含没掷中的;证据 E-144)。</summary>
         public int ActStatusRequests => Sum(s => s.ActStatusRequests);
 
+        /// <summary>怪物脚本里按动作族写的 [TRIGGER] 开关(证据 E-145):落到存在的招与触发器上、落空、指向还没有宿主的动作族的总次数(按进过的房间里场上的怪物累计)。</summary>
+        public int ActSwitchApplied => Sum(s => s.ActSwitchApplied);
+
+        public int ActSwitchMissed => Sum(s => s.ActSwitchMissed);
+
+        public int ActSwitchUnhosted => Sum(s => s.ActSwitchUnhosted);
+
         /// <summary>
         /// 整座副本的声音提示队列(证据 E-089、E-090):每一步把当前房间会话发出的提示按时间顺序收进来,换房间时先放新房间的 <see cref="SoundCueKind.RoomEnter"/> 标记与地图声音
         /// (第一次进去还有怪物出场声);播放的一方每帧调 <see cref="DrainSounds"/> 取走。

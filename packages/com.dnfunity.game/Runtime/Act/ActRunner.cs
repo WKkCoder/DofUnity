@@ -90,6 +90,14 @@ namespace Dnf.Game.Act
         void ApplyStatus(ActiveStatusEntry entry, IActEntity source)
         {
         }
+
+        /// <summary>
+        /// [TRIGGER] 的按动作族写法([ATTACK] n 触发器序号 [ON]/[OFF]/[RESET] 等,E-145):把行为拥有者另一个动作上的触发器开关打开、关掉或复位。
+        /// 动作与它的触发器开关属于拥有者(怪物的每一招一份,出招之间保留),所以由拥有者自己落实;没有这种动作容器的对象什么都不做。
+        /// </summary>
+        void SetActionTrigger(ActTriggerPool pool, int slot, int trigger, ActTriggerCommand command)
+        {
+        }
     }
 
     /// <summary>运行器对世界的请求:随机数、生成被动对象、解析选择器。</summary>
@@ -926,12 +934,26 @@ namespace Dnf.Game.Act
 
         private void SwitchTrigger(ActBehavior b)
         {
-            int n = b.TriggerIndex;
+            if (b.TriggerPool != ActTriggerPool.Own)
+            {
+                // 客户端的执行块只看行为拥有者,不看目标集合:从拥有者取那一族动作的触发器池,再按序号写开关(0x010b861b,E-145)
+                _owner.SetActionTrigger(b.TriggerPool, b.TriggerSlot, b.TriggerIndex, b.Command);
+                return;
+            }
+            ApplyTrigger(b.TriggerIndex, b.Command);
+        }
+
+        /// <summary>
+        /// 本运行器这个动作自己的第 <paramref name="n"/> 个触发器:开、关,或复位(清触发次数与单次位、计时重新起算;复位的客户端实现在受保护区,这一条是推断)。
+        /// 拥有者把"另一个动作上的开关"落实到正在跑的这一个动作时也走这里(E-145)。
+        /// </summary>
+        public void ApplyTrigger(int n, ActTriggerCommand command)
+        {
             if (n < 0 || n >= _enabled.Length)
             {
                 return;
             }
-            switch (b.Command)
+            switch (command)
             {
                 case ActTriggerCommand.On:
                     _enabled[n] = true;

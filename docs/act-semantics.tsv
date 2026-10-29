@@ -128,7 +128,7 @@ beh	0x63	[SUMMON MONSTER]	五个值(编号、等级、三偏移)在目标循环�
 beh	0x64	[TELEPORT]	按基准对象(拥有者或目标)的坐标加三轴偏移瞬移,朝左时 X 偏移取反;九个标志码已读通(M40);落点不合法时找最近合法点(半径 200)	中	最近合法点搜索的另两个参数(-1 与 3);USE EFFECT 的特效记录;关联状态的完整列表
 beh	0x67	[CHANGE ATTACKINFO]	DEFAULT(-1)或索引切换action+0xfb表(0x2cc)并刷新+0x200	中	具名attackinfo执行路径、+0x200槽名
 beh	0x6b	[SET SPEED]	对目标速度控制器(+0x50→+0xc)写 X/Y/Z 浮点速度，X 随朝向取反	高	加载侧 3/4 修饰在执行块无分支
-beh	0x6e	[TRIGGER]	运行时按编号启用/禁用/重置动作上的触发器条目:模式 0 写条目 +0x1c=1,1 写 0,2 调桩 0x296a477(当复位);开关字节就是 [ENABLE],帧 0 复位(0x010a3fe0)不清它,所以跨出招保留;.ai 的 is attack action enable 读它(0x010a34d0,E-134)	中	整数加载分支切片缺失；motion 分池语义未全核对；桩 0x296a477 在受保护区
+beh	0x6e	[TRIGGER]	运行时按编号启用/禁用/重置动作上的触发器条目:模式 0 写条目 +0x1c=1,1 写 0,2 调桩 0x296a477(当复位);开关字节就是 [ENABLE],帧 0 复位(0x010a3fe0)不清它,所以跨出招保留;.ai 的 is attack action enable 读它(0x010a34d0,E-134);按动作族写法(E-145):加载块 0x0133b043 给每种写法一个种类码(没写 3、[MOVE] 4、[STAY] 8、[DAMAGE] 9、[SIT] 0xa、[ATTACK] 0xb、[DOWN] 0xc、[CUSTOM] 0xd、[DEFAULT] 0xe、[PROC] 0xf),[ATTACK]/[CUSTOM] 先写动作序号再写触发器序号,命令 [ON] 0、[OFF] 1、[RESET] 2;执行块 0x010b861b 只看行为拥有者(不循环目标集合),按种类码取拥有者那一族动作的触发器池,池空或触发器个数不大于序号就跳过	中	桩 0x296a477 在受保护区(复位按清计数与单次位的推断做);各池号对应哪个容器的细节未全核对;[DAMAGE](9)加载读一个整数、执行读两个,两头对不上,全库无此写法;怪物非出招动作族还没有宿主,只记数
 beh	0x6f	[RESTORE]	种类 0 [HP] 1 [MP],数量(值表达式),第 2 个参数码 7 为 [%];血量百分比 = 数量 × 目标最大生命(槽 0x2a8) ÷ 100(有符号、向零截断),魔法走槽 0x51c;只构造请求对象(0x150/0xe0 字节)经 vtable+0x58 提交,血量由服务端改(块 0x010b8c89,E-134)	中	服务端怎样夹值与死亡;百分比以外的符号码
 beh	0x71	[SEND DO BEHAVIOR]	对目标+0x148动作实例远程执行第k号BEHAVIOR(010d1370)	中	加载侧选择器在执行侧未再读
 beh	0x73	[DESTROY] / [DESTROY BY FORCE]	分类型调用销毁/死亡虚函数；FORCE 附 SKIP MASTER CHECK 绕过 master 校验	中	master 规则细节与各 +0x7e4 等语义
