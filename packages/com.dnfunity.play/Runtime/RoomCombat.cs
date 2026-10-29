@@ -602,6 +602,10 @@ namespace Dnf.Play
         private SkillKeys _bufferedSkills;
         private readonly CommandInput _commands = new CommandInput();
 
+        // 增益(M48,E-141):生效中的增益容器,与"正在施法、等施法正常结束才挂增益"的那个增益类技能槽
+        private readonly HeroBuffs _buffs = new HeroBuffs();
+        private HeroSkillSlot _castingBuff;
+
         // 声音提示(证据 E-089、E-090):逻辑只发提示,播放在别处
         private readonly SoundCueQueue _sounds = new SoundCueQueue();
         private WeaponSound _weaponSound;
@@ -875,6 +879,21 @@ namespace Dnf.Play
 
         /// <summary>主角用倒地起身技能起身的次数(M47,E-140)。</summary>
         public int QuickStands => _heroDown.QuickStands;
+
+        /// <summary>
+        /// 主角身上生效中的增益(M48,E-141):增益类技能的施法动作正常结束时挂上,每步按墙钟走时间;换房间时由副本会话抄给下一个房间的会话,
+        /// 主角倒下就清空(推断)。属性消费者:跳跃力(<see cref="TownHero.JumpPowerBonus"/>,每步摆进主角)、魔法攻击力(<see cref="RollFormulaDamage"/>)。
+        /// </summary>
+        public HeroBuffs Buffs => _buffs;
+
+        /// <summary>放出的增益类技能次数(也算进 <see cref="SkillCasts"/>;被打断没挂上的也算)。</summary>
+        public int BuffCasts { get; private set; }
+
+        /// <summary>施法正常结束、增益真的挂上的次数。</summary>
+        public int BuffsApplied { get; private set; }
+
+        /// <summary>施法中途被打断(受击、倒地、死亡)、增益没挂上的次数。</summary>
+        public int BuffsInterrupted { get; private set; }
 
         public string MapPath => _room.MapPath;
         public TownHero Hero => _room.Hero;
@@ -1578,6 +1597,7 @@ namespace Dnf.Play
             _room.ShakeX = _shake.OffsetX;
             _room.ShakeY = _shake.OffsetY;
             Skills.Advance(deltaMs);
+            _buffs.Advance(deltaMs);    // 增益的持续时间按墙钟走(M48,E-141;计时单位与时钟是推断)
             Vitals?.RegenMp(deltaMs);   // 魔法值按墙钟恢复(证据 E-087);死了不恢复在 RegenMp 里判断
             if (Vitals != null)
             {
@@ -1594,6 +1614,12 @@ namespace Dnf.Play
             {
                 // 主角死了:不再接受任何输入;攻击键(X)在复活窗口开着时就是"使用复活币"(证据 E-115)
                 reviveKey = attackPressed || _bufferedAttack;
+                _buffs.Clear();             // 倒下就摘掉全部增益、正在施的也作废(推断,E-141)
+                if (_castingBuff != null)
+                {
+                    _castingBuff = null;
+                    BuffsInterrupted++;
+                }
                 dirX = 0;
                 dirY = 0;
                 attackPressed = false;
@@ -1696,6 +1722,11 @@ namespace Dnf.Play
                     {
                         CommandCasts++;
                     }
+                    if (cast.Buff != null)
+                    {
+                        _castingBuff = cast;      // 增益等施法动作正常结束才挂(E-141)
+                        BuffCasts++;
+                    }
                     SpawnEffects(cast);
                 }
                 else if (attackPressed && TryPickupSelected(_room.Hero))
@@ -1703,7 +1734,9 @@ namespace Dnf.Play
                     attackPressed = false;     // 攻击键这一下用来捡东西了(证据 E-122)
                 }
                 UpdateHopCharge(_room.Hero);
+                _room.Hero.JumpPowerBonus = _buffs.Total(BuffStat.JumpPower);   // 跳跃力增益:摆进主角,起跳初速度公式用(E-141)
                 _room.Update(heroDelta, dirX, dirY, attackPressed, jumpPressed);
+                UpdateBuffCast(_room.Hero);
                 SpawnStageEffect(_room.Hero);
                 UpdateHopLanding(_room.Hero);
             }
@@ -1920,6 +1953,33 @@ namespace Dnf.Play
                 return;
             }
             HeroSkills.BeginHop(slot, hero, SkillHopPlan.IntLerp(0, 100, elapsed - min, max - min));
+        }
+
+        /// <summary>
+        /// 增益类技能的施法收尾(M48,E-141):主角还在放这个技能就接着等;施法状态结束了——正常播完(回到站立、奔跑等)就在这一刻挂上增益
+        /// (客户端是状态结束钩子里才挂附加体),受击、倒地、死亡把它打断就没有增益(魔法值与冷却在放出来时已经算过)。
+        /// </summary>
+        private void UpdateBuffCast(TownHero hero)
+        {
+            HeroSkillSlot slot = _castingBuff;
+            if (slot == null)
+            {
+                return;
+            }
+            if (hero.Motion == HeroMotion.Skill && hero.SkillId == slot.SkillId)
+            {
+                return;
+            }
+            _castingBuff = null;
+            if (HeroDead || hero.IsHurt || hero.IsDown)
+            {
+                BuffsInterrupted++;
+                return;
+            }
+            if (_buffs.Apply(slot.SkillId, slot.Buff.Stat, slot.BuffAmount, slot.BuffDurationMs) != null)
+            {
+                BuffsApplied++;
+            }
         }
 
         /// <summary>
@@ -2709,7 +2769,22 @@ namespace Dnf.Play
             }
             DefenderPanel defender = monster.Defense ?? new DefenderPanel { Level = monster.Level };
             bool bonusHit = HitDamage.BonusHitApplies(defender.Level, monster.LastAttackerId == HeroAttackerId);
-            return HitDamage.Roll(info.Input, _attacker, defender, bonusHit, _damageConstants, seed, out critical);
+            int magicalBonus = (int)_buffs.Total(BuffStat.MagicalAttack);
+            if (magicalBonus == 0)
+            {
+                return HitDamage.Roll(info.Input, _attacker, defender, bonusHit, _damageConstants, seed, out critical);
+            }
+            // 魔法攻击力增益(E-141):合计属性 = 面板 + 增益加和,算这一击时临时加进攻击者面板,算完还原(本函数对会话状态仍然无副作用)
+            int panelMagical = _attacker.MagicalAttack;
+            _attacker.MagicalAttack = panelMagical + magicalBonus;
+            try
+            {
+                return HitDamage.Roll(info.Input, _attacker, defender, bonusHit, _damageConstants, seed, out critical);
+            }
+            finally
+            {
+                _attacker.MagicalAttack = panelMagical;
+            }
         }
 
         // ------------------------------------------------------------------ 怪物打主角(P5.M5,证据 E-086)

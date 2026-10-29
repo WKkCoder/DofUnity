@@ -697,6 +697,7 @@ DIE 开始(`0x00837612`)、其余状态(1、2、6 到 9)。
 - **接线**:`RoomCombatSession.Strike` 在命中时,**有主角攻击面板(`HeroPanel`)与公式常量**就调 `RollFormulaDamage`(`HeroStrikeInfo.Input` + 面板 + `MonsterActor.Defense`)算伤害,否则仍是占位伤害;结算顺序不变(先选目标血条,再 `ApplyHit`,再放声音与命中停顿,最后放数字)。
 - **额外命中**:低于 50 级的怪物,攻击者与它上一次挨打时记下的不是同一个(`MonsterActor.LastAttackerId`)就乘 1.1;主角打中后写 `RoomCombatSession.HeroAttackerId`,所以同一个主角连续打,只有第一击算额外命中。
 - **暴击**:公式返回是否暴击,伤害数字带暴击位(`DamageNumberFlags.Critical`,E-107)。
+- **属性增益(M48,E-141)**:`RollFormulaDamage` 算这一击时,把主角身上生效中的魔法攻击力增益(`HeroBuffs.Total`,属性附加体的加和)临时加进攻击者面板的魔法攻击力,算完还原(函数对会话状态仍无副作用);物理一击不受影响;别的属性(物理攻击力、暴击率、元素强化等)的增益消费者还没做。
 - **回归开关**:`--no-damage` / `-dnfnodamage` 不装配生命与公式常量,也就没有面板,主角打怪物仍是占位伤害,按时刻对拍的回归检查靠它保持原来的时刻。
 
 测试:`HitDamageTests`(Game 33 条)、`HeroDamageTests`(Play 20 条);全套 1422 条通过(Data 92、Script 7、Squirrel 22、Game 453、Render 274、Play 574),0 警告。

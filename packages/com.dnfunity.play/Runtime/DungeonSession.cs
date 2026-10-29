@@ -856,9 +856,11 @@ namespace Dnf.Play
             TownHero hero = Current.Hero;
             HeroSkills carried = Current.Skills;
             HeroVitals carriedVitals = Current.Vitals;
+            HeroBuffs carriedBuffs = Current.Buffs;
             Maze.TryNeighbor(CellX, CellY, side, out int nx, out int ny);
             Enter(nx, ny, true, ExitBits.Opposite(side), hero.FacingLeft);
             Current.Skills.CopyCooldownsFrom(carried);   // 技能冷却不因换房间清零
+            Current.Buffs.CopyStateFrom(carriedBuffs);   // 生效中的增益跟着人走(M48,E-141)
             Current.SyncProgress();                      // 别的房间里升了级:先换上新等级的上限,再抄生命魔法(证据 E-111)
             if (carriedVitals != null && Current.Vitals != null && !ReferenceEquals(carriedVitals, Current.Vitals))
             {

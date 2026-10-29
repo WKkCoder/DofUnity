@@ -129,6 +129,24 @@ internal sealed class AvatarFixture : IDisposable
     /// <summary>以跳跃键当扳机的两键指令技能(M47,合成):指令"下,跳跃",[consume MP] 10、[cool time] 1000、两列 [level info]。</summary>
     public const int JumpCommandSkill = 906;
 
+    /// <summary>
+    /// 增益类技能(M48,证据 E-141)的合成数据:跳跃力类 <see cref="JumpBuffSkill"/>(指令单键"增益",[static data] 第 0 项是加成 <see cref="JumpBuffAmount"/>,
+    /// [level info] 一列是持续毫秒:第 1 级 <see cref="JumpBuffMs1"/>、第 2 级 <see cref="JumpBuffMs2"/>)与魔法攻击力类 <see cref="MagicBuffSkill"/>
+    /// (指令"下,增益",[level info] 两列 (持续毫秒,加成):第 1 级 <see cref="MagicBuffMs1"/>/<see cref="MagicBuffAmount1"/>、第 2 级 <see cref="MagicBuffMs2"/>/<see cref="MagicBuffAmount2"/>);
+    /// 动作脚本的 [buff motion] 是 <see cref="BuffAni"/>(三帧 × <see cref="BuffFrameMs"/> 毫秒,没有攻击框)。耗蓝 12 与 8、冷却 2000 与 1500。数全是测试用的。
+    /// </summary>
+    public const int JumpBuffSkill = 907;
+    public const int MagicBuffSkill = 908;
+    public const int JumpBuffAmount = 30;
+    public const int JumpBuffMs1 = 3000;
+    public const int JumpBuffMs2 = 4000;
+    public const int MagicBuffMs1 = 5000;
+    public const int MagicBuffAmount1 = 40;
+    public const int MagicBuffMs2 = 6000;
+    public const int MagicBuffAmount2 = 60;
+    public const int BuffFrameMs = 100;
+    public const string BuffAni = "character/test/animation/buffcast.ani";
+
     public const int QuickStandMs = 150;
     public const int QuickStandMp = 5;
     public const int QuickStandCool = 4000;
@@ -780,6 +798,7 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[dashattack motion]").Str("Animation/DashAttack.ani")
                 .Tag("[jump motion]").Str("animation/jump.ani")
                 .Tag("[jumpattack motion]").Str("animation/jumpattack.ani")
+                .Tag("[buff motion]").Str("animation/buffcast.ani")
                 .Tag("[jump power]").Int(JumpPowerStat)
                 .Tag("[weight]").Int(WeightStat)
                 .Tag("[jump speed]").Int(JumpSpeedStat)
@@ -798,7 +817,18 @@ internal sealed class AvatarFixture : IDisposable
             ("skill/skilllist.lst", NewScript().Int(0).Str("testskill.lst").Build()),
             ("skill/testskill.lst", NewScript()
                 .Int(181).Str("test/passive.skl").Int(HardAttackSkill).Str("test/hardattack.skl").Int(UpperSlashSkill).Str("test/upperslash.skl")
-                .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Int(ChainSkill).Str("test/chain.skl").Int(WaveSkill).Str("test/wave.skl").Int(HopSkill).Str("test/hop.skl").Int(QuickStandSkill).Str("test/quickstand.skl").Int(JumpCommandSkill).Str("test/jumpcommand.skl").Build()),
+                .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Int(ChainSkill).Str("test/chain.skl").Int(WaveSkill).Str("test/wave.skl").Int(HopSkill).Str("test/hop.skl").Int(QuickStandSkill).Str("test/quickstand.skl").Int(JumpCommandSkill).Str("test/jumpcommand.skl")
+                .Int(JumpBuffSkill).Str("test/jumpbuff.skl").Int(MagicBuffSkill).Str("test/magicbuff.skl").Build()),
+            // 增益类技能:跳跃力类(加成在 [static data],持续时间在 [level info] 一列)与魔法攻击力类(持续时间与加成是 [level info] 的两列)
+            ("skill/test/jumpbuff.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[command]").Paren("(BUFF)").Tag("[maximum level]").Int(10)
+                .Tag("[consume MP]").Int(12, 12).Tag("[cool time]").Int(2000, 2000)
+                .Tag("[static data]").Int(JumpBuffAmount)
+                .Tag("[level info]").Int(1, JumpBuffMs1, JumpBuffMs2).Build()),
+            ("skill/test/magicbuff.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[command]").Paren("(DOWN)").Sep(",").Paren("(BUFF)").Tag("[maximum level]").Int(10)
+                .Tag("[consume MP]").Int(8, 8).Tag("[cool time]").Int(1500, 1500)
+                .Tag("[level info]").Int(2, MagicBuffMs1, MagicBuffAmount1, MagicBuffMs2, MagicBuffAmount2).Build()),
             ("skill/test/jumpcommand.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Paren("(DOWN)").Sep(",").Paren("(JUMP)").Tag("[maximum level]").Int(10)
                 .Tag("[consume MP]").Int(10, 10).Tag("[cool time]").Int(1000, 1000)
@@ -940,6 +970,8 @@ internal sealed class AvatarFixture : IDisposable
             (Attack3Ani, BuildBoxAni((0, 200, null), (1, 200, new[] { ((ushort)15, new[] { 20, -10, 0, 40, 20, 50 }) }))),
             // 技能动作:护身(占动作表的第 0 项)与鬼斩(600 毫秒,第 2、3 帧各带一个攻击框)
             ("character/test/animation/guard.ani", BuildBoxAni((0, 100, null))),
+            // 增益施法动作:三帧,没有攻击框
+            (BuffAni, BuildBoxAni((0, BuffFrameMs, null), (1, BuffFrameMs, null), (0, BuffFrameMs, null))),
             (HardAttackEffect1, BuildEffectAni(false)),
             (HardAttackEffect2, BuildEffectAni(true)),
             (ChainEffect1, BuildEffectAni(false)),

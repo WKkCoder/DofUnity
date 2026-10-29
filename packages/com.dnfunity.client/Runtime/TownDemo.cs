@@ -56,8 +56,8 @@ namespace Dnf.Client
     /// 首领清空 3 秒后出结算菜单(再次挑战 F13、选择其它地下城 F11、返回城镇 F12,笔记本键盘用 1、2、3;或者点菜单行,触摸也行;
     /// 选定时日志里留一行 DNF_SETTLE choice=…,流程由外面接,证据 E-091)。
     /// 按键(副本房间里的主角,按原版默认键位,证据 E-072、E-076):方向键 走动(按住;同方向再按一下接着按住 = 奔跑);X 普攻(连按接下一段);C 跳跃;
-    /// A S D 前三个技能快捷槽(新建的剑士是鬼斩、上挑、后跳,各有冷却);Z 与原版的另一个快捷槽没有确认绑什么,不响应。
-    /// 空格 暂停/继续;暂停时左右方向键按 50 毫秒步进动画时间;H 显示/隐藏文字;Esc 退出(流程模式的城镇与副本里改为打开系统菜单,见下);点击/触摸 暂停/继续(开着触屏操作层时改用右上角的暂停键)。
+    /// A S D 前三个技能快捷槽(新建的剑士是鬼斩、上挑、后跳,各有冷却);Z 是出招指令里的"技能"键、空格是"增益"键(E-140、E-141,人在战斗里操作时;指令开着)。
+    /// P 暂停/继续(战斗里空格让给增益键;暂停着、城镇与选择界面里空格仍是继续、对话、确认);暂停时左右方向键按 50 毫秒步进动画时间;H 显示/隐藏文字;Esc 退出(流程模式的城镇与副本里改为打开系统菜单,见下);点击/触摸 暂停/继续(开着触屏操作层时改用右上角的暂停键)。
     /// 主角死后(副本里,证据 E-115):躺平那一刻起屏幕上方是 10 秒倒计时,攻击键 X 就是使用复活币(原地满血复活、短暂无敌),币用完、到上限或计时走完副本失败、回城镇;-dnfcoins N 指定起始复活币数(默认 5,占位:没有背包),-dnfmonsterdamage N(测试旋钮)让怪物伤害乘上 N 以便无人值守地检查死亡。
     /// 系统菜单(本项目自己的占位设计,原版 Esc 菜单的版式没有读到,<see cref="SystemMenu"/>):流程模式下在城镇与副本里按 Esc 打开,游戏暂停;上下键(或鼠标悬停)选,回车、空格、数字键或点击确定,再按 Esc 关上;副本里是 继续 / 放弃回城 / 退出游戏,城镇里是 继续 / 回选角 / 退出游戏。-dnfmenuat 秒 [-dnfmenuchoose N] 无人值守地走一遍(副本阶段开始后第几秒打开、再过一秒选第 N 项),日志里留 DNF_MENU 行。
     /// 触屏操作层(M13,<see cref="TouchOverlay"/>、<see cref="TouchControls"/>;本项目自己的设计,原版是键盘游戏):手机与平板默认开,桌面带 -dnftouch 开(鼠标左键模拟一根手指)。
@@ -2119,11 +2119,25 @@ namespace Dnf.Client
         }
 
         /// <summary>
+        /// 空格此刻是出招指令的"增益"键(M48,E-141):在运行、没暂停、人用键盘操作(没有时间表、没有自动机)、当前是带出招指令的战斗会话(副本房间或单房间演示)时成立;
+        /// 暂停着、在城镇与选择界面里空格仍是原来的用途(继续、对话、确认)。
+        /// </summary>
+        private bool SpaceIsBuffKey
+        {
+            get
+            {
+                return _state == State.Running && !_paused && _heroInput && _script.IsEmpty && _session is ICommandSession
+                    && (_flow == null || _flow.Stage == GameStage.Dungeon);
+            }
+        }
+
+        /// <summary>
         /// 方向键(或 -dnfautowalk 的时间表)当前的状态:-1/0/1;返回这一帧有没有"刚按下攻击键"(X 键,或时间表里到点的 attack),
         /// <paramref name="jump"/> 是这一帧有没有"刚按下跳跃键"(C 键,或时间表里到点的 jump)。
         /// 按原版的默认键位(clientonly/hotkeysystem.co,证据 E-072):X 普通攻击、C 跳跃、A S D F G H 是六个技能快捷槽(新建的剑士前三个是鬼斩、上挑、后跳,证据 E-076;槽里放什么由技能簿定,M35);
         /// Z 是出招指令里的"技能"键(热键表里"技能"一格的默认键;M47,E-140):和方向键、跳跃键一起按出各技能 [command] 里的键序列就放那个技能,
-        /// 躺着时按倒地起身的指令就起身;空格是热键表里的"技能2"(增益键,推断),增益类技能还没有做,空格在本演示里仍是暂停。
+        /// 躺着时按倒地起身的指令就起身;空格是热键表里的"技能2"(增益键,推断,E-141):战斗里人在操作时它是出招指令里的"增益"键(跳跃力、魔法攻击力一类增益技能),
+        /// 不再暂停(暂停改用 P 键或 Esc 系统菜单);城镇、选择界面里空格仍是对话、确认。
         /// </summary>
         private bool ReadHeroInput(out int dirX, out int dirY, out bool jump, out SkillKeys skills)
         {
@@ -2157,6 +2171,12 @@ namespace Dnf.Client
             if (Input.GetKey(KeyCode.H)) { _heldSkills |= SkillKeys.H; }
             if (Input.GetKeyDown(KeyCode.Z)) { skills |= SkillKeys.CommandSkill; }
             if (Input.GetKey(KeyCode.Z)) { _heldSkills |= SkillKeys.CommandSkill; }
+            if (SpaceIsBuffKey)
+            {
+                // 空格是出招指令里的"增益"键(M48,E-141);只在战斗里这样,城镇里空格仍是对话,暂停改用 P 键
+                if (Input.GetKeyDown(KeyCode.Space)) { skills |= SkillKeys.CommandBuff; }
+                if (Input.GetKey(KeyCode.Space)) { _heldSkills |= SkillKeys.CommandBuff; }
+            }
             bool attack = Input.GetKeyDown(KeyCode.X);
             if (TouchActive)
             {
@@ -2871,9 +2891,15 @@ namespace Dnf.Client
                         {
                             // 城镇里走到 NPC 身边按空格:有任务的开任务对话窗口,只开商店的直接开商店(本项目自己的占位键位;游戏暂停由 PumpMenu 接着处理)
                         }
-                        else
+                        else if (!SpaceIsBuffKey)
                         {
                             TogglePause();
+                        }
+                        break;
+                    case KeyCode.P:
+                        if (!InSelect && !InCharacterSelect && !InLoading)
+                        {
+                            TogglePause();    // 战斗里空格让给增益键(M48,E-141),暂停用 P 键(或 Esc 系统菜单)
                         }
                         break;
                     case KeyCode.LeftArrow:

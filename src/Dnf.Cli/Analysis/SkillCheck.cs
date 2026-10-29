@@ -648,6 +648,117 @@ internal static class SkillCheck
                 Report(lying && session.QuickStands == 1 && session.HeroDown.QuickStanding,
                     "倒地起身:躺着的主角打出倒地起身的指令,起身 " + session.QuickStands + " 次(躺着 " + (lying ? "是" : "否") + ",正在起身 " + (session.HeroDown.QuickStanding ? "是" : "否") + ")");
             }
+
+            // 8. 增益类技能(M48,证据 E-141):表里的每个增益在真实数据里都读得通——技能在目录里、是主动技能、指令的扳机是增益键、[static data] 与 [level info] 的列够用、
+            // 每一级的持续时间与数值都是正数;真实会话里按各自的指令打一遍:施法动作是角色的 [buff motion](没有攻击框),施法正常结束那一步挂上增益,数值与持续时间等于槽里读出来的,
+            // 到点失效,魔法值与冷却在放出来时就算了。只打印汇总数,时长与数值不打印。
+            int buffSkills = 0;
+            int buffLevelsChecked = 0;
+            int buffCycles = 0;
+            int buffMotionOk = 0;
+            var buffProblems = new List<string>();
+            foreach (BuffRecipe recipe in SkillRecipes.Default.AllBuffs)
+            {
+                buffSkills++;
+                string label = "增益 #" + buffSkills;
+                SkillDef? def = catalog.Find(recipe.SkillId);
+                if (def == null || !def.IsActive)
+                {
+                    buffProblems.Add(label + ":技能不在目录里或不是主动技能");
+                    continue;
+                }
+                if (def.Command.IsEmpty || def.Command.Trigger != CommandKey.Buff)
+                {
+                    buffProblems.Add(label + ":指令的扳机不是增益键");
+                }
+                int needColumns = Math.Max(recipe.DurationColumn, recipe.AmountStaticIndex >= 0 ? 0 : recipe.AmountColumn) + 1;
+                if (def.LevelInfo.Columns < needColumns || !def.LevelInfo.IsConsistent || def.LevelInfo.Levels < def.MaximumLevel)
+                {
+                    buffProblems.Add(label + ":[level info] 列数或行数不够");
+                }
+                if (recipe.AmountStaticIndex >= 0 && def.StaticData.Length <= recipe.AmountStaticIndex)
+                {
+                    buffProblems.Add(label + ":[static data] 不够长");
+                }
+                for (int lv = 1; lv <= def.MaximumLevel; lv++)
+                {
+                    buffLevelsChecked++;
+                    int duration = def.GetLevel(lv, recipe.DurationColumn, false);
+                    int amount = recipe.AmountStaticIndex >= 0 ? def.GetStatic(recipe.AmountStaticIndex, false) : def.GetLevel(lv, recipe.AmountColumn, false);
+                    if (duration <= 0 || amount <= 0)
+                    {
+                        buffProblems.Add(label + " " + lv + " 级:持续时间或数值不是正数");
+                    }
+                }
+
+                RoomCombatSession session = NewSession(assets, opts, caster);
+                HeroSkillSlot? slot = session.Skills.SlotOfSkill(def.Id);
+                if (slot?.Buff == null || caster.Skills.LevelOf(def.Id) <= 0)
+                {
+                    buffProblems.Add(label + ":没有排进槽里(没学会或没有放法)");
+                    continue;
+                }
+                if (!session.Hero.HasBuffMotion)
+                {
+                    buffProblems.Add(label + ":角色脚本没有 [buff motion]");
+                    continue;
+                }
+                int mpBefore = session.Vitals?.Mp ?? 0;
+                foreach (CommandStep step in CommandSteps.Of(def.Command, session.Hero.FacingLeft))
+                {
+                    session.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Keys);
+                }
+                if (session.BuffCasts != 1 || session.Hero.Motion != HeroMotion.Skill || session.Buffs.Count != 0)
+                {
+                    buffProblems.Add(label + ":按指令没有放出施法动作(或还没施完就挂上了增益)");
+                    continue;
+                }
+                AniFile? motion = assets.LoadAni(session.Hero.CurrentAnimationPath ?? "");
+                if (motion != null && motion.Frames.Length > 0 && !motion.Frames.Any(fr => fr.Boxes.Any(b => b.Type == AniBoxType.Attack)))
+                {
+                    buffMotionOk++;
+                }
+                else
+                {
+                    buffProblems.Add(label + ":施法动作读不到,或带攻击框");
+                }
+                int castMs = 0;
+                while (session.Hero.Motion == HeroMotion.Skill && castMs < 20000)
+                {
+                    session.Update(10, 0, 0, false, false, SkillKeys.None);
+                    castMs += 10;
+                }
+                HeroBuff? applied = session.Buffs.Find(def.Id);
+                if (session.BuffsApplied != 1 || applied == null || applied.Stat != recipe.Stat || applied.Amount != slot.BuffAmount || applied.DurationMs != slot.BuffDurationMs)
+                {
+                    buffProblems.Add(label + ":施法结束时没有按槽里的数值挂上");
+                    continue;
+                }
+                if (session.Vitals != null && session.Vitals.Mp != mpBefore - slot.ConsumeMp)
+                {
+                    buffProblems.Add(label + ":魔法值没按 [consume MP] 扣");
+                }
+                int livedMs = 0;
+                while (session.Buffs.Has(def.Id) && livedMs < slot.BuffDurationMs + 2000)
+                {
+                    session.Update(10, 0, 0, false, false, SkillKeys.None);
+                    livedMs += 10;
+                }
+                double expected = slot.BuffDurationMs - 10;      // 挂上那一步已经过去了一步,所以比标称时长短一个步长以内
+                if (session.Buffs.Has(def.Id) || session.Buffs.Expired != 1 || Math.Abs(livedMs - expected) > 30)
+                {
+                    buffProblems.Add(label + ":持续时间走完的时间与槽里的时长对不上");
+                    continue;
+                }
+                buffCycles++;
+            }
+            foreach (string line in buffProblems)
+            {
+                Console.WriteLine("    " + line);
+            }
+            Report(buffSkills == SkillRecipes.Default.BuffCount && buffSkills > 0 && buffProblems.Count == 0 && buffCycles == buffSkills && buffMotionOk == buffSkills,
+                "增益类技能 " + buffSkills + " 个(逐级查了 " + buffLevelsChecked + " 级的持续时间与数值都为正)在真实数据里读得通;真实会话里按各自的指令各放一遍:施法动作无攻击框 "
+                + buffMotionOk + " 个、施法结束挂上并到点失效 " + buffCycles + " 个(问题 " + buffProblems.Count + " 条)");
         }
 
         Console.WriteLine(bad == 0 ? "skill-check 全部通过" : "skill-check 有 " + bad + " 项失败");

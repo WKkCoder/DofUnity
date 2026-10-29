@@ -526,6 +526,12 @@ namespace Dnf.Render
         /// <summary>角色脚本的 [jump power](跳跃力,起跳初速度公式的分子);没写时 <see cref="DefaultJumpPower"/>。</summary>
         public double JumpPower { get; set; } = DefaultJumpPower;
 
+        /// <summary>
+        /// 增益附加体加在跳跃力上的数(E-141:客户端的"合计跳跃力"= 加和 × 倍率,属性增益把数加进加和里);没有增益时 0。
+        /// 由外面的战斗会话每步按生效中的增益摆进来,起跳初速度 <see cref="JumpTakeoffSpeed"/> 用 <see cref="JumpPower"/> 加上它。后跳的起跳力是技能自己的参数,不受它影响。
+        /// </summary>
+        public double JumpPowerBonus { get; set; }
+
         /// <summary>角色脚本的 [weight](重量,起跳初速度公式里的分母项);没写时 <see cref="DefaultWeight"/>。</summary>
         public int WeightStat { get; set; } = DefaultWeight;
 
@@ -541,8 +547,8 @@ namespace Dnf.Render
         /// </summary>
         public double MapGravityAdjust { get; set; }
 
-        /// <summary>起跳初速度(像素/秒),用 <see cref="TakeoffSpeed"/> 由跳跃力、重量与跳跃速度属性算出。</summary>
-        public double JumpTakeoffSpeed => TakeoffSpeed(JumpPower, WeightStat, JumpSpeedStat);
+        /// <summary>起跳初速度(像素/秒),用 <see cref="TakeoffSpeed"/> 由跳跃力(加上增益 <see cref="JumpPowerBonus"/>)、重量与跳跃速度属性算出。</summary>
+        public double JumpTakeoffSpeed => TakeoffSpeed(JumpPower + JumpPowerBonus, WeightStat, JumpSpeedStat);
 
         /// <summary>重力加速度的大小(像素/秒²)= 跳跃速度属性 × (重力基数 + 地图修正) / 100。</summary>
         public double JumpGravity => JumpSpeedStat * (EngineGroundGravity - MapGravityAdjust) / 100.0;
@@ -957,6 +963,7 @@ namespace Dnf.Render
 
         private DnfAssets _etcAssets;
         private string[] _etcPaths = Array.Empty<string>();
+        private string _buffPath;
 
         /// <summary>
         /// 记下 .chr 的 [etc motion](一串 .ani,技能与特殊动作用,按序号取)。动画本身在第一次用到时才读,所以这里很便宜。
@@ -984,6 +991,47 @@ namespace Dnf.Render
             _etcAssets = assets;
             _etcPaths = paths.ToArray();
             _etcMotions.Clear();
+            _buffPath = null;
+            foreach (ScriptLine line in doc)
+            {
+                if (!line.TagIs("[buff motion]"))
+                {
+                    continue;
+                }
+                foreach (ScriptValue v in line.Values)
+                {
+                    if (v.Kind == ScriptValueKind.String && !string.IsNullOrEmpty(v.Text))
+                    {
+                        _buffPath = PvfPath.ResolveRelativeTo(chrPath, v.Text);
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+
+        /// <summary>角色脚本有 [buff motion](增益施法的动作,引擎状态 0x11 用的那一个,E-141)。没有它,增益类技能放不出来。</summary>
+        public bool HasBuffMotion => _buffPath != null;
+
+        /// <summary>
+        /// 放一个增益类技能(E-141):原地播 [buff motion],不滑行、不命中(这个动作里只有受击框,没有攻击框),播完回到站立。
+        /// 和别的技能一样用 <see cref="HeroMotion.Skill"/> 表示"正在施法",技能编号是 <paramref name="skillId"/>;施法期间不能接别的技能。
+        /// 引擎里增益只能从站立与奔跑状态发出,这里取 <see cref="CanBeginSkill"/>(没有腾空、挥击、受伤、倒地)。读不到动作时返回 false,不改变状态。
+        /// 增益本身(附加体)由外面的战斗会话在施法正常结束那一刻挂上(状态结束钩子里才挂,中途被打断就没有)。
+        /// </summary>
+        public bool BeginBuffMotion(int skillId)
+        {
+            if (!CanBeginSkill)
+            {
+                return false;
+            }
+            EtcMotion m = EtcByPath(_buffPath);
+            if (m == null)
+            {
+                return false;
+            }
+            StartSkill(skillId, -1, 0, m, 0.0, 0.0);
+            return true;
         }
 
         /// <summary>[etc motion] 的条目数。</summary>

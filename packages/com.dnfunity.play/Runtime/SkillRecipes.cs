@@ -4,7 +4,8 @@ using System.Collections.Generic;
 // 证据:E-129(客户端原生技能状态码的读码结果:技能起手函数、状态进入块、逐帧块里的连击判定);E-135(波系技能状态 0x18:施法蓄力与主角放出的被动对象);
 // E-137(挂多个特效、对象等特效关键帧的那一类技能,状态 0x23:一进状态就挂四个特效、被动对象等特效动画的关键帧标志、帧号到数就结束状态);
 // E-138(蓄力后跳起来砸下去的那一类技能,状态 0x24:按住技能键蓄力、松开或蓄满才出招,跳跃距离与高度按蓄力档位插值,位移由动画时间脚本化,命中窗口由计时器重武装);
-// E-139(单段位移攻击类技能,状态 0x1d:起滑的"顺着按"两个数替换基础两个数、学了某个被动技能后命中名单按计时器多次重新武装)。
+// E-139(单段位移攻击类技能,状态 0x1d:起滑的"顺着按"两个数替换基础两个数、学了某个被动技能后命中名单按计时器多次重新武装);
+// E-141(增益类技能,状态 0x11:施法动作只播 [buff motion],状态正常结束时才挂属性附加体,持续时间与数值取自技能数据的哪一列由技能自己的挂附加体代码决定)。
 namespace Dnf.Play
 {
     /// <summary>
@@ -290,31 +291,84 @@ namespace Dnf.Play
     }
 
     /// <summary>
+    /// 增益类技能的放法(状态 0x11,证据 E-141):主角原地播 [buff motion],动画播完(状态正常结束)那一刻才挂上一个属性增益——
+    /// 改哪个属性是 <see cref="Stat"/>,持续时间(毫秒)取 .skl [level info] 当前等级的 <see cref="DurationColumn"/> 列,
+    /// 数值取 [static data] 的第 <see cref="AmountStaticIndex"/> 个数(不小于 0 时)或 [level info] 当前等级的 <see cref="AmountColumn"/> 列(否则)。
+    /// 下标与列号都是客户端挂附加体的代码里写死的常量,不是数据值。耗蓝与冷却同别的技能,在放出来(进入施法状态)那一刻算(推断)。
+    /// </summary>
+    public sealed class BuffRecipe
+    {
+        public BuffRecipe(int skillId, BuffStat stat, int durationColumn, int amountStaticIndex, int amountColumn)
+        {
+            SkillId = skillId;
+            Stat = stat;
+            DurationColumn = durationColumn;
+            AmountStaticIndex = amountStaticIndex;
+            AmountColumn = amountColumn;
+        }
+
+        public int SkillId { get; }
+
+        /// <summary>改哪个属性。</summary>
+        public BuffStat Stat { get; }
+
+        /// <summary>.skl [level info] 里持续时间(毫秒)的列。</summary>
+        public int DurationColumn { get; }
+
+        /// <summary>数值在 [static data] 里的下标;负数表示数值取 <see cref="AmountColumn"/> 列。</summary>
+        public int AmountStaticIndex { get; }
+
+        /// <summary>数值在 [level info] 里的列(<see cref="AmountStaticIndex"/> 为负时用)。</summary>
+        public int AmountColumn { get; }
+    }
+
+    /// <summary>
     /// 技能配方表。<see cref="Default"/> 是读码移植出来的技能(证据 E-129);测试可以自己造一张。
     /// 表里的数都是客户端状态码里的常量(下标、列号),不含 PVF 里的数据值,也不含任何文件名——文件名按下标到角色脚本与技能预载表里取。
+    /// 增益类技能(<see cref="BuffRecipe"/>)另放一张表:它们没有多段动作与攻击信息,只有一个施法动作与一个附加体。
     /// </summary>
     public sealed class SkillRecipes
     {
         private readonly Dictionary<int, SkillRecipe> _byId = new Dictionary<int, SkillRecipe>();
+        private readonly Dictionary<int, BuffRecipe> _buffs = new Dictionary<int, BuffRecipe>();
 
-        public SkillRecipes(IEnumerable<SkillRecipe> recipes)
+        public SkillRecipes(IEnumerable<SkillRecipe> recipes, IEnumerable<BuffRecipe> buffs = null)
         {
             foreach (SkillRecipe r in recipes ?? throw new ArgumentNullException(nameof(recipes)))
             {
                 _byId[r.SkillId] = r;
             }
+            if (buffs != null)
+            {
+                foreach (BuffRecipe b in buffs)
+                {
+                    _buffs[b.SkillId] = b;
+                }
+            }
         }
 
-        /// <summary>配方的个数。</summary>
+        /// <summary>配方的个数(不含增益类)。</summary>
         public int Count => _byId.Count;
 
-        /// <summary>全部配方(检查表本身的结构用)。</summary>
+        /// <summary>全部配方(检查表本身的结构用;不含增益类)。</summary>
         public IEnumerable<SkillRecipe> All => _byId.Values;
+
+        /// <summary>增益类技能的个数。</summary>
+        public int BuffCount => _buffs.Count;
+
+        /// <summary>全部增益类技能的放法。</summary>
+        public IEnumerable<BuffRecipe> AllBuffs => _buffs.Values;
 
         /// <summary>这个技能的配方;没有返回 null。</summary>
         public SkillRecipe Find(int skillId)
         {
             return _byId.TryGetValue(skillId, out SkillRecipe r) ? r : null;
+        }
+
+        /// <summary>这个技能的增益放法;不是增益类技能返回 null。</summary>
+        public BuffRecipe FindBuff(int skillId)
+        {
+            return _buffs.TryGetValue(skillId, out BuffRecipe b) ? b : null;
         }
 
         /// <summary>读码移植出来的配方。</summary>
@@ -409,6 +463,17 @@ namespace Dnf.Play
                 },
                 slideSpeedIndex: 0, slideAccelIndex: 1, forwardSpeedIndex: 2, forwardAccelIndex: 3, chainFromFrame: 1, forwardReplacesBase: true,
                 multiHitPassiveSkillId: 162, multiHitCountIndex: 4),
+        },
+        new[]
+        {
+            // 增益类技能(状态 0x11,证据 E-141):施法动作都是 [buff motion],状态结束钩子里按技能编号分支挂附加体。
+            // 跳跃力类:附加体类型 8,数值取 [static data] 第 0 个数、时长取 [level info] 第 0 列。
+            new BuffRecipe(175, BuffStat.JumpPower, durationColumn: 0, amountStaticIndex: 0, amountColumn: -1),
+
+            // 魔法攻击力类:附加体类型 1,时长取 [level info] 第 0 列、数值取第 1 列。
+            // 没做:另一个增益(客户端把数值乘 0.1 存进主角一个浮点字段、每次攻击时按它掷骰触发某个效果,触发效果没读到)、
+            // 另一个走状态 0x32 的增益(另一套代码)、增益的特效与音效、增益图标。
+            new BuffRecipe(176, BuffStat.MagicalAttack, durationColumn: 0, amountStaticIndex: -1, amountColumn: 1),
         });
     }
 }

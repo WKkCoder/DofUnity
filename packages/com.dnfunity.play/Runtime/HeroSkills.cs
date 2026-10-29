@@ -80,6 +80,30 @@ namespace Dnf.Play
         /// <summary>多段技能的配方(证据 E-129);不是配方技能为 null。</summary>
         public SkillRecipe Recipe { get; internal set; }
 
+        /// <summary>增益类技能的放法(E-141);不是增益类技能为 null。增益类技能没有配方(没有多段动作与攻击信息)。</summary>
+        public BuffRecipe Buff { get; internal set; }
+
+        /// <summary>
+        /// 增益持续时间(毫秒):.skl [level info] 当前等级的 <see cref="BuffRecipe.DurationColumn"/> 列;不是增益类技能或读不到定义为 0。
+        /// </summary>
+        public double BuffDurationMs => Buff == null || Def == null ? 0.0 : Def.GetLevel(Level, Buff.DurationColumn, false);
+
+        /// <summary>
+        /// 增益加在属性上的数:[static data] 的 <see cref="BuffRecipe.AmountStaticIndex"/> 项(下标不小于 0 时)或 [level info] 当前等级的 <see cref="BuffRecipe.AmountColumn"/> 列;
+        /// 不是增益类技能或读不到定义为 0。
+        /// </summary>
+        public double BuffAmount
+        {
+            get
+            {
+                if (Buff == null || Def == null)
+                {
+                    return 0.0;
+                }
+                return Buff.AmountStaticIndex >= 0 ? Def.GetStatic(Buff.AmountStaticIndex, false) : Def.GetLevel(Level, Buff.AmountColumn, false);
+            }
+        }
+
         /// <summary>配方技能每一段命中用的攻击信息与伤害数,与 <see cref="SkillRecipe.Stages"/> 一一对应;不是配方技能为 null。</summary>
         public IReadOnlyList<HeroStrikeInfo> StageStrikes { get; internal set; }
 
@@ -100,10 +124,14 @@ namespace Dnf.Play
 
         /// <summary>
         /// 第 <paramref name="stage"/> 段主角的身体有没有自己的命中:配方技能看这一段的攻击信息下标(波系技能的施法动作没有,伤害全在放出的对象上);
-        /// 别的技能(没有配方)有。
+        /// 别的技能(没有配方)有;增益类技能的施法动作没有攻击框,主角的身体不打人。
         /// </summary>
         public bool StageHasOwnStrike(int stage)
         {
+            if (Buff != null)
+            {
+                return false;
+            }
             if (Recipe == null || Recipe.Stages.Count == 0)
             {
                 return true;
@@ -222,16 +250,16 @@ namespace Dnf.Play
             }
         }
 
-        /// <summary>这个技能编号有没有实现放法(三个手写的、倒地起身,加上默认配方表里的)。</summary>
+        /// <summary>这个技能编号有没有实现放法(三个手写的、倒地起身,加上默认配方表里的配方技能与增益类技能)。</summary>
         public static bool IsImplemented(int skillId)
         {
             return skillId == SkillIds.HardAttack || skillId == SkillIds.UpperSlash || skillId == SkillIds.BackStep || skillId == SkillIds.QuickStand
-                || SkillRecipes.Default.Find(skillId) != null;
+                || SkillRecipes.Default.Find(skillId) != null || SkillRecipes.Default.FindBuff(skillId) != null;
         }
 
         private static bool IsImplemented(HeroSkillSlot slot)
         {
-            return slot.Recipe != null || IsImplemented(slot.SkillId);
+            return slot.Recipe != null || slot.Buff != null || IsImplemented(slot.SkillId);
         }
 
         /// <summary>
@@ -316,6 +344,7 @@ namespace Dnf.Play
         {
             var slot = new HeroSkillSlot(key, def.Id, level, def);
             SkillRecipe recipe = (recipes ?? SkillRecipes.Default).Find(def.Id);
+            slot.Buff = (recipes ?? SkillRecipes.Default).FindBuff(def.Id);        // 增益类技能(E-141):没有配方,放法只有一个施法动作与一个附加体
             if (recipe != null)
             {
                 // 配方技能:逐段取攻击信息(角色 [etc attack info] 的下标)与伤害数(.skl [level info] 当前等级的两列),特效取技能预载表的下标(证据 E-129)
@@ -626,7 +655,9 @@ namespace Dnf.Play
                     began = hero.BeginBackStep(slot.SkillId, slot.Def == null ? 0 : slot.Def.GetStatic(0, false));
                     break;
                 default:
-                    began = slot.Recipe != null && BeginStage(slot, 0, hero, heldX, heldY, false, MultiHitWindows(slot));
+                    began = slot.Recipe != null
+                        ? BeginStage(slot, 0, hero, heldX, heldY, false, MultiHitWindows(slot))
+                        : slot.Buff != null && hero.BeginBuffMotion(slot.SkillId);   // 增益类:原地播 [buff motion],施法正常结束时才挂增益(E-141,由房间会话挂)
                     break;
             }
             if (!began)
