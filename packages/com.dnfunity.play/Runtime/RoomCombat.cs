@@ -1067,6 +1067,9 @@ namespace Dnf.Play
         /// <summary>异常状态的持续伤害一共掉了多少血。</summary>
         public long StatusTickDamage => _heroStatus == null ? 0 : _heroStatus.TickDamageTotal;
 
+        /// <summary>脚本的 [ACTIVE STATUS] 对主角发起的挂状态请求次数(掷骰前,含没掷中的;E-144)。</summary>
+        public int ActStatusRequests { get; private set; }
+
         /// <summary>复活时放在主角身上的特效动画(<c>UseCoin.ani</c>;客户端用币的特效函数 0x00865b50 加载它,放约 1 秒,挂在主角身上是推断)。</summary>
         public const string ReviveEffectPath = "Common/Etc/Animation/UseCoin.ani";
 
@@ -2935,7 +2938,7 @@ namespace Dnf.Play
                 }
                 return;
             }
-            _heroEntity = new HeroActEntity(_room.Hero, () => !HeroDead, () => Vitals?.Hp ?? 0, () => Vitals?.HpMax ?? 0, () => Vitals?.Level ?? 1);
+            _heroEntity = new HeroActEntity(_room.Hero, () => !HeroDead, () => Vitals?.Hp ?? 0, () => Vitals?.HpMax ?? 0, () => Vitals?.Level ?? 1, ApplyActStatus);
             _actWorld = new ActWorld(this);
             foreach (MonsterActor m in _monsters)
             {
@@ -3435,6 +3438,29 @@ namespace Dnf.Play
             if (_heroStatus.ControlLocked)
             {
                 _statusHeld = hero.HoldHurt(_heroStatus.LockRemainingMs, attackerFacingLeft) || _statusHeld;
+            }
+        }
+
+        /// <summary>
+        /// 脚本的 [ACTIVE STATUS] 作用到主角(E-144):客户端执行块调的是目标的"挂状态"虚函数 0x008184e0,和受击处理对每个 .atk 状态槽调的同一个,
+        /// 所以这里照 <see cref="ApplyHeroStatuses"/> 的规则:每次一次概率掷骰(<see cref="ActiveStatusSet.Apply"/>:概率与受害者等级、状态等级之差),
+        /// 挂上(或刷新)了失去控制的状态就把主角留在受击姿势里直到它结束;受击方向取施加者的朝向(推断:没有"被谁打中"的击退,只决定受击姿势朝哪边)。
+        /// 与 .atk 状态槽的区别:没有"这一击"可言,所以不调 <see cref="ActiveStatusSet.NotifyHit"/>(睡眠与冰冻不会被它叫醒或打碎);
+        /// 没有生命条的模式(无伤害)与死了的主角不挂。
+        /// </summary>
+        private void ApplyActStatus(ActiveStatusEntry entry, IActEntity source)
+        {
+            if (_heroStatus == null || Vitals == null || HeroDead || entry == null)
+            {
+                return;
+            }
+            ActStatusRequests++;
+            _heroStatus.Apply(entry, Vitals.Level, _statusRandom.NextDouble());
+            if (_heroStatus.ControlLocked)
+            {
+                TownHero hero = _room.Hero;
+                bool pushToLeft = source != null ? source.FacingLeft : !hero.FacingLeft;
+                _statusHeld = hero.HoldHurt(_heroStatus.LockRemainingMs, pushToLeft) || _statusHeld;
             }
         }
 

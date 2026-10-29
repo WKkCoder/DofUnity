@@ -42,6 +42,7 @@ HITS = re.compile(r"命中 (\d+) 次,击杀 (\d+) 个")
 OBJECTS = re.compile(r"物件\(E-126\):进过的房间里有 (\d+) 个可破坏物件,挥中 (\d+) 次,打翻 (\d+) 个,放出 \[item\] 动作 (\d+) 次,掉出 (\d+) 件")
 ACTS = re.compile(r"脚本\(E-130\):进过的房间里出招带 \.act 触发器的怪物 (\d+) 只,脚本放出被动对象 (\d+) 个,打中主角 (\d+) 次")
 SUMMONS = re.compile(r"召唤\(E-134\):脚本召唤出怪物 (\d+) 只,被拒绝 (\d+) 次,召唤物被打死 (\d+) 只")
+STATUS = re.compile(r"异常状态\(E-136\):挂到主角身上 (\d+) 次,概率没中 (\d+) 次,持续伤害共 (\d+) 点(?:,脚本 \[ACTIVE STATUS\]\(E-144\)发起的请求 (\d+) 次)?")
 EXC = re.compile(r"(Unhandled exception|未处理的异常|System\.\w+Exception|Exception:|   at Dnf\.)")
 
 
@@ -97,6 +98,10 @@ def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=5000
     sm = SUMMONS.search(text)
     if sm:
         rec["summoned"], rec["summon_refused"], rec["summoned_killed"] = (int(sm.group(i)) for i in range(1, 4))
+    st = STATUS.search(text)
+    if st:
+        rec["status_applied"], rec["status_missed"], rec["status_tick_damage"] = (int(st.group(i)) for i in range(1, 4))
+        rec["act_status_requests"] = int(st.group(4) or 0)
     if EXC.search(text):
         rec["status"] = "crash"
         lines = [l for l in text.splitlines() if l.strip()]
@@ -200,6 +205,12 @@ def main(argv):
     with_summons = sum(1 for r in results if r.get("summoned", 0) > 0)
     print("召唤(只在本机,E-134):召唤过怪物的副本 %d 个;召唤出 %d 只,被拒绝 %d 次,召唤物被打死 %d 只"
           % (with_summons, sum_sums["summoned"], sum_sums["summon_refused"], sum_sums["summoned_killed"]))
+    if a.damage:
+        with_status = sum(1 for r in results if r.get("status_applied", 0) > 0)
+        with_act_status = sum(1 for r in results if r.get("act_status_requests", 0) > 0)
+        print("异常状态(只在本机,E-136/E-144,--damage):挂到主角身上的副本 %d 个,其中脚本 [ACTIVE STATUS] 发起过请求的 %d 个;挂上 %d 次,概率没中 %d 次,脚本请求 %d 次"
+              % (with_status, with_act_status, sum(r.get("status_applied", 0) for r in results), sum(r.get("status_missed", 0) for r in results),
+                 sum(r.get("act_status_requests", 0) for r in results)))
     print("用时 %.0f 秒;明细 %s.json / %s.tsv" % (time.time() - t0, a.out, a.out))
     return 0
 

@@ -412,14 +412,17 @@ namespace Dnf.Play
         private readonly Func<int> _hp;
         private readonly Func<int> _hpMax;
         private readonly Func<int> _level;
+        private readonly Action<ActiveStatusEntry, IActEntity> _status;
 
-        public HeroActEntity(TownHero hero, Func<bool> alive, Func<int> hp = null, Func<int> hpMax = null, Func<int> level = null)
+        public HeroActEntity(TownHero hero, Func<bool> alive, Func<int> hp = null, Func<int> hpMax = null, Func<int> level = null,
+            Action<ActiveStatusEntry, IActEntity> status = null)
         {
             _hero = hero ?? throw new ArgumentNullException(nameof(hero));
             _alive = alive ?? (() => true);
             _hp = hp ?? (() => 0);
             _hpMax = hpMax ?? (() => 0);
             _level = level ?? (() => 1);
+            _status = status;
         }
 
         public ActEntityKind Kind => ActEntityKind.Character;
@@ -452,6 +455,14 @@ namespace Dnf.Play
         /// <summary>[SET HP] 作用到主角:不执行(这一版脚本对主角的作用都不执行,与设速度、切动作一致)。</summary>
         public void SetHp(int hp)
         {
+        }
+
+        /// <summary>
+        /// [ACTIVE STATUS] 作用到主角(E-144):交给会话的状态系统,走和 .atk 状态槽同一条规则(概率与等级差修正、抗性、时长、持续伤害、失去控制);没装状态系统(没有生命条的模式)什么都不做。
+        /// </summary>
+        public void ApplyStatus(ActiveStatusEntry entry, IActEntity source)
+        {
+            _status?.Invoke(entry, source);
         }
 
         public void SetFacing(bool left)

@@ -726,3 +726,16 @@ DIE 开始(`0x00837612`)、其余状态(1、2、6 到 9)。
 **Unity 里的实现**:`MonsterDef.SuperArmorOnAttack` → `MonsterActor.SuperArmorOnAttack`(`RoomMonsterBuilder`)→ `IsSuperArmored`(带标签、活着、出招相位);`RoomCombatSession.Strike` 算 `armor` 与 `noReaction`,传给 `MonsterActor.ApplyHit(…, noReaction)`:只扣血,不请求受击与倒地,不起新的击退(还没走完的击退照旧),被打死的一击照常走死亡流程;计数 `MonsterArmorAbsorbed`。本机扫描汇总(非 REA):`monster.lst` 里 1956 个能解析的 `.mob` 中 32 个写了这个标签。测试:`MonsterSuperArmorTests`(10 条)与 `MonsterTests` 里标签解析 1 条。
 
 **没做**:第二个整数的去向(受保护槽 `+0x204` 是哪个属性);第 4 步的例外条件;怪物虚表槽 `+0x3a0`(跳进受保护区,按没有);服务端 `[full-superarmor]`;客户端运行期开关霸体的另一类调用(`0x00dc4350` 一带);主角侧技能自带的霸体。
+
+## 27. 脚本行为 [ACTIVE STATUS] 与受击处理共用的挂状态入口(E-144;静态读码 + 实现 + 合成数值测试)
+
+受害者一侧的挂状态函数是虚槽 `+0x530`(`0x008184e0`;E-136 与 flow §30 的状态公式库都挂在它后面)。它有两条调用来源:
+
+- **受击处理**(§14 的下游):对攻击信息的每个 `[active status]` 槽调一次,施加者是攻击者,参数是槽里的种类、概率、状态等级、持续时间与附加整数;
+- **脚本行为 `[ACTIVE STATUS]`**(行为码 `0x7b`,`0x010bbec6` 起的块):对行为目标集合里每个“活动对象”(类型位掩码 `0x11`,虚槽 `+0x30` = `0x007f9d90`;主角与怪物满足,被动对象不满足是推断)调一次,施加者是行为拥有者,参数取自行为记录:整数 0 种类、浮点 0 概率、整数 1 等级、整数 2 持续时间、整数 3 起附加整数。
+
+两条来源的参数顺序、种类名表、附加整数个数表完全一致,所以脚本挂的状态与攻击信息挂的状态走同一套规则(概率、等级差修正、抗性、时长、持续伤害、失去控制)。区别只有两点:脚本没有“这一击”,睡眠、冰冻不会被它叫醒或打碎(`ActiveStatusSet.NotifyHit` 不调);施加者是行为拥有者。
+
+**Unity 里的实现**:`ActBehaviorKind.ActiveStatus`(`ActCompiler.ParseActiveStatus`)→ `ActRunner` 对集合里活着的非被动对象调 `IActEntity.ApplyStatus` → `HeroActEntity` → `RoomCombatSession.ApplyActStatus`(`ActiveStatusSet.Apply` 一次掷骰;掷中失去控制类立刻 `HoldHurt`,之后由 `UpdateHeroStatus` 接管)。本机汇总(非 REA):怪物招式 `.act` 里 87 条读通、整数个数与 `.atk` 状态槽的读法完全一致。测试:`ActRuntimeTests.Status`(7 条)与 `PassiveObjectTests.Status`(3 条)。
+
+**没做**:怪物自己身上的状态;元素种类(分支为空);无敌、霸体、倒地期间 `0x008184e0` 的拒绝条件;被动对象目标的类型位只是推断。

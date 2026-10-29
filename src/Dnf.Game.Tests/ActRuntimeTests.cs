@@ -123,6 +123,14 @@ public sealed partial class ActRuntimeTests
                 IsAlive = false;
             }
         }
+
+        public List<(ActiveStatusEntry entry, IActEntity source)> Statuses { get; } = new();
+
+        public void ApplyStatus(ActiveStatusEntry entry, IActEntity source)
+        {
+            Log.Add("status:" + entry.Kind);
+            Statuses.Add((entry, source));
+        }
     }
 
     private sealed class Host : IActHost

@@ -13,7 +13,7 @@ namespace Dnf.Cli.Analysis;
 ///   第一部分:每只怪物的出招 .act(.mob 的 [attack action] 或 [action list])——有多少怪物带触发器、触发器里多少是运行器认得的;
 ///   第二部分:这些 .act 能放出的被动对象(沿 [CREATE PASSIVEOBJECT] 的编号顺藤摸瓜,含对象再放对象)——有多少个、它们自己的 .act 的触发器认得多少;
 ///   第三部分:被动对象全表的总体情况。
-///   最后一段是检查(每项一行 [通过]/[失败],有失败时退出码为 1,verify-all 的 actrun 项用它):引用读得到、没有读不通的 [CREATE PASSIVEOBJECT]、
+///   最后一段是检查(每项一行 [通过]/[失败],有失败时退出码为 1,verify-all 的 actrun 项用它):引用读得到、没有读不通的 [CREATE PASSIVEOBJECT] 与 [ACTIVE STATUS](E-144)、
 ///   运行器认得的触发器占比不低于下限、能放出的被动对象的 .obj 读得到、模板(基础动画)配得出。
 ///   只输出个数与标签名,不输出路径与脚本里的值;输出放 out/,不入库。
 /// </summary>
@@ -40,6 +40,18 @@ internal static class ActRunCheck
         public readonly SortedDictionary<string, int> UnsupportedTriggerTags = new(StringComparer.Ordinal);
         public readonly SortedDictionary<string, int> UnsupportedBehaviorTags = new(StringComparer.Ordinal);
         public readonly SortedDictionary<string, int> BehaviorKinds = new(StringComparer.Ordinal);
+
+        /// <summary>[SET ACTION] 切到哪一族动作(按行为条数;E-144 起记,看哪些族还没接到怪物身上)。</summary>
+        public readonly SortedDictionary<string, int> SetActionTargets = new(StringComparer.Ordinal);
+
+        /// <summary>[ACTIVE STATUS](E-144):读通的按种类的条数、读不通的条数(种类读不出)、读完后多出来没读的整数个数(应当是 0)。</summary>
+        public readonly SortedDictionary<string, int> ActiveStatusKinds = new(StringComparer.Ordinal);
+        public int ActiveStatusBroken;
+        public int ActiveStatusSpill;
+        public int ActiveStatusMissing;
+
+        /// <summary>引用了含 [ACTIVE STATUS] 的行为组的触发器,按 [DO BEHAVIOR] 的目标选择器(目标是 [CHECKUP OBJECT] 的取最近一个 [WHICH] 的选择器)分的条数。</summary>
+        public readonly SortedDictionary<string, int> ActiveStatusTargets = new(StringComparer.Ordinal);
 
         public void Add(ActProgram program)
         {
@@ -74,6 +86,27 @@ internal static class ActRunCheck
                     {
                         UnsupportedTriggerTags.TryGetValue(tag, out int c);
                         UnsupportedTriggerTags[tag] = c + 1;
+                    }
+                }
+                ActSelector which = ActSelector.WorkingSet;
+                foreach (ActRecord r in t.Records)
+                {
+                    if (r.Kind == ActRecordKind.Which)
+                    {
+                        which = r.Selector;
+                    }
+                    else if ((r.Kind == ActRecordKind.DoBehavior || r.Kind == ActRecordKind.DirectDoBehavior) && r.Behavior != null)
+                    {
+                        foreach (int idx in r.Behavior.Candidates())
+                        {
+                            if (idx >= 0 && idx < program.Behaviors.Count && program.Behaviors[idx].Items.Any(b => b.Kind == ActBehaviorKind.ActiveStatus))
+                            {
+                                string target = (r.Selector == ActSelector.WorkingSet ? which : r.Selector).ToString();
+                                ActiveStatusTargets.TryGetValue(target, out int n);
+                                ActiveStatusTargets[target] = n + 1;
+                                break;
+                            }
+                        }
                     }
                 }
                 bool isEvent = false;
@@ -115,6 +148,24 @@ internal static class ActRunCheck
                     string kind = b.Kind.ToString();
                     BehaviorKinds.TryGetValue(kind, out int k);
                     BehaviorKinds[kind] = k + 1;
+                    if (b.Kind == ActBehaviorKind.SetAction)
+                    {
+                        string target = b.Action.ToString();
+                        SetActionTargets.TryGetValue(target, out int sa);
+                        SetActionTargets[target] = sa + 1;
+                    }
+                    if (b.Kind == ActBehaviorKind.ActiveStatus)
+                    {
+                        string status = b.Status.Kind.ToString();
+                        ActiveStatusKinds.TryGetValue(status, out int ak);
+                        ActiveStatusKinds[status] = ak + 1;
+                        ActiveStatusSpill += b.StatusSpill;
+                        ActiveStatusMissing += b.StatusMissing;
+                    }
+                    else if (b.Kind == ActBehaviorKind.Unsupported && b.Tag == "[ACTIVE STATUS]")
+                    {
+                        ActiveStatusBroken++;
+                    }
                     if (b.Kind == ActBehaviorKind.CreatePassive)
                     {
                         spawns = true;
@@ -140,6 +191,10 @@ internal static class ActRunCheck
             Console.WriteLine("  触发器按唤醒方式:带事件记录 " + EventTriggers + ",带 [FRAME] 的 " + FrameTriggers + ",只有条件 " + ConditionOnly
                 + ";行为组 " + Groups + " 个(含读不懂标签的 " + GroupsWithUnsupported + " 个),行为 " + Items + " 条;带 [CREATE PASSIVEOBJECT] 的 .act " + WithSpawn + " 个;SUB ANI " + SubAnis + " 个");
             Console.WriteLine("  行为种类:" + Join(BehaviorKinds, 30));
+            Console.WriteLine("  [SET ACTION] 切到的动作族:" + Join(SetActionTargets, 12));
+            Console.WriteLine("  [ACTIVE STATUS] 读通 " + ActiveStatusKinds.Values.Sum() + " 条(按种类:" + Join(ActiveStatusKinds, 18) + "),读不通 " + ActiveStatusBroken
+                + " 条,整数多写 " + ActiveStatusSpill + " 个、少写 " + ActiveStatusMissing + " 个");
+            Console.WriteLine("  引用含 [ACTIVE STATUS] 行为组的触发器,按目标选择器:" + Join(ActiveStatusTargets, 18));
             Console.WriteLine("  读不通的 [CREATE PASSIVEOBJECT] " + CreateBroken + " 条(缺 [INDEX] " + CreateNoIndex + ",缺 [POS] " + CreateNoPos + ")");
             Console.WriteLine("  读不懂的触发器标签(种数 " + UnsupportedTriggerTags.Count + ",按触发器条数):" + Join(UnsupportedTriggerTags, 25));
             Console.WriteLine("  读不懂的行为标签(种数 " + UnsupportedBehaviorTags.Count + ",按行为组个数):" + Join(UnsupportedBehaviorTags, 25));
@@ -149,7 +204,8 @@ internal static class ActRunCheck
         {
             Programs, WithTriggers, Triggers, Supported, FrameTriggers, EventTriggers, ConditionOnly, Groups, GroupsWithUnsupported, Items, WithSpawn, SubAnis,
             CreateBroken, CreateNoIndex, CreateNoPos,
-            UnsupportedTriggerTags, UnsupportedBehaviorTags, BehaviorKinds,
+            UnsupportedTriggerTags, UnsupportedBehaviorTags, BehaviorKinds, SetActionTargets,
+            ActiveStatusKinds, ActiveStatusBroken, ActiveStatusSpill, ActiveStatusMissing, ActiveStatusTargets,
         };
     }
 
@@ -477,6 +533,10 @@ internal static class ActRunCheck
         Report(withActFile > 0 && attackActs.Count > 0, "怪物招式的 .act 读得到并编得出程序(" + attackActs.Count + " 个)");
         Report(missingActs * 50 <= actRefs, "怪物招式引用的 .act 读不到的不超过 2%(" + missingActs + "/" + actRefs + ")");
         Report(monsterTally.CreateBroken == 0 && objectTally.CreateBroken == 0, "每个 [CREATE PASSIVEOBJECT] 都带对象编号,编得出(读不通 " + (monsterTally.CreateBroken + objectTally.CreateBroken) + " 条)");
+        int statusOff = monsterTally.ActiveStatusSpill + objectTally.ActiveStatusSpill + monsterTally.ActiveStatusMissing + objectTally.ActiveStatusMissing;
+        Report(monsterTally.ActiveStatusBroken + objectTally.ActiveStatusBroken == 0 && statusOff == 0,
+            "每个 [ACTIVE STATUS] 都读得出种类,整数个数与 .atk 状态槽的读法一致(读不通 " + (monsterTally.ActiveStatusBroken + objectTally.ActiveStatusBroken)
+            + " 条,多写或少写的整数 " + statusOff + " 个)");
         Report(monsterTally.Triggers > 0 && monsterTally.Supported * 100 >= monsterTally.Triggers * 95,
             "怪物出招里运行器认得的触发器占比不低于 95%(" + Percent(monsterTally.Supported, monsterTally.Triggers) + ")");
         Report(objectTally.Triggers > 0 && objectTally.Supported * 100 >= objectTally.Triggers * 90,

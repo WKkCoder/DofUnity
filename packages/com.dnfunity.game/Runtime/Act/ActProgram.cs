@@ -422,6 +422,13 @@ namespace Dnf.Game.Act
         /// [MP] 这一版没有对应的量,当空操作。
         /// </summary>
         Restore,
+
+        /// <summary>
+        /// [ACTIVE STATUS] [种类] 概率 等级 持续毫秒 附加整数…:对每个目标(主角与怪物这类"活动对象",被动对象不算)挂一个异常状态。
+        /// 客户端执行块在 0x010bbec6(行为码 0x7b):按种类码分支把参数装成向量,调目标的"挂状态"虚槽 0x530 = 0x008184e0——
+        /// 和受击处理对每个 .atk 状态槽调的是同一个函数(E-144),所以挂上的规则就是 E-136 那一套。
+        /// </summary>
+        ActiveStatus,
     }
 
     /// <summary>
@@ -612,6 +619,20 @@ namespace Dnf.Game.Act
 
         /// <summary>数量按百分比([%],客户端的符号码 7):目标最大生命 × 数量 / 100,向零截断。</summary>
         public bool RestorePercent { get; internal set; }
+
+        // ---- [ACTIVE STATUS]
+
+        /// <summary>
+        /// 要挂的状态槽(种类、概率、状态等级、持续毫秒、附加整数),读法与 .atk 的 [active status] 槽一致(参数布局取自客户端执行块:
+        /// 种类码 0 到 17 与 <see cref="ActiveStatusKind"/> 同序,概率是浮点、其后依次是等级、持续时间与按种类定的附加整数;E-144)。
+        /// </summary>
+        public ActiveStatusEntry Status { get; internal set; }
+
+        /// <summary>这条 [ACTIVE STATUS] 比"概率、等级、持续时间加该种类的附加整数"多写的整数个数(审计用:应当总是 0,否则说明附加整数的个数与 .atk 的读法对不上)。</summary>
+        public int StatusSpill { get; internal set; }
+
+        /// <summary>这条 [ACTIVE STATUS] 比应有的少写的整数个数(缺的按 0 处理;审计用,应当总是 0,否则同样说明个数对不上)。</summary>
+        public int StatusMissing { get; internal set; }
 
         public override string ToString() => Kind + " " + Tag;
     }

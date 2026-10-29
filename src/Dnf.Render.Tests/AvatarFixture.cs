@@ -356,6 +356,7 @@ internal sealed class AvatarFixture : IDisposable
     /// summontimed(同上,等级写 0,带 [SUMMON TIME] <see cref="SummonLifeMs"/>)、summonkill(帧 1 同 summon,帧 3 对 [SUMMON OBJECT] 执行 [SET HP] 0)、
     /// summononce(帧 1 同 summon,随后 [TRIGGER] 0 [OFF] 把自己的触发器关掉:开关跨出招保留,只召唤一次)、
     /// restore(帧 1 [RESTORE] [HP] -50 [%]:每次出招扣掉自己最大生命的一半)。
+    /// M51(证据 E-144)再加两只:status(帧 1 对攻击目标 [ACTIVE STATUS] [stun] 概率 100、等级 0、持续 2000 毫秒)与 statusmiss(同上,概率 0)。
     /// </summary>
     public const int ActForeverId = 9206;
 
@@ -581,6 +582,8 @@ internal sealed class AvatarFixture : IDisposable
         ("summonkill", new[] { "ActSummonKill" }),
         ("summononce", new[] { "ActSummonOnce" }),
         ("restore", new[] { "ActRestore" }),
+        ("status", new[] { "ActStatus" }),
+        ("statusmiss", new[] { "ActStatusMiss" }),
     };
 
     private IEnumerable<(string Name, byte[] Data)> ActScripts()
@@ -704,6 +707,15 @@ internal sealed class AvatarFixture : IDisposable
         yield return (BlobActionDir + "/actrestore.act", ActWith(ThrowActAni)
             .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
             .Behavior(b => b.Tag("[RESTORE]").Tag("[HP]").Int(-50).Tag("[%]"))
+            .Build());
+        // M51(证据 E-144):对攻击目标(主角)挂异常状态:眩晕,状态等级 0、持续 2000 毫秒;概率 100 与 0
+        yield return (BlobActionDir + "/actstatus.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0, "[TARGET]")
+            .Behavior(b => b.Tag("[ACTIVE STATUS]").Tag("[stun]").Float(100f).Int(0, 2000))
+            .Build());
+        yield return (BlobActionDir + "/actstatusmiss.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0, "[TARGET]")
+            .Behavior(b => b.Tag("[ACTIVE STATUS]").Tag("[stun]").Float(0f).Int(0, 2000))
             .Build());
         foreach (int id in new[] { ActShotId, ActRepeatId, ActGraveId, ActSpawnerId, ActFallId })
         {

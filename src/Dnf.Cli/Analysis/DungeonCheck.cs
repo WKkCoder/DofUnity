@@ -193,7 +193,7 @@ internal static class DungeonCheck
             + session.PassiveHits + " 次");
         Console.WriteLine("召唤(E-134):脚本召唤出怪物 " + session.SummonsSpawned + " 只,被拒绝 " + session.SummonsRefused + " 次,召唤物被打死 " + session.SummonedKills + " 只");
         Console.WriteLine("异常状态(E-136):" + (session.Vitals != null
-            ? "挂到主角身上 " + session.StatusApplied + " 次,概率没中 " + session.StatusMissed + " 次,持续伤害共 " + session.StatusTickDamage + " 点"
+            ? "挂到主角身上 " + session.StatusApplied + " 次,概率没中 " + session.StatusMissed + " 次,持续伤害共 " + session.StatusTickDamage + " 点,脚本 [ACTIVE STATUS](E-144)发起的请求 " + session.ActStatusRequests + " 次"
             : "怪物不还手,没有状态"));
         if (session.Revive != null && session.Revive.Deaths > 0)
         {

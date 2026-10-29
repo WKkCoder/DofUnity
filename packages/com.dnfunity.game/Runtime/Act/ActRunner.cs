@@ -81,6 +81,15 @@ namespace Dnf.Game.Act
         /// 没有生命的对象(被动对象、主角这一版)怎么回应。
         /// </summary>
         void SetHp(int hp);
+
+        /// <summary>
+        /// [ACTIVE STATUS]:对这个对象挂一个异常状态槽(E-144)。<paramref name="source"/> 是行为的拥有者(施加者)。
+        /// 概率掷骰、等级差修正、抗性与"挂不上"的各种情形由对象自己的状态系统处理(主角走 E-136 的那一套);
+        /// 没有状态系统的对象(这一版的怪物、被动对象)什么都不做,所以给了默认的空实现。
+        /// </summary>
+        void ApplyStatus(ActiveStatusEntry entry, IActEntity source)
+        {
+        }
     }
 
     /// <summary>运行器对世界的请求:随机数、生成被动对象、解析选择器。</summary>
@@ -865,6 +874,16 @@ namespace Dnf.Game.Act
                     }
                     case ActBehaviorKind.Restore:
                         Restore(b, targets);
+                        break;
+                    case ActBehaviorKind.ActiveStatus:
+                        // 客户端 0x010bbec6 起的块:对集合里每个"活动对象"(类型位 0x11,主角与怪物;被动对象没有)调一次挂状态,源头是行为拥有者(E-144)
+                        foreach (IActEntity t in targets)
+                        {
+                            if (t.Kind != ActEntityKind.Passive && t.IsAlive)
+                            {
+                                t.ApplyStatus(b.Status, _owner);
+                            }
+                        }
                         break;
                     default:
                         break;     // 没做的行为按空操作处理(ActBehaviorGroup.UnsupportedTags 供审计)

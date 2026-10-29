@@ -56,14 +56,14 @@ namespace Dnf.Game
             ["[boss tower]"] = "[/boss tower]",
         };
 
-        private static readonly string[] StatusNames =
+        internal static readonly string[] StatusNames =
         {
             "[slow]", "[freeze]", "[poison]", "[stun]", "[curse]", "[blind]", "[lightning]", "[stone]", "[sleep]",
             "[burn]", "[weapon break]", "[bleeding]", "[haste]", "[bless]", "[element]", "[confuse]", "[hold]", "[armor break]",
         };
 
         /// <summary>读完类型后还要再读的整数个数(其余类型没有附加整数)。</summary>
-        private static int ExtraIntegers(string status)
+        internal static int ExtraIntegers(string status)
         {
             switch (status)
             {

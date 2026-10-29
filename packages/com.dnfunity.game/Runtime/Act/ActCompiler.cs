@@ -132,6 +132,31 @@ namespace Dnf.Game.Act
 
         public int Int(int fallback = 0) => TryInt(out int v) ? v : fallback;
 
+        /// <summary>读一个浮点(整数记号也算,转成浮点);不在数上返回 false 且不前进。</summary>
+        public bool TryFloat(out float value)
+        {
+            if (AtNumber)
+            {
+                ScriptValue v = _t[_i].Value;
+                value = v.IsNumber ? v.Int : v.Float;
+                _i++;
+                return true;
+            }
+            value = 0f;
+            return false;
+        }
+
+        /// <summary>现在游标正对着的整数记号个数(到下一个标签为止;审计用,不前进)。</summary>
+        public int PendingNumbers()
+        {
+            int n = 0;
+            for (int i = _i; i < _t.Count && _t[i].Kind == ActTokenKind.Value && IsNumeric(_t[i].Value); i++)
+            {
+                n++;
+            }
+            return n;
+        }
+
         /// <summary>读掉所有紧跟着的整数。</summary>
         public int[] Ints()
         {
@@ -863,6 +888,8 @@ namespace Dnf.Game.Act
                         RestorePercent = cur.AtOpen("[%]"),
                     };
                 }
+                case "[ACTIVE STATUS]":
+                    return ParseActiveStatus(cur, tag);
                 case "[DIM]":
                 {
                     // [DIM] "名字" [=] 表达式 [/DIM](E-132;全库只有赋值,没有别的比较符)
@@ -880,6 +907,40 @@ namespace Dnf.Game.Act
                 default:
                     return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
             }
+        }
+
+        /// <summary>
+        /// [ACTIVE STATUS] [种类] 概率 等级 持续毫秒 附加整数…(客户端执行块 0x010bbec6,E-144):种类是一个小写开标签(与 .atk 的状态槽同名),
+        /// 也可以写成带引号的字符串(客户端读的是"类型记号或字符串",真实数据里有一处这样写),
+        /// 概率读成浮点,等级与持续时间是整数,附加整数的个数按种类定(与 <see cref="AttackInfoLoader.ExtraIntegers"/> 一致,执行块里每个种类分支取的 ints 个数同样如此)。
+        /// 种类认不出来就记成不支持(客户端的种类分支只到 17);数不够当缺省 0。
+        /// </summary>
+        private static ActBehavior ParseActiveStatus(ActCursor cur, string tag)
+        {
+            string name = cur.TakeOpen() ?? cur.TakeString();
+            int kind = name == null ? -1 : Array.IndexOf(AttackInfoLoader.StatusNames, name);
+            if (kind < 0)
+            {
+                return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
+            }
+            var extra = new int[AttackInfoLoader.ExtraIntegers(name)];
+            int expected = 3 + extra.Length;
+            int pending = cur.PendingNumbers();
+            cur.TryFloat(out float probability);
+            int level = cur.Int();
+            int duration = cur.Int();
+            for (int i = 0; i < extra.Length; i++)
+            {
+                extra[i] = cur.Int();
+            }
+            return new ActBehavior
+            {
+                Kind = ActBehaviorKind.ActiveStatus,
+                Tag = tag,
+                Status = ActiveStatusEntry.Create((ActiveStatusKind)kind, probability, level, duration, extra),
+                StatusSpill = Math.Max(0, pending - expected),
+                StatusMissing = Math.Max(0, expected - pending),
+            };
         }
 
         private static ActBehavior ParseCreate(ActCursor cur, string tag)
