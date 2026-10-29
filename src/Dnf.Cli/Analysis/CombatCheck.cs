@@ -182,6 +182,7 @@ internal static class CombatCheck
         Console.WriteLine("结束:主角 (" + F(session.Hero.X) + "," + F(session.Hero.Y) + "),命中 " + session.Hits + " 次,放技能 " + session.SkillCasts + " 次(接段 " + session.SkillChains + " 次),击杀 " + session.Kills + " 个,总伤害 " + session.TotalDamage
             + ",剩余 " + session.AliveCount + " 个,怪物扔出投射物 " + session.ProjectilesThrown + " 个,打中主角 " + session.ProjectileHits + " 个(E-103),脚本放出被动对象 " + session.PassivesSpawned + " 个,打中主角 " + session.PassiveHits + " 次(E-130)"
             + ",角色技能放出对象 " + session.HeroObjectsSpawned + " 个,打中怪物 " + session.HeroObjectHits + " 次(E-135)"
+            + (session.HopWindows > 0 ? ",命中窗口 " + session.HopWindows + " 个(E-138、E-139)" : string.Empty)
             + (session.Vitals != null
                 ? ",主角被打中 " + session.HeroHits + " 次(共 " + session.HeroDamageTaken + " 点),生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax
                     + ",魔法 " + session.Vitals.Mp + "/" + session.Vitals.MpMax

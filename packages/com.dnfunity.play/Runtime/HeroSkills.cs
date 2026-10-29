@@ -437,7 +437,7 @@ namespace Dnf.Play
                     began = hero.BeginBackStep(slot.SkillId, slot.Def == null ? 0 : slot.Def.GetStatic(0, false));
                     break;
                 default:
-                    began = slot.Recipe != null && BeginStage(slot, 0, hero, heldX, heldY, false);
+                    began = slot.Recipe != null && BeginStage(slot, 0, hero, heldX, heldY, false, MultiHitWindows(slot));
                     break;
             }
             if (!began)
@@ -480,10 +480,25 @@ namespace Dnf.Play
             {
                 return null;
             }
-            return BeginStage(slot, next, hero, heldX, heldY, true) ? slot : null;
+            return BeginStage(slot, next, hero, heldX, heldY, true, MultiHitWindows(slot)) ? slot : null;
         }
 
-        private static bool BeginStage(HeroSkillSlot slot, int stage, TownHero hero, int heldX, int heldY, bool chain)
+        /// <summary>
+        /// 这个技能这一次放出来的多段命中次数(证据 E-139):配方标了多段命中的被动技能、主角学过它(等级大于 0)、
+        /// [static data] 里取得到次数且次数大于 0 时返回这个次数,否则 0(只命中一轮)。客户端还要求不在 PVP 模式,这里没有 PVP。
+        /// </summary>
+        private int MultiHitWindows(HeroSkillSlot slot)
+        {
+            SkillRecipe r = slot.Recipe;
+            if (r == null || r.MultiHitPassiveSkillId <= 0 || r.MultiHitCountIndex < 0 || slot.Def == null
+                || SkillLevelOf == null || SkillLevelOf(r.MultiHitPassiveSkillId) <= 0)
+            {
+                return 0;
+            }
+            return Math.Max(0, slot.Def.GetStatic(r.MultiHitCountIndex, false));
+        }
+
+        private static bool BeginStage(HeroSkillSlot slot, int stage, TownHero hero, int heldX, int heldY, bool chain, int multiHitWindows = 0)
         {
             SkillStageSpec spec = slot.Recipe.Stages[stage];
             Slide(slot, hero, heldX, heldY, out double speed, out double accel);
@@ -493,8 +508,8 @@ namespace Dnf.Play
                 hold = HopHoldMs(slot);
             }
             return chain
-                ? hero.ChainSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame)
-                : hero.BeginSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame);
+                ? hero.ChainSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame, rearmWindows: multiHitWindows)
+                : hero.BeginSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame, multiHitWindows);
         }
 
         /// <summary>
@@ -552,7 +567,8 @@ namespace Dnf.Play
         /// <summary>
         /// 进入一段那一刻的起滑速度与加速度(证据 E-129):没按方向键取基础的两个数;按着朝向一侧的方向键,再加上"顺着按"的加成;
         /// 按着别的方向(反向、只按上下)就不滑。同时按了左右与上下时只看左右(原版怎么选没读到,按横向优先推断)。
-        /// 配方标了 <see cref="SkillRecipe.SlideFollowsHeldDirection"/> 为 false 时不看方向键,一律取基础的两个数。
+        /// 配方标了 <see cref="SkillRecipe.SlideFollowsHeldDirection"/> 为 false 时不看方向键,一律取基础的两个数;
+        /// 标了 <see cref="SkillRecipe.ForwardReplacesBase"/> 时,顺着按是把基础的两个数整个换成"顺着按"的两个数(证据 E-139)。
         /// </summary>
         internal static void Slide(HeroSkillSlot slot, TownHero hero, int heldX, int heldY, out double speed, out double accel)
         {
@@ -575,6 +591,13 @@ namespace Dnf.Play
             {
                 speed = 0;
                 accel = 0;
+                return;
+            }
+            if (r.ForwardReplacesBase)
+            {
+                // 状态 0x1d 的进入块(证据 E-139):顺着按时起滑速度与加速度整个换成"顺着按"的两个数,没有的下标当 0
+                speed = r.ForwardSpeedIndex >= 0 && def != null ? def.GetStatic(r.ForwardSpeedIndex, false) : 0;
+                accel = r.ForwardAccelIndex >= 0 && def != null ? def.GetStatic(r.ForwardAccelIndex, false) : 0;
                 return;
             }
             if (r.ForwardSpeedIndex >= 0 && def != null)

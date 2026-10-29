@@ -66,7 +66,7 @@ internal sealed class AvatarFixture : IDisposable
 
     /// <summary>
     /// 多段技能(M37,证据 E-129)的合成数据:技能编号 <see cref="ChainSkill"/>,[etc motion] 第 2、3 项是两段动作(<see cref="ChainAAni"/> 400 毫秒、<see cref="ChainBAni"/> 300 毫秒),
-    /// [etc attack info] 第 1、2 项是两段的攻击信息;.skl 的 [static data] 是 (200, −400, 100, −100),[level info] 四列 (第 1 级 150、250、30、50,第 2 级 180、300、40、60)。
+    /// [etc attack info] 第 1、2 项是两段的攻击信息;.skl 的 [static data] 是 (200, −400, 100, −100, 2)(第五个数是多段命中的次数,M46),[level info] 四列 (第 1 级 150、250、30、50,第 2 级 180、300、40、60)。
     /// A 段第 2 帧(200 到 300 毫秒)有攻击框,B 段第 1 帧(100 到 200 毫秒)有;两段的特效(<see cref="ChainEffect1"/>、<see cref="ChainEffect2"/>)是 350 毫秒的合成动画,
     /// 技能预载脚本(<c>sqr/common.nut</c>)里按这个顺序登记。数全是测试用的。
     /// </summary>
@@ -791,7 +791,7 @@ internal sealed class AvatarFixture : IDisposable
                 (0, 50, new[] { WaveObjBox }), (1, 50, new[] { WaveObjBox }), (2, 50, new (ushort Type, int[] Values)[0]), (3, 50, new (ushort Type, int[] Values)[0]))),
             ("skill/test/chain.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Str("SKILL").Tag("[maximum level]").Int(10)
-                .Tag("[consume MP]").Int(20, 20).Tag("[cool time]").Int(3000, 3000).Tag("[static data]").Int(200, -400, 100, -100)
+                .Tag("[consume MP]").Int(20, 20).Tag("[cool time]").Int(3000, 3000).Tag("[static data]").Int(200, -400, 100, -100, 2)
                 .Tag("[level info]").Int(4, 150, 250, 30, 50, 180, 300, 40, 60).Build()),     // 第一个数是列数(4),后面按行排:第 1 级 (150, 250, 30, 50),第 2 级 (180, 300, 40, 60)
             // 多段技能两段的攻击信息:第一段击退 ChainAPushAside,第二段击倒并击退 ChainBPushAside
             (ChainAAtk, NewScript().Tag("[damage reaction]").Tag("[damage]").Tag("[push aside]").Int(ChainAPushAside).Build()),

@@ -429,6 +429,12 @@ namespace Dnf.Render
         private int _hopRearmsDone;
         private bool _hopLanded;
 
+        // 多段命中(证据 E-139):间隔 = 整段动画时长 / 次数的重武装计时器;与脚本跳跃的计时器互不相干
+        private int _stageRearmInterval;
+        private int _stageRearmMax;
+        private int _stageRearmDone;
+        private int _stageRearmNextMs = -1;
+
         // 受击:[damage motion 1]、[damage motion 2](没写就是 null,对应的受击不生效),当前播的那一段,硬直与击退的进度
         private AniFile _damage1;
         private string _damage1Path;
@@ -647,6 +653,12 @@ namespace Dnf.Render
 
         /// <summary>这次脚本跳跃一共的命中窗口数 N(第一个窗口加上 N−1 次重武装);不在放脚本跳跃的技能时为 0。</summary>
         public int HopHits => Motion == HeroMotion.Skill && _hop != null ? _hop.Hits : 0;
+
+        /// <summary>这一段的多段命中计时器已经响过的次数(证据 E-139);没有多段命中、或不在放技能时为 0。</summary>
+        public int StageRearmsDone => Motion == HeroMotion.Skill ? _stageRearmDone : 0;
+
+        /// <summary>这一段的多段命中计时器最多响几次(证据 E-139);没有多段命中、或不在放技能时为 0。</summary>
+        public int StageRearmsMax => Motion == HeroMotion.Skill ? _stageRearmMax : 0;
 
         /// <summary>脚本跳跃的落地计数(每落地一次加 1,永远递增);会话据此放落地的震屏。</summary>
         public int HopLandings { get; private set; }
@@ -1041,8 +1053,11 @@ namespace Dnf.Render
         /// 只在地面站立、行走、奔跑时能放。<paramref name="holdFirstFrameMs"/> 不小于 0 时,动画第 0 帧的停留换成这个毫秒数(施法蓄力,证据 E-135)。
         /// <paramref name="endFrame"/> 不小于 0 时,动画播到这一帧(从 0 数)的开头技能状态就结束、回到站立(证据 E-137:状态码在帧号到数时直接请求站立状态,
         /// 不等动画播完);小于 0 就播到动画结束。
+        /// <paramref name="rearmWindows"/> 大于 0 时开多段命中计时器(证据 E-139):间隔 = 整段动画时长(按播放倍率折算)/ 这个数,最多响这么多次,
+        /// 每次响就让命中名单重新武装(<see cref="HitRearmNumber"/> 加 1);0 表示没有。
         /// </summary>
-        public bool BeginSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel, int holdFirstFrameMs = -1, int endFrame = -1)
+        public bool BeginSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel, int holdFirstFrameMs = -1, int endFrame = -1,
+            int rearmWindows = 0)
         {
             if (!CanBeginSkill)
             {
@@ -1055,7 +1070,48 @@ namespace Dnf.Render
             }
             StartSkill(skillId, -1, 0, m, slideSpeed, slideAccel);
             _skillEndMs = EndMsOf(m, endFrame);
+            StartStageRearm(m, rearmWindows);
             return true;
+        }
+
+        /// <summary>
+        /// 开(或清除)这一段的多段命中计时器(证据 E-139):间隔 = 整段动画时长(按这一段的播放倍率折算,整数毫秒)/ <paramref name="windows"/>(整数除法),
+        /// 最多响 <paramref name="windows"/> 次;计时器在动画开始后第一次更新时才起算(之后每次响铃都从"此刻"重新数一个间隔,与客户端计时器的"到点重置为现在"一致)。
+        /// </summary>
+        private void StartStageRearm(EtcMotion m, int windows)
+        {
+            _stageRearmDone = 0;
+            _stageRearmNextMs = -1;
+            if (windows <= 0 || m == null)
+            {
+                _stageRearmMax = 0;
+                _stageRearmInterval = 0;
+                return;
+            }
+            double rate = SkillRate;
+            int total = (int)(m.Timeline.TotalMilliseconds * 100.0 / (rate * 100.0));
+            _stageRearmMax = windows;
+            _stageRearmInterval = total / windows;
+        }
+
+        /// <summary>多段命中这一步:<paramref name="e"/> 是这一段动画已经过去的墙钟毫秒;到点就重武装一次(一步最多一次),次数用完不再响。</summary>
+        private void StepStageRearm(int e)
+        {
+            if (_stageRearmDone >= _stageRearmMax)
+            {
+                return;
+            }
+            if (_stageRearmNextMs < 0)
+            {
+                _stageRearmNextMs = e + _stageRearmInterval;
+                return;
+            }
+            if (e >= _stageRearmNextMs)
+            {
+                _stageRearmDone++;
+                _stageRearmNextMs = e + _stageRearmInterval;
+                HitRearmNumber++;
+            }
         }
 
         /// <summary>
@@ -1125,7 +1181,7 @@ namespace Dnf.Render
         /// <paramref name="rateScale"/> 是这一段动画的变速系数(乘在攻击速度的播放倍率上),技能结束或换段时恢复 1。
         /// </summary>
         public bool ChainSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel, int holdFirstFrameMs = -1, int endFrame = -1,
-            SkillHopPlan hop = null, double rateScale = 1.0)
+            SkillHopPlan hop = null, double rateScale = 1.0, int rearmWindows = 0)
         {
             if (Motion != HeroMotion.Skill || SkillId != skillId || _skillWindupStage >= 0 || _skillMotion == null)
             {
@@ -1147,6 +1203,7 @@ namespace Dnf.Render
             _skillStage++;
             SwingNumber++;
             StartHop(m, hop);
+            StartStageRearm(m, rearmWindows);
             return true;
         }
 
@@ -1226,6 +1283,8 @@ namespace Dnf.Render
             _skillEndMs = -1.0;
             _skillRateScale = 1.0;
             _hop = null;
+            _stageRearmMax = 0;
+            _stageRearmDone = 0;
             _motionMs = 0;
             _attackQueued = false;
             SwingNumber++;
@@ -1274,6 +1333,8 @@ namespace Dnf.Render
             _skillSlideV = 0;
             _skillRateScale = 1.0;
             _hop = null;
+            _stageRearmMax = 0;
+            _stageRearmDone = 0;
             _motionMs = motionMs < 0 ? 0 : motionMs;
             _attackQueued = false;
             ResetAir();
@@ -1322,6 +1383,10 @@ namespace Dnf.Render
             if (_hop != null)
             {
                 StepHop((int)_motionMs);
+            }
+            if (_stageRearmMax > 0)
+            {
+                StepStageRearm((int)_motionMs);
             }
             if (_motionMs >= duration)
             {
@@ -1428,6 +1493,8 @@ namespace Dnf.Render
             _skillMotion = null;
             _skillSlideV = 0.0;
             _skillRateScale = 1.0;
+            _stageRearmMax = 0;
+            _stageRearmDone = 0;
             _attackQueued = false;
             _motionMs = 0;
         }

@@ -681,7 +681,9 @@ namespace Dnf.Play
         /// </summary>
         public SkillKeys SkillsHeld { get; set; }
 
-        /// <summary>蓄力跳跃类技能打开过的命中窗口数(每个跳跃一个第一窗口,加上计时器每响一次重武装的一个;证据 E-138),给检查与测试用。</summary>
+        /// <summary>
+        /// 蓄力跳跃类技能与多段命中的技能打开过的命中窗口数(每次放出一个第一窗口,加上计时器每响一次重武装的一个;证据 E-138、E-139),给检查与测试用。
+        /// </summary>
         public int HopWindows { get; private set; }
 
         /// <summary>此刻主角这一击用的攻击信息(普攻、奔跑攻击、空中攻击与各个技能各取各的;蓄力跳跃类技能的第一个窗口与重武装窗口用的不是同一项),给检查与测试用。</summary>
@@ -1940,7 +1942,7 @@ namespace Dnf.Play
                 _evalSwing = hero.SwingNumber;
                 _evalRearm = hero.HitRearmNumber;
                 _evalFrame = -1;
-                if (hero.HopHits > 0)
+                if (hero.HopHits > 0 || hero.StageRearmsMax > 0)
                 {
                     HopWindows++;
                 }
@@ -1949,7 +1951,7 @@ namespace Dnf.Play
             }
             else if (hero.HitRearmNumber != _evalRearm)
             {
-                // 命中窗口重武装(蓄力跳跃类技能的计时器响了,证据 E-138):这一击里已经打中的目标清掉,当前这一帧重新判一遍
+                // 命中窗口重武装(蓄力跳跃类技能或多段命中的计时器响了,证据 E-138、E-139):这一击里已经打中的目标清掉,当前这一帧重新判一遍
                 _evalRearm = hero.HitRearmNumber;
                 _hitThisSwing.Clear();
                 _hitBreakablesThisSwing.Clear();

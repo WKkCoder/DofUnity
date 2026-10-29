@@ -9,12 +9,12 @@ namespace Dnf.Play.Tests;
 /// <summary>
 /// 多段技能配方(M37,证据 E-129):槽按配方读各段的攻击信息与伤害列、起手按方向键定滑行、同一个键在动画播过指定帧后接下一段、
 /// 分段特效按帧放并跟着主角、接段不再扣蓝不再进冷却。数据全是合成的(见 <see cref="AvatarFixture.ChainSkill"/>):
-/// 两段动作 400 与 300 毫秒,第一段第 2 帧(200 毫秒起)、第二段第 1 帧(100 毫秒起)有攻击框;[static data] 是 (200, −400, 100, −100);
+/// 两段动作 400 与 300 毫秒,第一段第 2 帧(200 毫秒起)、第二段第 1 帧(100 毫秒起)有攻击框;[static data] 是 (200, −400, 100, −100, 2);
 /// [level info] 四列,2 级是 (180, 300, 40, 60):第一段取第 0 列与第 2 列,第二段取第 1 列与第 3 列;冷却 3000、耗蓝 20。
 /// </summary>
 public class SkillChainTests
 {
-    private static SkillRecipes Recipes(int gateForStage1 = 0, int chainFromFrame = 2, bool followHeld = true, bool threeStages = false)
+    private static SkillRecipes Recipes(int gateForStage1 = 0, int chainFromFrame = 2, bool followHeld = true, bool threeStages = false, bool forwardReplaces = false)
     {
         var stages = new List<SkillStageSpec>
         {
@@ -29,7 +29,8 @@ public class SkillChainTests
         return new SkillRecipes(new[]
         {
             new SkillRecipe(AvatarFixture.ChainSkill, stages,
-                slideSpeedIndex: 0, slideAccelIndex: 1, forwardSpeedIndex: 2, forwardAccelIndex: 3, chainFromFrame: chainFromFrame, slideFollowsHeldDirection: followHeld),
+                slideSpeedIndex: 0, slideAccelIndex: 1, forwardSpeedIndex: 2, forwardAccelIndex: 3, chainFromFrame: chainFromFrame, slideFollowsHeldDirection: followHeld,
+                forwardReplacesBase: forwardReplaces),
         });
     }
 
@@ -106,6 +107,7 @@ public class SkillChainTests
             Assert.Same(r, SkillRecipes.Default.Find(r.SkillId));
             Assert.True(HeroSkills.IsImplemented(r.SkillId));
             Assert.True(r.Stages.Count >= 1 && r.ChainFromFrame >= 1);
+            Assert.Equal(r.MultiHitPassiveSkillId > 0, r.MultiHitCountIndex >= 0);      // 多段命中:被动技能编号与次数下标要么都有、要么都没有
             Assert.All(r.Stages, st =>
             {
                 Assert.True(st.MotionIndex >= 0 && st.EffectFrame >= 0 && st.EffectIndex >= -1 && st.CastHoldFrames >= 0);
@@ -164,6 +166,49 @@ public class SkillChainTests
         double distance = TownHero.SlideDistance(speed, accel, 0, 400);
         Assert.Equal(100 + (facingLeft ? -distance : distance), hero.X, 6);
         Assert.Equal(speed == 0.0, distance == 0.0);
+    }
+
+    [Theory]
+    [InlineData(0, 0, false, 200.0, -400.0)]     // 没按方向键:基础的两个数
+    [InlineData(1, 0, false, 100.0, -100.0)]     // 朝右、按右:基础的两个数整个换成"顺着按"的两个数(不是加成,证据 E-139)
+    [InlineData(-1, 0, false, 0.0, 0.0)]         // 朝右、按左:不滑
+    [InlineData(0, -1, false, 0.0, 0.0)]         // 只按上或下:不滑
+    [InlineData(1, 1, false, 100.0, -100.0)]     // 斜着按:只看左右(推断)
+    [InlineData(-1, 0, true, 100.0, -100.0)]     // 朝左、按左:顺着
+    [InlineData(1, 0, true, 0.0, 0.0)]
+    [InlineData(0, 0, true, 200.0, -400.0)]
+    public void ARecipeThatReplacesTheBaseSlideSwapsBothNumbersWhenTheForwardKeyIsHeld(int heldX, int heldY, bool facingLeft, double speed, double accel)
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        HeroSkills skills = Load(new GameData(new PvfScriptSource(assets.Pvf)), 2, Recipes(forwardReplaces: true));
+        TownHero hero = NewHero(assets, facingLeft: facingLeft);
+
+        Assert.Equal(SkillCastResult.Cast, skills.Cast(skills.SlotOf(SkillKeys.A), hero, null, heldX, heldY));
+        Assert.Equal(speed, hero.SkillSlideSpeed);
+        hero.Update(400, 0, 0);
+        double distance = TownHero.SlideDistance(speed, accel, 0, 400);
+        Assert.Equal(100 + (facingLeft ? -distance : distance), hero.X, 6);
+        Assert.Equal(speed == 0.0, distance == 0.0);
+    }
+
+    [Fact]
+    public void AReplacingRecipeWithoutForwardNumbersSlidesNotAtAllWhenTheForwardKeyIsHeld()
+    {
+        // "顺着按"的两个下标是 -1 时(客户端没有对应的读取),顺着按取 0:替换成"什么都没有"
+        var recipes = new SkillRecipes(new[]
+        {
+            new SkillRecipe(AvatarFixture.ChainSkill,
+                new[] { new SkillStageSpec(motionIndex: 2, attackInfoIndex: 1, damageRateColumn: 0, damageFixedColumn: 2, effectIndex: -1, effectFrame: 0) },
+                slideSpeedIndex: 0, slideAccelIndex: 1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: 1, forwardReplacesBase: true),
+        });
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        HeroSkills skills = Load(new GameData(new PvfScriptSource(assets.Pvf)), 2, recipes);
+        TownHero hero = NewHero(assets);
+
+        Assert.Equal(SkillCastResult.Cast, skills.Cast(skills.SlotOf(SkillKeys.A), hero, null, 1, 0));
+        Assert.Equal(0.0, hero.SkillSlideSpeed);
     }
 
     [Theory]

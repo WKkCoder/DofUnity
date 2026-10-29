@@ -3,7 +3,8 @@ using System.Collections.Generic;
 
 // 证据:E-129(客户端原生技能状态码的读码结果:技能起手函数、状态进入块、逐帧块里的连击判定);E-135(波系技能状态 0x18:施法蓄力与主角放出的被动对象);
 // E-137(挂多个特效、对象等特效关键帧的那一类技能,状态 0x23:一进状态就挂四个特效、被动对象等特效动画的关键帧标志、帧号到数就结束状态);
-// E-138(蓄力后跳起来砸下去的那一类技能,状态 0x24:按住技能键蓄力、松开或蓄满才出招,跳跃距离与高度按蓄力档位插值,位移由动画时间脚本化,命中窗口由计时器重武装)。
+// E-138(蓄力后跳起来砸下去的那一类技能,状态 0x24:按住技能键蓄力、松开或蓄满才出招,跳跃距离与高度按蓄力档位插值,位移由动画时间脚本化,命中窗口由计时器重武装);
+// E-139(单段位移攻击类技能,状态 0x1d:起滑的"顺着按"两个数替换基础两个数、学了某个被动技能后命中名单按计时器多次重新武装)。
 namespace Dnf.Play
 {
     /// <summary>
@@ -213,8 +214,12 @@ namespace Dnf.Play
     public sealed class SkillRecipe
     {
         public SkillRecipe(int skillId, IEnumerable<SkillStageSpec> stages, int slideSpeedIndex, int slideAccelIndex, int forwardSpeedIndex, int forwardAccelIndex,
-            int chainFromFrame, bool slideFollowsHeldDirection = true, IEnumerable<SkillObjectSpec> objects = null, SkillHopSpec hop = null)
+            int chainFromFrame, bool slideFollowsHeldDirection = true, IEnumerable<SkillObjectSpec> objects = null, SkillHopSpec hop = null,
+            bool forwardReplacesBase = false, int multiHitPassiveSkillId = 0, int multiHitCountIndex = -1)
         {
+            ForwardReplacesBase = forwardReplacesBase;
+            MultiHitPassiveSkillId = multiHitPassiveSkillId;
+            MultiHitCountIndex = multiHitCountIndex;
             SkillId = skillId;
             Stages = new List<SkillStageSpec>(stages ?? throw new ArgumentNullException(nameof(stages))).AsReadOnly();
             if (Stages.Count == 0)
@@ -249,6 +254,21 @@ namespace Dnf.Play
 
         /// <summary>按着朝向一侧的方向键时,加速度的加成在 [static data] 里的下标;负数表示没有加成。</summary>
         public int ForwardAccelIndex { get; }
+
+        /// <summary>
+        /// "顺着按"的两个数是替换基础的两个数(证据 E-139:状态 0x1d 的进入块里,朝向一侧的方向键把起滑速度与加速度整个换成第三、第四个数),
+        /// 而不是像状态 0x2a 那样加在基础的两个数上;false 是加成(默认)。只在 <see cref="SlideFollowsHeldDirection"/> 为 true 时有意义。
+        /// </summary>
+        public bool ForwardReplacesBase { get; }
+
+        /// <summary>
+        /// 多段命中要学会的被动技能编号(证据 E-139);0 表示这个配方没有多段命中。学过这个被动技能(等级大于 0)的主角放这个技能时,
+        /// 命中名单在动画播放期间按计时器重新武装,同一个目标可以再挨几下,次数取 [static data] 的第 <see cref="MultiHitCountIndex"/> 个数。
+        /// </summary>
+        public int MultiHitPassiveSkillId { get; }
+
+        /// <summary>多段命中次数在 [static data] 里的下标;负数表示没有。</summary>
+        public int MultiHitCountIndex { get; }
 
         /// <summary>当前段的动画播到第几帧(从 0 数)以后,再按同一个技能键才算接下一段。</summary>
         public int ChainFromFrame { get; }
@@ -374,6 +394,21 @@ namespace Dnf.Play
                 hop: new SkillHopSpec(holdMinIndex: 0, holdMaxIndex: 1, distanceMinIndex: 2, distanceMaxIndex: 3, heightMinIndex: 4, heightMaxIndex: 5,
                     speedMinIndex: 6, speedMaxIndex: 7, hitsMinIndex: 8, hitsMaxIndex: 9, riseFrame: 2, landFrame: 4, hitStartFrame: 3, hitEndFrame: 5,
                     repeatAttackInfoIndex: 26)),
+
+            // 单段位移攻击类技能(状态 0x1d,证据 E-139):施放动作是 [etc motion] 第 11 项,攻击信息取 [etc attack info] 第 14 项,
+            // 伤害取 [level info] 的百分比第 0 列与固定值第 2 列。起滑:没按方向键取 [static data] 头两个数(速度、加速度),
+            // 按着朝向一侧的方向键换成第 2、3 个数(替换,不是加成),按着别的方向不滑。
+            // 多段命中:学过一个被动技能(不在 PVP 模式)时,进入块起一个计时器,间隔 = 整段动画时长 / [static data] 第 4 个数,次数就是这个数;
+            // 每次到点调虚表槽 0x208 清命中名单,同一个目标能再挨一下。
+            // 没做:状态码在动画播到第 1 帧时挂两个特效(一个垫在主角下面、一个盖在上面),但它们是按写死的名字载入的,不在预载表里,名字不入库,所以这里不放特效;
+            // [level info] 第 1 列(客户端乘 0.1 写进主角的一个浮点字段,用途没读到)、某个成长类型才有的额外被动对象、技能音效。
+            new SkillRecipe(11,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 11, attackInfoIndex: 14, damageRateColumn: 0, damageFixedColumn: 2, effectIndex: -1, effectFrame: 0),
+                },
+                slideSpeedIndex: 0, slideAccelIndex: 1, forwardSpeedIndex: 2, forwardAccelIndex: 3, chainFromFrame: 1, forwardReplacesBase: true,
+                multiHitPassiveSkillId: 162, multiHitCountIndex: 4),
         });
     }
 }
