@@ -162,4 +162,120 @@ public class KnockdownFlightTests
         Assert.Equal((true, 3), (flight.TakeEnded(), flight.BeginCount));
         Assert.Equal(0.0, flight.AniMs);
     }
+
+    // ------------------------------------------------------------------ 倒地起身(M47,证据 E-140)
+
+    private static KnockdownFlight LyingFlight(DnfAssets assets)
+    {
+        var flight = new KnockdownFlight(Weight, new DownAnimation(assets.LoadAni(AvatarFixture.DownAni)));
+        flight.Place(300, 100, 0, false);
+        flight.Begin(Request(), 500, 500, true);
+        Run(flight, () => flight.Stage == 2);
+        return flight;
+    }
+
+    [Fact]
+    public void QuickStandIsOnlyPossibleWhileLyingAndNotWhenDeadOrAlreadyStandingUp()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        var flight = new KnockdownFlight(Weight, new DownAnimation(assets.LoadAni(AvatarFixture.DownAni)));
+        Assert.False(flight.CanQuickStand);                               // 没在倒地里
+        Assert.False(flight.BeginQuickStand(100));
+        Assert.Equal((false, -1.0), (flight.QuickStanding, flight.QuickStandLeftMs));
+
+        flight.Place(300, 100, 0, false);
+        flight.Begin(Request(), 500, 500, true);
+        Assert.Equal(0, flight.Stage);
+        Assert.False(flight.CanQuickStand);                               // 腾空阶段不行
+        Assert.False(flight.BeginQuickStand(100));
+        Run(flight, () => flight.Stage == 1);
+        Assert.False(flight.CanQuickStand);                               // 颠一下的阶段也不行
+        Run(flight, () => flight.Stage == 2);
+        Assert.True(flight.CanQuickStand);                                // 躺着才行
+
+        flight.DieOnLying = true;                                         // 已死的不能起身
+        Assert.False(flight.CanQuickStand);
+        Assert.False(flight.BeginQuickStand(100));
+        flight.DieOnLying = false;
+
+        Assert.True(flight.BeginQuickStand(100));
+        Assert.Equal((true, true, 100.0), (flight.QuickStanding, flight.Active, flight.QuickStandLeftMs));
+        Assert.False(flight.CanQuickStand);                               // 已经在起身里,不能再进一次
+        Assert.False(flight.BeginQuickStand(500));
+        Assert.Equal(100.0, flight.QuickStandLeftMs);
+    }
+
+    [Fact]
+    public void QuickStandEndsAfterItsOwnCountdownInsteadOfTheLyingAnimation()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+
+        // 对照:一直躺着,躺着的那一帧放完(400 毫秒)才起身
+        KnockdownFlight normal = LyingFlight(assets);
+        normal.Update(150, null);
+        Assert.True(normal.Active);
+
+        KnockdownFlight quick = LyingFlight(assets);
+        Assert.True(quick.BeginQuickStand(100));
+        quick.Update(90, null);
+        Assert.Equal((true, true), (quick.Active, quick.QuickStanding));
+        Assert.Equal(10.0, quick.QuickStandLeftMs, 6);
+        Assert.Equal(2, quick.Stage);                                     // 仍是倒地的躺着阶段:位置不动、不是站立
+        Assert.Equal(0.0, quick.Z);
+        quick.Update(20, null);
+        Assert.Equal((false, false, -1.0), (quick.Active, quick.QuickStanding, quick.QuickStandLeftMs));
+        Assert.True(quick.TakeEnded());                                   // 起身通知照常发一次
+        Assert.False(quick.TakeEnded());
+        Assert.Equal(-1, quick.Stage);
+    }
+
+    [Fact]
+    public void AZeroDurationQuickStandEndsOnTheNextStepAndEarlyEndDoesNotCutItShort()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        KnockdownFlight zero = LyingFlight(assets);
+        Assert.True(zero.BeginQuickStand(0));
+        Assert.True(zero.QuickStanding);
+        zero.Update(1, null);
+        Assert.Equal((false, true), (zero.Active, zero.TakeEnded()));
+
+        // 起身途中提前结束的标志没有用:只看自己的倒计时
+        KnockdownFlight flagged = LyingFlight(assets);
+        Assert.True(flagged.BeginQuickStand(100));
+        flagged.EarlyEnd = true;
+        flagged.Update(50, null);
+        Assert.True(flagged.Active);
+        flagged.Update(60, null);
+        Assert.False(flagged.Active);
+
+        // 负时长当 0
+        KnockdownFlight negative = LyingFlight(assets);
+        Assert.True(negative.BeginQuickStand(-30));
+        Assert.Equal(0.0, negative.QuickStandLeftMs);
+    }
+
+    [Fact]
+    public void ANewRequestAStopOrAResurrectionCancelsTheQuickStand()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+
+        KnockdownFlight again = LyingFlight(assets);
+        Assert.True(again.BeginQuickStand(200));
+        again.Begin(Request(), 500, 500, true);                           // 起身时又被击倒:重新倒地,起身作废
+        Assert.Equal((true, false), (again.Active, again.QuickStanding));
+
+        KnockdownFlight stopped = LyingFlight(assets);
+        Assert.True(stopped.BeginQuickStand(200));
+        stopped.Stop(keepVelocity: false);
+        Assert.Equal((false, false, -1.0), (stopped.Active, stopped.QuickStanding, stopped.QuickStandLeftMs));
+
+        KnockdownFlight revived = LyingFlight(assets);
+        Assert.True(revived.BeginQuickStand(200));
+        revived.Resurrect();                                              // 活着时复活是空操作(还在倒地里),不动起身倒计时
+        Assert.True(revived.QuickStanding);
+    }
 }

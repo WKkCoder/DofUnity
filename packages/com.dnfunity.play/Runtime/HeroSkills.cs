@@ -17,6 +17,9 @@ namespace Dnf.Play
 
         /// <summary>后跳(BackStep)。</summary>
         public const int BackStep = 169;
+
+        /// <summary>倒地起身类技能(引擎状态 0x12,躺在地上时按指令键起身,证据 E-140;没有走 <see cref="HeroSkills.Cast"/>,由房间战斗会话直接处理)。</summary>
+        public const int QuickStand = 190;
     }
 
     /// <summary>放技能的结果。</summary>
@@ -46,7 +49,7 @@ namespace Dnf.Play
     {
         public SkillKeys Key { get; }
 
-        /// <summary>快捷栏里的位置(0 到 5,对应键 A S D F G H;底栏上从左数第几个槽)。</summary>
+        /// <summary>快捷栏里的位置(0 到 5,对应键 A S D F G H;底栏上从左数第几个槽);没有快捷键、只靠出招指令放的槽是 -1。</summary>
         public int Position { get; }
 
         public int SkillId { get; }
@@ -123,6 +126,31 @@ namespace Dnf.Play
 
         public bool Ready => CooldownLeftMs <= 0.0;
 
+        /// <summary>
+        /// 算"这个技能的键按着"的键:快捷键,加上指令扳机对应的 <see cref="SkillKeys.CommandSkill"/> 或 <see cref="SkillKeys.CommandBuff"/>
+        /// (蓄力类技能靠指令放出来时,看扳机键是不是还按着,E-140)。
+        /// </summary>
+        public SkillKeys HoldKeys
+        {
+            get
+            {
+                SkillKeys keys = Key;
+                SkillCommand c = Def?.Command;
+                if (c != null && !c.IsEmpty)
+                {
+                    if (c.Trigger == CommandKey.Skill)
+                    {
+                        keys |= SkillKeys.CommandSkill;
+                    }
+                    else if (c.Trigger == CommandKey.Buff)
+                    {
+                        keys |= SkillKeys.CommandBuff;
+                    }
+                }
+                return keys;
+            }
+        }
+
         /// <summary>冷却剩余的比例(0 到 1);界面画冷却遮罩用。</summary>
         public double CooldownFraction => CooldownMs > 0 ? Math.Min(1.0, Math.Max(0.0, CooldownLeftMs / CooldownMs)) : 0.0;
 
@@ -134,7 +162,7 @@ namespace Dnf.Play
             {
                 position++;
             }
-            Position = position;
+            Position = key == SkillKeys.None ? -1 : position;
             SkillId = skillId;
             Level = level < 1 ? 1 : level;
             Def = def;
@@ -161,19 +189,44 @@ namespace Dnf.Play
         public const int SlotCount = SkillBook.QuickSlots;
 
         private readonly List<HeroSkillSlot> _slots;
+        private readonly List<HeroSkillSlot> _commandSlots;
+        private List<HeroSkillSlot> _commandOrder;
 
         /// <summary>按快捷栏位置从小到大;只含放了技能的格(空格没有槽,键没有绑定)。旧的初始技能表创建方式(没给技能簿)只会有 A、S、D 三个。</summary>
         public IReadOnlyList<HeroSkillSlot> Slots => _slots;
 
+        /// <summary>
+        /// 学会了、有出招指令、没放进快捷栏的技能的槽(<see cref="HeroSkillSlot.Key"/> 是 None):只能靠指令放(<see cref="TryCastCommand"/>),
+        /// 不画在底栏上。放进了快捷栏的技能不在这里——指令与快捷键共用同一个槽(同一份冷却)。
+        /// </summary>
+        public IReadOnlyList<HeroSkillSlot> CommandSlots => _commandSlots;
+
         public HeroSkills(IEnumerable<HeroSkillSlot> slots)
+            : this(slots, null)
         {
-            _slots = new List<HeroSkillSlot>(slots ?? throw new ArgumentNullException(nameof(slots)));
         }
 
-        /// <summary>这个技能编号有没有实现放法(三个手写的,加上默认配方表里的)。</summary>
+        public HeroSkills(IEnumerable<HeroSkillSlot> slots, IEnumerable<HeroSkillSlot> commandSlots)
+        {
+            _slots = new List<HeroSkillSlot>(slots ?? throw new ArgumentNullException(nameof(slots)));
+            _commandSlots = new List<HeroSkillSlot>();
+            if (commandSlots != null)
+            {
+                foreach (HeroSkillSlot c in commandSlots)
+                {
+                    if (c != null && SlotOfSkill(c.SkillId) == null)
+                    {
+                        _commandSlots.Add(c);
+                    }
+                }
+            }
+        }
+
+        /// <summary>这个技能编号有没有实现放法(三个手写的、倒地起身,加上默认配方表里的)。</summary>
         public static bool IsImplemented(int skillId)
         {
-            return skillId == SkillIds.HardAttack || skillId == SkillIds.UpperSlash || skillId == SkillIds.BackStep || SkillRecipes.Default.Find(skillId) != null;
+            return skillId == SkillIds.HardAttack || skillId == SkillIds.UpperSlash || skillId == SkillIds.BackStep || skillId == SkillIds.QuickStand
+                || SkillRecipes.Default.Find(skillId) != null;
         }
 
         private static bool IsImplemented(HeroSkillSlot slot)
@@ -236,7 +289,26 @@ namespace Dnf.Play
                 }
                 slots.Add(MakeSlot(data, chr, (SkillKeys)(1 << position), def, book.LevelOf(skillId), recipes, effects));
             }
-            return new HeroSkills(slots) { SkillLevelOf = book.LevelOf };
+            // 学会了、有出招指令、没放进快捷栏的主动技能:只靠指令放(E-140)。没有放法的技能不进来(按指令也放不出东西)
+            var commandSlots = new List<HeroSkillSlot>();
+            foreach (KeyValuePair<int, int> learned in book.Learned)
+            {
+                if (learned.Value <= 0 || book.QuickSlotOf(learned.Key) >= 0)
+                {
+                    continue;
+                }
+                SkillDef def = book.Catalog.Find(learned.Key) ?? data.GetSkill(job, learned.Key);
+                if (def == null || def.Type != "[active]" || def.Command.IsEmpty)
+                {
+                    continue;
+                }
+                HeroSkillSlot slot = MakeSlot(data, chr, SkillKeys.None, def, learned.Value, recipes, effects);
+                if (IsImplemented(slot))
+                {
+                    commandSlots.Add(slot);
+                }
+            }
+            return new HeroSkills(slots, commandSlots) { SkillLevelOf = book.LevelOf };
         }
 
         private static HeroSkillSlot MakeSlot(GameData data, CharacterDef chr, SkillKeys key, SkillDef def, int level, SkillRecipes recipes = null,
@@ -309,7 +381,7 @@ namespace Dnf.Play
         /// <summary>鬼斩特效放在主角前方多少像素(基线截图与效果图做模板匹配得到:朝左时效果锚点比主角世界 x 再往左 40,纵向没有偏移)。</summary>
         public const int HardAttackEffectForwardX = 40;
 
-        /// <summary>这个技能编号占的槽;没有则 null。</summary>
+        /// <summary>这个技能编号占的槽(先找快捷槽,再找只靠指令放的槽);没有则 null。</summary>
         public HeroSkillSlot SlotOfSkill(int skillId)
         {
             foreach (HeroSkillSlot s in _slots)
@@ -317,6 +389,16 @@ namespace Dnf.Play
                 if (s.SkillId == skillId)
                 {
                     return s;
+                }
+            }
+            if (_commandSlots != null)
+            {
+                foreach (HeroSkillSlot s in _commandSlots)
+                {
+                    if (s.SkillId == skillId)
+                    {
+                        return s;
+                    }
                 }
             }
             return null;
@@ -342,15 +424,28 @@ namespace Dnf.Play
             {
                 return;
             }
-            foreach (HeroSkillSlot s in _slots)
+            foreach (HeroSkillSlot s in AllSlots())
             {
-                foreach (HeroSkillSlot o in other._slots)
+                foreach (HeroSkillSlot o in other.AllSlots())
                 {
                     if (o.SkillId == s.SkillId)
                     {
                         s.CooldownLeftMs = Math.Min(o.CooldownLeftMs, s.CooldownMs);
                     }
                 }
+            }
+        }
+
+        /// <summary>快捷槽加上只靠指令放的槽。</summary>
+        private IEnumerable<HeroSkillSlot> AllSlots()
+        {
+            foreach (HeroSkillSlot s in _slots)
+            {
+                yield return s;
+            }
+            foreach (HeroSkillSlot s in _commandSlots)
+            {
+                yield return s;
             }
         }
 
@@ -361,7 +456,13 @@ namespace Dnf.Play
             {
                 return;
             }
-            foreach (HeroSkillSlot s in _slots)
+            AdvanceCooldowns(_slots, deltaMs);
+            AdvanceCooldowns(_commandSlots, deltaMs);
+        }
+
+        private static void AdvanceCooldowns(List<HeroSkillSlot> slots, double deltaMs)
+        {
+            foreach (HeroSkillSlot s in slots)
             {
                 if (s.CooldownLeftMs > 0.0)
                 {
@@ -399,6 +500,94 @@ namespace Dnf.Play
 
         /// <summary>最近一次 <see cref="TryCast"/> 的结果(放出来了就是 <see cref="SkillCastResult.Cast"/>;按了几个键时是最后一个被试的槽的结果)。用来决定放"没魔法"、"冷却中"的语音。</summary>
         public SkillCastResult LastCastResult { get; private set; } = SkillCastResult.NotBound;
+
+        /// <summary>最近一次 <see cref="TryCastCommand"/> 里有没有哪个技能的指令被打出来(不论后来放没放成)。</summary>
+        public bool CommandMatched { get; private set; }
+
+        /// <summary>技能与增益这两个键当扳机(按下就判定);跳跃只在指令多于一个键时当扳机(只有一个跳跃键的指令会和普通跳跃撞车,留给专门的处理);攻击键当扳机的是普攻与冲刺攻击,不在这里。</summary>
+        private static bool IsPressTrigger(CommandKey key)
+        {
+            return key == CommandKey.Skill || key == CommandKey.Buff;
+        }
+
+        private static bool IsCommandCastable(HeroSkillSlot s)
+        {
+            return s.SkillId != SkillIds.QuickStand && IsImplemented(s) && CommandCasts(s.Def?.Command);
+        }
+
+        /// <summary>
+        /// 这条指令能不能由指令层放出技能:扳机是技能或增益键,或者是跳跃键而且指令不止一个键(只有一个跳跃键的指令会和普通跳跃撞车,留给专门的处理;攻击键当扳机的是普攻与冲刺攻击,不在这里)。
+        /// </summary>
+        public static bool CommandCasts(SkillCommand c)
+        {
+            return c != null && !c.IsEmpty && (IsPressTrigger(c.Trigger) || (c.Trigger == CommandKey.Jump && c.Length >= 2));
+        }
+
+        /// <summary>能靠指令放的槽,指令越长越先试(长指令包含短指令,同长度按快捷槽在前、技能编号小的在前)。</summary>
+        private List<HeroSkillSlot> CommandOrder()
+        {
+            if (_commandOrder == null)
+            {
+                var all = new List<HeroSkillSlot>();
+                foreach (HeroSkillSlot s in AllSlots())
+                {
+                    if (IsCommandCastable(s))
+                    {
+                        all.Add(s);
+                    }
+                }
+                var ordered = new List<HeroSkillSlot>(all.Count);
+                for (int length = 8; length >= 1; length--)
+                {
+                    foreach (HeroSkillSlot s in all)
+                    {
+                        if (s.Def.Command.Length == length)
+                        {
+                            ordered.Add(s);
+                        }
+                    }
+                }
+                _commandOrder = ordered;
+            }
+            return _commandOrder;
+        }
+
+        /// <summary>
+        /// 按出招指令放技能(E-140):逐个试"打出了自己指令"的槽(指令长的在前),放出来的第一个就是这一步的技能;
+        /// 指令打出来了但没放成(冷却、魔法值不够)就接着试后面短一点的指令——例如"上 + 技能"的技能在冷却,同一下按键会落到单键"技能"的技能上(推断)。
+        /// 一个都没放出来时,<see cref="CommandMatched"/> 告诉有没有指令被打出来,<see cref="LastCastResult"/> 是最后一个打出指令却没放成的结果
+        /// (没有指令被打出来时不改它)。放出来后清空输入历史,同一串按键不会再放第二次。
+        /// 方向键的前后按"这一步转身之后"的朝向算:<paramref name="heldX"/> 不为 0 就是主角这一步转向的方向(按左键转向左),为 0 时用主角现在的朝向。
+        /// </summary>
+        public HeroSkillSlot TryCastCommand(CommandInput input, TownHero hero, HeroVitals vitals = null, int heldX = 0, int heldY = 0)
+        {
+            CommandMatched = false;
+            if (input == null || hero == null)
+            {
+                return null;
+            }
+            bool facingLeft = heldX != 0 ? heldX < 0 : hero.FacingLeft;
+            foreach (HeroSkillSlot s in CommandOrder())
+            {
+                if (!input.Matches(s.Def.Command, facingLeft))
+                {
+                    continue;
+                }
+                CommandMatched = true;
+                if (heldX != 0)
+                {
+                    hero.TurnTo(heldX < 0);       // 按着方向键放技能:先转向那边(与走路、跳跃、普攻一致),技能朝着按的方向出
+                }
+                SkillCastResult result = Cast(s, hero, vitals, heldX, heldY);
+                LastCastResult = result;
+                if (result == SkillCastResult.Cast)
+                {
+                    input.Clear();
+                    return s;
+                }
+            }
+            return null;
+        }
 
         /// <summary>
         /// 试着放这一个槽的技能;放出来就启动冷却,并(给了 <paramref name="vitals"/> 时)扣掉 [consume MP]。
@@ -461,11 +650,36 @@ namespace Dnf.Play
                 return null;
             }
             HeroSkillSlot slot = SlotOfSkill(hero.SkillId);
-            SkillRecipe recipe = slot?.Recipe;
-            if (recipe == null || (pressed & slot.Key) == 0)
+            if (slot?.Recipe == null || (pressed & slot.Key) == 0)
             {
                 return null;
             }
+            return ChainSlot(slot, hero, heldX, heldY);
+        }
+
+        /// <summary>
+        /// 同 <see cref="TryChain"/>,只是"再按一下技能键"按出招指令算:主角正在放的配方技能带指令时,这一步按下了它指令的扳机键就接下一段
+        /// (只看扳机,不要求把整串指令再打一遍——客户端逐帧代码查的是技能键是否按下,指令在起手时已经判过,推断,E-140)。
+        /// 只认技能与增益两种扳机。
+        /// </summary>
+        public HeroSkillSlot TryChainCommand(CommandInput input, TownHero hero, int heldX = 0, int heldY = 0)
+        {
+            if (input == null || hero == null || hero.Motion != HeroMotion.Skill || hero.SkillWindingUp)
+            {
+                return null;
+            }
+            HeroSkillSlot slot = SlotOfSkill(hero.SkillId);
+            SkillCommand command = slot?.Def?.Command;
+            if (slot?.Recipe == null || command == null || command.IsEmpty || !IsPressTrigger(command.Trigger) || !input.JustPressed(command.Trigger))
+            {
+                return null;
+            }
+            return ChainSlot(slot, hero, heldX, heldY);
+        }
+
+        private HeroSkillSlot ChainSlot(HeroSkillSlot slot, TownHero hero, int heldX, int heldY)
+        {
+            SkillRecipe recipe = slot.Recipe;
             if (recipe.Hop != null)
             {
                 return null;           // 蓄力跳跃类技能:两段之间按"松开或蓄满"自动衔接,再按技能键不接段(证据 E-138)

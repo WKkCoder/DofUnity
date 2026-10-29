@@ -60,6 +60,29 @@ namespace Dnf.Play
         /// <summary>从开始玩起自然起身(躺完)的次数,不含提前起身。</summary>
         public int GetUps { get; private set; }
 
+        /// <summary>从开始玩起用倒地起身技能(E-140)起身的次数。</summary>
+        public int QuickStands { get; private set; }
+
+        /// <summary>正在倒地起身里(E-140)。</summary>
+        public bool QuickStanding => _flight.QuickStanding;
+
+        /// <summary>现在能不能倒地起身:躺着(阶段 2)、没死、还没在起身里。</summary>
+        public bool CanQuickStand => _flight.CanQuickStand;
+
+        /// <summary>
+        /// 倒地起身(E-140):躺着时进入"倒地起身"状态,<paramref name="durationMs"/> 毫秒后起身站定,期间仍是倒地姿势(有没有无敌没读到;期间被再次击倒就取消起身)。
+        /// 不能起身(没躺着、已死、已在起身里)返回 false。
+        /// </summary>
+        public bool BeginQuickStand(double durationMs)
+        {
+            if (!_flight.BeginQuickStand(durationMs))
+            {
+                return false;
+            }
+            QuickStands++;
+            return true;
+        }
+
         public double VerticalSpeed => _flight.VerticalSpeed;
         public double HorizontalSpeed => _flight.HorizontalSpeed;
 

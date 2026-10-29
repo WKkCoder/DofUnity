@@ -114,6 +114,9 @@ namespace Dnf.Game
         /// <summary>有 [command](出招指令)标签:主动技能里能放进快捷槽、按指令放出的才有(证据 E-076:新建角色的初始技能表里,恰好是它们占了 A S D 三个快捷槽)。</summary>
         public bool HasCommand { get; }
 
+        /// <summary>出招指令的键序列(.skl 的 [command];没有标签或标签为空时是 <see cref="SkillCommand.Empty"/>,E-140)。</summary>
+        public SkillCommand Command { get; }
+
         /// <summary>
         /// [icon] 的图标图像(原样,例如 "Character/Swordman/Effect/SkillIcon.img";在图包里的路径是前面加 sprite/ 再转小写,证据 E-088);没有 [icon] 时为 null。
         /// </summary>
@@ -273,6 +276,7 @@ namespace Dnf.Game
             EffectiveMaxLevel = effective;
             Type = table.FirstString("[type]");
             HasCommand = table.Has("[command]");
+            Command = table.TryGetLine("[command]", out ScriptLine commandLine) ? SkillCommand.From(commandLine) : SkillCommand.Empty;
 
             // [icon] "图像" 帧 "图像" 帧:能用时的图标与不能用时的灰图标(形状不对就当没有)
             IconFrame = -1;

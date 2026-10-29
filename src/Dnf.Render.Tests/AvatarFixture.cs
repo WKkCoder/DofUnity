@@ -119,6 +119,19 @@ internal sealed class AvatarFixture : IDisposable
     /// [level info] 一列 (第 1 级 <see cref="HopRate1"/>,第 2 级 <see cref="HopRate2"/>),消耗魔法 10、冷却 3500;预载特效两个。数全是测试用的。
     /// </summary>
     public const int HopSkill = 904;
+
+    /// <summary>
+    /// 倒地起身类技能(M47,证据 E-140)的合成数据:技能编号 <see cref="QuickStandSkill"/>(与 <c>SkillIds.QuickStand</c> 相同),指令是合成的"下 &amp; 跳跃"(同时按),
+    /// [static data] 第 0 项是起身时长 <see cref="QuickStandMs"/>,耗蓝 <see cref="QuickStandMp"/>,冷却 <see cref="QuickStandCool"/>。
+    /// </summary>
+    public const int QuickStandSkill = 190;
+
+    /// <summary>以跳跃键当扳机的两键指令技能(M47,合成):指令"下,跳跃",[consume MP] 10、[cool time] 1000、两列 [level info]。</summary>
+    public const int JumpCommandSkill = 906;
+
+    public const int QuickStandMs = 150;
+    public const int QuickStandMp = 5;
+    public const int QuickStandCool = 4000;
     public const string HopReadyAni = "character/test/animation/hopready.ani";
     public const string HopAni = "character/test/animation/hop.ani";
     public const string HopFirstAtk = "character/test/attackinfo/hopfirst.atk";
@@ -407,6 +420,23 @@ internal sealed class AvatarFixture : IDisposable
             {
                 _tokens.Add((IntType, v));
             }
+            return this;
+        }
+
+        /// <summary>括号词标记(类型 6,值是字符串池下标;[command] 里的 (UP)、(SKILL) 就是这种写法,M47)。</summary>
+        public Script Paren(params string[] words)
+        {
+            foreach (string word in words)
+            {
+                _tokens.Add(((byte)TokenType.Paren, _owner.Intern(word)));
+            }
+            return this;
+        }
+
+        /// <summary>分隔符标记(类型 8,值是字符串池下标:"," 是先后、"&amp;" 是同时,M47)。</summary>
+        public Script Sep(string text)
+        {
+            _tokens.Add(((byte)TokenType.Separator, _owner.Intern(text)));
             return this;
         }
 
@@ -768,10 +798,19 @@ internal sealed class AvatarFixture : IDisposable
             ("skill/skilllist.lst", NewScript().Int(0).Str("testskill.lst").Build()),
             ("skill/testskill.lst", NewScript()
                 .Int(181).Str("test/passive.skl").Int(HardAttackSkill).Str("test/hardattack.skl").Int(UpperSlashSkill).Str("test/upperslash.skl")
-                .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Int(ChainSkill).Str("test/chain.skl").Int(WaveSkill).Str("test/wave.skl").Int(HopSkill).Str("test/hop.skl").Build()),
+                .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Int(ChainSkill).Str("test/chain.skl").Int(WaveSkill).Str("test/wave.skl").Int(HopSkill).Str("test/hop.skl").Int(QuickStandSkill).Str("test/quickstand.skl").Int(JumpCommandSkill).Str("test/jumpcommand.skl").Build()),
+            ("skill/test/jumpcommand.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[command]").Paren("(DOWN)").Sep(",").Paren("(JUMP)").Tag("[maximum level]").Int(10)
+                .Tag("[consume MP]").Int(10, 10).Tag("[cool time]").Int(1000, 1000)
+                .Tag("[level info]").Int(2, 100, 5).Build()),
+            // 倒地起身类技能:指令 (DOWN) & (JUMP)
+            ("skill/test/quickstand.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[command]").Paren("(DOWN)").Sep("&").Paren("(JUMP)").Tag("[maximum level]").Int(1)
+                .Tag("[consume MP]").Int(QuickStandMp, QuickStandMp).Tag("[cool time]").Int(QuickStandCool, QuickStandCool)
+                .Tag("[static data]").Int(QuickStandMs).Build()),
             // 蓄力跳跃类技能:十个 [static data](蓄力、距离、高度、变速、窗口数的最小与最大)与一列 [level info]
             ("skill/test/hop.skl", NewScript()
-                .Tag("[type]").Str("[active]").Tag("[command]").Str("SKILL").Tag("[maximum level]").Int(10)
+                .Tag("[type]").Str("[active]").Tag("[command]").Paren("(UP)").Sep("&").Paren("(SKILL)").Tag("[maximum level]").Int(10)
                 .Tag("[consume MP]").Int(10, 10).Tag("[cool time]").Int(3500, 3500)
                 .Tag("[static data]").Int(HopHoldMin, HopHoldMax, HopDistanceMin, HopDistanceMax, HopHeightMin, HopHeightMax, HopSpeedMin, HopSpeedMax, HopHitsMin, HopHitsMax)
                 .Tag("[level info]").Int(1, HopRate1, HopRate2).Build()),
@@ -779,7 +818,7 @@ internal sealed class AvatarFixture : IDisposable
             (HopRepeatAtk, NewScript().Tag("[damage reaction]").Tag("[down]").Tag("[push aside]").Int(HopRepeatPushAside).Build()),
             // 波系技能:三列 (固定值、大小比率、百分比),[casting time] 与三个 [static data]
             ("skill/test/wave.skl", NewScript()
-                .Tag("[type]").Str("[active]").Tag("[command]").Str("SKILL").Tag("[maximum level]").Int(10)
+                .Tag("[type]").Str("[active]").Tag("[command]").Paren("(SKILL)").Tag("[maximum level]").Int(10)
                 .Tag("[consume MP]").Int(15, 15).Tag("[cool time]").Int(2500, 2500).Tag("[casting time]").Int(WaveCastMs, WaveCastMs)
                 .Tag("[static data]").Int(250, 160, -320)
                 .Tag("[level info]").Int(3, 11, 100, 222, 12, 101, 333).Build()),
@@ -790,7 +829,7 @@ internal sealed class AvatarFixture : IDisposable
             (WaveObjAni, BuildBlobBoxesAni(false,
                 (0, 50, new[] { WaveObjBox }), (1, 50, new[] { WaveObjBox }), (2, 50, new (ushort Type, int[] Values)[0]), (3, 50, new (ushort Type, int[] Values)[0]))),
             ("skill/test/chain.skl", NewScript()
-                .Tag("[type]").Str("[active]").Tag("[command]").Str("SKILL").Tag("[maximum level]").Int(10)
+                .Tag("[type]").Str("[active]").Tag("[command]").Paren("(RIGHT)").Sep(",").Paren("(SKILL)").Tag("[maximum level]").Int(10)
                 .Tag("[consume MP]").Int(20, 20).Tag("[cool time]").Int(3000, 3000).Tag("[static data]").Int(200, -400, 100, -100, 2)
                 .Tag("[level info]").Int(4, 150, 250, 30, 50, 180, 300, 40, 60).Build()),     // 第一个数是列数(4),后面按行排:第 1 级 (150, 250, 30, 50),第 2 级 (180, 300, 40, 60)
             // 多段技能两段的攻击信息:第一段击退 ChainAPushAside,第二段击倒并击退 ChainBPushAside

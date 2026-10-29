@@ -530,8 +530,177 @@ internal static class SkillCheck
             "技能配方 " + recipeCount + " 个(共 " + recipeStages + " 段、放对象 " + recipeObjects + " 个、带蓄力 " + recipeHolds + " 段、等特效标志的对象 " + recipeGates
             + " 个、定结束帧 " + recipeEndFrames + " 段、蓄力跳跃 " + recipeHops + " 个、多段命中 " + recipeMultiHits + " 个)在真实数据里都读得通"
             + "(动作、攻击信息、特效、对象、蓄力、结束帧、[static data]、[level info] 列;问题 " + recipeProblems.Count + " 条)");
+
+        // 7. 出招指令(M47,证据 E-140):整个职业技能的 [command] 在真实数据里读得通,而且输入层认得出来——
+        // 有 [command] 的技能都解析出至少一个键、没有读不懂的括号词;把指令的键按顺序打一遍(朝右、朝左各一次),输入层认得出就是自己的指令;
+        // 已实现的、能靠指令放的技能,在真实的房间会话里按各自的指令打一遍,放出来的就是它自己(或指令更长、同样被打出来的另一个技能);
+        // 躺着的主角打出倒地起身的指令就起身。只打印汇总数,指令本身不打印。
+        int withCommand = 0;
+        int emptyParsed = 0;
+        int unknownTokens = 0;
+        int typedBad = 0;
+        int togetherCommands = 0;
+        int castableByCommand = 0;
+        var triggerCounts = new int[8];
+        var commandTexts = new Dictionary<string, int>();
+        foreach (SkillDef def in catalog.Skills)
+        {
+            if (!def.HasCommand)
+            {
+                continue;
+            }
+            withCommand++;
+            SkillCommand command = def.Command;
+            if (command.IsEmpty)
+            {
+                emptyParsed++;
+                continue;
+            }
+            unknownTokens += command.UnknownCount;
+            triggerCounts[(int)command.Trigger]++;
+            togetherCommands += command.HasTogether ? 1 : 0;
+            castableByCommand += HeroSkills.CommandCasts(command) ? 1 : 0;
+            commandTexts[command.ToString()] = commandTexts.TryGetValue(command.ToString(), out int seenBefore) ? seenBefore + 1 : 1;
+            foreach (bool facingLeft in new[] { false, true })
+            {
+                var input = new CommandInput();
+                foreach (CommandStep step in CommandSteps.Of(command, facingLeft))
+                {
+                    input.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Skill, step.Buff);
+                }
+                if (!input.Matches(command, facingLeft))
+                {
+                    typedBad++;
+                }
+            }
+        }
+        int sameCommand = commandTexts.Values.Count(n => n > 1);
+        Report(withCommand > 0 && unknownTokens == 0 && typedBad == 0,
+            "技能指令:" + withCommand + " 个技能带 [command](其中空的 " + emptyParsed + " 个,只能靠快捷槽),解析出键的 " + (withCommand - emptyParsed) + " 个,读不懂的括号词 " + unknownTokens + " 个,带\"同时\"的 " + togetherCommands
+            + " 个;扳机键 上/下/左/右/攻击/跳跃/技能/增益 各 " + string.Join("/", triggerCounts) + ";能靠指令放的 " + castableByCommand + " 个;"
+            + "按各自的键序列打一遍(朝右、朝左)输入层认不出的 " + typedBad + " 次;指令完全相同的有 " + sameCommand + " 组");
+
+        HeroProgress? caster = HeroProgress.CreateForLocalHero(assets, level);
+        if (caster != null)
+        {
+            SkillPlanner.SpendAll(caster);
+            var ready = new List<SkillDef>();
+            foreach (SkillDef def in catalog.Skills)
+            {
+                if (def.IsActive && def.Id != SkillIds.QuickStand && HeroSkills.IsImplemented(def.Id) && HeroSkills.CommandCasts(def.Command) && caster.Skills.LevelOf(def.Id) > 0)
+                {
+                    ready.Add(def);
+                }
+            }
+            int selfCast = 0;
+            int longerCast = 0;
+            int missed = 0;
+            int wrong = 0;
+            foreach (SkillDef def in ready)
+            {
+                RoomCombatSession session = NewSession(assets, opts, caster);
+                foreach (CommandStep step in CommandSteps.Of(def.Command, session.Hero.FacingLeft))
+                {
+                    session.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Keys);
+                }
+                if (session.Hero.Motion != HeroMotion.Skill && !session.Hero.IsBackStep)
+                {
+                    missed++;      // 后跳是跳跃状态的特殊参数(动作是跳跃,不是技能动作),所以也要认
+                }
+                else if (session.Hero.SkillId == def.Id)
+                {
+                    selfCast++;
+                }
+                else if (catalog.Find(session.Hero.SkillId)?.Command.Length > def.Command.Length)
+                {
+                    longerCast++;
+                }
+                else
+                {
+                    wrong++;
+                }
+            }
+            Report(ready.Count > 0 && missed == 0 && wrong == 0,
+                "指令放技能:已实现、已学会、能靠指令放的 " + ready.Count + " 个技能,在房间会话里各打一遍自己的指令:放出来的就是它自己 " + selfCast + " 个、落到指令更长的另一个技能 " + longerCast
+                + " 个、没放出来 " + missed + " 个、放成了别的 " + wrong + " 个");
+
+            // 倒地起身:躺着的主角打出倒地起身的指令
+            SkillDef? quick = catalog.Find(SkillIds.QuickStand);
+            if (quick != null && caster.Skills.LevelOf(SkillIds.QuickStand) > 0 && !quick.Command.IsEmpty)
+            {
+                RoomCombatSession session = NewSession(assets, opts, caster);
+                bool lying = false;
+                if (session.HeroDown.Available && session.HeroDown.Begin(new KnockdownInput(300, false, false, false, 500, 500), 0, false, false))
+                {
+                    for (int t = 0; t < 4000 && session.HeroDown.Stage != 2; t += 10)
+                    {
+                        session.Update(10, 0, 0, false, false, SkillKeys.None);
+                    }
+                    lying = session.HeroDown.Stage == 2;
+                }
+                if (lying)
+                {
+                    foreach (CommandStep step in CommandSteps.Of(quick.Command, session.Hero.FacingLeft))
+                    {
+                        session.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Keys);
+                    }
+                }
+                Report(lying && session.QuickStands == 1 && session.HeroDown.QuickStanding,
+                    "倒地起身:躺着的主角打出倒地起身的指令,起身 " + session.QuickStands + " 次(躺着 " + (lying ? "是" : "否") + ",正在起身 " + (session.HeroDown.QuickStanding ? "是" : "否") + ")");
+            }
+        }
+
         Console.WriteLine(bad == 0 ? "skill-check 全部通过" : "skill-check 有 " + bad + " 项失败");
         return bad == 0 ? 0 : 1;
+    }
+
+    /// <summary>一局新的房间战斗会话(检查用:每次放技能都要一局新的),主角带着花光点数的技能簿,出招指令开着,怪物不还手。</summary>
+    private static RoomCombatSession NewSession(DnfAssets assets, Options opts, HeroProgress progress)
+    {
+        RoomCombatSession session = DemoCombat.CreateSession(assets, opts.MapPath, opts.HeroWeapon ?? DemoHero.StarterWeapon, 1, false, progress);
+        session.CommandsEnabled = true;
+        return session;
+    }
+
+    /// <summary>把一条指令打成一串按键步骤的一步。</summary>
+    private readonly record struct CommandStep(double Ms, int DirX, int DirY, bool Attack, bool Jump, bool Skill, bool Buff)
+    {
+        /// <summary>这一步按下的出招指令键(技能键与增益键)。</summary>
+        public SkillKeys Keys => (Skill ? SkillKeys.CommandSkill : SkillKeys.None) | (Buff ? SkillKeys.CommandBuff : SkillKeys.None);
+    }
+
+    private static class CommandSteps
+    {
+        /// <summary>
+        /// 把指令打一遍:每个键按一步(方向键按下后在下一个键之前松开,"同时"连着下一个键的方向键一直按到下一个键按下那一步),
+        /// 按 <paramref name="facingLeft"/> 把朝前、朝后换成实际要按的左右键。
+        /// </summary>
+        public static IEnumerable<CommandStep> Of(SkillCommand command, bool facingLeft)
+        {
+            int dirX = 0;
+            int dirY = 0;
+            for (int i = 0; i < command.Length; i++)
+            {
+                CommandKey key = CommandInput.Absolute(command.Keys[i], facingLeft);
+                switch (key)
+                {
+                    case CommandKey.Up: dirY = -1; break;
+                    case CommandKey.Down: dirY = 1; break;
+                    case CommandKey.Left: dirX = -1; break;
+                    case CommandKey.Right: dirX = 1; break;
+                }
+                yield return new CommandStep(50.0, dirX, dirY, key == CommandKey.Attack, key == CommandKey.Jump, key == CommandKey.Skill, key == CommandKey.Buff);
+                if (!command.TogetherWithNext(i) && i + 1 < command.Length)
+                {
+                    if (dirX != 0 || dirY != 0)
+                    {
+                        dirX = 0;
+                        dirY = 0;
+                        yield return new CommandStep(30.0, 0, 0, false, false, false, false);     // 松开方向键(连着按同一个方向键时两次按下之间要有松开)
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>前置技能的有向图里有没有环(深度优先)。</summary>

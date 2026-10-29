@@ -434,7 +434,7 @@ namespace Dnf.Play
     /// 没做:属性点与技能点的花费、装备的其余加成、技能的逐级成长、上挑自己的攻击信息与伤害数、
     /// 复活与结算里的经验显示、技能音效与语音、掉落。出口开关与换房间在 <see cref="DungeonSession"/>。证据 E-069。
     /// </summary>
-    public sealed class RoomCombatSession : ISkillHoldSession, ISoundSource, IItemSession
+    public sealed class RoomCombatSession : ICommandSession, ISoundSource, IItemSession
     {
         /// <summary>一小步的最长时间(毫秒):比任何动画帧都短,保证每一帧的判定框至少被检查一次。</summary>
         public const double MaxStepMs = 10;
@@ -600,6 +600,7 @@ namespace Dnf.Play
         private bool _bufferedAttack;
         private bool _bufferedJump;
         private SkillKeys _bufferedSkills;
+        private readonly CommandInput _commands = new CommandInput();
 
         // 声音提示(证据 E-089、E-090):逻辑只发提示,播放在别处
         private readonly SoundCueQueue _sounds = new SoundCueQueue();
@@ -680,6 +681,15 @@ namespace Dnf.Play
         /// 不写就当全都松开(蓄力技能一放出来就按最低档出招)。
         /// </summary>
         public SkillKeys SkillsHeld { get; set; }
+
+        /// <summary>
+        /// 出招指令开关(M47,E-140):为真时,技能键 Z(<see cref="SkillKeys.CommandSkill"/>)与方向键、跳跃键一起按出技能自己 [command] 里的键序列就放那个技能,
+        /// 躺着时打出倒地起身技能的指令就起身(学了的话)。默认关(旧会话与自动机不变);Unity 播放器给玩家打开。
+        /// </summary>
+        public bool CommandsEnabled { get; set; }
+
+        /// <summary>出招指令的输入历史(给检查与测试看)。</summary>
+        public CommandInput Commands => _commands;
 
         /// <summary>
         /// 蓄力跳跃类技能与多段命中的技能打开过的命中窗口数(每次放出一个第一窗口,加上计时器每响一次重武装的一个;证据 E-138、E-139),给检查与测试用。
@@ -859,6 +869,12 @@ namespace Dnf.Play
 
         /// <summary>多段技能接上下一段的次数(证据 E-129;不算进 <see cref="SkillCasts"/>,接段不是新的一次施放)。</summary>
         public int SkillChains { get; private set; }
+
+        /// <summary>靠出招指令(而不是快捷键)放出来的技能次数(M47,E-140;也算进 <see cref="SkillCasts"/>)。</summary>
+        public int CommandCasts { get; private set; }
+
+        /// <summary>主角用倒地起身技能起身的次数(M47,E-140)。</summary>
+        public int QuickStands => _heroDown.QuickStands;
 
         public string MapPath => _room.MapPath;
         public TownHero Hero => _room.Hero;
@@ -1248,6 +1264,46 @@ namespace Dnf.Play
         }
 
         /// <summary>
+        /// 倒地起身(M47,E-140):主角躺着(倒地阶段 2、没死)、学了这个技能、冷却好了、魔法值够,而且这一步打出了它的指令或按了它的快捷键,
+        /// 就进入起身状态,时长取技能 [static data] 的第 0 项;冷却在进入那一刻开始。起身这一下的按键用掉(清掉这一步的跳跃与快捷键位,免得同一下按键又被当成别的操作)。返回是否起身。
+        /// </summary>
+        private bool TryQuickStand(ref bool jumpPressed, ref SkillKeys skillsPressed)
+        {
+            if (HeroDead || !_heroDown.CanQuickStand)
+            {
+                return false;
+            }
+            HeroSkillSlot slot = Skills.SlotOfSkill(SkillIds.QuickStand);
+            if (slot == null || !slot.Ready || (Vitals != null && Vitals.Mp < slot.ConsumeMp))
+            {
+                return false;
+            }
+            bool byKey = slot.Key != SkillKeys.None && (skillsPressed & slot.Key) != SkillKeys.None;
+            bool byCommand = CommandsEnabled && slot.Def != null && _commands.Matches(slot.Def.Command, _room.Hero.FacingLeft);
+            if (!byKey && !byCommand)
+            {
+                return false;
+            }
+            double duration = slot.Def == null ? 0.0 : Math.Max(0, slot.Def.GetStatic(0, false));
+            if (!_heroDown.BeginQuickStand(duration))
+            {
+                return false;
+            }
+            Vitals?.TrySpendMp(slot.ConsumeMp);
+            slot.CooldownLeftMs = slot.CooldownMs;
+            if (byKey)
+            {
+                skillsPressed &= ~slot.Key;
+            }
+            if (byCommand)
+            {
+                jumpPressed = false;
+                _commands.Clear();
+            }
+            return true;
+        }
+
+        /// <summary>
         /// 按了技能键:放出来的发各技能自己的声音(上挑 UPPER_SLASH_02;后跳的语音在起跳切换时发;鬼斩没有读到专门的声音);
         /// 没放出来时,魔法不够放"没魔法"语音,冷却中放"冷却中"语音(两个语音在 12 项语音表里有位置,触发的位置是按名字推断的)。
         /// </summary>
@@ -1598,10 +1654,30 @@ namespace Dnf.Play
                 _bufferedJump = false;
                 _bufferedSkills = SkillKeys.None;
                 _heroDown.Step(heroDelta);     // 倒地在命中停顿里一起冻结(与怪物的倒地一样);先走倒地,摄像机在后面的 Update 里跟着新位置
+                // 出招指令(M47,E-140):这一步按下的键进输入历史;躺着时打出倒地起身的指令(或按它的快捷键)就起身,这一下按键用掉
+                if (CommandsEnabled)
+                {
+                    _commands.Update(heroDelta, dirX, dirY, attackPressed, jumpPressed,
+                        (skillsPressed & SkillKeys.CommandSkill) != SkillKeys.None, (skillsPressed & SkillKeys.CommandBuff) != SkillKeys.None);
+                }
+                TryQuickStand(ref jumpPressed, ref skillsPressed);
+                SkillKeys quickPressed = skillsPressed & SkillKeys.Quick;
                 // 正在放多段技能时,再按它的键就是接下一段(证据 E-129);不是接段才按起手处理
-                HeroSkillSlot chained = skillsPressed == SkillKeys.None ? null : Skills.TryChain(skillsPressed, _room.Hero, dirX, dirY);
-                HeroSkillSlot cast = skillsPressed == SkillKeys.None || chained != null ? null : Skills.TryCast(skillsPressed, _room.Hero, Vitals, dirX, dirY);
-                if (skillsPressed != SkillKeys.None && chained == null)
+                HeroSkillSlot chained = quickPressed == SkillKeys.None ? null : Skills.TryChain(quickPressed, _room.Hero, dirX, dirY);
+                if (chained == null && CommandsEnabled)
+                {
+                    chained = Skills.TryChainCommand(_commands, _room.Hero, dirX, dirY);
+                }
+                HeroSkillSlot cast = quickPressed == SkillKeys.None || chained != null ? null : Skills.TryCast(quickPressed, _room.Hero, Vitals, dirX, dirY);
+                bool announce = quickPressed != SkillKeys.None;
+                bool viaCommand = false;
+                if (cast == null && chained == null && CommandsEnabled)
+                {
+                    cast = Skills.TryCastCommand(_commands, _room.Hero, Vitals, dirX, dirY);
+                    viaCommand = cast != null;
+                    announce |= Skills.CommandMatched;
+                }
+                if (announce && chained == null)
                 {
                     EmitSkillCues(cast);
                 }
@@ -1616,6 +1692,10 @@ namespace Dnf.Play
                     attackPressed = false;
                     jumpPressed = false;
                     SkillCasts++;
+                    if (viaCommand)
+                    {
+                        CommandCasts++;
+                    }
                     SpawnEffects(cast);
                 }
                 else if (attackPressed && TryPickupSelected(_room.Hero))
@@ -1835,7 +1915,7 @@ namespace Dnf.Play
             int min = slot.Def.GetStatic(hop.HoldMinIndex, false);
             int max = slot.Def.GetStatic(hop.HoldMaxIndex, false);
             int elapsed = (int)hero.MotionMs;
-            if ((SkillsHeld & slot.Key) != SkillKeys.None && elapsed < max)
+            if ((SkillsHeld & slot.HoldKeys) != SkillKeys.None && elapsed < max)
             {
                 return;
             }

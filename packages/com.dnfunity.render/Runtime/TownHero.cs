@@ -678,6 +678,18 @@ namespace Dnf.Render
         /// </summary>
         public bool CanBeginSkill => !(IsAirborne || IsAttacking || IsHurt || IsDown);
 
+        /// <summary>
+        /// 先转向再出手:按着方向键放技能时,主角这一步先转向那个方向(与走路、跳跃、普攻按着方向键时先转身一致)。
+        /// 只在腾得出手时转(<see cref="CanBeginSkill"/>),别的状态里不能转身。
+        /// </summary>
+        public void TurnTo(bool facingLeft)
+        {
+            if (CanBeginSkill)
+            {
+                FacingLeft = facingLeft;
+            }
+        }
+
         /// <summary>正在挥的这一击的种类;不在攻击时为 <see cref="HeroAttackKind.Normal"/>。</summary>
         public HeroAttackKind AttackKind => Motion == HeroMotion.DashAttack ? HeroAttackKind.Dash
             : (Motion == HeroMotion.JumpAttack ? HeroAttackKind.Jump : (Motion == HeroMotion.Skill ? HeroAttackKind.Skill : HeroAttackKind.Normal));
@@ -2699,6 +2711,18 @@ namespace Dnf.Render
         F = 8,
         G = 16,
         H = 32,
+
+        /// <summary>
+        /// 出招指令里的"技能"键(原版热键表里"技能"一格,默认 Z,E-140)。不是快捷槽:它只在指令里当扳机用,
+        /// 放哪个技能由方向键加上各技能自己的 [command] 决定(<c>CommandInput</c>、<c>HeroSkills.TryCastCommand</c>)。
+        /// </summary>
+        CommandSkill = 64,
+
+        /// <summary>出招指令里的"增益"键(热键表里"技能2"一格,默认空格;推断,E-140)。</summary>
+        CommandBuff = 128,
+
+        /// <summary>六个快捷槽的键(A S D F G H)。</summary>
+        Quick = A | S | D | F | G | H,
     }
 
     /// <summary>带技能快捷键的场景游戏(副本房间里的战斗):同 <see cref="IActionSession"/>,每帧多一组"刚按下"的技能键。</summary>
@@ -2714,6 +2738,15 @@ namespace Dnf.Render
     public interface ISkillHoldSession : ISkillSession
     {
         SkillKeys SkillsHeld { get; set; }
+    }
+
+    /// <summary>
+    /// 带出招指令开关的会话(M47,证据 E-140):开着时,技能键 <see cref="SkillKeys.CommandSkill"/>、<see cref="SkillKeys.CommandBuff"/> 与方向键、跳跃键
+    /// 一起按出各技能 [command] 里的键序列就放那个技能;关着时这两个键没有用(旧行为,自动机与旧脚本不变)。
+    /// </summary>
+    public interface ICommandSession : ISkillHoldSession
+    {
+        bool CommandsEnabled { get; set; }
     }
 
     /// <summary>

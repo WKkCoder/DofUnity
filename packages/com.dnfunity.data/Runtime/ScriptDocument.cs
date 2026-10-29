@@ -17,7 +17,7 @@ namespace Dnf.Data
         Paren,
         /// <summary>"种类 + 键"的字符串引用(标记类型 9 加 10,键是字符串池下标)。<see cref="ScriptValue.Int"/> 是种类,<see cref="ScriptValue.Text"/> 是键。</summary>
         Keyed,
-        /// <summary>分隔符(标记类型 8)。</summary>
+        /// <summary>分隔符(标记类型 8,值是字符串池下标:<see cref="ScriptValue.Text"/> 是分隔字符本身,如 "," 或 "&amp;";越界时为 null,E-140)。</summary>
         Separator,
         /// <summary>没有识别的标记类型(<see cref="ScriptValue.Int"/> 里是原始值)。</summary>
         Other,
@@ -148,7 +148,7 @@ namespace Dnf.Data
                         values.Add(new ScriptValue(ScriptValueKind.Paren, t.Value, StringAt(strings, t.Value)));
                         break;
                     case (byte)TokenType.Separator:
-                        values.Add(new ScriptValue(ScriptValueKind.Separator, t.Value, null));
+                        values.Add(new ScriptValue(ScriptValueKind.Separator, t.Value, StringAt(strings, t.Value)));
                         break;
                     case (byte)TokenType.StringRefKind:
                         if (i + 1 < tokens.Length && tokens[i + 1].Type == (byte)TokenType.StringRefKey)

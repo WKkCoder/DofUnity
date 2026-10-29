@@ -108,6 +108,7 @@ namespace Dnf.Play
         private int _rollState;
         private bool _ended;
         private bool _died;
+        private double _quickStandLeftMs = -1.0;
 
         /// <param name="weight">体重属性(怪物是 [weight],主角是 .chr 的 [weight]:原版里都是 <c>0x007692b0</c> 读出来的合计体重,证据 E-105)。</param>
         public KnockdownFlight(int weight, DownAnimation animation)
@@ -140,6 +141,30 @@ namespace Dnf.Play
         public double AniMs => _aniMs;
 
         public DownAnimation Animation => _anim;
+
+        /// <summary>正在"倒地起身"(引擎状态 0x12,E-140)里:躺着时按了倒地起身技能的指令,倒计时走完就起身。</summary>
+        public bool QuickStanding => _active && _quickStandLeftMs >= 0.0;
+
+        /// <summary>倒地起身还剩多少毫秒;不在倒地起身里是 -1。</summary>
+        public double QuickStandLeftMs => QuickStanding ? _quickStandLeftMs : -1.0;
+
+        /// <summary>现在能不能倒地起身:只在阶段 2(躺着)、没有已死、还没在起身里(引擎里这个技能只在 DOWN 状态的躺着阶段可用,E-140)。</summary>
+        public bool CanQuickStand => _active && _stage == 2 && !DieOnLying && _quickStandLeftMs < 0.0;
+
+        /// <summary>
+        /// 倒地起身(E-140,静态读码):躺着时进入状态 0x12,停留 <paramref name="durationMs"/> 毫秒(技能 [static data] 的第 0 项)之后起身站定;
+        /// 进入时不换动画(推断:倒地动画照常放),这期间仍算倒地(起身时有没有无敌没有读到,不做;被再次击倒就取消起身)。时长为 0 的话下一步就起身。
+        /// 不能起身(<see cref="CanQuickStand"/> 为假)返回 false。
+        /// </summary>
+        public bool BeginQuickStand(double durationMs)
+        {
+            if (!CanQuickStand)
+            {
+                return false;
+            }
+            _quickStandLeftMs = Math.Max(0.0, durationMs);
+            return true;
+        }
 
         /// <summary>从创建起 <see cref="Begin"/> 的次数(包括落地后的再请求);宿主据此知道这一步里状态被"重新开始"过(怪物的阶段计时在每次开始时归零)。</summary>
         public int BeginCount { get; private set; }
@@ -227,6 +252,7 @@ namespace Dnf.Play
             _stage = launch.Stage;
             _type = launch.Type;
             _stage2Ms = 0;
+            _quickStandLeftMs = -1.0;
             int jump = wasDown && (prevType == 2 || prevType == 3) ? 1 : (launch.Stage == 1 || launch.Stage == 2 ? launch.Stage : 0);
             IReadOnlyList<int> holds = _anim.HoldFrames;
             if (jump != 0 && holds.Count > 0)
@@ -266,6 +292,7 @@ namespace Dnf.Play
         {
             _active = false;
             _ended = false;
+            _quickStandLeftMs = -1.0;
             if (!keepVelocity)
             {
                 Z = 0;
@@ -288,6 +315,7 @@ namespace Dnf.Play
             }
             _active = true;
             _ended = false;
+            _quickStandLeftMs = -1.0;
             _stage = 2;
             _stage2Ms = 0;
             _vx = 0;
@@ -383,6 +411,7 @@ namespace Dnf.Play
             _active = false;
             _vx = 0;
             _ended = true;
+            _quickStandLeftMs = -1.0;
         }
 
         /// <summary>阶段 2:躺着不动;动画放完(或没有可放的帧时停够占位时长、或提前结束)就起身。</summary>
@@ -393,6 +422,16 @@ namespace Dnf.Play
             _vx = 0;
             AdvanceClock(ms);
             _stage2Ms += ms;
+            if (_quickStandLeftMs >= 0.0)
+            {
+                // 倒地起身里:只看自己的倒计时(提前起身、躺地占位时长与动画放完都不再起作用)
+                _quickStandLeftMs -= ms;
+                if (_quickStandLeftMs <= 0.0)
+                {
+                    End();
+                }
+                return;
+            }
             int lying = _anim.LyingFrame;
             bool stuckOnHold = lying >= 0 && _anim.IsHold(lying);
             bool done = stuckOnHold ? _stage2Ms >= MonsterTuning.KnockDownHoldMs : _aniMs >= _anim.TotalMs;

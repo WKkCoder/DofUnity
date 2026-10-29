@@ -1786,6 +1786,11 @@ namespace Dnf.Client
                 {
                     holdSession.SkillsHeld = _heroInput ? _heldSkills : SkillKeys.None;   // 蓄力类技能每步查键是否还按着(E-138)
                 }
+                if (_session is ICommandSession commandSession)
+                {
+                    // 出招指令(M47,E-140):人用键盘(或触屏)操作时开;时间表里写了 z 或 buff 的那一局也开;自动机走另一条路,不开
+                    commandSession.CommandsEnabled = _heroInput && (_script.IsEmpty || _script.UsesCommands);
+                }
                 if (_session is ISkillSession skillSession)
                 {
                     skillSession.Update(deltaMs, dirX, dirY, attack, jump, skills);
@@ -2117,7 +2122,8 @@ namespace Dnf.Client
         /// 方向键(或 -dnfautowalk 的时间表)当前的状态:-1/0/1;返回这一帧有没有"刚按下攻击键"(X 键,或时间表里到点的 attack),
         /// <paramref name="jump"/> 是这一帧有没有"刚按下跳跃键"(C 键,或时间表里到点的 jump)。
         /// 按原版的默认键位(clientonly/hotkeysystem.co,证据 E-072):X 普通攻击、C 跳跃、A S D F G H 是六个技能快捷槽(新建的剑士前三个是鬼斩、上挑、后跳,证据 E-076;槽里放什么由技能簿定,M35);
-        /// Z 与空格也是技能槽,但原版里它们绑什么技能没有确认,所以不响应(空格在本演示里是暂停)。
+        /// Z 是出招指令里的"技能"键(热键表里"技能"一格的默认键;M47,E-140):和方向键、跳跃键一起按出各技能 [command] 里的键序列就放那个技能,
+        /// 躺着时按倒地起身的指令就起身;空格是热键表里的"技能2"(增益键,推断),增益类技能还没有做,空格在本演示里仍是暂停。
         /// </summary>
         private bool ReadHeroInput(out int dirX, out int dirY, out bool jump, out SkillKeys skills)
         {
@@ -2149,6 +2155,8 @@ namespace Dnf.Client
             if (Input.GetKey(KeyCode.F)) { _heldSkills |= SkillKeys.F; }
             if (Input.GetKey(KeyCode.G)) { _heldSkills |= SkillKeys.G; }
             if (Input.GetKey(KeyCode.H)) { _heldSkills |= SkillKeys.H; }
+            if (Input.GetKeyDown(KeyCode.Z)) { skills |= SkillKeys.CommandSkill; }
+            if (Input.GetKey(KeyCode.Z)) { _heldSkills |= SkillKeys.CommandSkill; }
             bool attack = Input.GetKeyDown(KeyCode.X);
             if (TouchActive)
             {
