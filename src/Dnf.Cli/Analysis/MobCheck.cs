@@ -63,6 +63,8 @@ internal static class MobCheck
         // 有射程范围的记录数、有攻击动作却没有这个标签的文件数、概率超出 0 到 100 的记录数。只统计个数,不输出任何数值。
         int attackKindDefs = 0, attackKindBadShape = 0, attackKindRecords = 0, attackKindCountMismatch = 0, attackKindWithExtents = 0;
         int attackKindMissing = 0, attackKindChanceOutOfRange = 0, attackKindNegativeReach = 0;
+        // [superarmor on attack](M50,E-143):有标签的文件数、第一个整数非 0(出招时带霸体)的文件数、整数个数不是 2 的文件数。只统计个数。
+        int armorDefs = 0, armorOn = 0, armorBadShape = 0;
         // [throw attack](E-103):有这个块的文件数、块数、个数表与 [passive object number] 对不上的块数、招号不在 [attack motion] 范围里的块数、
         // 没有 [throw frame] 的块数、被动对象编号为 0 的块数、编号不在列表里或读不到基础动画的块数、引用的 .ptl 数与读不到的数、
         // .ptl 只在 x 轴直线飞的数与其余运动方式的数、没有 [life time] 的 .ptl 数、带发射声音的块数、[attack number] 大于 1 的块数。只统计个数,不输出任何数值。
@@ -194,6 +196,19 @@ internal static class MobCheck
                 }
                 categoryEntries += triples;
                 categoryDroppedEntries += triples - def.AbilityCategories.Length;
+            }
+
+            if (def.Tags.TryGetLine("[superarmor on attack]", out ScriptLine armorLine))
+            {
+                armorDefs++;
+                if (def.SuperArmorOnAttack)
+                {
+                    armorOn++;
+                }
+                if (armorLine.Values.Length != 2)
+                {
+                    armorBadShape++;
+                }
             }
 
             if (def.Tags.TryGetLine("[attack kind]", out ScriptLine kindLine))
@@ -453,6 +468,7 @@ internal static class MobCheck
             + " 个文件,记录条数与 [attack motion] 个数对不上 " + attackKindCountMismatch + " 个文件,有射程范围的记录 " + attackKindWithExtents
             + " 条,概率超出 0 到 100 的记录 " + attackKindChanceOutOfRange + " 条,射程为负的记录 " + attackKindNegativeReach
             + " 条;有攻击动作却没有这个标签的文件 " + attackKindMissing);
+        Console.WriteLine("[superarmor on attack](E-143):" + armorDefs + " 个文件,其中出招时带霸体(第一个数非 0)" + armorOn + " 个,整数个数不是 2 " + armorBadShape + " 个");
         Console.WriteLine("[throw attack](E-103):" + throwDefs + " 个文件,共 " + throwBlocks + " 个块,个数表与 [passive object number] 对不上 " + throwBadShape
             + " 个块,招号不在 [attack motion] 范围里 " + throwBadAttackIndex + " 个块,没有 [throw frame] " + throwNoFrame + " 个块,被动对象编号为 0 " + throwNoObject
             + " 个块,编号不在列表里或读不到基础动画 " + throwObjectMissing + " 个块,带发射声音 " + throwWithSound + " 个块,[attack number] 大于 1 " + throwRepeating
@@ -504,6 +520,9 @@ internal static class MobCheck
                 ["attackKindMissing"] = attackKindMissing,
                 ["attackKindChanceOutOfRange"] = attackKindChanceOutOfRange,
                 ["attackKindNegativeReach"] = attackKindNegativeReach,
+                ["armorDefs"] = armorDefs,
+                ["armorOn"] = armorOn,
+                ["armorBadShape"] = armorBadShape,
                 ["throwDefs"] = throwDefs,
                 ["throwBlocks"] = throwBlocks,
                 ["throwBadShape"] = throwBadShape,

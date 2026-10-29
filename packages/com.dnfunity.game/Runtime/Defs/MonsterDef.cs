@@ -217,6 +217,30 @@ namespace Dnf.Game
         /// <summary>[vision]:全库 1,257 个 .mob 使用(与 [sight] 不同写法,含义属推断:视野距离);没有则 0。</summary>
         public int Vision => Tags.IntOr("[vision]", 0);
 
+        /// <summary>
+        /// [superarmor on attack](E-143):第一个整数非 0 表示这个怪物出招期间(客户端 STATE_ATTACK = 8)带档位 1 的霸体——客户端在进入出招状态时打开、
+        /// 离开出招状态时关闭;这一档霸体被攻击信息的 [ignore super armor] 无视(见 <c>docs/hit-pipeline.md</c> §26)。
+        /// 第二个整数(<see cref="SuperArmorValue"/>)在打开时加进怪物属性组里的一个数值槽,哪个属性没读出来。全库 34 个怪物写了它(本机脚本扫描汇总,非 REA)。
+        /// </summary>
+        public bool SuperArmorOnAttack
+        {
+            get
+            {
+                int[] v = Tags.Ints("[superarmor on attack]");
+                return v.Length > 0 && v[0] != 0;
+            }
+        }
+
+        /// <summary>[superarmor on attack] 的第二个整数(缺省 0;含义没读出来,不参与运行期)。</summary>
+        public int SuperArmorValue
+        {
+            get
+            {
+                int[] v = Tags.Ints("[superarmor on attack]");
+                return v.Length > 1 ? v[1] : 0;
+            }
+        }
+
         /// <summary>[warlike]:服务端缺省 50(好战程度,名字取自标签,数值含义属推断)。</summary>
         public int Warlike => Tags.IntOr("[warlike]", 50);
 

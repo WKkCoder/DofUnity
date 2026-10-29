@@ -918,6 +918,9 @@ namespace Dnf.Play
         /// <summary>因为霸体而没有产生受击反应(硬直、击退、倒地都没有,伤害照扣)的次数。</summary>
         public int SuperArmorAbsorbed { get; private set; }
 
+        /// <summary>怪物的霸体吞掉的受击反应次数(M50,E-143):出招中带 [superarmor on attack] 的怪物挨了不无视霸体的一击、没死,没有受击也没有倒地。</summary>
+        public int MonsterArmorAbsorbed { get; private set; }
+
         public string MapPath => _room.MapPath;
         public TownHero Hero => _room.Hero;
         public TownCamera Camera => _room.Camera;
@@ -2396,7 +2399,13 @@ namespace Dnf.Play
             // 受击硬直与击退按客户端的公式算(证据 E-080);没有硬直表时 StunInput 无效,怪物走占位值。
             // 倒地(以及空中、倒地中又挨打)按客户端的开始处理算:体重缩放的击飞、z 抛物线、落地后颠一下再躺下(证据 E-082、E-083)
             _monsterHp?.SetTarget(monster, _hudClockMs);    // 先选中再结算:血条先取这一击之前的生命,这一击才会掉出一段闪光(证据 E-106)
-            bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, facingLeft, StunInput(info), DownInput(info));
+            // 受击决策的第 1、2、4 步(E-079、E-143):[damage reaction] 是 none,或出招中的怪物带着霸体而这一击不无视它 → 只扣血、没有受击或倒地
+            bool armor = monster.IsSuperArmored && !info.IgnoreSuperArmor && !info.ReactionNone;
+            bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, facingLeft, StunInput(info), DownInput(info), info.ReactionNone || armor);
+            if (armor && !killed)
+            {
+                MonsterArmorAbsorbed++;
+            }
             EmitHitCues(hero, info, monster, killed);
             int stun = HitStop.StunMs(info.HitValue, info.UseWeaponHitDelayRate, WeaponStunMs);
             if (stun > 0)

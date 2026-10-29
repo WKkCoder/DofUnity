@@ -181,6 +181,25 @@ public sealed class MonsterTests
         Assert.Equal((0, 0), (byList.DestinationChangeTerm, byList.KeepDistanceWithTarget));
     }
 
+    [Fact]
+    public void TheSuperArmorOnAttackTagReadsAFlagAndASecondValue()
+    {
+        // [superarmor on attack] 两个整数(E-143):第一个非 0 才算出招时带霸体,第二个只记下来(含义没读出来);没有标签、没有数都是不带
+        MonsterDef armored = Def(8, Line("[superarmor on attack]", 1, 77));
+        Assert.True(armored.SuperArmorOnAttack);
+        Assert.Equal(77, armored.SuperArmorValue);
+        Assert.True(Def(8, Line("[superarmor on attack]", 5, 0)).SuperArmorOnAttack);       // 非 0 都算
+
+        MonsterDef off = Def(9, Line("[superarmor on attack]", 0, 33));
+        Assert.False(off.SuperArmorOnAttack);
+        Assert.Equal(33, off.SuperArmorValue);
+
+        MonsterDef none = Def(10, Line("[vision]", 100));
+        Assert.False(none.SuperArmorOnAttack);
+        Assert.Equal(0, none.SuperArmorValue);
+        Assert.False(Def(11, Line("[superarmor on attack]")).SuperArmorOnAttack);
+    }
+
     // ---------------- 基础属性表 ----------------
 
     [Fact]

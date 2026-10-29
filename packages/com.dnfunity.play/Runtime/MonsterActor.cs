@@ -256,6 +256,15 @@ namespace Dnf.Play
         public bool IsAlive => Hp > 0;
         public bool IsGone => Phase == MonsterPhase.Gone;
 
+        /// <summary>.mob 的 [superarmor on attack] 第一个数非 0:出招期间带档位 1 的霸体(E-143)。由 <see cref="RoomMonsterBuilder"/> 从定义里接过来。</summary>
+        public bool SuperArmorOnAttack { get; set; }
+
+        /// <summary>
+        /// 现在带着霸体(档位 1):有 <see cref="SuperArmorOnAttack"/> 而且正在出招。客户端进入出招状态(STATE_ATTACK = 8)时打开、离开时关闭,
+        /// 所以出招之外(待机、走路、受击、倒地)没有;已经死了也没有。
+        /// </summary>
+        public bool IsSuperArmored => SuperArmorOnAttack && IsAlive && Phase == MonsterPhase.Attack;
+
         /// <summary>血量归零之后到消失之前,精灵画成纯白剪影(白闪;腾空的尸体也是白的,证据 E-084 的基线逐帧)。</summary>
         public bool DeathSilhouette => !IsAlive && Phase != MonsterPhase.Gone;
 
@@ -1868,7 +1877,7 @@ namespace Dnf.Play
         /// 死亡的那一击:怪物有倒地动作而且给了倒地输入时,走倒地流程(请求用这一击自己的推力与抬升,E-079 第 3 步),躺下的那一刻转入死亡、
         /// 白闪淡出后消失(E-082、E-084);否则直接死亡(在空中被打死时带着当前速度落地)。
         /// </summary>
-        public bool ApplyHit(int damage, bool knockDown, double pushPixels, bool pushToLeft, HitStunInput stun, KnockdownInput down)
+        public bool ApplyHit(int damage, bool knockDown, double pushPixels, bool pushToLeft, HitStunInput stun, KnockdownInput down, bool noReaction = false)
         {
             if (!IsAlive || Phase == MonsterPhase.Gone)
             {
@@ -1880,6 +1889,8 @@ namespace Dnf.Play
             }
             _brain?.NotifyDamaged();                           // 挨了打:马上找目标、不等发现迟滞(E-114)
             Hp = Math.Max(0, Hp - Math.Max(0, damage));
+            int oldPushDir = _pushDir;
+            double oldPushTotal = _pushTotal, oldPushDone = _pushDone, oldPushMs = _pushMs;
             _pushDir = pushToLeft ? -1 : 1;
             _pushTotal = Math.Max(0.0, pushPixels);
             _pushDone = 0;
@@ -1902,6 +1913,16 @@ namespace Dnf.Play
                 _flight.Stop(true);
                 EnterPhase(MonsterPhase.Dying);
                 return true;
+            }
+            if (noReaction)
+            {
+                // 决策函数第 1、2、4 步(E-079、E-143):这一击的 [damage reaction] 是 none,或怪物带着霸体而这一击不无视它 →
+                // 不请求受击也不请求倒地,只扣了血(上面已扣);没有反应就没有新的击退,当前动作与还没走完的击退照旧
+                _pushDir = oldPushDir;
+                _pushTotal = oldPushTotal;
+                _pushDone = oldPushDone;
+                _pushMs = oldPushMs;
+                return false;
             }
             if (down.IsSet && _model.Down != null && (knockDown || (down.ReactionDamage && (_flight.Active || Z > 0))))
             {
