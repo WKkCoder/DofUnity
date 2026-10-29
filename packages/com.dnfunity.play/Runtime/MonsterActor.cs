@@ -116,7 +116,7 @@ namespace Dnf.Play
     }
 
     /// <summary>一个房间里的怪物:位置、朝向、血量,按阶段播放 .mob 里的动作,并给出受击框。</summary>
-    public sealed class MonsterActor
+    public sealed partial class MonsterActor
     {
         private readonly MonsterModel _model;
         private readonly Dictionary<AniFile, AniTimeline> _timelines = new Dictionary<AniFile, AniTimeline>();
@@ -473,7 +473,7 @@ namespace Dnf.Play
         /// <summary>写法指到的招或触发器不存在(没有这一招、这一招没装触发器、序号越界)的次数:客户端同样跳过(触发器个数不大于序号就不动,E-145)。</summary>
         public int ActSwitchMissed { get; private set; }
 
-        /// <summary>指向非出招动作族([MOVE]、[STAY]、[DOWN]、[CUSTOM] 等)的次数:怪物的这些动作还没有 .act 触发器宿主(M39-2b),只记数、不落实。</summary>
+        /// <summary>指向还没有宿主的动作族([DEFAULT]、[CUSTOM])的次数:只记数、不落实。站立、行走、坐下、倒地、过程已有宿主(M53,E-146),落空的算 <see cref="ActSwitchMissed"/>。</summary>
         public int ActSwitchUnhosted { get; private set; }
 
         /// <summary>
@@ -485,7 +485,27 @@ namespace Dnf.Play
         {
             if (pool != ActTriggerPool.Attack)
             {
-                ActSwitchUnhosted++;
+                switch (pool)
+                {
+                    case ActTriggerPool.Stay:
+                        ActSwitchFamilyTrigger(MonsterActFamily.Stay, trigger, command);
+                        break;
+                    case ActTriggerPool.Move:
+                        ActSwitchFamilyTrigger(MonsterActFamily.Move, trigger, command);
+                        break;
+                    case ActTriggerPool.Sit:
+                        ActSwitchFamilyTrigger(MonsterActFamily.Sit, trigger, command);
+                        break;
+                    case ActTriggerPool.Down:
+                        ActSwitchFamilyTrigger(MonsterActFamily.Down, trigger, command);
+                        break;
+                    case ActTriggerPool.Proc:
+                        ActSwitchFamilyTrigger(MonsterActFamily.Proc, trigger, command);
+                        break;
+                    default:
+                        ActSwitchUnhosted++;
+                        break;
+                }
                 return;
             }
             bool[] state = _actEnabled != null && (uint)slot < (uint)_actEnabled.Length ? _actEnabled[slot] : null;
@@ -603,6 +623,7 @@ namespace Dnf.Play
             {
                 _actRunner.OnAttackSuccess(victim);
             }
+            FamilyOnAttackSuccess(victim);
         }
 
         /// <summary>
@@ -630,22 +651,7 @@ namespace Dnf.Play
             {
                 return;
             }
-            double seconds = deltaMs / 1000.0;
-            if (_actVx != 0 || _actVy != 0)
-            {
-                TryMove(_actVx * seconds, _actVy * seconds, walk);
-            }
-            if (_actFalling && !_hovering)
-            {
-                Z += _actVz * seconds;
-                _actVz -= PassiveObject.Gravity * seconds;
-                if (Z <= 0)
-                {
-                    Z = 0;
-                    _actVz = 0;
-                    _actFalling = false;
-                }
-            }
+            ApplyActMotion(deltaMs, walk);
         }
 
         /// <summary>进入出招阶段时挂上这一招的运行器:动作从头开始,触发器开关沿用上次出招留下的样子(出生时是 [ENABLE] 的初值,E-134),下一步先唤醒 [ON SET ACTION]。</summary>
@@ -672,6 +678,7 @@ namespace Dnf.Play
         {
             _damageBoxOff = false;      // 受击盒关着出了出招阶段:当作脚本忘了开,别让怪物永远打不到而清不掉房间(推断,E-133)
             RestoreHover();
+            DropIfAirborne();
             if (_actRunner == null && !_actFalling && _actVx == 0 && _actVy == 0 && _actVz == 0 && !_attackRectOff)
             {
                 return;
@@ -683,6 +690,20 @@ namespace Dnf.Play
             _attackRectOff = false;
             _deferredAttack = -1;
             _actRunner = null;
+        }
+
+        /// <summary>
+        /// 行走里的脚本把怪物抛到半空、动作又被换掉了:不悬停的怪物从这里受重力落回地面(推断,E-146:不然怪物永远停在主角够不着的高度,房间清不掉)。
+        /// 倒地飞行与死亡自己管 Z;出招里的高度由出招自己的规则管。
+        /// </summary>
+        private void DropIfAirborne()
+        {
+            if (Phase == MonsterPhase.Attack || Phase == MonsterPhase.Dying || Phase == MonsterPhase.Gone || Z <= 0 || _hovering || _hoverFalling || _flight.Active)
+            {
+                return;
+            }
+            _hoverFalling = true;
+            _hoverVz = 0;
         }
 
         /// <summary>
@@ -724,7 +745,7 @@ namespace Dnf.Play
 
         private void ActSetSpeed(bool hasX, float vx, bool hasY, float vy, bool hasZ, float vz)
         {
-            if (Phase != MonsterPhase.Attack)
+            if (Phase == MonsterPhase.Gone)
             {
                 return;
             }
@@ -739,15 +760,22 @@ namespace Dnf.Play
             if (hasZ)
             {
                 _actVz = vz;
-                _actFalling = vz != 0;     // 给了 Z 方向的速度才受重力,落到地面就停(推断,E-130)
+                // 出招里给了 Z 方向的速度才受重力,落到地面就停(推断,E-130);出招以外的动作族(行走里的跳跃之类)在半空里把 Z 速度设成 0 只是"不再上升",
+                // 之后照样受重力落回地面(推断:不然怪物每走一圈升一截,永远打不到,E-146)
+                _actFalling = vz != 0 || (Phase != MonsterPhase.Attack && Z > 0 && !_hovering);
             }
         }
 
         /// <summary>脚本的 [SET ACTION]:出招阶段里切到另一招([ATTACK] n)或回待机;别的动作族(走、受击、倒地……)怪物这一版不接。</summary>
         private void ActSetAction(ActActionKind kind, int index, bool now, bool atEnd)
         {
-            if (!IsAlive || Phase != MonsterPhase.Attack)
+            if (!IsAlive || Phase == MonsterPhase.Gone)
             {
+                return;
+            }
+            if (Phase != MonsterPhase.Attack)
+            {
+                ActSetActionOutsideAttack(kind, index);
                 return;
             }
             switch (kind)
@@ -989,7 +1017,7 @@ namespace Dnf.Play
 
             public bool FacingLeft => _m.FacingLeft;
 
-            public bool IsAlive => _m.IsAlive && _m.Phase != MonsterPhase.Gone;
+            public bool IsAlive => (_m.IsAlive && _m.Phase != MonsterPhase.Gone) || _m.LastActRunning;
 
             public IActEntity Target => _m.ActTarget;
 
@@ -1184,6 +1212,7 @@ namespace Dnf.Play
         {
             if (Phase == MonsterPhase.Gone)
             {
+                TickGhostFamilies(deltaMs);        // 身体没了,最后一幕的脚本还可以跑完(E-146)
                 return;
             }
             if (deltaMs < 0)
@@ -1285,6 +1314,7 @@ namespace Dnf.Play
             {
                 StepHover(deltaMs / 1000.0);
             }
+            TickFamilies(deltaMs, walk);
             if (Hp <= 0 && Phase != MonsterPhase.Gone && _deathMs >= MonsterTuning.DeathMs)
             {
                 // 从血量归零算起 DeathMs 后消失:倒地流程还没走完(尸体还在空中)也一样(证据 E-084 的基线逐帧)
@@ -1936,6 +1966,7 @@ namespace Dnf.Play
             {
                 _actRunner.OnDamage(ActTarget);                // 出招时挨了打:唤醒带 [ON DAMAGE] 的触发器(E-130;挨打者当作攻击者就是主角)
             }
+            FamilyOnDamage();                                  // 当前动作(非出招族)与过程动作也收到(E-146)
             _brain?.NotifyDamaged();                           // 挨了打:马上找目标、不等发现迟滞(E-114)
             Hp = Math.Max(0, Hp - Math.Max(0, damage));
             int oldPushDir = _pushDir;

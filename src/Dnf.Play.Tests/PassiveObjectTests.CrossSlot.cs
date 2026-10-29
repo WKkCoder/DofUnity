@@ -77,12 +77,12 @@ public partial class PassiveObjectTests
     }
 
     [Fact]
-    public void SwitchesAimedAtMissingAttacksOutOfRangeTriggersOrOtherFamiliesDoNothingAndAreCounted()
+    public void SwitchesAimedAtMissingAttacksOutOfRangeTriggersOrEmptyFamiliesDoNothingAndAreCounted()
     {
         using var arena = new ActArena("xmiss", useVitals: false);
         MonsterActor m = arena.Monster;
         Assert.True(arena.Until(() => m.ActSwitchMissed > 0) > 0);
-        Assert.Equal((0, 2, 1), (m.ActSwitchApplied, m.ActSwitchMissed, m.ActSwitchUnhosted));     // 没有第 5 招、第 0 招没有第 7 个触发器、[MOVE] 还没有宿主
+        Assert.Equal((0, 3, 0), (m.ActSwitchApplied, m.ActSwitchMissed, m.ActSwitchUnhosted));     // 没有第 5 招、第 0 招没有第 7 个触发器、[MOVE] 这一族没装程序(M53 起有宿主,落空)
         Assert.Equal(true, m.ActTriggerState(0, 0));                // 越界的开关没有误伤别的触发器
         Assert.Null(m.ActTriggerState(5, 0));
     }

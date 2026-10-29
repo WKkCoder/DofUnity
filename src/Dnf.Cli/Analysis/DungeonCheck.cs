@@ -192,6 +192,8 @@ internal static class DungeonCheck
         Console.WriteLine("脚本(E-130):进过的房间里出招带 .act 触发器的怪物 " + session.ActMonsters + " 只,脚本放出被动对象 " + session.PassivesSpawned + " 个,打中主角 "
             + session.PassiveHits + " 次");
         Console.WriteLine("脚本跨招开关(E-145):落到存在的招与触发器 " + session.ActSwitchApplied + " 次,落空 " + session.ActSwitchMissed + " 次,指向未接线的动作族 " + session.ActSwitchUnhosted + " 次");
+        Console.WriteLine("脚本非出招动作族(E-146):进过的房间里装了站立、行走、受击、倒地、过程或最后一幕触发器的怪物 " + session.FamilyActMonsters + " 只,运行器启动 " + session.FamilyRunsStarted
+            + " 次,[SET ACTION] 落实 " + session.FamilySetActionApplied + " 次、没落实 " + session.FamilySetActionUnhosted + " 次");
         Console.WriteLine("召唤(E-134):脚本召唤出怪物 " + session.SummonsSpawned + " 只,被拒绝 " + session.SummonsRefused + " 次,召唤物被打死 " + session.SummonedKills + " 只");
         Console.WriteLine("异常状态(E-136):" + (session.Vitals != null
             ? "挂到主角身上 " + session.StatusApplied + " 次,概率没中 " + session.StatusMissed + " 次,持续伤害共 " + session.StatusTickDamage + " 点,脚本 [ACTIVE STATUS](E-144)发起的请求 " + session.ActStatusRequests + " 次"

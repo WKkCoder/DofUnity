@@ -50,6 +50,28 @@ namespace Dnf.Render
     }
 
     /// <summary>
+    /// .mob 里每个动作族的 .act 路径(规范化的 PVF 路径,没写为 null)。和 <see cref="MonsterModel.ActionPaths"/> 不同,不管动画是不是取自旧式 motion 标签都记:
+    /// 触发器宿主(M53,证据 E-146)要的是脚本本身。[etc action] 是一张列表(自定义动作,[SET ACTION] [CUSTOM] n 与 [TRIGGER] [CUSTOM] a n 的下标就是它的下标)。
+    /// </summary>
+    public sealed class MonsterActPaths
+    {
+        public string Waiting { get; set; }
+        public string Move { get; set; }
+        public string Sit { get; set; }
+        public string Damage1 { get; set; }
+        public string Damage2 { get; set; }
+        public string Down { get; set; }
+        public string Overturn { get; set; }
+        public string Last { get; set; }
+        public string Proc { get; set; }
+        public IReadOnlyList<string> Etc { get; set; } = Array.Empty<string>();
+
+        /// <summary>至少写了一个 .act。</summary>
+        public bool Any => Waiting != null || Move != null || Sit != null || Damage1 != null || Damage2 != null || Down != null || Overturn != null
+            || Last != null || Proc != null || Etc.Count > 0;
+    }
+
+    /// <summary>
     /// 一种怪物的外观:.mob 里的动作脚本(待机、行走、受击两种、倒地、翻倒、攻击)解析成动画文件。
     /// 路径相对 .mob 所在的目录(证据 E-069:monster/goblin/goblin.mob 的 "Animation_Goblin2/Stay.ani" → monster/goblin/animation_goblin2/stay.ani)。
     /// 缺少的动作为 null;攻击动作与攻击信息列表保持脚本里的顺序(攻击信息可以是空串)。
@@ -77,6 +99,9 @@ namespace Dnf.Render
         /// <summary>待机、行走、受击、倒地、翻倒各自来自哪个 .act(旧式标签或没有该动作时为 null),按 Waiting、Move、Damage1、Damage2、Down、Overturn 的顺序。</summary>
         public IReadOnlyList<string> ActionPaths { get; }
 
+        /// <summary>每个动作族的 .act 路径(M53,E-146):触发器宿主用;.mob 没写任何 action 标签时各项都是 null。</summary>
+        public MonsterActPaths FamilyActs { get; }
+
         /// <summary>每个动画的 PVF 路径(用来在绘制列表里标记动画)。</summary>
         public IReadOnlyDictionary<AniFile, string> Paths { get; }
 
@@ -85,7 +110,7 @@ namespace Dnf.Render
 
         private MonsterModel(string mobPath, AniFile waiting, AniFile move, AniFile damage1, AniFile damage2, AniFile down, AniFile overturn,
             IReadOnlyList<AniFile> attacks, IReadOnlyList<string> attackInfos, Dictionary<AniFile, string> paths,
-            IReadOnlyList<string> attackActions, IReadOnlyList<string> actions)
+            IReadOnlyList<string> attackActions, IReadOnlyList<string> actions, MonsterActPaths familyActs)
         {
             MobPath = mobPath;
             Waiting = waiting;
@@ -99,6 +124,7 @@ namespace Dnf.Render
             Paths = paths;
             AttackActionPaths = attackActions;
             ActionPaths = actions;
+            FamilyActs = familyActs;
         }
 
         public string PathOf(AniFile ani)
@@ -161,6 +187,8 @@ namespace Dnf.Render
             var paths = new Dictionary<AniFile, string>();
             string waiting = null, move = null, damage1 = null, damage2 = null, down = null, overturn = null;
             string waitingAct = null, moveAct = null, damage1Act = null, damage2Act = null, downAct = null, overturnAct = null;
+            string sitAct = null, lastAct = null, procAct = null;
+            var etcActRel = new List<string>();
             var attackRel = new List<string>();
             var attackActRel = new List<string>();
             var infoRel = new List<string>();
@@ -218,6 +246,22 @@ namespace Dnf.Render
                 {
                     overturnAct = line.FirstString();
                 }
+                else if (sitAct == null && line.TagIs("[sit action]"))
+                {
+                    sitAct = line.FirstString();
+                }
+                else if (lastAct == null && line.TagIs("[last action]"))
+                {
+                    lastAct = line.FirstString();
+                }
+                else if (procAct == null && line.TagIs("[proc action]"))
+                {
+                    procAct = line.FirstString();
+                }
+                else if (etcActRel.Count == 0 && line.TagIs("[etc action]"))
+                {
+                    AddStrings(line, etcActRel);
+                }
                 else if (attackActRel.Count == 0 && (line.TagIs("[attack action]") || line.TagIs("[action list]")))
                 {
                     AddStrings(line, attackActRel);                 // 两个标签在全库里不同时出现:脚本怪物的攻击列表写成其中之一
@@ -258,7 +302,30 @@ namespace Dnf.Render
             AniFile d2 = LoadMotionOrAction(assets, mobPath, damage2, damage2Act, paths, out actions[3]);
             AniFile dn = LoadMotionOrAction(assets, mobPath, down, downAct, paths, out actions[4]);
             AniFile ov = LoadMotionOrAction(assets, mobPath, overturn, overturnAct, paths, out actions[5]);
-            return new MonsterModel(mobPath, wait, mv, d1, d2, dn, ov, attacks, infos, paths, attackActs, actions);
+            var familyActs = new MonsterActPaths
+            {
+                Waiting = ResolveAct(mobPath, waitingAct),
+                Move = ResolveAct(mobPath, moveAct),
+                Sit = ResolveAct(mobPath, sitAct),
+                Damage1 = ResolveAct(mobPath, damage1Act),
+                Damage2 = ResolveAct(mobPath, damage2Act),
+                Down = ResolveAct(mobPath, downAct),
+                Overturn = ResolveAct(mobPath, overturnAct),
+                Last = ResolveAct(mobPath, lastAct),
+                Proc = ResolveAct(mobPath, procAct),
+            };
+            var etc = new List<string>();
+            foreach (string rel in etcActRel)
+            {
+                etc.Add(ResolveAct(mobPath, rel));
+            }
+            familyActs.Etc = etc;
+            return new MonsterModel(mobPath, wait, mv, d1, d2, dn, ov, attacks, infos, paths, attackActs, actions, familyActs);
+        }
+
+        private static string ResolveAct(string mobPath, string rel)
+        {
+            return string.IsNullOrEmpty(rel) ? null : PvfPath.ResolveRelativeTo(mobPath, rel);
         }
 
         private static AniFile LoadMotionOrAction(DnfAssets assets, string mobPath, string motionRel, string actionRel,

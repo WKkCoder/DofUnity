@@ -129,6 +129,41 @@ public class MonsterTests
     }
 
     [Fact]
+    public void AMonsterRecordsTheActPathOfEveryActionFamilyEvenWhenThereIsNoAnimationForIt()
+    {
+        // 触发器宿主要的是每一族的 .act 本身(M53,E-146):路径相对 .mob 所在目录;文件不存在也照记,动画取不到不影响
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterModel model = MonsterModel.Read(assets, AvatarFixture.BlobFamilyMobPath);
+        Assert.NotNull(model);
+        string dir = AvatarFixture.BlobActionDir + "/";
+        MonsterActPaths acts = model.FamilyActs;
+        Assert.True(acts.Any);
+        Assert.Equal(dir + "stay.act", acts.Waiting);
+        Assert.Equal(dir + "move.act", acts.Move);
+        Assert.Equal(dir + "sit.act", acts.Sit);
+        Assert.Equal(dir + "damage1.act", acts.Damage1);
+        Assert.Equal(dir + "damage2.act", acts.Damage2);
+        Assert.Equal(dir + "down.act", acts.Down);
+        Assert.Equal(dir + "overturn.act", acts.Overturn);
+        Assert.Equal(dir + "last.act", acts.Last);
+        Assert.Equal(dir + "proc.act", acts.Proc);
+        Assert.Equal(new[] { dir + "etc1.act", dir + "etc2.act" }, acts.Etc.ToArray());
+        Assert.Null(model.Overturn);                                       // 翻倒的 .act 文件不存在:路径记着,动画是 null
+        Assert.Equal(new[] { dir + "attack.act" }, model.AttackActionPaths.ToArray());
+
+        // 只写旧式 motion 的怪物没有任何 .act;只写了一部分的怪物其余为 null
+        Assert.False(MonsterModel.Read(assets, AvatarFixture.BlobMobPath).FamilyActs.Any);
+        MonsterActPaths partial = MonsterModel.Read(assets, AvatarFixture.BlobScriptedMobPath).FamilyActs;
+        Assert.True(partial.Any);
+        Assert.Equal(dir + "stay.act", partial.Waiting);
+        Assert.Null(partial.Sit);
+        Assert.Null(partial.Last);
+        Assert.Null(partial.Proc);
+        Assert.Empty(partial.Etc);
+    }
+
+    [Fact]
     public void AModelWithoutAnyHurtBoxInAnyAnimationCanNeverBeHit()
     {
         using var fx = new AvatarFixture();

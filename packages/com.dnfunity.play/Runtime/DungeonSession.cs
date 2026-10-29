@@ -477,6 +477,15 @@ namespace Dnf.Play
 
         public int ActSwitchUnhosted => Sum(s => s.ActSwitchUnhosted);
 
+        /// <summary>怪物非出招动作族(站立、行走、受击、倒地、过程、最后一幕)的 .act 触发器宿主(证据 E-146):装了的怪物数、运行器启动次数、脚本 [SET ACTION] 落实与没落实的次数(按进过的房间累计)。</summary>
+        public int FamilyActMonsters => Sum(s => s.FamilyActMonsters);
+
+        public int FamilyRunsStarted => Sum(s => s.FamilyRunsStarted);
+
+        public int FamilySetActionApplied => Sum(s => s.FamilySetActionApplied);
+
+        public int FamilySetActionUnhosted => Sum(s => s.FamilySetActionUnhosted);
+
         /// <summary>
         /// 整座副本的声音提示队列(证据 E-089、E-090):每一步把当前房间会话发出的提示按时间顺序收进来,换房间时先放新房间的 <see cref="SoundCueKind.RoomEnter"/> 标记与地图声音
         /// (第一次进去还有怪物出场声);播放的一方每帧调 <see cref="DrainSounds"/> 取走。

@@ -337,6 +337,148 @@ internal static class ActRunCheck
         }
     }
 
+    /// <summary>
+    /// 非出招动作族宿主(E-146)按"怪物"的汇总:一只怪物所有带触发器的 .act(出招与各族)里,指向站立、行走、坐下、倒地、过程这几族的 [TRIGGER] 开关,
+    /// 目标族的 .act(每族取 .mob 里写的第一个)存在、触发器序号在范围内算落到宿主上,否则落空(客户端:池为空或个数不大于序号就跳过);[DEFAULT]、[CUSTOM] 还没有宿主。
+    /// </summary>
+    private sealed class FamilySwitchTally
+    {
+        public int FamilyMonsters;
+        public int WithSwitches;
+        public int Switches;
+        public int Resolved;
+        public int Missed;
+        public int MissNoAct;
+        public int MissNoTriggers;
+        public int MissOutOfRange;
+        public int Unhosted;
+        public readonly SortedDictionary<string, int> ByPool = new SortedDictionary<string, int>(StringComparer.Ordinal);
+
+        public void Print()
+        {
+            Console.WriteLine("  非出招动作族宿主(E-146,按怪物):带触发器的非出招族 .act 的怪物 " + FamilyMonsters + " 个;含指向这些族的 [TRIGGER] 开关的怪物 " + WithSwitches + " 个,开关 " + Switches
+                + " 条(落到宿主 " + Resolved + " 条,落空 " + Missed + " 条[那一族没写 .act " + MissNoAct + "、.act 没有触发器 " + MissNoTriggers + "、序号越界 " + MissOutOfRange + "],指向没有宿主的族 " + Unhosted + " 条;按池 " + Join(ByPool, 10) + ")");
+        }
+
+        public object ToJson() => new { FamilyMonsters, WithSwitches, Switches, Resolved, Missed, MissNoAct, MissNoTriggers, MissOutOfRange, Unhosted, ByPool };
+    }
+
+    private static void CountFamilySwitches(MonsterDef def, ScriptLine[] doc, Func<string?, ActProgram?> program, FamilySwitchTally tally)
+    {
+        var pools = new Dictionary<ActTriggerPool, ActProgram?>();
+        var sources = new List<ActProgram>();
+        bool anyFamily = false;
+        foreach (ScriptLine line in doc)
+        {
+            ActTriggerPool? pool = null;
+            if (line.TagIs("[waiting action]"))
+            {
+                pool = ActTriggerPool.Stay;
+            }
+            else if (line.TagIs("[move action]"))
+            {
+                pool = ActTriggerPool.Move;
+            }
+            else if (line.TagIs("[sit action]"))
+            {
+                pool = ActTriggerPool.Sit;
+            }
+            else if (line.TagIs("[down action]"))
+            {
+                pool = ActTriggerPool.Down;
+            }
+            else if (line.TagIs("[proc action]"))
+            {
+                pool = ActTriggerPool.Proc;
+            }
+            else if (!line.TagIs("[damage action 1]") && !line.TagIs("[damage action 2]") && !line.TagIs("[overturn action]") && !line.TagIs("[last action]"))
+            {
+                continue;
+            }
+            string? path = null;
+            foreach (ScriptValue v in line.Values)
+            {
+                if (v.Kind == ScriptValueKind.String && !string.IsNullOrEmpty(v.Text) && v.Text.EndsWith(".act", StringComparison.OrdinalIgnoreCase))
+                {
+                    path = PvfPath.ResolveRelativeTo(def.Path, v.Text);
+                    break;
+                }
+            }
+            ActProgram? p = program(path);
+            if (p == null)
+            {
+                continue;
+            }
+            if (pool != null && !pools.ContainsKey(pool.Value))
+            {
+                pools[pool.Value] = p;
+            }
+            if (p.Triggers.Count > 0)
+            {
+                anyFamily = true;
+                if (!sources.Contains(p))
+                {
+                    sources.Add(p);
+                }
+            }
+        }
+        foreach (string raw in def.AttackList)
+        {
+            ActProgram? p = string.IsNullOrEmpty(raw) ? null : program(PvfPath.ResolveRelativeTo(def.Path, raw));
+            if (p != null && p.Triggers.Count > 0 && !sources.Contains(p))
+            {
+                sources.Add(p);
+            }
+        }
+        if (anyFamily)
+        {
+            tally.FamilyMonsters++;
+        }
+        bool any = false;
+        foreach (ActProgram source in sources)
+        {
+            foreach (ActBehaviorGroup g in source.Behaviors)
+            {
+                foreach (ActBehavior b in g.Items)
+                {
+                    if (b.Kind != ActBehaviorKind.TriggerSwitch || b.TriggerPool == ActTriggerPool.Own || b.TriggerPool == ActTriggerPool.Attack)
+                    {
+                        continue;
+                    }
+                    any = true;
+                    tally.Switches++;
+                    string name = b.TriggerPool.ToString();
+                    tally.ByPool[name] = tally.ByPool.TryGetValue(name, out int n) ? n + 1 : 1;
+                    if (b.TriggerPool == ActTriggerPool.Default || b.TriggerPool == ActTriggerPool.Custom)
+                    {
+                        tally.Unhosted++;
+                    }
+                    else if (pools.TryGetValue(b.TriggerPool, out ActProgram? target) && target != null && (uint)b.TriggerIndex < (uint)target.Triggers.Count)
+                    {
+                        tally.Resolved++;
+                    }
+                    else
+                    {
+                        tally.Missed++;
+                        if (target == null)
+                        {
+                            tally.MissNoAct++;
+                        }
+                        else if (target.Triggers.Count == 0)
+                        {
+                            tally.MissNoTriggers++;
+                        }
+                        else
+                        {
+                            tally.MissOutOfRange++;
+                        }
+                    }
+                }
+            }
+        }
+        tally.WithSwitches += any ? 1 : 0;
+    }
+
     private static string Percent(long a, long b) => b == 0 ? "-" : (a * 100.0 / b).ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + "%";
 
     private static string Join(SortedDictionary<string, int> map, int limit)
@@ -468,6 +610,7 @@ internal static class ActRunCheck
             ("死亡 [last action]", new[] { "[last action]" }),
             ("坐 [sit action]", new[] { "[sit action]" }),
         };
+        var familySwitch = new FamilySwitchTally();
         var otherTallies = new Tally[otherKinds.Length];
         var otherPrograms = new Dictionary<string, ActProgram>[otherKinds.Length];
         var otherMonsters = new int[otherKinds.Length];
@@ -484,6 +627,7 @@ internal static class ActRunCheck
             {
                 continue;
             }
+            CountFamilySwitches(def, doc, Program, familySwitch);
             for (int k = 0; k < otherKinds.Length; k++)
             {
                 bool any = false;
@@ -527,6 +671,8 @@ internal static class ActRunCheck
             Console.WriteLine("其余动作 · " + otherKinds[k].Title + ":带触发器的怪物 " + otherMonsters[k] + " 个");
             otherTallies[k].Print("  这类 .act");
         }
+        Console.WriteLine();
+        familySwitch.Print();
 
         // ---- 第二部分:顺着 [CREATE PASSIVEOBJECT] 能到的被动对象
         var reached = new SortedSet<int>();
@@ -686,6 +832,7 @@ internal static class ActRunCheck
                 monsters, withAttackList, withActFile, withTriggers, withRunnable, allRunnable, withSpawn, missingActs, actRefs,
                 monsterActs = monsterTally.ToJson(),
                 crossSlotSwitches = crossSwitch.ToJson(),
+                familySwitches = familySwitch.ToJson(),
                 reachedObjects = reached.Count, templates, missingObjects, objectsWithTriggers, objectsRunnable, objectsAllRunnable, objectsDepth2,
                 objectActs = objectTally.ToJson(),
                 allObjects = allIds.Length, readable, basicAct, oldStyle, etcActs, anyTrig, allRun, timeLimit, endOfAnim, neither,

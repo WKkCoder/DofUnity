@@ -291,6 +291,12 @@ internal sealed class AvatarFixture : IDisposable
     /// <summary>旧式与 action 标签并存的怪物:待机两种标签都有(旧式优先)、行走只有 [move action]、攻击列表写成 [action list]。</summary>
     public const string BlobMixedMobPath = "monster/blob/mixed.mob";
 
+    /// <summary>
+    /// 每一族动作都写了 .act 的怪物(M53,E-146):[waiting action]、[move action]、[sit action]、[damage action 1/2]、[down action]、[overturn action]、
+    /// [last action]、[proc action],以及两项的 [etc action] 列表和一项攻击;.act 文件不一定存在(只测路径解析)。
+    /// </summary>
+    public const string BlobFamilyMobPath = "monster/blob/famall.mob";
+
     /// <summary>所有动画都没有受击框的怪物(占位、机关一类;主角永远打不到它,M36,证据 E-128):待机、行走各一段、没有别的动作。</summary>
     public const string BlobGhostMobPath = "monster/blob/ghost.mob";
 
@@ -554,6 +560,11 @@ internal sealed class AvatarFixture : IDisposable
     }
 
     private const string ThrowActAni = "../Animation_Blob/Throw.ani";
+    private const string StayActAni = "../Animation_Blob/Stay.ani";
+    private const string MoveActAni = "../Animation_Blob/Move.ani";
+    private const string Damage1ActAni = "../Animation_Blob/Damage1.ani";
+    private const string DownActAni = "../Animation_Blob/Down.ani";
+    private const string LastActAni = "../Animation_Blob/Last.ani";
     private const string StrikeActAni = "../Animation_Blob/Strike.ani";
 
     /// <summary>每只 act_&lt;名字&gt; 怪物的出招 .act 文件名表(同一个 .act 可以出现在不同怪物里)。</summary>
@@ -596,8 +607,62 @@ internal sealed class AvatarFixture : IDisposable
         ("xmiss", new[] { "ActXMiss" }),
     };
 
+    /// <summary>
+    /// 非出招动作族靠 .act 触发器的怪物(M53,E-146):名字都以 f_ 开头,路径同样是 <see cref="ActMobPath"/>。每项:名字、出招 .act 列表、
+    /// 成对的(标签, .act 名)——覆盖默认的站立、行走、受击、倒地 .act(只有动画),或补上 [sit action]、[last action]、[proc action] 等。
+    /// 各 .act 的内容见 <see cref="ActScripts"/> 里"M53"一段。
+    /// </summary>
+    private static readonly (string Name, string[] Attacks, string[] Pairs)[] FamilyMobs =
+    {
+        ("f_plain", new[] { "ActPlain" }, new string[0]),
+        ("f_stay", new[] { "ActPlain" }, new[] { "[waiting action]", "FStay" }),
+        ("f_move", new[] { "ActPlain" }, new[] { "[move action]", "FMove" }),
+        ("f_hop", new[] { "ActPlain" }, new[] { "[move action]", "FHop" }),
+        ("f_dmg", new[] { "ActPlain" }, new[] { "[damage action 1]", "FDamage", "[down action]", "FDown" }),
+        ("f_procboot", new[] { "ActPlain" }, new[] { "[proc action]", "FProcBoot" }),
+        ("f_procdmg", new[] { "ActPlain" }, new[] { "[proc action]", "FProcDmg" }),
+        ("f_procsw", new[] { "ActPlain" }, new[] { "[proc action]", "FProcSw", "[waiting action]", "FStaySw" }),
+        ("f_stayset", new[] { "ActPlain", "ActPlain" }, new[] { "[waiting action]", "FStaySet" }),
+        ("f_stayunh", new[] { "ActPlain" }, new[] { "[waiting action]", "FStayUnh" }),
+        ("f_last", new[] { "ActPlain" }, new[] { "[last action]", "FLast" }),
+        ("f_xstay", new[] { "ActXStayOff" }, new[] { "[waiting action]", "FStay" }),
+        ("f_xunh", new[] { "ActXUnh" }, new string[0]),
+    };
+
     private IEnumerable<(string Name, byte[] Data)> ActScripts()
     {
+        foreach ((string name, string[] attacks, string[] pairs) in FamilyMobs)
+        {
+            var over = new Dictionary<string, string>();
+            for (int i = 0; i + 1 < pairs.Length; i += 2)
+            {
+                over[pairs[i]] = pairs[i + 1];
+            }
+            Script mob = NewScript();
+            var defaults = new[] { ("[waiting action]", "Stay"), ("[move action]", "Move"), ("[damage action 1]", "Damage1"), ("[damage action 2]", "Damage2"), ("[down action]", "Down") };
+            foreach ((string tag, string act) in defaults)
+            {
+                mob.Tag(tag).Str("Action/" + (over.TryGetValue(tag, out string replaced) ? replaced : act) + ".act");
+            }
+            for (int i = 0; i + 1 < pairs.Length; i += 2)
+            {
+                if (!Array.Exists(defaults, d => d.Item1 == pairs[i]))
+                {
+                    mob.Tag(pairs[i]).Str("Action/" + pairs[i + 1] + ".act");
+                }
+            }
+            mob.Tag("[attack action]");
+            foreach (string act in attacks)
+            {
+                mob.Str("Action/" + act + ".act");
+            }
+            mob.Tag("[/attack action]").Tag("[attack info]");
+            foreach (string _ in attacks)
+            {
+                mob.Str("");
+            }
+            yield return (ActMobPath(name), mob.Tag("[/attack info]").Build());
+        }
         foreach ((string name, string[] acts) in ActMobs)
         {
             Script mob = NewScript()
@@ -766,6 +831,73 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[TRIGGER]").Tag("[ATTACK]").Int(0, 7).Tag("[OFF]")
                 .Tag("[TRIGGER]").Tag("[MOVE]").Int(0).Tag("[OFF]"))
             .Build());
+        // M53(证据 E-146):非出招动作族的 .act。放出来的 ActForeverId 对象不会消失,会话里的被动对象数就是触发次数
+        yield return (BlobActionDir + "/fstay.act", ActWith(StayActAni)
+            .Trigger(r => r.Tag("[LIMIT]").Int(1).Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/fmove.act", ActWith(MoveActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 100))
+            .Build());
+        // 行走里跳一下:一开始 Z 方向给个速度,第 1 帧(100 毫秒)把 Z 速度设成 0——"不再上升",之后照样受重力落回地面
+        yield return (BlobActionDir + "/fhop.act", ActWith(MoveActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[LIMIT]").Int(1).Tag("[FRAME]").Int(1, 1), 1)
+            .Behavior(b => b.SetSpeed("[Z AXIS]", 600))
+            .Behavior(b => b.SetSpeed("[Z AXIS]", 0))
+            .Build());
+        yield return (BlobActionDir + "/fdamage.act", ActWith(Damage1ActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/fdown.act", ActWith(DownActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        // 过程动作没有动画(帧号固定 0):出生就跑,[FRAME] 0 0 在出生那一步放一个;或者等挨打放一个
+        yield return (BlobActionDir + "/fprocboot.act", NewScript()
+            .Trigger(r => r.Tag("[FRAME]").Int(0, 0), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/fprocdmg.act", NewScript()
+            .Trigger(r => r.Tag("[ON DAMAGE]"), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        // 过程的触发器 0 出生时关着,站立动作一开始就把它打开(跨族 [TRIGGER] [PROC])
+        yield return (BlobActionDir + "/fprocsw.act", NewScript()
+            .Trigger(r => r.Tag("[ENABLE]").Tag("[OFF]").Tag("[ON DAMAGE]"), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/fstaysw.act", ActWith(StayActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[TRIGGER]").Tag("[PROC]").Int(0).Tag("[ON]"))
+            .Build());
+        // 站立动作里切招(第 1 招)与切到怪物没接的动作(自定义)
+        yield return (BlobActionDir + "/fstayset.act", ActWith(StayActAni)
+            .Trigger(r => r.Tag("[LIMIT]").Int(1).Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[NOW]"))
+            .Build());
+        yield return (BlobActionDir + "/fstayunh.act", ActWith(StayActAni)
+            .Trigger(r => r.Tag("[LIMIT]").Int(1).Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(0).Tag("[NOW]"))
+            .Build());
+        // 最后一幕:自己的动画 1200 毫秒(三帧各 400);血量归零那一步放一个,帧 2(800 毫秒,身体 500 毫秒时已消失)再放一个
+        yield return (BlobActionDir + "/flast.act", ActWith(LastActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(2, 2), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/actxstayoff.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[TRIGGER]").Tag("[STAY]").Int(0).Tag("[OFF]"))
+            .Build());
+        yield return (BlobActionDir + "/actxunh.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[TRIGGER]").Tag("[DEFAULT]").Int(0).Tag("[OFF]")
+                .Tag("[TRIGGER]").Tag("[CUSTOM]").Int(0, 0).Tag("[OFF]"))
+            .Build());
+        yield return (BlobAnimationDir + "/last.ani", BuildBlobAni(false, (0, 400, default), (1, 400, default), (2, 400, default)));
         foreach (int id in new[] { ActShotId, ActRepeatId, ActGraveId, ActSpawnerId, ActFallId })
         {
             int spawned = id;
@@ -1239,6 +1371,19 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[waiting motion]").Str("Animation_Blob/Ghost.ani")
                 .Tag("[move motion]").Str("Animation_Blob/Ghost.ani").Build()),
             (BlobAnimationDir + "/ghost.ani", BuildBlobAni(true, (0, 100, default), (1, 100, default))),
+            (BlobFamilyMobPath, NewScript()
+                .Tag("[waiting action]").Str("Action/Stay.act")
+                .Tag("[move action]").Str("Action/Move.act")
+                .Tag("[sit action]").Str("Action/Sit.act")
+                .Tag("[damage action 1]").Str("Action/Damage1.act")
+                .Tag("[damage action 2]").Str("Action/Damage2.act")
+                .Tag("[down action]").Str("Action/Down.act")
+                .Tag("[overturn action]").Str("Action/Overturn.act")
+                .Tag("[last action]").Str("Action/Last.act")
+                .Tag("[proc action]").Str("Action/Proc.act")
+                .Tag("[etc action]").Str("Action/Etc1.act").Str("Action/Etc2.act")
+                .Tag("[/etc action]")
+                .Tag("[attack action]").Str("Action/Attack.act").Tag("[/attack action]").Build()),
             (BlobMixedMobPath, NewScript()
                 .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
                 .Tag("[waiting action]").Str("Action/Move.act")

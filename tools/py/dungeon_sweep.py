@@ -43,6 +43,7 @@ OBJECTS = re.compile(r"物件\(E-126\):进过的房间里有 (\d+) 个可破坏�
 ACTS = re.compile(r"脚本\(E-130\):进过的房间里出招带 \.act 触发器的怪物 (\d+) 只,脚本放出被动对象 (\d+) 个,打中主角 (\d+) 次")
 SUMMONS = re.compile(r"召唤\(E-134\):脚本召唤出怪物 (\d+) 只,被拒绝 (\d+) 次,召唤物被打死 (\d+) 只")
 SWITCH = re.compile(r"脚本跨招开关\(E-145\):落到存在的招与触发器 (\d+) 次,落空 (\d+) 次,指向未接线的动作族 (\d+) 次")
+FAMILY = re.compile(r"脚本非出招动作族\(E-146\):进过的房间里装了站立、行走、受击、倒地、过程或最后一幕触发器的怪物 (\d+) 只,运行器启动 (\d+) 次,\[SET ACTION\] 落实 (\d+) 次、没落实 (\d+) 次")
 STATUS = re.compile(r"异常状态\(E-136\):挂到主角身上 (\d+) 次,概率没中 (\d+) 次,持续伤害共 (\d+) 点(?:,脚本 \[ACTIVE STATUS\]\(E-144\)发起的请求 (\d+) 次)?")
 EXC = re.compile(r"(Unhandled exception|未处理的异常|System\.\w+Exception|Exception:|   at Dnf\.)")
 
@@ -102,6 +103,9 @@ def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=5000
     sw = SWITCH.search(text)
     if sw:
         rec["switch_applied"], rec["switch_missed"], rec["switch_unhosted"] = (int(sw.group(i)) for i in range(1, 4))
+    fm = FAMILY.search(text)
+    if fm:
+        rec["family_monsters"], rec["family_runs"], rec["family_set_applied"], rec["family_set_unhosted"] = (int(fm.group(i)) for i in range(1, 5))
     st = STATUS.search(text)
     if st:
         rec["status_applied"], rec["status_missed"], rec["status_tick_damage"] = (int(st.group(i)) for i in range(1, 4))
@@ -214,6 +218,11 @@ def main(argv):
     with_switch = sum(1 for r in results if r.get("switch_applied", 0) > 0)
     print("跨招开关(只在本机,E-145):脚本落实过按动作族 [TRIGGER] 的副本 %d 个;落到存在的招与触发器 %d 次,落空 %d 次,指向未接线的动作族 %d 次"
           % (with_switch, sw_sums["switch_applied"], sw_sums["switch_missed"], sw_sums["switch_unhosted"]))
+    fam_keys = ["family_monsters", "family_runs", "family_set_applied", "family_set_unhosted"]
+    fam_sums = {k: sum(r.get(k, 0) for r in results) for k in fam_keys}
+    with_family = sum(1 for r in results if r.get("family_runs", 0) > 0)
+    print("非出招动作族(只在本机,E-146):有宿主运行过的副本 %d 个;怪物 %d 只,运行器启动 %d 次,[SET ACTION] 落实 %d 次、没落实 %d 次"
+          % (with_family, fam_sums["family_monsters"], fam_sums["family_runs"], fam_sums["family_set_applied"], fam_sums["family_set_unhosted"]))
     if a.damage:
         with_status = sum(1 for r in results if r.get("status_applied", 0) > 0)
         with_act_status = sum(1 for r in results if r.get("act_status_requests", 0) > 0)

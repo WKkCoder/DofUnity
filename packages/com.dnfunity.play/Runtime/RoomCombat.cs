@@ -1098,7 +1098,7 @@ namespace Dnf.Play
             }
         }
 
-        /// <summary>同上,指向还没有 .act 触发器宿主的动作族([MOVE]、[STAY]、[DOWN]、[CUSTOM] 等)的次数。</summary>
+        /// <summary>同上,指向还没有 .act 触发器宿主的动作族([DEFAULT]、[CUSTOM])的次数(站立、行走、坐下、倒地、过程已有宿主,E-146)。</summary>
         public int ActSwitchUnhosted
         {
             get
@@ -1107,6 +1107,65 @@ namespace Dnf.Play
                 foreach (MonsterActor m in _monsters)
                 {
                     n += m.ActSwitchUnhosted;
+                }
+                return n;
+            }
+        }
+
+        /// <summary>场上装了非出招动作族 .act 触发器的怪物数(E-146)。</summary>
+        public int FamilyActMonsters
+        {
+            get
+            {
+                int n = 0;
+                foreach (MonsterActor m in _monsters)
+                {
+                    if (m.HasFamilyActs)
+                    {
+                        n++;
+                    }
+                }
+                return n;
+            }
+        }
+
+        /// <summary>非出招动作族运行器启动过的总次数(进入一族、过程出生、最后一幕开始都算;E-146)。</summary>
+        public int FamilyRunsStarted
+        {
+            get
+            {
+                int n = 0;
+                foreach (MonsterActor m in _monsters)
+                {
+                    n += m.FamilyRunsStarted;
+                }
+                return n;
+            }
+        }
+
+        /// <summary>非出招动作族里的脚本 [SET ACTION] 落实了的次数(切招、回待机、开始行走)。</summary>
+        public int FamilySetActionApplied
+        {
+            get
+            {
+                int n = 0;
+                foreach (MonsterActor m in _monsters)
+                {
+                    n += m.FamilySetActionApplied;
+                }
+                return n;
+            }
+        }
+
+        /// <summary>同上,没有落实的次数(指向还没接的动作,或怪物此刻不在待机与行走)。</summary>
+        public int FamilySetActionUnhosted
+        {
+            get
+            {
+                int n = 0;
+                foreach (MonsterActor m in _monsters)
+                {
+                    n += m.FamilySetActionUnhosted;
                 }
                 return n;
             }
@@ -2977,6 +3036,7 @@ namespace Dnf.Play
                 {
                     m.ActTarget = null;
                     m.SetActs(null, null);
+                    m.SetFamilyActs(null, null);
                 }
                 return;
             }
@@ -3007,6 +3067,8 @@ namespace Dnf.Play
             }
             m.ActTarget = _heroEntity;
             m.SetActs(any ? programs : null, any ? _actWorld : null);
+            // 非出招动作族(站立、行走、受击、倒地、过程、最后一幕)的 .act 触发器(M53,E-146)
+            m.SetFamilyActs(MonsterFamilyActs.Build(_acts, m.Model.FamilyActs), _actWorld);
         }
 
         /// <summary>被动对象各走一步(这一步里新放出来的从下一步起走)。</summary>
