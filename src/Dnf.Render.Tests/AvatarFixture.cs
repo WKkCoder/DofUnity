@@ -144,6 +144,16 @@ internal sealed class AvatarFixture : IDisposable
     public const int MagicBuffAmount1 = 40;
     public const int MagicBuffMs2 = 6000;
     public const int MagicBuffAmount2 = 60;
+
+    /// <summary>
+    /// 概率触发类增益(M49,证据 E-142)的合成数据:指令"上,增益",[level info] 两列 (千分比概率,持续毫秒):第 1 级 <see cref="ProcBuffPermille1"/>/<see cref="ProcBuffMs1"/>、
+    /// 第 2 级 <see cref="ProcBuffPermille2"/>/<see cref="ProcBuffMs2"/>;耗蓝 6、冷却 1200。数全是测试用的。
+    /// </summary>
+    public const int ProcBuffSkill = 909;
+    public const int ProcBuffPermille1 = 250;
+    public const int ProcBuffMs1 = 7000;
+    public const int ProcBuffPermille2 = 600;
+    public const int ProcBuffMs2 = 8000;
     public const int BuffFrameMs = 100;
     public const string BuffAni = "character/test/animation/buffcast.ani";
 
@@ -818,7 +828,7 @@ internal sealed class AvatarFixture : IDisposable
             ("skill/testskill.lst", NewScript()
                 .Int(181).Str("test/passive.skl").Int(HardAttackSkill).Str("test/hardattack.skl").Int(UpperSlashSkill).Str("test/upperslash.skl")
                 .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Int(ChainSkill).Str("test/chain.skl").Int(WaveSkill).Str("test/wave.skl").Int(HopSkill).Str("test/hop.skl").Int(QuickStandSkill).Str("test/quickstand.skl").Int(JumpCommandSkill).Str("test/jumpcommand.skl")
-                .Int(JumpBuffSkill).Str("test/jumpbuff.skl").Int(MagicBuffSkill).Str("test/magicbuff.skl").Build()),
+                .Int(JumpBuffSkill).Str("test/jumpbuff.skl").Int(MagicBuffSkill).Str("test/magicbuff.skl").Int(ProcBuffSkill).Str("test/procbuff.skl").Build()),
             // 增益类技能:跳跃力类(加成在 [static data],持续时间在 [level info] 一列)与魔法攻击力类(持续时间与加成是 [level info] 的两列)
             ("skill/test/jumpbuff.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Paren("(BUFF)").Tag("[maximum level]").Int(10)
@@ -829,6 +839,11 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[type]").Str("[active]").Tag("[command]").Paren("(DOWN)").Sep(",").Paren("(BUFF)").Tag("[maximum level]").Int(10)
                 .Tag("[consume MP]").Int(8, 8).Tag("[cool time]").Int(1500, 1500)
                 .Tag("[level info]").Int(2, MagicBuffMs1, MagicBuffAmount1, MagicBuffMs2, MagicBuffAmount2).Build()),
+            // 概率触发类增益:持续时间是 [level info] 第 1 列、千分比概率是第 0 列
+            ("skill/test/procbuff.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[command]").Paren("(UP)").Sep(",").Paren("(BUFF)").Tag("[maximum level]").Int(10)
+                .Tag("[consume MP]").Int(6, 6).Tag("[cool time]").Int(1200, 1200)
+                .Tag("[level info]").Int(2, ProcBuffPermille1, ProcBuffMs1, ProcBuffPermille2, ProcBuffMs2).Build()),
             ("skill/test/jumpcommand.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Paren("(DOWN)").Sep(",").Paren("(JUMP)").Tag("[maximum level]").Int(10)
                 .Tag("[consume MP]").Int(10, 10).Tag("[cool time]").Int(1000, 1000)
@@ -964,14 +979,15 @@ internal sealed class AvatarFixture : IDisposable
             (JumpAni, BuildBoxAni((0, 100, new[] { HeroHurtBox }), (1, 100, new[] { HeroHurtBox }), (0, 80, new[] { HeroHurtBox }), (1, 10000, new[] { HeroHurtBox }),
                 (0, 100, new[] { HeroHurtBox }), (1, 80, new[] { HeroHurtBox }), (0, 10000, new[] { HeroHurtBox }), (1, 50, new[] { HeroHurtBox }))),
             (JumpAttackAni, BuildBoxAni((0, 100, null), (1, 50, new[] { ((ushort)15, new[] { 20, -10, 0, 40, 20, 50 }) }), (0, 50, null))),
-            // 三段普攻:四帧 × 100、三帧 × 100、两帧 × 200 毫秒;攻击框(类型 15)在武器图层的动画里,第三段的基础动画自己带一个
-            (Attack1Ani, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, null), (1, 100, null))),
-            (Attack2Ani, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, null))),
-            (Attack3Ani, BuildBoxAni((0, 200, null), (1, 200, new[] { ((ushort)15, new[] { 20, -10, 0, 40, 20, 50 }) }))),
+            // 三段普攻:四帧 × 100、三帧 × 100、两帧 × 200 毫秒;攻击框(类型 15)在武器图层的动画里,第三段的基础动画自己带一个;
+            // 每帧带站立高度的受击框(原版的出招动画也带受击框;M49 的霸体测试要靠它让怪物打得中出招中的主角)
+            (Attack1Ani, BuildBoxAni((0, 100, new[] { HeroHurtBox }), (1, 100, new[] { HeroHurtBox }), (0, 100, new[] { HeroHurtBox }), (1, 100, new[] { HeroHurtBox }))),
+            (Attack2Ani, BuildBoxAni((0, 100, new[] { HeroHurtBox }), (1, 100, new[] { HeroHurtBox }), (0, 100, new[] { HeroHurtBox }))),
+            (Attack3Ani, BuildBoxAni((0, 200, new[] { HeroHurtBox }), (1, 200, new[] { HeroHurtBox, ((ushort)15, new[] { 20, -10, 0, 40, 20, 50 }) }))),
             // 技能动作:护身(占动作表的第 0 项)与鬼斩(600 毫秒,第 2、3 帧各带一个攻击框)
             ("character/test/animation/guard.ani", BuildBoxAni((0, 100, null))),
-            // 增益施法动作:三帧,没有攻击框
-            (BuffAni, BuildBoxAni((0, BuffFrameMs, null), (1, BuffFrameMs, null), (0, BuffFrameMs, null))),
+            // 增益施法动作:三帧,没有攻击框,每帧带受击框(施法时主角站着挨打;M49 的霸体测试靠它让怪物打得中施法中的主角)
+            (BuffAni, BuildBoxAni((0, BuffFrameMs, new[] { HeroHurtBox }), (1, BuffFrameMs, new[] { HeroHurtBox }), (0, BuffFrameMs, new[] { HeroHurtBox }))),
             (HardAttackEffect1, BuildEffectAni(false)),
             (HardAttackEffect2, BuildEffectAni(true)),
             (ChainEffect1, BuildEffectAni(false)),

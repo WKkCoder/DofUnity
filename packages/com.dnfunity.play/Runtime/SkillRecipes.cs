@@ -298,13 +298,14 @@ namespace Dnf.Play
     /// </summary>
     public sealed class BuffRecipe
     {
-        public BuffRecipe(int skillId, BuffStat stat, int durationColumn, int amountStaticIndex, int amountColumn)
+        public BuffRecipe(int skillId, BuffStat stat, int durationColumn, int amountStaticIndex, int amountColumn, double amountScale = 1.0)
         {
             SkillId = skillId;
             Stat = stat;
             DurationColumn = durationColumn;
             AmountStaticIndex = amountStaticIndex;
             AmountColumn = amountColumn;
+            AmountScale = amountScale;
         }
 
         public int SkillId { get; }
@@ -320,6 +321,9 @@ namespace Dnf.Play
 
         /// <summary>数值在 [level info] 里的列(<see cref="AmountStaticIndex"/> 为负时用)。</summary>
         public int AmountColumn { get; }
+
+        /// <summary>读出来的整数乘它才是挂在属性上的数(缺省 1;概率类增益的数是千分比,乘 0.001 换成 0 到 1,E-142)。</summary>
+        public double AmountScale { get; }
     }
 
     /// <summary>
@@ -471,9 +475,12 @@ namespace Dnf.Play
             new BuffRecipe(175, BuffStat.JumpPower, durationColumn: 0, amountStaticIndex: 0, amountColumn: -1),
 
             // 魔法攻击力类:附加体类型 1,时长取 [level info] 第 0 列、数值取第 1 列。
-            // 没做:另一个增益(客户端把数值乘 0.1 存进主角一个浮点字段、每次攻击时按它掷骰触发某个效果,触发效果没读到)、
-            // 另一个走状态 0x32 的增益(另一套代码)、增益的特效与音效、增益图标。
             new BuffRecipe(176, BuffStat.MagicalAttack, durationColumn: 0, amountStaticIndex: -1, amountColumn: 1),
+
+            // 概率触发类(E-142):专门的附加体类(不走属性号);[level info] 第 0 列是千分比的概率(客户端乘 0.1 存进主角的一个浮点字段,
+            // 主角受击前的钩子里再乘 100 与 [0, 10000) 的随机数比,即概率 = 列值 / 1000)、第 1 列是持续毫秒。效果是被打时有这个概率让这一击不产生受击反应(霸体)。
+            new BuffRecipe(180, BuffStat.SuperArmorChance, durationColumn: 1, amountStaticIndex: -1, amountColumn: 0, amountScale: 0.001),
+            // 没做:另一个走状态 0x32 的增益(另一套代码)、增益的特效与音效、增益图标。
         });
     }
 }

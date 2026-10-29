@@ -89,8 +89,8 @@ namespace Dnf.Play
         public double BuffDurationMs => Buff == null || Def == null ? 0.0 : Def.GetLevel(Level, Buff.DurationColumn, false);
 
         /// <summary>
-        /// 增益加在属性上的数:[static data] 的 <see cref="BuffRecipe.AmountStaticIndex"/> 项(下标不小于 0 时)或 [level info] 当前等级的 <see cref="BuffRecipe.AmountColumn"/> 列;
-        /// 不是增益类技能或读不到定义为 0。
+        /// 增益加在属性上的数:[static data] 的 <see cref="BuffRecipe.AmountStaticIndex"/> 项(下标不小于 0 时)或 [level info] 当前等级的 <see cref="BuffRecipe.AmountColumn"/> 列,
+        /// 再乘 <see cref="BuffRecipe.AmountScale"/>(概率类增益把千分比换成 0 到 1,E-142);不是增益类技能或读不到定义为 0。
         /// </summary>
         public double BuffAmount
         {
@@ -100,7 +100,8 @@ namespace Dnf.Play
                 {
                     return 0.0;
                 }
-                return Buff.AmountStaticIndex >= 0 ? Def.GetStatic(Buff.AmountStaticIndex, false) : Def.GetLevel(Level, Buff.AmountColumn, false);
+                int raw = Buff.AmountStaticIndex >= 0 ? Def.GetStatic(Buff.AmountStaticIndex, false) : Def.GetLevel(Level, Buff.AmountColumn, false);
+                return raw * Buff.AmountScale;
             }
         }
 
@@ -209,7 +210,7 @@ namespace Dnf.Play
     /// 冷却在放出的那一刻开始(.skl 的 [auto cooltime apply] 1 对应的行为,客户端在进入技能状态时启动冷却),按墙钟倒数。
     /// 耗蓝(证据 E-087):给了 <see cref="HeroVitals"/> 就在技能真正开始的那一刻扣 [consume MP],魔法值不够就放不出来(<see cref="SkillCastResult.NoMp"/>,
     /// 不启动冷却、不扣蓝);没给就不耗蓝(旧行为)。
-    /// 没做:施放期间的无敌与霸体、冷却缩减、技能等级成长对伤害与攻击范围的影响。
+    /// 没做:施放期间的无敌与技能自带的霸体(概率触发类增益带来的霸体已做,E-142)、冷却缩减、技能等级成长对伤害与攻击范围的影响。
     /// </summary>
     public sealed class HeroSkills
     {

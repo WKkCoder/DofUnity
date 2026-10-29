@@ -102,6 +102,11 @@ namespace Dnf.Play
         /// </summary>
         public bool FireElement { get; }
 
+        /// <summary>
+        /// [ignore super armor] 非 0:这一击无视一档霸体(受击反应决策函数第 2 步,档位 1 被它打破、档位 2 不受影响,证据 E-079、E-142)。
+        /// </summary>
+        public bool IgnoreSuperArmor { get; }
+
         // 攻击信息读出来的伤害输入(没有 .atk 的手填写法为 null)
         private readonly HitInput _source;
 
@@ -123,8 +128,9 @@ namespace Dnf.Play
             int hitValue = -1, bool useWeaponHitDelayRate = false, float hitScale = -1f, int knockBackType = 0, bool noKnockBack = false,
             int forceHitStunMs = 0, bool magical = false, int liftUp = 0, bool bounce = false, bool ignoreWeight = false, bool reactionDamage = false,
             string hitWav = null, bool reactionNone = false, HitInput source = null, ActiveStatusEntry[] statuses = null, float humanActiveStatusRate = 1f,
-            bool fireElement = false)
+            bool fireElement = false, bool ignoreSuperArmor = false)
         {
+            IgnoreSuperArmor = ignoreSuperArmor;
             FireElement = fireElement;
             _source = source;
             _statuses = statuses != null && statuses.Length > 0 ? statuses : null;
@@ -161,7 +167,7 @@ namespace Dnf.Play
                     info.LiftUp, info.Bounce != 0, info.IgnoreWeight != 0,
                     info.Reaction == DamageReaction.Damage || info.Reaction == DamageReaction.DamageExceptHuman, info.HitWav,
                     info.Reaction == DamageReaction.None, HitInput.From(info), StatusSlots(info), info.HumanActiveStatusRate,
-                    info.Elements.Contains(ElementKind.Fire));
+                    info.Elements.Contains(ElementKind.Fire), info.IgnoreSuperArmor != 0);
         }
 
         /// <summary>攻击信息里真正写了的异常状态槽(种类不是"没有");一个也没有返回 null。</summary>
@@ -183,7 +189,7 @@ namespace Dnf.Play
         {
             return new HeroStrikeInfo(DamageBonus, PushAside, KnockDown, ratePercent, fixedDamage, HitValue, UseWeaponHitDelayRate,
                 HitScale, KnockBackType, NoKnockBack, ForceHitStunMs, Magical, LiftUp, Bounce, IgnoreWeight, ReactionDamage, HitWav, ReactionNone, _source,
-                _statuses, HumanActiveStatusRate, FireElement);
+                _statuses, HumanActiveStatusRate, FireElement, IgnoreSuperArmor);
         }
     }
 
@@ -575,6 +581,15 @@ namespace Dnf.Play
         /// <summary>异常状态概率用的随机数,与伤害、物理、动作脚本的随机数都分开,免得改变它们的序列。</summary>
         private readonly Random _statusRandom;
 
+        /// <summary>施法被打时掷霸体概率用的随机数(M49,E-142),同样与别的随机数分开。</summary>
+        private readonly Random _procRandom;
+
+        /// <summary>
+        /// 主角此刻的霸体档位:0 没有、1 可被攻击信息的 [ignore super armor] 打破、2 不可破(客户端受击反应决策函数第 2、4 步,E-079、E-142)。
+        /// 只在一次受击的"受击前钩子"与"受击后钩子"之间有值(概率触发类增益在前一个钩子里置 1,后一个钩子里清零)。
+        /// </summary>
+        private int _superArmorMode;
+
         private readonly List<ActiveStatusTick> _statusTicks = new List<ActiveStatusTick>();
 
         /// <summary>上一小步的方向键(摇脱按"换方向"算一下)。</summary>
@@ -895,6 +910,14 @@ namespace Dnf.Play
         /// <summary>施法中途被打断(受击、倒地、死亡)、增益没挂上的次数。</summary>
         public int BuffsInterrupted { get; private set; }
 
+        /// <summary>
+        /// 概率触发类增益(<see cref="BuffStat.SuperArmorChance"/>)掷中的次数:主角正在出招(<see cref="TownHero.IsAttacking"/>)时每挨一击掷一次(M49,E-142)。
+        /// </summary>
+        public int SuperArmorProcs { get; private set; }
+
+        /// <summary>因为霸体而没有产生受击反应(硬直、击退、倒地都没有,伤害照扣)的次数。</summary>
+        public int SuperArmorAbsorbed { get; private set; }
+
         public string MapPath => _room.MapPath;
         public TownHero Hero => _room.Hero;
         public TownCamera Camera => _room.Camera;
@@ -1184,6 +1207,7 @@ namespace Dnf.Play
             _physicsRandom = new Random(unchecked(seed * 31 + 17));
             _numberRandom = new Random(unchecked(seed * 53 + 41));
             _statusRandom = new Random(unchecked(seed * 197 + 83));
+            _procRandom = new Random(unchecked(seed * 271 + 97));
             _heroDown = new HeroKnockdown(_room.Hero);
             _voiceSeed = unchecked((uint)seed * 2246822519u + 3266489917u);
             SyncStance();
@@ -3261,6 +3285,8 @@ namespace Dnf.Play
         /// <param name="hit">攻击框与主角受击框的相交盒,伤害数字按它的中心放(证据 E-107)。</param>
         private void StrikeHero(MonsterActor owner, HeroStrikeInfo info, bool attackerFacingLeft, TownHero hero, MonsterActor attacker, Aabb hit)
         {
+            // 受击前钩子(onBeforeDamage,主角类的覆盖 0x00846bd0;E-142):带概率触发类增益、而且正在出招的主角,每挨一击掷一次霸体
+            _superArmorMode = RollSuperArmor(hero);
             int attack = info.Magical ? owner.MagicalAttack : owner.PhysicalAttack;
             int damage = _damageConstants != null
                 ? MonsterDamage.Roll(info, owner.Level, attack, Vitals, _damageConstants, unchecked((uint)_monsterRandom.Next()))
@@ -3288,10 +3314,32 @@ namespace Dnf.Play
                 }
             }
             AddNumber(damage, DamageNumberFlags.VictimIsHero, hit, hero.Y);
+            _superArmorMode = 0;                          // 受击后钩子(onAfterDamage,主角类的覆盖 0x0084a5e0)把这一击的霸体摘掉(E-142)
         }
 
         /// <summary>
-        /// 主角被打中之后的受击反应(决策函数 0x00822ca0 对"没有霸体、没有异常状态"的主角,证据 E-079、E-105):
+        /// 受击前钩子里的霸体掷骰(E-142):有概率触发类增益(<see cref="BuffStat.SuperArmorChance"/>)、主角正在出招(客户端问"当前有没有攻击信息序号",
+        /// 这里取 <see cref="TownHero.IsAttacking"/>,推断)时,概率 × 10000 大于 [0, 10000) 的随机数就掷中,档位 1;没掷中或没有增益返回 0。
+        /// 放增益的施法状态(0x11)的进入块里没有设攻击信息序号的调用(静态读码),所以正在放增益不算出招(推断,中低);
+        /// 客户端的钩子还要求这一击不是 stuck 命中(参数,眼下没有这个概念,按否)。
+        /// </summary>
+        private int RollSuperArmor(TownHero hero)
+        {
+            double chance = _buffs.Total(BuffStat.SuperArmorChance);
+            if (chance <= 0.0 || !hero.IsAttacking || _castingBuff != null)
+            {
+                return 0;
+            }
+            if (chance * 10000.0 > _procRandom.Next(10000))
+            {
+                SuperArmorProcs++;
+                return 1;
+            }
+            return 0;
+        }
+
+        /// <summary>
+        /// 主角被打中之后的受击反应(决策函数 0x00822ca0 对"没有异常状态"的主角,证据 E-079、E-105;霸体按第 2、4 步,E-142):
         /// 已死 → 有倒地动作就倒地(请求用这一击自己的推力与抬升;[damage reaction] 为 none 时决策函数不产生反应,由每帧函数补发推力、抬升各 400 的倒地),
         /// 没有倒地动作就停在受击姿势上(占位的死亡);没死:none → 不产生反应;倒地类的攻击(2),或普通受击(1、3)打中腾空的主角、已在倒地里的主角 →
         /// 倒地分支(有倒地动作才走,没有退到受击分支);其余走受击分支(交替放 [damage motion 1]、[damage motion 2],硬直与击退按 E-080 的公式)。
@@ -3330,6 +3378,13 @@ namespace Dnf.Play
             }
             if (info.ReactionNone)
             {
+                return;
+            }
+            if (_superArmorMode >= 2 || (_superArmorMode == 1 && !info.IgnoreSuperArmor))
+            {
+                // 第 2、4 步(E-079、E-142):霸体档位 1 且这一击没有 [ignore super armor]、或档位 2 → 没死的主角不产生反应(伤害照扣,硬直、击退、倒地都没有)。
+                // 第 4 步另有一组例外(受击方 +0x738 一带的两个检查加攻击方槽 +0x220())没有读通,按没有例外处理。
+                SuperArmorAbsorbed++;
                 return;
             }
             if (_heroStatus != null && (_heroStatus.Has(ActiveStatusKind.Freeze) || _heroStatus.Has(ActiveStatusKind.Stone)))

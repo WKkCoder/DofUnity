@@ -166,9 +166,10 @@ public sealed class HeroBuffTests
         Assert.Null(recipes.Find(AvatarFixture.JumpBuffSkill));
         Assert.Equal(2, recipes.AllBuffs.Count());
 
-        // 默认表里有两个增益类技能,改的属性各是一种
-        Assert.Equal(2, SkillRecipes.Default.BuffCount);
-        Assert.Equal(new[] { BuffStat.MagicalAttack, BuffStat.JumpPower }.OrderBy(s => (int)s), SkillRecipes.Default.AllBuffs.Select(b => b.Stat).OrderBy(s => (int)s));
+        // 默认表里有三个增益类技能,改的属性各是一种(第三个是 M49 的概率触发类,E-142)
+        Assert.Equal(3, SkillRecipes.Default.BuffCount);
+        Assert.Equal(new[] { BuffStat.MagicalAttack, BuffStat.JumpPower, BuffStat.SuperArmorChance }.OrderBy(s => (int)s),
+            SkillRecipes.Default.AllBuffs.Select(b => b.Stat).OrderBy(s => (int)s));
     }
 
     [Fact]

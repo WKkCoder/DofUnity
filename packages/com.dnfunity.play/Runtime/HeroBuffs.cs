@@ -6,7 +6,8 @@ using System.Collections.Generic;
 namespace Dnf.Play
 {
     /// <summary>
-    /// 增益改的属性。编号是服务端 .apd 附加体类型枚举里的号(E-141:1 魔法攻击力、8 跳跃力);这里只收已经接上消费者的属性。
+    /// 增益改的属性。1 与 8 是服务端 .apd 附加体类型枚举里的号(E-141:1 魔法攻击力、8 跳跃力);100 起是本工程自己的内部编号
+    /// (客户端里这类增益是专门的附加体类,不走"属性号 + 加和"那一套,没有对应的枚举号,E-142)。这里只收已经接上消费者的属性。
     /// </summary>
     public enum BuffStat
     {
@@ -15,6 +16,12 @@ namespace Dnf.Play
 
         /// <summary>跳跃力:加进起跳初速度公式里的跳跃力(<see cref="Dnf.Render.TownHero.JumpPowerBonus"/>)。</summary>
         JumpPower = 8,
+
+        /// <summary>
+        /// 出招被打时的霸体概率(0 到 1;内部编号,E-142):主角正在出招(普攻、技能;站着与正在放增益不算)时每挨一击掷一次,
+        /// 掷中这一击不产生受击反应、伤害照扣(<see cref="RoomCombatSession.SuperArmorProcs"/>、<see cref="RoomCombatSession.SuperArmorAbsorbed"/>)。
+        /// </summary>
+        SuperArmorChance = 100,
     }
 
     /// <summary>一个生效中的增益(客户端:主角附加体容器里的一个属性附加体)。</summary>

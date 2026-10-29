@@ -689,6 +689,10 @@ internal static class SkillCheck
                     {
                         buffProblems.Add(label + " " + lv + " 级:持续时间或数值不是正数");
                     }
+                    if (recipe.Stat == BuffStat.SuperArmorChance && amount * recipe.AmountScale > 1.0)
+                    {
+                        buffProblems.Add(label + " " + lv + " 级:概率超过 100%(M49,E-142)");       // 概率类增益的数是千分比,换成 0 到 1 以后不会超过 1
+                    }
                 }
 
                 RoomCombatSession session = NewSession(assets, opts, caster);
