@@ -70,6 +70,12 @@ namespace Dnf.Play
             return a != null && a.Ani != null ? a : null;
         }
 
+        /// <summary>
+        /// [etc action] 第 n 项,不看动画读得出读不出(越界或 .act 读不到为 null)。触发器开关板用它:
+        /// 客户端的“某一族动作的触发器池”跟动画无关,脚本问起时只看这一项的 .act 有没有触发器(E-158)。
+        /// </summary>
+        public PassiveAction EtcAction(int n) => (uint)n < (uint)_etc.Length ? _etc[n] : null;
+
         /// <summary>.obj 的 [attack info]:对象的攻击框打中主角时用(没有时全是默认值)。</summary>
         public HeroStrikeInfo Strike { get; }
 

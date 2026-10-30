@@ -85,7 +85,7 @@ cond	0x29	[IS AI TARGET]	AI +0x7b0 设目标，非过滤	低	全库 0 次
 cond	0x2b	DIRECT DO BEHAVIOR	同 0x00	高	直接差异在行为层
 cond	0x2c	[GET TARGET]	按 mode 随机/距离/等级/生命/最近命中整理工作集并留前 maxN;工作集一开始为空则整个触发器不通过(0x010d7ccb 到 0x010d3ed3);[HP][HIGH] 的比较函数 0x010d1160 恒真,不排序(原版笔误)	高	[MP] 键;随机洗牌序列与客户端不逐个对应
 cond	0x2d	[IS GRABABLE]	逐对象:转成生物类(被动对象剔除)后取虚槽 0x380;参数为 1 留能抓的,别的值留不能抓的	高	主角侧只近似为活着且没有冰冻、石化
-cond	0x2e	[TRIGGER CHECK]	读指定触发器池第 N 条的开关;种类 3(没写族)为整体真假,否则逐对象过滤;[ON]/[OFF] 对应 P=0/1;不认 [DEFAULT]	中	被动对象的 [CUSTOM] 开关板与 [DEFAULT]/[CUSTOM] 池没有宿主;是否还检查触发次数没确认
+cond	0x2e	[TRIGGER CHECK]	读指定触发器池第 N 条的开关;种类 3(没写族)为整体真假,否则逐对象过滤;[ON]/[OFF] 对应 P=0/1;不认 [DEFAULT];被动对象(另一个类 0x019d920c)只答 [CUSTOM](虚槽 0x450)、[DEFAULT](字段 +0x130)、[PROC](虚槽 0x14c),别的族对象被剔除(E-158)	中	怪物的 [DEFAULT]/[CUSTOM] 池没有宿主(被动对象 M62 起有);是否还检查触发次数没确认
 cond	0x38	[IS END MAP]	拥有者近地图右缘且 X 轴速度>0	中	左端 x≤150 特例；函数 0x0046ef10
 cond	0x39	[IS END MAP VERTICALLY]	拥有者近地图上缘且 Y 轴速度>0	中	函数 0x0062d080
 cond	0x3a	[IS DAMAGEBOX ENABLE]	目标伤害盒开关与参数 0/1 一致	中	全库仅 1 例

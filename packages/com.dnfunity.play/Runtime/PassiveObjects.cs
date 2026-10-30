@@ -272,6 +272,99 @@ namespace Dnf.Play
             return _savedTargets != null && _savedTargets.TryGetValue(slot, out IActEntity target) ? target : null;
         }
 
+        // ------------------------------------------------------------------ 各动作的触发器开关板(E-158)
+
+        private readonly Dictionary<PassiveAction, bool[]> _boards = new Dictionary<PassiveAction, bool[]>();
+
+        /// <summary>脚本读别的动作的开关([TRIGGER CHECK] [CUSTOM] 等)的次数,以及其中落空的次数(没有这一个动作、没装触发器、序号越界;审计与测试用)。</summary>
+        public int BoardReads { get; private set; }
+
+        public int BoardReadMisses { get; private set; }
+
+        /// <summary>脚本写别的动作的开关([TRIGGER] [CUSTOM] 等)的次数,以及其中落空的次数。</summary>
+        public int BoardWrites { get; private set; }
+
+        public int BoardWriteMisses { get; private set; }
+
+        /// <summary>
+        /// 这个动作的触发器开关板:对象一生一份、换动作也保留(客户端的动作池属于对象,开关字节只有 [TRIGGER] 行为才改,出招式的复位函数不碰它,E-134、E-158),
+        /// 第一次用到时取脚本里 [ENABLE] 写的初值(推断:客户端对象出生时就把全部动作的触发器池建好,所以没进过的动作也有初值)。没有触发器的动作没有开关板。
+        /// </summary>
+        private bool[] BoardOf(PassiveAction action)
+        {
+            if (action == null || !action.HasTriggers)
+            {
+                return null;
+            }
+            if (!_boards.TryGetValue(action, out bool[] board))
+            {
+                board = ActRunner.NewEnabledState(action.Program);
+                _boards.Add(action, board);
+            }
+            return board;
+        }
+
+        /// <summary>
+        /// 脚本按动作族点名的动作(客户端:被动对象这一类对象只认 [CUSTOM] a(虚槽 0x450)、[DEFAULT]、[PROC],E-158):
+        /// [CUSTOM] a 是 [etc action] 第 a 项,[DEFAULT] 是基础动作(推断:对象字段 +0x130 就是默认动作的池);被动对象没有 [PROC] 动作,
+        /// 别的族(出招、站立、行走、坐下、倒地)客户端转不成那个类,取不到池。
+        /// </summary>
+        private PassiveAction PoolAction(ActTriggerPool pool, int slot)
+        {
+            switch (pool)
+            {
+                case ActTriggerPool.Custom:
+                    return _template.EtcAction(slot);
+                case ActTriggerPool.Default:
+                    return _template.Basic;
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>[TRIGGER CHECK] 的读侧:这一族动作上第 <paramref name="trigger"/> 个触发器现在开着吗;取不到池或序号不小于个数返回 null(对象被剔除)。</summary>
+        bool? IActEntity.GetActionTrigger(ActTriggerPool pool, int slot, int trigger)
+        {
+            BoardReads++;
+            bool[] board = BoardOf(PoolAction(pool, slot));
+            if (board == null || (uint)trigger >= (uint)board.Length)
+            {
+                BoardReadMisses++;
+                return null;
+            }
+            return board[trigger];
+        }
+
+        /// <summary>
+        /// [TRIGGER] 的按动作族写法落到被动对象自己的动作上:写那个动作的开关板;写的正是正在跑的这一个动作时(运行器共用同一份数组)
+        /// 复位还要清它的次数、单次位与计时(经 <see cref="ActRunner.ApplyTrigger"/>);别的动作此刻没有运行器,下次进入从头开始,复位没有可见的效果。
+        /// </summary>
+        void IActEntity.SetActionTrigger(ActTriggerPool pool, int slot, int trigger, ActTriggerCommand command)
+        {
+            PassiveAction action = PoolAction(pool, slot);
+            bool[] board = BoardOf(action);
+            if (board == null || (uint)trigger >= (uint)board.Length)
+            {
+                BoardWriteMisses++;
+                return;
+            }
+            BoardWrites++;
+            if (action == _action && _runner != null)
+            {
+                _runner.ApplyTrigger(trigger, command);
+                return;
+            }
+            switch (command)
+            {
+                case ActTriggerCommand.On:
+                    board[trigger] = true;
+                    break;
+                case ActTriggerCommand.Off:
+                    board[trigger] = false;
+                    break;
+            }
+        }
+
         // ------------------------------------------------------------------ 推进
 
         private void SwitchAction(PassiveAction next)
@@ -281,7 +374,7 @@ namespace Dnf.Play
             _rectOn = true;
             _hitDone = false;
             _motionVersion++;
-            _runner = next.HasTriggers ? new ActRunner(next.Program, this, _host) : null;
+            _runner = next.HasTriggers ? new ActRunner(next.Program, this, _host, BoardOf(next)) : null;
             _setActionPending = _runner != null;
         }
 

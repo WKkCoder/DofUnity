@@ -208,6 +208,8 @@ internal static class DungeonCheck
         Console.WriteLine("脚本(E-130):进过的房间里出招带 .act 触发器的怪物 " + session.ActMonsters + " 只,脚本放出被动对象 " + session.PassivesSpawned + " 个,打中主角 "
             + session.PassiveHits + " 次");
         Console.WriteLine("脚本跨招开关(E-145):落到存在的招与触发器 " + session.ActSwitchApplied + " 次,落空 " + session.ActSwitchMissed + " 次,指向未接线的动作族 " + session.ActSwitchUnhosted + " 次");
+        Console.WriteLine("被动对象的动作开关板(E-158):读别的动作的开关 " + session.PassiveBoardReads + " 次(落空 " + session.PassiveBoardReadMisses + "),写 " + session.PassiveBoardWrites
+            + " 次(落空 " + session.PassiveBoardWriteMisses + ")");
         Console.WriteLine("脚本非出招动作族(E-146):进过的房间里装了站立、行走、受击、倒地、过程或最后一幕触发器的怪物 " + session.FamilyActMonsters + " 只,运行器启动 " + session.FamilyRunsStarted
             + " 次,[SET ACTION] 落实 " + session.FamilySetActionApplied + " 次、没落实 " + session.FamilySetActionUnhosted + " 次");
         Console.WriteLine("脚本换动作文件(E-151):换上 " + session.ActionFilesApplied + " 次,记成待换 " + session.ActionFilesDeferred + " 次,这一版没有对应动作的族 "

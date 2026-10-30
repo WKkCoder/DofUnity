@@ -411,6 +411,269 @@ internal static class ActRunCheck
     }
 
     /// <summary>
+    /// 实跑的小世界(E-158):只有被动对象自己,没有主角与目标;对象放出的对象也在里面跑(同时最多 <see cref="MaxObjects"/> 个,多了拒绝)。
+    /// 用来验证真实脚本在开关板宿主上跑得起来(不抛异常),并数开关的读写;不是战斗模拟。
+    /// </summary>
+    private sealed class LiveWorld : IActHost
+    {
+        public const int MaxObjects = 200;
+
+        private readonly ActLibrary _library;
+        private readonly MonsterActor _root;
+        private readonly Random _rng = new Random(1);
+
+        public readonly List<PassiveObject> All = new List<PassiveObject>();
+        public long Ms;
+        public int Refused;
+
+        public LiveWorld(ActLibrary library, MonsterActor root)
+        {
+            _library = library;
+            _root = root;
+        }
+
+        public int Random(int n) => _rng.Next(n);
+
+        public long NowMs => Ms;
+
+        public void SpawnPassive(IActEntity owner, int index, int level, float x, float y, float z, bool facingLeft)
+        {
+            PassiveTemplate? template = All.Count >= MaxObjects ? null : _library.Passive(index);
+            if (template == null)
+            {
+                Refused++;
+                return;
+            }
+            All.Add(new PassiveObject(template, owner, _root, this, x, y, z, facingLeft));
+        }
+
+        public void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into)
+        {
+        }
+
+        public void Shake(int strength, int durationMs)
+        {
+        }
+
+        public void SummonMonster(IActEntity master, int index, int level, float x, float y, float z, bool facingLeft, int lifetimeMs)
+        {
+        }
+
+        /// <summary>放一个对象进去,按 10 毫秒一步跑 <paramref name="seconds"/> 秒(全部消失就提前结束)。</summary>
+        public void Run(PassiveTemplate template, int seconds)
+        {
+            All.Add(new PassiveObject(template, _root.ActSelf, _root, this, 300, 100, 0, false));
+            for (int t = 0; t < seconds * 1000; t += 10)
+            {
+                int live = 0;
+                for (int i = 0; i < All.Count; i++)
+                {
+                    PassiveObject o = All[i];
+                    if (!o.Finished)
+                    {
+                        live++;
+                        o.Update(10);
+                    }
+                }
+                Ms += 10;
+                if (live == 0)
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    private sealed class LiveBoardTally
+    {
+        public int Objects;
+        public int NoTemplate;
+        public int Failed;
+        public int Reads;
+        public int ReadMisses;
+        public int Writes;
+        public int WriteMisses;
+        public int Spawned;
+        public int Refused;
+        public readonly SortedDictionary<string, int> Errors = new SortedDictionary<string, int>(StringComparer.Ordinal);
+
+        public void Print()
+        {
+            Console.WriteLine("  实跑(空场地、没有主角与目标、每个对象 10 秒;E-158):对象 " + Objects + " 个(没有模板 " + NoTemplate + " 个,抛异常 " + Failed + " 个);开关读 " + Reads + " 次(落空 " + ReadMisses
+                + "),写 " + Writes + " 次(落空 " + WriteMisses + ");放出对象 " + Spawned + " 个(上限拒绝 " + Refused + " 次)" + (Errors.Count > 0 ? ";异常 " + Join(Errors, 6) : string.Empty));
+        }
+
+        public object ToJson() => new { Objects, NoTemplate, Failed, Reads, ReadMisses, Writes, WriteMisses, Spawned, Refused, Errors };
+    }
+
+    private static LiveBoardTally RunLiveBoards(DnfAssets assets, GameData data, ActLibrary library, IEnumerable<int> ids)
+    {
+        var tally = new LiveBoardTally();
+        MonsterActor? root = null;
+        foreach (int mid in data.MonsterIds())
+        {
+            MonsterDef? def = data.GetMonster(mid);
+            if (def == null)
+            {
+                continue;
+            }
+            try
+            {
+                MonsterModel model = MonsterModel.Read(assets, def.Path);
+                root = new MonsterActor(0, new RoomMonsterSpawn(1, 0, 0, 0, 0, 0, 1, 0, "[fixed]", "[normal]"), model, 1, 100, 222.5, 1500, 0);
+                break;
+            }
+            catch (Exception)
+            {
+                // 读不了的怪物跳过,换下一个
+            }
+        }
+        if (root == null)
+        {
+            return tally;
+        }
+        foreach (int id in ids)
+        {
+            PassiveTemplate? template = library.Passive(id);
+            if (template == null)
+            {
+                tally.NoTemplate++;
+                continue;
+            }
+            var world = new LiveWorld(library, root);
+            try
+            {
+                world.Run(template, 10);
+            }
+            catch (Exception e)
+            {
+                tally.Failed++;
+                tally.Errors[e.GetType().Name] = tally.Errors.TryGetValue(e.GetType().Name, out int n) ? n + 1 : 1;
+                continue;
+            }
+            tally.Objects++;
+            foreach (PassiveObject o in world.All)
+            {
+                tally.Reads += o.BoardReads;
+                tally.ReadMisses += o.BoardReadMisses;
+                tally.Writes += o.BoardWrites;
+                tally.WriteMisses += o.BoardWriteMisses;
+            }
+            tally.Spawned += world.All.Count - 1;
+            tally.Refused += world.Refused;
+        }
+        return tally;
+    }
+
+    /// <summary>
+    /// 被动对象各动作的触发器开关板(E-158)按对象的汇总:对象每个动作(基础动作与 [etc action] 各项)的 .act 里,读别的动作开关的 [TRIGGER CHECK] 与写别的动作开关的 [TRIGGER]
+    /// (不写族的是自己这一动作,不算)。被动对象只有 [CUSTOM](.obj 的 [etc action] 第 a 项)与 [DEFAULT](基础动作)两种池;要有答案还得那个动作的 .act 读得到、装了触发器、序号在范围内,
+    /// 其余落空(读侧对象被剔除、写侧跳过)。
+    /// </summary>
+    private sealed class BoardTally
+    {
+        public int Objects;
+        public int Reads;
+        public int Writes;
+        public readonly SortedSet<int> Ids = new SortedSet<int>();
+        public readonly SortedDictionary<string, int> ReadByOutcome = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        public readonly SortedDictionary<string, int> WriteByOutcome = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        public readonly SortedDictionary<string, int> ByPool = new SortedDictionary<string, int>(StringComparer.Ordinal);
+
+        public void Print(string title)
+        {
+            Console.WriteLine("  " + title + ":带跨动作开关读写的对象 " + Objects + " 个;读 [TRIGGER CHECK] " + Reads + " 条(" + Join(ReadByOutcome, 8) + "),写 [TRIGGER] " + Writes
+                + " 条(" + Join(WriteByOutcome, 8) + ");按池 " + Join(ByPool, 10));
+        }
+
+        public object ToJson() => new { Objects, Reads, Writes, ReadByOutcome, WriteByOutcome, ByPool };
+    }
+
+    private static void CountBoards(int id, Dnf.Game.PassiveObjectDef def, Func<string?, ActProgram?> program, BoardTally tally)
+    {
+        ActProgram? basic = program(def.BasicActionPath);
+        var etc = new ActProgram?[def.EtcActionPaths.Length];
+        var sources = new List<ActProgram>();
+        if (basic != null)
+        {
+            sources.Add(basic);
+        }
+        for (int i = 0; i < etc.Length; i++)
+        {
+            etc[i] = program(def.EtcActionPaths[i]);
+            if (etc[i] != null)
+            {
+                sources.Add(etc[i]!);
+            }
+        }
+
+        string Outcome(ActTriggerPool pool, int slot, int index)
+        {
+            ActProgram? target;
+            switch (pool)
+            {
+                case ActTriggerPool.Custom:
+                    target = (uint)slot < (uint)etc.Length ? etc[slot] : null;
+                    break;
+                case ActTriggerPool.Default:
+                    target = basic;
+                    break;
+                default:
+                    return "没有这一族的池";
+            }
+            if (target == null)
+            {
+                return "没有这个动作";
+            }
+            if (target.Triggers.Count == 0)
+            {
+                return "动作没装触发器";
+            }
+            return (uint)index < (uint)target.Triggers.Count ? "有答案" : "序号越界";
+        }
+
+        void Add(SortedDictionary<string, int> map, string key) => map[key] = map.TryGetValue(key, out int n) ? n + 1 : 1;
+
+        bool any = false;
+        foreach (ActProgram source in sources)
+        {
+            foreach (ActTrigger t in source.Triggers)
+            {
+                foreach (ActRecord rec in t.Records)
+                {
+                    if (rec.Kind != ActRecordKind.TriggerCheck || rec.TriggerPool == ActTriggerPool.Own)
+                    {
+                        continue;
+                    }
+                    any = true;
+                    tally.Reads++;
+                    Add(tally.ReadByOutcome, Outcome(rec.TriggerPool, rec.TriggerSlot, rec.Number));
+                    Add(tally.ByPool, "读 " + rec.TriggerPool);
+                }
+            }
+            foreach (ActBehaviorGroup g in source.Behaviors)
+            {
+                foreach (ActBehavior b in g.Items)
+                {
+                    if (b.Kind != ActBehaviorKind.TriggerSwitch || b.TriggerPool == ActTriggerPool.Own)
+                    {
+                        continue;
+                    }
+                    any = true;
+                    tally.Writes++;
+                    Add(tally.WriteByOutcome, Outcome(b.TriggerPool, b.TriggerSlot, b.TriggerIndex));
+                    Add(tally.ByPool, "写 " + b.TriggerPool);
+                }
+            }
+        }
+        tally.Objects += any ? 1 : 0;
+        if (any)
+        {
+            tally.Ids.Add(id);
+        }
+    }
+
+    /// <summary>
     /// 非出招动作族宿主(E-146)按"怪物"的汇总:一只怪物所有带触发器的 .act(出招与各族)里,指向站立、行走、坐下、倒地、过程这几族的 [TRIGGER] 开关,
     /// 目标族的 .act(每族取 .mob 里写的第一个)存在、触发器序号在范围内算落到宿主上,否则落空(客户端:池为空或个数不大于序号就跳过);[DEFAULT]、[CUSTOM] 还没有宿主。
     /// </summary>
@@ -959,6 +1222,8 @@ internal static class ActRunCheck
 
         // ---- 第三部分:被动对象全表
         int[] allIds = data.PassiveObjectIds();
+        var boardsAll = new BoardTally();
+        var boardsReached = new BoardTally();
         int readable = 0, basicAct = 0, oldStyle = 0, etcActs = 0, anyTrig = 0, allRun = 0, timeLimit = 0, endOfAnim = 0, neither = 0;
         var allActs = new Dictionary<string, ActProgram>(StringComparer.OrdinalIgnoreCase);
         foreach (int id in allIds)
@@ -969,6 +1234,11 @@ internal static class ActRunCheck
                 continue;
             }
             readable++;
+            CountBoards(id, def, Program, boardsAll);
+            if (reached.Contains(id))
+            {
+                CountBoards(id, def, Program, boardsReached);
+            }
             basicAct += def.BasicActionPath != null ? 1 : 0;
             oldStyle += def.BasicActionPath == null && def.BasicMotionPath != null ? 1 : 0;
             etcActs += def.EtcActionPaths.Length > 0 ? 1 : 0;
@@ -1005,9 +1275,15 @@ internal static class ActRunCheck
             allTally.Add(p);
         }
         allTally.Print("被动对象全表的 .act");
+        Console.WriteLine("被动对象各动作的触发器开关板(E-158,按对象):");
+        boardsReached.Print("怪物出招能放出的");
+        boardsAll.Print("全表");
 
         // ---- 检查
         var library = new ActLibrary(assets, data);
+        LiveBoardTally liveBoards = RunLiveBoards(assets, data, library, boardsAll.Ids);
+        Console.WriteLine();
+        liveBoards.Print();
         int templates = 0;
         foreach (int id in reached)
         {
@@ -1045,6 +1321,12 @@ internal static class ActRunCheck
         Report(withRunnable > 0 && withSpawn > 0, "有怪物带运行器认得的触发器,也有怪物的招式会放被动对象");
         Report(fileSwap.Records > 0 && fileSwap.Resolved * 100 >= fileSwap.Records * 95,
             "[CHANGE ACTION FILE] 换进来的 .act 读得到的不低于 95%(" + fileSwap.Resolved + "/" + fileSwap.Records + ")");
+        int boardAll = boardsAll.Reads + boardsAll.Writes;
+        int boardHit = (boardsAll.ReadByOutcome.TryGetValue("有答案", out int boardReadHit) ? boardReadHit : 0)
+            + (boardsAll.WriteByOutcome.TryGetValue("有答案", out int boardWriteHit) ? boardWriteHit : 0);
+        Report(liveBoards.Objects > 0 && liveBoards.Failed == 0, "被动对象的开关板实跑(E-158):有跨动作开关读写的对象各跑 10 秒都不抛异常(" + liveBoards.Objects + " 个跑完,抛异常 " + liveBoards.Failed + " 个)");
+        Report(boardAll > 0 && boardHit * 100 >= boardAll * 95,
+            "被动对象跨动作的开关读写(E-158)落到自己有触发器的动作上的不低于 95%(" + boardHit + "/" + boardAll + ")");
         int forceAll = monsterTally.ForceBlocks + monsterTally.ForceBroken;
         Report(forceAll > 0 && monsterTally.ForceBlocks * 100 >= forceAll * 95,
             "怪物出招里的 [SET POS FORCE] 读通的不低于 95%(" + monsterTally.ForceBlocks + "/" + forceAll + ")");
@@ -1062,6 +1344,9 @@ internal static class ActRunCheck
                 objectActs = objectTally.ToJson(),
                 allObjects = allIds.Length, readable, basicAct, oldStyle, etcActs, anyTrig, allRun, timeLimit, endOfAnim, neither,
                 allObjectActs = allTally.ToJson(),
+                boardsReached = boardsReached.ToJson(),
+                boardsAll = boardsAll.ToJson(),
+                liveBoards = liveBoards.ToJson(),
             };
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(opts.JsonFile))!);
             File.WriteAllText(opts.JsonFile, JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));

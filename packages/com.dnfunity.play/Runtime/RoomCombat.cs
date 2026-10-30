@@ -1157,6 +1157,86 @@ namespace Dnf.Play
             }
         }
 
+        // 已经消失的被动对象的开关板读写累计(消失的对象从表里删掉,计数得先收起来;E-158)
+        private int _passiveBoardReads;
+        private int _passiveBoardReadMisses;
+        private int _passiveBoardWrites;
+        private int _passiveBoardWriteMisses;
+
+        /// <summary>把已经消失的被动对象从表里拿掉,并把它们的开关板读写计数收进累计。</summary>
+        private void RetireFinishedPassives()
+        {
+            for (int i = _passives.Count - 1; i >= 0; i--)
+            {
+                PassiveObject p = _passives[i];
+                if (!p.Finished)
+                {
+                    continue;
+                }
+                _passiveBoardReads += p.BoardReads;
+                _passiveBoardReadMisses += p.BoardReadMisses;
+                _passiveBoardWrites += p.BoardWrites;
+                _passiveBoardWriteMisses += p.BoardWriteMisses;
+                _passives.RemoveAt(i);
+            }
+        }
+
+        /// <summary>被动对象的脚本读别的动作的触发器开关([TRIGGER CHECK] [CUSTOM] 等)的次数(含已消失的对象,E-158)。</summary>
+        public int PassiveBoardReads
+        {
+            get
+            {
+                int n = _passiveBoardReads;
+                foreach (PassiveObject p in _passives)
+                {
+                    n += p.BoardReads;
+                }
+                return n;
+            }
+        }
+
+        /// <summary>同上,取不到那个动作的池或序号越界而落空的次数。</summary>
+        public int PassiveBoardReadMisses
+        {
+            get
+            {
+                int n = _passiveBoardReadMisses;
+                foreach (PassiveObject p in _passives)
+                {
+                    n += p.BoardReadMisses;
+                }
+                return n;
+            }
+        }
+
+        /// <summary>被动对象的脚本写别的动作的触发器开关([TRIGGER] [CUSTOM] 等)的次数。</summary>
+        public int PassiveBoardWrites
+        {
+            get
+            {
+                int n = _passiveBoardWrites;
+                foreach (PassiveObject p in _passives)
+                {
+                    n += p.BoardWrites;
+                }
+                return n;
+            }
+        }
+
+        /// <summary>同上,落空的次数。</summary>
+        public int PassiveBoardWriteMisses
+        {
+            get
+            {
+                int n = _passiveBoardWriteMisses;
+                foreach (PassiveObject p in _passives)
+                {
+                    n += p.BoardWriteMisses;
+                }
+                return n;
+            }
+        }
+
         /// <summary>场上装了非出招动作族 .act 触发器的怪物数(E-146)。</summary>
         public int FamilyActMonsters
         {
@@ -1996,7 +2076,7 @@ namespace Dnf.Play
             ResolveProjectileHits();
             ResolvePassiveHits();
             _projectiles.RemoveAll(p => p.Finished);
-            _passives.RemoveAll(p => p.Finished);
+            RetireFinishedPassives();
             _heroObjects.RemoveAll(o => o.Finished);
             SpawnSkillObjects(hero);       // 这一步新放的对象从下一步起才走
             SyncStance();
@@ -3288,6 +3368,7 @@ namespace Dnf.Play
         {
             _acts = library;
             _passives.Clear();
+            _passiveBoardReads = _passiveBoardReadMisses = _passiveBoardWrites = _passiveBoardWriteMisses = 0;
             _pendingSummons.Clear();
             if (library == null)
             {

@@ -438,6 +438,18 @@ internal sealed class AvatarFixture : IDisposable
     public const int ActGraveId = 9203;
     public const int ActSpawnerId = 9204;
     public const int ActFallId = 9205;
+
+    /// <summary>
+    /// M62(证据 E-158)被动对象各动作的触发器开关板:<see cref="ActBoardReadId"/> 出生时读 [CUSTOM] 0 的触发器 0(开着的那条放 X 速度 100,关着的那条放 Y 速度 50)、三种落空的读法(越界序号、不存在的动作、没装触发器的动作,满足了才放 Z 速度 300)与动画读不到的自定义动作 2(池照样存在,通过就放一个 <see cref="ActGraveId"/>);
+    /// <see cref="ActBoardWriteId"/> 出生时把 [CUSTOM] 0 的触发器 0 关掉、再写一次越界的触发器 9(落空)、然后切过去(触发器 0 被关了不触发,同一动作的触发器 1 照常触发);
+    /// <see cref="ActBoardLoopId"/> 基础动作与自定义动作 0 来回切,自定义动作 0 每次进来放一个 <see cref="ActGraveId"/>、把自己的触发器 0 关掉再切回去(开关保留时只放一个)。
+    /// </summary>
+    public const int ActBoardReadId = 9207;
+    public const int ActBoardWriteId = 9208;
+    public const int ActBoardLoopId = 9209;
+
+    /// <summary><see cref="ActBoardInitId"/>:自定义动作 0 的触发器 0 初值是关([ENABLE] [OFF]);基础动作出生时读它的开关(读 [OFF] 通过、读 [ON] 不通过)。</summary>
+    public const int ActBoardInitId = 9210;
     public const string ActObjectDir = "passiveobject/blob";
     public const string ActBoomAni = "passiveobject/blob/animation/boom.ani";
     public const string ActIdleAni = "passiveobject/blob/animation/idle.ani";
@@ -663,6 +675,8 @@ internal sealed class AvatarFixture : IDisposable
         ("spawn9203", new[] { "ActSpawn9203" }),
         ("spawn9204", new[] { "ActSpawn9204" }),
         ("spawn9205", new[] { "ActSpawn9205" }),
+        ("spawn9207", new[] { "ActSpawn9207" }),
+        ("spawn9208", new[] { "ActSpawn9208" }),
         ("dmgoff", new[] { "ActDmgOff" }),
         ("dmgkeep", new[] { "ActDmgKeep" }),
         ("hover", new[] { "ActHover" }),
@@ -1082,7 +1096,7 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[TRIGGER]").Tag("[CUSTOM]").Int(0, 0).Tag("[OFF]"))
             .Build());
         yield return (BlobAnimationDir + "/last.ani", BuildBlobAni(false, (0, 400, default), (1, 400, default), (2, 400, default)));
-        foreach (int id in new[] { ActShotId, ActRepeatId, ActGraveId, ActSpawnerId, ActFallId })
+        foreach (int id in new[] { ActShotId, ActRepeatId, ActGraveId, ActSpawnerId, ActFallId, ActBoardReadId, ActBoardWriteId })
         {
             int spawned = id;
             yield return (BlobActionDir + "/actspawn" + id + ".act", ActWith(ThrowActAni)
@@ -1136,6 +1150,73 @@ internal sealed class AvatarFixture : IDisposable
         yield return (ActObjectDir + "/action/actfall.act", ActWith("../animation/idle.ani")
             .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
             .Behavior(b => b.SetSpeed("[Z AXIS]", 300))
+            .Build());
+        // ---- M62(证据 E-158):被动对象各动作的触发器开关板
+        string boardRead = "[TRIGGER CHECK]";
+        yield return (ActObjectDir + "/actbread.obj", NewScript()
+            .Tag("[basic action]").Str("action/actbread.act")
+            .Tag("[etc action]").Str("action/actbread_e0.act").Str("action/actidle.act").Str("action/actbread_noani.act")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actbread.act", ActWith("../animation/idle.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]").Tag(boardRead).Tag("[CUSTOM]").Int(0, 0).Tag("[ON]"), 0, "[CHECKUP OBJECT]")
+            .Trigger(r => r.Tag("[ON SET ACTION]").Tag(boardRead).Tag("[CUSTOM]").Int(0, 0).Tag("[OFF]"), 1, "[CHECKUP OBJECT]")
+            .Trigger(r => r.Tag("[ON SET ACTION]").Tag(boardRead).Tag("[CUSTOM]").Int(0, 5).Tag("[ON]"), 2, "[CHECKUP OBJECT]")
+            .Trigger(r => r.Tag("[ON SET ACTION]").Tag(boardRead).Tag("[CUSTOM]").Int(9, 0).Tag("[ON]"), 2, "[CHECKUP OBJECT]")
+            .Trigger(r => r.Tag("[ON SET ACTION]").Tag(boardRead).Tag("[CUSTOM]").Int(1, 0).Tag("[ON]"), 2, "[CHECKUP OBJECT]")
+            .Trigger(r => r.Tag("[ON SET ACTION]").Tag(boardRead).Tag("[CUSTOM]").Int(2, 0).Tag("[ON]"), 3, "[CHECKUP OBJECT]")
+            .Behavior(b => b.SetSpeed("[X AXIS]", 100))
+            .Behavior(b => b.SetSpeed("[Y AXIS]", 50))
+            .Behavior(b => b.SetSpeed("[Z AXIS]", 300))
+            .Behavior(b => b.Create(ActGraveId, 0, 0, 0))
+            .Build());
+        yield return (ActObjectDir + "/action/actbread_e0.act", ActWith("../animation/idle.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 7))
+            .Build());
+        // 自定义动作 2:.act 读得到、动画读不到(放不出来,但客户端的动作池跟动画无关,脚本问起它的触发器照样有答案)
+        yield return (ActObjectDir + "/action/actbread_noani.act", ActWith("../animation/missing.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 5))
+            .Build());
+        yield return (ActObjectDir + "/actbwrite.obj", NewScript()
+            .Tag("[basic action]").Str("action/actbwrite.act")
+            .Tag("[etc action]").Str("action/actbwrite_e0.act")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actbwrite.act", ActWith("../animation/idle.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[TRIGGER]").Tag("[CUSTOM]").Int(0, 0).Tag("[OFF]").Tag("[TRIGGER]").Tag("[CUSTOM]").Int(0, 9).Tag("[OFF]").Tag("[SET ACTION]").Tag("[CUSTOM]").Int(0).Tag("[NOW]"))
+            .Build());
+        yield return (ActObjectDir + "/action/actbwrite_e0.act", ActWith("../animation/idle.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 1)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 11))
+            .Behavior(b => b.SetSpeed("[Y AXIS]", 22))
+            .Build());
+        yield return (ActObjectDir + "/actbloop.obj", NewScript()
+            .Tag("[basic action]").Str("action/actbloop.act")
+            .Tag("[etc action]").Str("action/actbloop_e0.act")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actbloop.act", ActWith("../animation/idle.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(0).Tag("[NOW]"))
+            .Build());
+        yield return (ActObjectDir + "/action/actbloop_e0.act", ActWith("../animation/idle.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Create(ActGraveId, 0, 0, 0).Tag("[TRIGGER]").Int(0).Tag("[OFF]").Tag("[SET ACTION]").Tag("[STAND]").Tag("[NOW]"))
+            .Build());
+        yield return (ActObjectDir + "/actbinit.obj", NewScript()
+            .Tag("[basic action]").Str("action/actbinit.act")
+            .Tag("[etc action]").Str("action/actbinit_e0.act")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actbinit.act", ActWith("../animation/idle.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]").Tag(boardRead).Tag("[CUSTOM]").Int(0, 0).Tag("[OFF]"), 0, "[CHECKUP OBJECT]")
+            .Trigger(r => r.Tag("[ON SET ACTION]").Tag(boardRead).Tag("[CUSTOM]").Int(0, 0).Tag("[ON]"), 1, "[CHECKUP OBJECT]")
+            .Behavior(b => b.SetSpeed("[X AXIS]", 31))
+            .Behavior(b => b.SetSpeed("[Y AXIS]", 32))
+            .Build());
+        yield return (ActObjectDir + "/action/actbinit_e0.act", ActWith("../animation/idle.ani")
+            .Trigger(r => r.Tag("[ENABLE]").Tag("[OFF]").Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 41))
             .Build());
         yield return (ActObjectDir + "/actforever.obj", NewScript().Tag("[basic action]").Str("action/actidle.act").Build());
         yield return (ActObjectDir + "/action/actidle.act", ActMotion("../animation/idle.ani"));
@@ -1485,6 +1566,10 @@ internal sealed class AvatarFixture : IDisposable
                 .Int(ActSpawnerId).Str("blob/actspawner.obj")
                 .Int(ActFallId).Str("blob/actfall.obj")
                 .Int(ActForeverId).Str("blob/actforever.obj")
+                .Int(ActBoardReadId).Str("blob/actbread.obj")
+                .Int(ActBoardWriteId).Str("blob/actbwrite.obj")
+                .Int(ActBoardLoopId).Str("blob/actbloop.obj")
+                .Int(ActBoardInitId).Str("blob/actbinit.obj")
                 .Int(CrateObjectId).Str("MapObject/BreakableObject/Crate.obj")
                 .Int(BarrelObjectId).Str("MapObject/BreakableObject/Barrel.obj")
                 .Int(PillarObjectId).Str("MapObject/BreakableObject/Pillar.obj")

@@ -477,6 +477,15 @@ namespace Dnf.Play
 
         public int ActSwitchUnhosted => Sum(s => s.ActSwitchUnhosted);
 
+        /// <summary>被动对象自己的脚本读与写别的动作的触发器开关([TRIGGER CHECK] [CUSTOM]、[TRIGGER] [CUSTOM] 等,证据 E-158):总次数与落空次数(按进过的房间累计)。</summary>
+        public int PassiveBoardReads => Sum(s => s.PassiveBoardReads);
+
+        public int PassiveBoardReadMisses => Sum(s => s.PassiveBoardReadMisses);
+
+        public int PassiveBoardWrites => Sum(s => s.PassiveBoardWrites);
+
+        public int PassiveBoardWriteMisses => Sum(s => s.PassiveBoardWriteMisses);
+
         /// <summary>怪物非出招动作族(站立、行走、受击、倒地、过程、最后一幕)的 .act 触发器宿主(证据 E-146):装了的怪物数、运行器启动次数、脚本 [SET ACTION] 落实与没落实的次数(按进过的房间累计)。</summary>
         public int FamilyActMonsters => Sum(s => s.FamilyActMonsters);
 
