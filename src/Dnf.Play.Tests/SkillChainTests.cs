@@ -110,11 +110,12 @@ public class SkillChainTests
             Assert.Equal(r.MultiHitPassiveSkillId > 0, r.MultiHitCountIndex >= 0);      // 多段命中:被动技能编号与次数下标要么都有、要么都没有
             Assert.All(r.Stages, st =>
             {
-                Assert.True(st.MotionIndex >= 0 && st.EffectFrame >= 0 && st.EffectIndex >= -1 && st.CastHoldFrames >= 0);
+                // 悬停俯冲类的动画是空中攻击动作,没有 [etc motion] 的下标(E-149)
+                Assert.True((st.MotionIndex >= 0 || r.Dive != null) && st.EffectFrame >= 0 && st.EffectIndex >= -1 && st.CastHoldFrames >= 0);
                 if (st.HasOwnStrike)
                 {
-                    // 蓄力跳跃类技能的伤害没有固定值列(只取百分比列)
-                    Assert.True(st.DamageRateColumn >= 0 && (st.DamageFixedColumn >= 0 || r.Hop != null));
+                    // 蓄力跳跃类与悬停俯冲类技能自己的伤害没有固定值列(只取百分比列)
+                    Assert.True(st.DamageRateColumn >= 0 && (st.DamageFixedColumn >= 0 || r.Hop != null || r.Dive != null));
                 }
                 else
                 {
@@ -131,6 +132,18 @@ public class SkillChainTests
                 Assert.True(h.HoldMinIndex >= 0 && h.HoldMaxIndex >= 0 && h.DistanceMinIndex >= 0 && h.DistanceMaxIndex >= 0 && h.HeightMinIndex >= 0 && h.HeightMaxIndex >= 0
                     && h.SpeedMinIndex >= 0 && h.SpeedMaxIndex >= 0 && h.HitsMinIndex >= 0 && h.HitsMaxIndex >= 0 && h.RepeatAttackInfoIndex >= 0);
                 Assert.True(0 < h.RiseFrame && h.RiseFrame < h.LandFrame && h.HitStartFrame < h.HitEndFrame && h.HitStartFrame >= 1);
+            }
+            if (r.Dive != null)
+            {
+                // 悬停俯冲类(E-149):只有一段、有自己的命中,不是蓄力跳跃;悬停毫秒与水平速度为正、竖直速度为负;特效下标不小于 -1、最小离地高度的下标非负;至少一个"落地放"的对象
+                SkillDiveSpec d = r.Dive;
+                Assert.True(r.Stages.Count == 1 && r.Stages[0].HasOwnStrike && r.Hop == null);
+                Assert.True(d.HoverMs > 0 && d.SpeedX > 0 && d.SpeedZ < 0 && d.EffectIndex >= -1 && d.ImpactHeightIndex >= 0);
+                Assert.Contains(r.Objects, o => o.OnLanding);
+            }
+            else
+            {
+                Assert.DoesNotContain(r.Objects, o => o.OnLanding);        // "落地放"只属于悬停俯冲
             }
             Assert.All(r.Objects, o => Assert.True(o.ObjectId > 0 && o.Stage >= 0 && o.Stage < r.Stages.Count && o.Frame >= 0
                 && o.DamageRateColumn >= 0 && o.DamageFixedColumn >= 0));

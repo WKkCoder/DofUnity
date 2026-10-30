@@ -5,7 +5,8 @@ using System.Collections.Generic;
 // E-137(挂多个特效、对象等特效关键帧的那一类技能,状态 0x23:一进状态就挂四个特效、被动对象等特效动画的关键帧标志、帧号到数就结束状态);
 // E-138(蓄力后跳起来砸下去的那一类技能,状态 0x24:按住技能键蓄力、松开或蓄满才出招,跳跃距离与高度按蓄力档位插值,位移由动画时间脚本化,命中窗口由计时器重武装);
 // E-139(单段位移攻击类技能,状态 0x1d:起滑的"顺着按"两个数替换基础两个数、学了某个被动技能后命中名单按计时器多次重新武装);
-// E-141(增益类技能,状态 0x11:施法动作只播 [buff motion],状态正常结束时才挂属性附加体,持续时间与数值取自技能数据的哪一列由技能自己的挂附加体代码决定)。
+// E-141(增益类技能,状态 0x11:施法动作只播 [buff motion],状态正常结束时才挂属性附加体,持续时间与数值取自技能数据的哪一列由技能自己的挂附加体代码决定);
+// E-149(腾空悬停后俯冲类技能,状态 0x19:只在跳跃状态里放,动画定在空中攻击动作的最后一帧,悬停一小段后水平与竖直一起冲下去,落地按起跳高度放脚下的冲击对象,再进坐姿)。
 namespace Dnf.Play
 {
     /// <summary>
@@ -91,8 +92,9 @@ namespace Dnf.Play
     public sealed class SkillObjectSpec
     {
         public SkillObjectSpec(int objectId, int stage, int frame, int damageRateColumn, int damageFixedColumn, int forwardX = 0, int offsetY = 0, int offsetZ = 0,
-            int afterEffect = -1, int afterEffectFlag = 1)
+            int afterEffect = -1, int afterEffectFlag = 1, bool onLanding = false)
         {
+            OnLanding = onLanding;
             ObjectId = objectId;
             Stage = stage;
             Frame = frame < 0 ? 0 : frame;
@@ -137,6 +139,12 @@ namespace Dnf.Play
 
         /// <summary>等到的关键帧标志编号。</summary>
         public int AfterEffectFlag { get; }
+
+        /// <summary>
+        /// 不按动画帧放,而是在俯冲落地那一刻放(<see cref="SkillRecipe.Dive"/>,证据 E-149):放的位置是主角脚下(三个偏移都是 0)、朝向同主角;
+        /// 只有离地高度够了才放(见 <see cref="SkillDiveSpec.ImpactHeightIndex"/>)。这类对象的 <see cref="Stage"/>、<see cref="Frame"/> 不起作用。
+        /// </summary>
+        public bool OnLanding { get; }
     }
 
     /// <summary>
@@ -207,6 +215,43 @@ namespace Dnf.Play
     }
 
     /// <summary>
+    /// 腾空悬停后俯冲类技能的特别部分(状态 0x19,证据 E-149)。放法:只能在跳跃状态里放(腾空、没有在空中挥击);
+    /// 放出来那一刻水平与竖直速度清零,动画定在角色脚本里的空中攻击动作(没有职业脚本函数改它时就是 [jumpattack motion])的最后一帧,身体一直保持这个姿势;
+    /// 过了 <see cref="HoverMs"/> 毫秒(状态计时器)开始俯冲:水平沿朝向以 <see cref="SpeedX"/>(引擎速度表的数,与别的技能一样乘移动速度)匀速冲,
+    /// 竖直速度一次设成 <see cref="SpeedZ"/> × 移动速度属性千分比 / 1000(向下为负),之后照常受重力;同时在主角身上放预载表的第 <see cref="EffectIndex"/> 个特效。
+    /// 俯冲期间主角的攻击框一直是那一帧(武器图层动画里)的;命中名单只在多段命中的被动技能打开时才重武装,基础职业没有,所以一个目标只挨一下。
+    /// 落地:放出来那一刻的离地高度不小于 [static data] 第 <see cref="ImpactHeightIndex"/> 个数,就在脚下放配方对象表里标了落地的被动对象
+    /// (<see cref="SkillObjectSpec.OnLanding"/>);不论放没放,落地后都进入坐姿([sit motion]),播完回到站立。
+    /// 常数(200、470、−900、0.001)是状态码里写死的引擎常量,下标也是;没有的:另一个职业成长类型的伤害加成、第二段命中的被动技能带来的次数、落地震屏(状态码里没找到)。
+    /// </summary>
+    public sealed class SkillDiveSpec
+    {
+        public SkillDiveSpec(int hoverMs, int speedX, int speedZ, int effectIndex, int impactHeightIndex)
+        {
+            HoverMs = hoverMs < 0 ? 0 : hoverMs;
+            SpeedX = speedX;
+            SpeedZ = speedZ;
+            EffectIndex = effectIndex;
+            ImpactHeightIndex = impactHeightIndex;
+        }
+
+        /// <summary>放出来之后悬停多久(毫秒)开始俯冲。</summary>
+        public int HoverMs { get; }
+
+        /// <summary>俯冲的水平速度(引擎速度表的数,乘移动速度换成像素/秒)。</summary>
+        public int SpeedX { get; }
+
+        /// <summary>俯冲的竖直速度(像素/秒,向下为负),再乘移动速度属性的千分比 / 1000。</summary>
+        public int SpeedZ { get; }
+
+        /// <summary>俯冲开始时在主角身上放的特效,在技能预载表里的下标;负数表示不放。</summary>
+        public int EffectIndex { get; }
+
+        /// <summary>[static data] 里"落地放对象所需的最小离地高度(像素)"的下标。</summary>
+        public int ImpactHeightIndex { get; }
+    }
+
+    /// <summary>
     /// 一个多段地面技能的放法(证据 E-129):各段(<see cref="Stages"/>)、起滑速度与加速度取 .skl [static data] 的哪几个数、接下一段的条件。
     /// 放法:起手放第 0 段;这一段的动画播过 <see cref="ChainFromFrame"/> 帧之后再按一次同一个技能键,就换成下一段(不再扣蓝、不再进冷却)。
     /// 滑行:起滑速度与加速度取 [static data] 的第 <see cref="SlideSpeedIndex"/>、<see cref="SlideAccelIndex"/> 个数;进入每一段那一刻看方向键——
@@ -216,8 +261,13 @@ namespace Dnf.Play
     {
         public SkillRecipe(int skillId, IEnumerable<SkillStageSpec> stages, int slideSpeedIndex, int slideAccelIndex, int forwardSpeedIndex, int forwardAccelIndex,
             int chainFromFrame, bool slideFollowsHeldDirection = true, IEnumerable<SkillObjectSpec> objects = null, SkillHopSpec hop = null,
-            bool forwardReplacesBase = false, int multiHitPassiveSkillId = 0, int multiHitCountIndex = -1)
+            bool forwardReplacesBase = false, int multiHitPassiveSkillId = 0, int multiHitCountIndex = -1, SkillDiveSpec dive = null)
         {
+            if (dive != null && hop != null)
+            {
+                throw new ArgumentException("一个配方不能既是蓄力跳跃又是悬停俯冲", nameof(dive));
+            }
+            Dive = dive;
             ForwardReplacesBase = forwardReplacesBase;
             MultiHitPassiveSkillId = multiHitPassiveSkillId;
             MultiHitCountIndex = multiHitCountIndex;
@@ -288,6 +338,12 @@ namespace Dnf.Play
         /// 两段之间由会话按"松开或蓄满"自动衔接(再按技能键不接段)。
         /// </summary>
         public SkillHopSpec Hop { get; }
+
+        /// <summary>
+        /// 悬停俯冲类技能的参数(证据 E-149);不是这一类技能为 null。有它的配方只有一段(攻击信息与伤害列取这一段,<see cref="SkillStageSpec.MotionIndex"/> 不用,
+        /// 动画是空中攻击动作),只能在跳跃状态里放(<see cref="HeroSkills.Cast"/> 走 <see cref="TownHero.BeginSkillDive"/>)。
+        /// </summary>
+        public SkillDiveSpec Dive { get; }
     }
 
     /// <summary>
@@ -467,6 +523,22 @@ namespace Dnf.Play
                 },
                 slideSpeedIndex: 0, slideAccelIndex: 1, forwardSpeedIndex: 2, forwardAccelIndex: 3, chainFromFrame: 1, forwardReplacesBase: true,
                 multiHitPassiveSkillId: 162, multiHitCountIndex: 4),
+
+            // 腾空悬停后俯冲类技能(状态 0x19,证据 E-149):起手函数只在跳跃状态放(状态码进入块把动画定在空中攻击动作的最后一帧,没有 [etc motion] 的下标)。
+            // 攻击信息取 [etc attack info] 第 10 项,伤害取 [level info] 的百分比第 0 列(没有固定值列);一进状态速度清零、悬停 200 毫秒,之后水平 470(引擎速度表的数)、
+            // 竖直 −900(都乘移动速度的千分比)俯冲,同时放预载表的第 0 个特效;落地时离地高度够 [static data] 第 3 个数,就在脚下放被动对象 20016(非 PVP 模式的那个),
+            // 伤害取 [level info] 的百分比第 2 列与固定值第 1 列。落地后进入坐姿。没做:某个成长类型学了另一个技能时落地伤害的放大、PVP 模式的对象、落地震屏、音效。
+            new SkillRecipe(16,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: -1, attackInfoIndex: 10, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                objects: new[]
+                {
+                    new SkillObjectSpec(objectId: 20016, stage: 0, frame: 0, damageRateColumn: 2, damageFixedColumn: 1, onLanding: true),
+                },
+                dive: new SkillDiveSpec(hoverMs: 200, speedX: 470, speedZ: -900, effectIndex: 0, impactHeightIndex: 3)),
         },
         new[]
         {

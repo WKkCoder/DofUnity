@@ -282,6 +282,7 @@ internal static class SkillCheck
         int recipeGates = 0;
         int recipeHops = 0;
         int recipeMultiHits = 0;
+        int recipeDives = 0;
         var recipeProblems = new List<string>();
         foreach (SkillRecipe recipe in SkillRecipes.Default.All)
         {
@@ -319,7 +320,7 @@ internal static class SkillCheck
             for (int i = 0; i < recipe.Stages.Count; i++)
             {
                 SkillStageSpec st = recipe.Stages[i];
-                if (!InLibrary(chr.CustomAnimationPath(st.MotionIndex)))
+                if (recipe.Dive == null && !InLibrary(chr.CustomAnimationPath(st.MotionIndex)))      // 悬停俯冲没有 [etc motion] 的下标(动画是空中攻击动作,下面单独查)
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:动作读不到");
                 }
@@ -467,6 +468,52 @@ internal static class SkillCheck
                     recipeProblems.Add(label + " 多段命中:次数不是正数,或动画时长装不下这些次数");
                 }
             }
+            if (recipe.Dive != null)
+            {
+                // 悬停俯冲(M55,证据 E-149):只有一段;悬停毫秒、水平速度为正、竖直速度为负(引擎常量);[static data] 里"落地放对象的最小离地高度"那个数读得出来且为正;
+                // 预载表里有指定的特效且动画在库里;角色脚本里有空中攻击动作与坐姿动作([jumpattack motion]、[sit motion]),动画在库里且有帧(俯冲定在空中攻击动作的最后一帧);
+                // 每一个"落地放"的对象都有:这里只数不打印具体的数
+                recipeDives++;
+                SkillDiveSpec dv = recipe.Dive;
+                if (recipe.Stages.Count != 1)
+                {
+                    recipeProblems.Add(label + " 悬停俯冲:配方不止一段");
+                }
+                if (dv.HoverMs <= 0 || dv.SpeedX <= 0 || dv.SpeedZ >= 0)
+                {
+                    recipeProblems.Add(label + " 悬停俯冲:悬停毫秒、水平速度或竖直速度的符号不对");
+                }
+                if (def.GetStatic(dv.ImpactHeightIndex, false) <= 0)
+                {
+                    recipeProblems.Add(label + " 悬停俯冲:落地放对象的最小离地高度读出来不是正数");
+                }
+                if (dv.EffectIndex >= 0 && (dv.EffectIndex >= effectPaths.Count || !InLibrary(PvfPath.ResolveRelativeTo(chr.Path, effectPaths[dv.EffectIndex]))))
+                {
+                    recipeProblems.Add(label + " 悬停俯冲:俯冲特效读不到(预载表里有 " + effectPaths.Count + " 个)");
+                }
+                foreach (string tag in new[] { "[jumpattack motion]", "[sit motion]" })
+                {
+                    string? motionPath = null;
+                    foreach (ScriptLine line in chr.Tags.Lines)
+                    {
+                        if (line.TagIs(tag))
+                        {
+                            string? rel = line.FirstString();
+                            motionPath = string.IsNullOrEmpty(rel) ? null : PvfPath.ResolveRelativeTo(chr.Path, rel);
+                            break;
+                        }
+                    }
+                    AniFile? ani = motionPath == null ? null : assets.LoadAni(motionPath);
+                    if (ani == null || ani.Frames.Length == 0)
+                    {
+                        recipeProblems.Add(label + " 悬停俯冲:角色脚本里的 " + tag + " 读不到或没有帧");
+                    }
+                }
+                if (!recipe.Objects.Any(ob => ob.OnLanding))
+                {
+                    recipeProblems.Add(label + " 悬停俯冲:没有\"落地放\"的对象");
+                }
+            }
             for (int i = 0; i < recipe.Objects.Count; i++)
             {
                 SkillObjectSpec o = recipe.Objects[i];
@@ -494,8 +541,8 @@ internal static class SkillCheck
                 {
                     recipeProblems.Add(label + " 对象 " + i + ":攻击信息读不到");
                 }
-                AniFile? motion = assets.LoadAni(chr.CustomAnimationPath(recipe.Stages[Math.Min(o.Stage, recipe.Stages.Count - 1)].MotionIndex) ?? "");
-                if (motion == null || o.Frame >= motion.Frames.Length)
+                AniFile? motion = o.OnLanding ? null : assets.LoadAni(chr.CustomAnimationPath(recipe.Stages[Math.Min(o.Stage, recipe.Stages.Count - 1)].MotionIndex) ?? "");
+                if (!o.OnLanding && (motion == null || o.Frame >= motion.Frames.Length))      // "落地放"的对象不按帧放(E-149)
                 {
                     recipeProblems.Add(label + " 对象 " + i + ":放出的帧 " + o.Frame + " 超出施法动作的帧数 " + (motion == null ? 0 : motion.Frames.Length));
                 }
@@ -528,7 +575,7 @@ internal static class SkillCheck
         }
         Report(recipeCount == SkillRecipes.Default.Count && recipeProblems.Count == 0,
             "技能配方 " + recipeCount + " 个(共 " + recipeStages + " 段、放对象 " + recipeObjects + " 个、带蓄力 " + recipeHolds + " 段、等特效标志的对象 " + recipeGates
-            + " 个、定结束帧 " + recipeEndFrames + " 段、蓄力跳跃 " + recipeHops + " 个、多段命中 " + recipeMultiHits + " 个)在真实数据里都读得通"
+            + " 个、定结束帧 " + recipeEndFrames + " 段、蓄力跳跃 " + recipeHops + " 个、多段命中 " + recipeMultiHits + " 个、悬停俯冲 " + recipeDives + " 个)在真实数据里都读得通"
             + "(动作、攻击信息、特效、对象、蓄力、结束帧、[static data]、[level info] 列;问题 " + recipeProblems.Count + " 条)");
 
         // 7. 出招指令(M47,证据 E-140):整个职业技能的 [command] 在真实数据里读得通,而且输入层认得出来——
@@ -599,6 +646,10 @@ internal static class SkillCheck
             foreach (SkillDef def in ready)
             {
                 RoomCombatSession session = NewSession(assets, opts, caster);
+                if (SkillRecipes.Default.Find(def.Id)?.Dive != null)
+                {
+                    LiftOff(session, 60.0);      // 悬停俯冲类技能只在腾空时放得出来(E-149):先跳起来、升到够高再打指令
+                }
                 foreach (CommandStep step in CommandSteps.Of(def.Command, session.Hero.FacingLeft))
                 {
                     session.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Keys);
@@ -648,6 +699,111 @@ internal static class SkillCheck
                 Report(lying && session.QuickStands == 1 && session.HeroDown.QuickStanding,
                     "倒地起身:躺着的主角打出倒地起身的指令,起身 " + session.QuickStands + " 次(躺着 " + (lying ? "是" : "否") + ",正在起身 " + (session.HeroDown.QuickStanding ? "是" : "否") + ")");
             }
+
+            // 7b. 悬停俯冲类技能(M55,证据 E-149)的真实会话:表里的每个俯冲技能——地面上打它的指令放不出它(不进冷却);主角起跳升到够高后打指令:放出来的就是它自己、
+            // 动画定在空中攻击动作的最后一帧;一路走完悬停、俯冲(放预载特效)、落地(放出时的离地高度够就放冲击对象,不够就不放)、坐姿、回到站立;
+            // 魔法值按 [consume MP] 扣、冷却开始计;另外在跳起的最高点再放一次(起点最高,看高度判定与对象)。只打印汇总数,高度与阈值不打印。
+            int diveSkills = 0;
+            int diveCycles = 0;
+            int diveGroundBlocked = 0;
+            int diveImpacts = 0;
+            int diveNoImpacts = 0;
+            var diveProblems = new List<string>();
+            foreach (SkillRecipe recipe in SkillRecipes.Default.All)
+            {
+                if (recipe.Dive == null)
+                {
+                    continue;
+                }
+                diveSkills++;
+                string label = "俯冲 #" + diveSkills;
+                SkillDef? def = catalog.Find(recipe.SkillId);
+                if (def == null || def.Command.IsEmpty || caster.Skills.LevelOf(def.Id) <= 0)
+                {
+                    diveProblems.Add(label + ":技能不在目录里、没有指令或没学会");
+                    continue;
+                }
+                int threshold = def.GetStatic(recipe.Dive.ImpactHeightIndex, false);
+
+                RoomCombatSession ground = NewSession(assets, opts, caster);
+                HeroSkillSlot? groundSlot = ground.Skills.SlotOfSkill(def.Id);
+                foreach (CommandStep step in CommandSteps.Of(def.Command, ground.Hero.FacingLeft))
+                {
+                    ground.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Keys);
+                }
+                if (groundSlot == null || ground.Hero.SkillId == def.Id || groundSlot.CooldownLeftMs > 0 || ground.Hero.DiveAirborne || ground.DiveStarts != 0)
+                {
+                    diveProblems.Add(label + ":地面上打指令不该放出俯冲(或没排进槽里)");
+                }
+                else
+                {
+                    diveGroundBlocked++;
+                }
+
+                foreach (bool atApex in new[] { false, true })
+                {
+                    RoomCombatSession session = NewSession(assets, opts, caster);
+                    HeroSkillSlot? slot = session.Skills.SlotOfSkill(def.Id);
+                    TownHero diver = session.Hero;
+                    bool lifted = slot != null && LiftOff(session, 6.0);
+                    if (lifted && atApex)
+                    {
+                        double last = diver.Z;
+                        for (int t = 0; t < 3000 && diver.Z >= last && diver.Motion == HeroMotion.Jump; t += 10)
+                        {
+                            last = diver.Z;
+                            session.Update(10, 0, 0, false, false, SkillKeys.None);
+                        }
+                    }
+                    if (!lifted || slot == null)
+                    {
+                        diveProblems.Add(label + ":起跳升不起来,或没排进槽里");
+                        continue;
+                    }
+                    int mpBefore = session.Vitals?.Mp ?? 0;
+                    foreach (CommandStep step in CommandSteps.Of(def.Command, diver.FacingLeft))
+                    {
+                        session.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Keys);
+                    }
+                    if (diver.Motion != HeroMotion.Skill || diver.SkillId != def.Id || !diver.DiveAirborne || !diver.FrameHeld || session.SkillCasts != 1)
+                    {
+                        diveProblems.Add(label + ":腾空时打指令没有放出俯冲(或动画没有定住)");
+                        continue;
+                    }
+                    int ms = 0;
+                    while (diver.Motion == HeroMotion.Skill && ms < 20000)
+                    {
+                        session.Update(10, 0, 0, false, false, SkillKeys.None);
+                        ms += 10;
+                    }
+                    bool impactExpected = (int)diver.DiveStartHeight >= threshold;
+                    bool ok = session.DiveLandings == 1 && session.DiveStarts <= 1 && diver.Motion == HeroMotion.Rest && diver.Z == 0.0
+                        && diver.DiveLandingImpact == impactExpected && session.DiveImpacts == (impactExpected ? 1 : 0) && session.HeroObjectsSpawned == session.DiveImpacts
+                        && slot.CooldownLeftMs > 0 && (session.Vitals == null || session.Vitals.Mp == mpBefore - slot.ConsumeMp);
+                    if (!ok)
+                    {
+                        diveProblems.Add(label + (atApex ? "(最高点)" : "(刚离地)") + ":俯冲没按规则走完(落地 " + session.DiveLandings + " 次、俯冲 " + session.DiveStarts + " 次、冲击 "
+                            + session.DiveImpacts + " 个、动作 " + diver.Motion + "、高度判定与对象不符、魔法值或冷却不对)");
+                        continue;
+                    }
+                    diveCycles++;
+                    if (impactExpected)
+                    {
+                        diveImpacts++;
+                    }
+                    else
+                    {
+                        diveNoImpacts++;
+                    }
+                }
+            }
+            foreach (string line in diveProblems)
+            {
+                Console.WriteLine("    " + line);
+            }
+            Report(diveSkills > 0 && diveProblems.Count == 0 && diveGroundBlocked == diveSkills && diveCycles == diveSkills * 2,
+                "悬停俯冲类技能 " + diveSkills + " 个:地面上打指令放不出 " + diveGroundBlocked + " 个;腾空时(刚离地与最高点各一次)打指令放出自己、定住最后一帧、悬停、俯冲、落地、坐姿、回到站立走完 "
+                + diveCycles + " 次,其中放了冲击对象 " + diveImpacts + " 次、因起点太低没放 " + diveNoImpacts + " 次(问题 " + diveProblems.Count + " 条)");
 
             // 8. 增益类技能(M48,证据 E-141):表里的每个增益在真实数据里都读得通——技能在目录里、是主动技能、指令的扳机是增益键、[static data] 与 [level info] 的列够用、
             // 每一级的持续时间与数值都是正数;真实会话里按各自的指令打一遍:施法动作是角色的 [buff motion](没有攻击框),施法正常结束那一步挂上增益,数值与持续时间等于槽里读出来的,
@@ -775,6 +931,17 @@ internal static class SkillCheck
         RoomCombatSession session = DemoCombat.CreateSession(assets, opts.MapPath, opts.HeroWeapon ?? DemoHero.StarterWeapon, 1, false, progress);
         session.CommandsEnabled = true;
         return session;
+    }
+
+    /// <summary>让主角起跳并升到离地至少 <paramref name="minHeight"/> 像素(检查用:只在腾空时放得出来的技能)。返回有没有升到。</summary>
+    private static bool LiftOff(RoomCombatSession session, double minHeight)
+    {
+        session.Update(10, 0, 0, false, true, SkillKeys.None);
+        for (int t = 0; t < 3000 && !(session.Hero.Motion == HeroMotion.Jump && session.Hero.Z >= minHeight); t += 10)
+        {
+            session.Update(10, 0, 0, false, false, SkillKeys.None);
+        }
+        return session.Hero.Motion == HeroMotion.Jump && session.Hero.Z >= minHeight;
     }
 
     /// <summary>把一条指令打成一串按键步骤的一步。</summary>

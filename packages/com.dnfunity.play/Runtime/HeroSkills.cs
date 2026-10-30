@@ -657,7 +657,7 @@ namespace Dnf.Play
                     break;
                 default:
                     began = slot.Recipe != null
-                        ? BeginStage(slot, 0, hero, heldX, heldY, false, MultiHitWindows(slot))
+                        ? (slot.Recipe.Dive != null ? BeginDive(slot, hero) : BeginStage(slot, 0, hero, heldX, heldY, false, MultiHitWindows(slot)))
                         : slot.Buff != null && hero.BeginBuffMotion(slot.SkillId);   // 增益类:原地播 [buff motion],施法正常结束时才挂增益(E-141,由房间会话挂)
                     break;
             }
@@ -790,6 +790,22 @@ namespace Dnf.Play
             var plan = new SkillHopPlan(distance, height, hits, hop.RiseFrame, hop.LandFrame, hop.HitStartFrame, hop.HitEndFrame);
             SkillStageSpec jump = recipe.Stages[1];
             return hero.ChainSkillMotion(slot.SkillId, jump.MotionIndex, 0.0, 0.0, -1, jump.EndFrame, plan, rate);
+        }
+
+        /// <summary>
+        /// 腾空悬停后俯冲类技能起手(证据 E-149):主角正在腾空的跳跃状态里才放得出来(在地面、起跳蹲姿、落地段、空中挥击、后跳都不行,返回 false,
+        /// 不扣蓝、不进冷却)。悬停毫秒、水平与竖直速度取配方,落地放对象所需的最小离地高度取 [static data] 的第 <see cref="SkillDiveSpec.ImpactHeightIndex"/> 个数
+        /// (读不到技能定义时取最大值,等于不放)。
+        /// </summary>
+        internal static bool BeginDive(HeroSkillSlot slot, TownHero hero)
+        {
+            SkillDiveSpec dive = slot.Recipe?.Dive;
+            if (dive == null)
+            {
+                return false;
+            }
+            int minHeight = slot.Def == null ? int.MaxValue : slot.Def.GetStatic(dive.ImpactHeightIndex, false);
+            return hero.BeginSkillDive(slot.SkillId, new SkillDivePlan(dive.HoverMs, dive.SpeedX, dive.SpeedZ, minHeight));
         }
 
         /// <summary>

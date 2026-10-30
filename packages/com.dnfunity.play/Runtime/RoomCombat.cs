@@ -610,6 +610,8 @@ namespace Dnf.Play
         private long _evalRearm;
         private int _evalFrame = -1;
         private int _hopLandingsSeen = -1;
+        private int _diveStartsSeen = -1;
+        private int _diveLandingsSeen = -1;
         private double _targetMs = double.MaxValue;
         private double _heroPauseMs;
         private bool _bufferedAttack;
@@ -740,6 +742,15 @@ namespace Dnf.Play
         /// 蓄力跳跃类技能与多段命中的技能打开过的命中窗口数(每次放出一个第一窗口,加上计时器每响一次重武装的一个;证据 E-138、E-139),给检查与测试用。
         /// </summary>
         public int HopWindows { get; private set; }
+
+        /// <summary>腾空悬停俯冲类技能开始俯冲的次数(悬停结束的那一刻放预载特效,证据 E-149),给检查与测试用。</summary>
+        public int DiveStarts { get; private set; }
+
+        /// <summary>腾空悬停俯冲类技能落地的次数(悬停期间落地也算,证据 E-149),给检查与测试用。</summary>
+        public int DiveLandings { get; private set; }
+
+        /// <summary>俯冲落地时放出冲击对象的次数(放出技能那一刻离地高度够才放;读不到对象模板时不放也不计),给检查与测试用。</summary>
+        public int DiveImpacts { get; private set; }
 
         /// <summary>此刻主角这一击用的攻击信息(普攻、奔跑攻击、空中攻击与各个技能各取各的;蓄力跳跃类技能的第一个窗口与重武装窗口用的不是同一项),给检查与测试用。</summary>
         public HeroStrikeInfo CurrentHeroStrike => CurrentStrikeInfo(Hero);
@@ -1919,6 +1930,7 @@ namespace Dnf.Play
                 UpdateBuffCast(_room.Hero);
                 SpawnStageEffect(_room.Hero);
                 UpdateHopLanding(_room.Hero);
+                UpdateDive(_room.Hero);
             }
             EmitHeroCues();
             UpdateRevive(deltaMs, reviveKey);
@@ -2203,6 +2215,88 @@ namespace Dnf.Play
         }
 
         /// <summary>
+        /// 腾空悬停俯冲类技能的会话部分(证据 E-149):主角开始俯冲(<see cref="TownHero.DiveStarts"/> 变了)那一刻,放配方指定的预载特效(挂在主角身上跟着走);
+        /// 俯冲落地(<see cref="TownHero.DiveLandings"/> 变了)那一刻,如果放出技能时离地够高(<see cref="TownHero.DiveLandingImpact"/>),
+        /// 就在主角脚下放配方里"落地放"的被动对象(<see cref="SkillObjectSpec.OnLanding"/>)。落地震屏没有读到,不震。
+        /// 第一次看到主角时只记下当前计数,不补放。
+        /// </summary>
+        private void UpdateDive(TownHero hero)
+        {
+            if (_diveStartsSeen < 0)
+            {
+                _diveStartsSeen = hero.DiveStarts;
+                _diveLandingsSeen = hero.DiveLandings;
+                return;
+            }
+            if (hero.DiveStarts != _diveStartsSeen)
+            {
+                _diveStartsSeen = hero.DiveStarts;
+                DiveStarts++;
+                SpawnDiveEffect(hero, Skills.SlotOfSkill(hero.DiveStartSkillId));
+            }
+            if (hero.DiveLandings != _diveLandingsSeen)
+            {
+                _diveLandingsSeen = hero.DiveLandings;
+                DiveLandings++;
+                if (hero.DiveLandingImpact)
+                {
+                    SpawnDiveImpact(hero, Skills.SlotOfSkill(hero.DiveLandingSkillId));
+                }
+            }
+        }
+
+        /// <summary>俯冲开始那一刻放预载特效(配方里的 <see cref="SkillDiveSpec.EffectIndex"/>,下标不在预载表里或读不到动画就不放),跟着主角。</summary>
+        private void SpawnDiveEffect(TownHero hero, HeroSkillSlot slot)
+        {
+            SkillDiveSpec dive = slot?.Recipe?.Dive;
+            if (dive == null || dive.EffectIndex < 0 || dive.EffectIndex >= slot.StageEffects.Count)
+            {
+                return;
+            }
+            AnimatedEffect effect = AnimatedEffect.Create(_assets, slot.StageEffects[dive.EffectIndex], hero.X, hero.Y, hero.Z, hero.FacingLeft);
+            if (effect != null)
+            {
+                _effects.Add(effect);
+                _followEffects.Add(effect);
+            }
+        }
+
+        /// <summary>俯冲落地那一刻放配方里标了"落地放"的被动对象:位置是主角脚下(没有前方偏移的话),朝向跟主角。</summary>
+        private void SpawnDiveImpact(TownHero hero, HeroSkillSlot slot)
+        {
+            SkillRecipe recipe = slot?.Recipe;
+            if (recipe == null)
+            {
+                return;
+            }
+            for (int i = 0; i < recipe.Objects.Count; i++)
+            {
+                SkillObjectSpec spec = recipe.Objects[i];
+                if (spec.OnLanding && AddSkillObject(slot, i, spec, hero))
+                {
+                    DiveImpacts++;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 按配方里的一条对象规格在主角前方(<see cref="SkillObjectSpec.ForwardX"/>)放一个被动对象,带这个技能这一条对象的伤害;
+        /// 没接上 .act 程序库(拿不到对象模板)、读不到对象、场上已满或对象表里没有这一条时不放,返回 false。
+        /// </summary>
+        private bool AddSkillObject(HeroSkillSlot slot, int index, SkillObjectSpec spec, TownHero hero)
+        {
+            PassiveTemplate template = _acts?.Passive(spec.ObjectId);
+            if (template == null || _heroObjects.Count >= MaxHeroObjects || index >= slot.ObjectStrikes.Count)
+            {
+                return false;
+            }
+            double x = hero.X + (hero.FacingLeft ? -spec.ForwardX : spec.ForwardX);
+            _heroObjects.Add(new HeroObject(template, slot.ObjectStrikes[index], slot.SkillId, x, hero.Y + spec.OffsetY, hero.Z + spec.OffsetZ, hero.FacingLeft));
+            HeroObjectsSpawned++;
+            return true;
+        }
+
+        /// <summary>
         /// 配方技能的分段特效(证据 E-129):这一段(按 <see cref="TownHero.SwingNumber"/> 区分)的动画播到指定帧时放一次,
         /// 特效挂在主角身上跟着走(客户端是把它放进主角的动画图层,所以滑行时跟着动),朝向与主角一致。
         /// 一段可以同时放好几个特效(<see cref="SkillStageSpec.EffectIndices"/>,证据 E-137);放出来的特效记在 <c>_stageEffectInstances</c> 里,
@@ -2261,7 +2355,7 @@ namespace Dnf.Play
             {
                 _evalSwing = hero.SwingNumber;
                 _evalRearm = hero.HitRearmNumber;
-                _evalFrame = -1;
+                _evalFrame = hero.StrikeFirstFrame - 1;      // 悬停俯冲:动画直接定在最后一帧,前面的帧没播过,不判(E-149)
                 if (hero.HopHits > 0 || hero.StageRearmsMax > 0)
                 {
                     HopWindows++;
@@ -2286,6 +2380,10 @@ namespace Dnf.Play
             if (frame > _evalFrame)
             {
                 _evalFrame = frame;
+            }
+            else if (hero.FrameHeld)
+            {
+                EvaluateFrame(hero, frame);      // 动画定住的那一帧攻击框一直在:主角冲过去时每步都判,已打中的目标由本击的名单挡住(E-149,推断)
             }
         }
 
@@ -2362,23 +2460,16 @@ namespace Dnf.Play
             {
                 SkillObjectSpec spec = recipe.Objects[i];
                 ulong bit = 1UL << i;
-                if ((_objectsDone & bit) != 0 || Math.Min(spec.Stage, recipe.Stages.Count - 1) != stage || hero.CurrentFrame < spec.Frame)
+                if (spec.OnLanding || (_objectsDone & bit) != 0 || Math.Min(spec.Stage, recipe.Stages.Count - 1) != stage || hero.CurrentFrame < spec.Frame)
                 {
-                    continue;
+                    continue;     // "落地放"的对象不按帧放,由 UpdateDive 在俯冲落地那一刻放(E-149)
                 }
                 if (spec.AfterEffect >= 0 && !AfterEffectReady(recipe.Stages[stage], spec, hero))
                 {
                     continue;
                 }
                 _objectsDone |= bit;
-                PassiveTemplate template = _acts?.Passive(spec.ObjectId);
-                if (template == null || _heroObjects.Count >= MaxHeroObjects || i >= slot.ObjectStrikes.Count)
-                {
-                    continue;
-                }
-                double x = hero.X + (hero.FacingLeft ? -spec.ForwardX : spec.ForwardX);
-                _heroObjects.Add(new HeroObject(template, slot.ObjectStrikes[i], slot.SkillId, x, hero.Y + spec.OffsetY, hero.Z + spec.OffsetZ, hero.FacingLeft));
-                HeroObjectsSpawned++;
+                AddSkillObject(slot, i, spec, hero);
             }
         }
 

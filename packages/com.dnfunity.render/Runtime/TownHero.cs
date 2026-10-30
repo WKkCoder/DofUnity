@@ -429,6 +429,18 @@ namespace Dnf.Render
         private int _hopRearmsDone;
         private bool _hopLanded;
 
+        // 腾空悬停俯冲类技能(M55,证据 E-149):计划、悬停与俯冲的进度、放出来时的离地高度、水平速度;动画定住的帧;落地后的坐姿动画
+        private SkillDivePlan _dive;
+        private double _diveMs;
+        private bool _diveStarted;
+        private double _diveStartZ;
+        private double _diveVx;
+        private int _holdFrame = -1;
+        private int _strikeFirstFrame;
+        private AniFile _sit;
+        private string _sitPath;
+        private AniTimeline _sitTimeline;
+
         // 多段命中(证据 E-139):间隔 = 整段动画时长 / 次数的重武装计时器;与脚本跳跃的计时器互不相干
         private int _stageRearmInterval;
         private int _stageRearmMax;
@@ -674,6 +686,42 @@ namespace Dnf.Render
 
         /// <summary>正在放脚本跳跃的技能而且还没落地。</summary>
         public bool HopAirborne => Motion == HeroMotion.Skill && _hop != null && !_hopLanded;
+
+        /// <summary>正在放腾空悬停俯冲类技能的空中部分(悬停或俯冲,还没落地;证据 E-149)。</summary>
+        public bool DiveAirborne => Motion == HeroMotion.Skill && _dive != null;
+
+        /// <summary>空中部分里已经开始俯冲(悬停结束);不在空中部分时为 false。</summary>
+        public bool IsDiving => DiveAirborne && _diveStarted;
+
+        /// <summary>俯冲开始的累计次数(每次悬停结束开始俯冲加 1,永远递增);会话据此在那一刻放预载特效。</summary>
+        public int DiveStarts { get; private set; }
+
+        /// <summary>俯冲落地的累计次数(永远递增);会话据此在落地那一刻放冲击对象。悬停期间落地(放得太低)也算一次。</summary>
+        public int DiveLandings { get; private set; }
+
+        /// <summary>最近一次俯冲落地时,放出来那一刻的离地高度够不够放冲击对象(落地那一步技能可能同时结束,所以单独记一份)。</summary>
+        public bool DiveLandingImpact { get; private set; }
+
+        /// <summary>最近一次俯冲落地的技能编号。</summary>
+        public int DiveLandingSkillId { get; private set; }
+
+        /// <summary>最近一次开始俯冲的技能编号(开始俯冲那一步技能可能同时落地结束,所以单独记一份)。</summary>
+        public int DiveStartSkillId { get; private set; }
+
+        /// <summary>动画此刻是定在某一帧上的(腾空悬停俯冲的空中部分);那一帧的攻击框一直有效,命中判定每步都判(证据 E-149)。</summary>
+        public bool FrameHeld => Motion == HeroMotion.Skill && _holdFrame >= 0;
+
+        /// <summary>最近一次放出俯冲时的离地高度(像素)。</summary>
+        public double DiveStartHeight => _diveStartZ;
+
+        /// <summary>
+        /// 这一击从动画第几帧起判命中:放腾空悬停俯冲类技能时动画是直接定在最后一帧的,前面的帧没有播过,不能算命中过(证据 E-149);其它情况是 0。
+        /// 命中判定在新的一击开始时用它当"已判到的帧"的起点。
+        /// </summary>
+        public int StrikeFirstFrame => Motion == HeroMotion.Skill ? _strikeFirstFrame : 0;
+
+        /// <summary>有坐姿动作([sit motion]):俯冲落地后才播得出坐姿,否则落地直接回到站立。</summary>
+        public bool CanSit => _sit != null;
 
         /// <summary>是否正在挥击(连招、奔跑攻击、空中攻击或技能)。</summary>
         public bool IsAttacking => Motion == HeroMotion.Attack || Motion == HeroMotion.DashAttack || Motion == HeroMotion.JumpAttack || Motion == HeroMotion.Skill;
@@ -1267,6 +1315,151 @@ namespace Dnf.Render
             return true;
         }
 
+        /// <summary>
+        /// 腾空悬停后俯冲类技能起手(证据 E-149,客户端状态 0x19 的起手函数与进入块):只在腾空的跳跃状态里放——起跳蹲姿(还没离地)、落地段、空中挥击、
+        /// 后跳与别的状态都不行(返回 false,不改变状态)。放出来:换成技能动作(<see cref="HeroMotion.Skill"/>,新的一击),动画直接定在空中攻击动作的最后一帧
+        /// (整个空中部分都是这一帧,命中从这一帧起判,<see cref="StrikeFirstFrame"/>),水平与竖直速度清零、记下此刻的离地高度;
+        /// 之后每步由悬停(<see cref="SkillDivePlan.HoverMs"/>)、俯冲、落地、坐姿四个相位接着走。没有空中攻击动作时返回 false。
+        /// </summary>
+        public bool BeginSkillDive(int skillId, SkillDivePlan plan)
+        {
+            if (plan == null || Motion != HeroMotion.Jump || _backStep || _prepMs >= 0 || _landingMs >= 0 || _jumpAttack == null || _jumpAttackTimeline == null
+                || _jumpAttack.Frames.Length == 0)
+            {
+                return false;
+            }
+            StartSkill(skillId, -1, 0, new EtcMotion { Ani = _jumpAttack, Path = _jumpAttackPath, Timeline = _jumpAttackTimeline }, 0.0, 0.0);
+            _dive = plan;
+            _diveMs = 0.0;
+            _diveStarted = false;
+            _diveVx = 0.0;
+            _diveStartZ = Z;
+            _vz = 0.0;
+            _holdFrame = _jumpAttack.Frames.Length - 1;
+            _strikeFirstFrame = _holdFrame;
+            return true;
+        }
+
+        /// <summary>俯冲的水平速度(像素/秒,不带朝向的符号):计划里的引擎速度表的数乘移动速度属性的千分比(与后跳同一个换算,<see cref="BackStepSpeedX"/>);没有计划时为 0。</summary>
+        public double DiveSpeedX => _dive == null ? 0.0 : _dive.SpeedX * (MoveSpeedStat > 0 ? MoveSpeedStat / 1000.0 : SpeedFactorX);
+
+        /// <summary>俯冲的竖直速度(像素/秒,向下为负):计划里的数乘移动速度属性的千分比 / 1000;没有计划时为 0。</summary>
+        public double DiveSpeedZ => _dive == null ? 0.0 : _dive.SpeedZ * (MoveSpeedStat > 0 ? MoveSpeedStat / 1000.0 : 1.0);
+
+        /// <summary>
+        /// 腾空悬停俯冲的空中部分走一步(证据 E-149):悬停期间水平不动、竖直只受重力(速度从 0 起);悬停结束那一刻(状态计时器到 <see cref="SkillDivePlan.HoverMs"/>)
+        /// 水平速度设成 <see cref="DiveSpeedX"/>(沿朝向)、竖直速度一次设成 <see cref="DiveSpeedZ"/>,之后照常受重力;碰到地面就落地(<see cref="LandDive"/>)。
+        /// 一步里跨过悬停结束或落地的时刻按步内精确时间拆开算。
+        /// </summary>
+        private void AdvanceDive(double deltaMs)
+        {
+            double left = deltaMs;
+            if (!_diveStarted)
+            {
+                double toStart = Math.Max(0.0, _dive.HoverMs - _diveMs);
+                double chunk = Math.Min(left, toStart);
+                if (chunk > 0.0)
+                {
+                    _diveMs += chunk;
+                    if (DiveFall(chunk, out double after))
+                    {
+                        LandDive(after + (left - chunk));
+                        return;
+                    }
+                    left -= chunk;
+                }
+                if (_diveMs < _dive.HoverMs)
+                {
+                    return;                              // 还在悬停
+                }
+                StartDive();
+            }
+            if (left > 0.0)
+            {
+                _diveMs += left;
+                if (DiveFall(left, out double after))
+                {
+                    LandDive(after);
+                }
+            }
+        }
+
+        /// <summary>悬停结束:开始俯冲(记一次,设水平与竖直速度,水平沿朝向)。</summary>
+        private void StartDive()
+        {
+            _diveStarted = true;
+            DiveStarts++;
+            DiveStartSkillId = SkillId;
+            _diveVx = (FacingLeft ? -1.0 : 1.0) * DiveSpeedX;
+            _vz = DiveSpeedZ;
+        }
+
+        /// <summary>
+        /// 俯冲的物理走 <paramref name="ms"/> 毫秒:水平按当前水平速度走(受可走区域与障碍限制),竖直按重力积分;这一段里触地就返回 true,
+        /// 水平只走到触地的时刻,<paramref name="afterMs"/> 是触地之后这一段里剩下的毫秒数(触地时刻是 z0 + v0 t − g t² / 2 = 0 的正根)。
+        /// </summary>
+        private bool DiveFall(double ms, out double afterMs)
+        {
+            afterMs = 0.0;
+            double seconds = ms / 1000.0;
+            double g = JumpGravity;
+            double z0 = Z, v0 = _vz;
+            double z1 = z0 + v0 * seconds - 0.5 * g * seconds * seconds;
+            bool lands = z1 <= 0.0;
+            double moveSeconds = seconds;
+            if (lands)
+            {
+                double touch = g > 0.0 ? (v0 + Math.Sqrt(v0 * v0 + 2.0 * g * Math.Max(z0, 0.0))) / g : seconds;
+                moveSeconds = Math.Min(Math.Max(touch, 0.0), seconds);
+                afterMs = (seconds - moveSeconds) * 1000.0;
+            }
+            if (_diveVx != 0.0 && moveSeconds > 0.0)
+            {
+                X = MoveAxis(X, _diveVx * moveSeconds, true);
+            }
+            if (lands)
+            {
+                Z = 0.0;
+                _vz = 0.0;
+                return true;
+            }
+            Z = z1;
+            _vz = v0 - g * seconds;
+            return false;
+        }
+
+        /// <summary>
+        /// 俯冲落地(证据 E-149):记一次落地,放出来那一刻的离地高度(取整)不小于计划里的最小高度就记"能放冲击对象"(由会话放),
+        /// 然后进入坐姿——动画换成 [sit motion] 从头播,播完回到站立;没有坐姿动作就直接回到站立。<paramref name="carryMs"/> 是落地之后这一步里剩下的时间,算在坐姿里。
+        /// </summary>
+        private void LandDive(double carryMs)
+        {
+            SkillDivePlan plan = _dive;
+            DiveLandings++;
+            DiveLandingImpact = (int)_diveStartZ >= plan.ImpactMinHeight;
+            DiveLandingSkillId = SkillId;
+            ClearDive();
+            Z = 0.0;
+            _vz = 0.0;
+            if (_sit == null)
+            {
+                FinishSkill();
+                return;
+            }
+            var sit = new EtcMotion { Ani = _sit, Path = _sitPath, Timeline = _sitTimeline };
+            _skillMotion = sit;
+            _skillThen = sit;
+            _skillEndMs = -1.0;
+            _skillSlideV0 = 0.0;
+            _skillSlideAccel = 0.0;
+            _skillSlideV = 0.0;
+            _motionMs = 0.0;
+            if (carryMs > 0.0)
+            {
+                AdvanceSkill(carryMs);
+            }
+        }
+
         /// <summary>后跳时"跳跃速度属性"的取值:客户端的后跳参数(模式 1)把它当 100 算(证据 E-076)。</summary>
         public const int BackStepJumpSpeedStat = 100;
 
@@ -1347,7 +1540,19 @@ namespace Dnf.Render
             _stageRearmDone = 0;
             _motionMs = 0;
             _attackQueued = false;
+            ClearDive();
             SwingNumber++;
+        }
+
+        /// <summary>清掉腾空悬停俯冲的状态(换技能、技能结束、摆姿势时);计数与最近一次落地的记录保留。</summary>
+        private void ClearDive()
+        {
+            _dive = null;
+            _diveMs = 0.0;
+            _diveStarted = false;
+            _diveVx = 0.0;
+            _holdFrame = -1;
+            _strikeFirstFrame = 0;
         }
 
         /// <summary>摆成"正在放技能的主体阶段,动画是 [etc motion] 第 <paramref name="etcIndex"/> 项,已播放 <paramref name="motionMs"/> 毫秒(按墙钟)"。读不到动画时摆成站立。</summary>
@@ -1393,6 +1598,7 @@ namespace Dnf.Render
             _skillSlideV = 0;
             _skillRateScale = 1.0;
             _hop = null;
+            ClearDive();
             _stageRearmMax = 0;
             _stageRearmDone = 0;
             _motionMs = motionMs < 0 ? 0 : motionMs;
@@ -1406,6 +1612,11 @@ namespace Dnf.Render
         /// </summary>
         private void AdvanceSkill(double deltaMs)
         {
+            if (_dive != null)
+            {
+                AdvanceDive(deltaMs);
+                return;
+            }
             if (_skillWindupStage >= 0)
             {
                 _motionMs += deltaMs;
@@ -1545,6 +1756,12 @@ namespace Dnf.Render
                 Z = 0;               // 脚本跳跃的技能结束时一定落回地面(状态提前结束的保险)
                 _hop = null;
             }
+            if (_dive != null)
+            {
+                Z = 0;               // 悬停俯冲的空中部分被提前结束时同样落回地面(保险)
+                _vz = 0;
+            }
+            ClearDive();
             Motion = HeroMotion.Rest;
             AttackStage = 0;
             SkillId = 0;
@@ -1958,6 +2175,7 @@ namespace Dnf.Render
             _attackQueued = false;
             _dashTrigger = false;
             ResetAir();
+            ClearDive();             // 俯冲的空中部分被击倒打断:高度交给倒地流程,不再自己走物理(E-149)
             Z = z;
             _downAniMs = 0;
             DownCount++;
@@ -2003,6 +2221,7 @@ namespace Dnf.Render
             ScriptLine[] doc = ReadChr(assets, chrPath);
             LoadMotion(assets, chrPath, doc, "[jump motion]", out _jump, out _jumpPath, out _jumpTimeline);
             LoadMotion(assets, chrPath, doc, "[jumpattack motion]", out _jumpAttack, out _jumpAttackPath, out _jumpAttackTimeline);
+            LoadMotion(assets, chrPath, doc, "[sit motion]", out _sit, out _sitPath, out _sitTimeline);   // 俯冲落地后的坐姿(E-149)
             JumpPower = DefaultJumpPower;
             WeightStat = DefaultWeight;
             JumpSpeedStat = DefaultJumpSpeedStat;
@@ -2679,6 +2898,10 @@ namespace Dnf.Render
                     case HeroMotion.DashAttack:
                         return _dashAttackTimeline.FrameAt(AttackAnimationMs);
                     case HeroMotion.Skill:
+                        if (_holdFrame >= 0)
+                        {
+                            return _holdFrame;                 // 腾空悬停俯冲的空中部分:动画定在最后一帧(E-149)
+                        }
                         return (_skillWindupStage >= 0 ? _attackTimelines[_skillWindupStage] : _skillMotion.Timeline).FrameAt(AttackAnimationMs);
                     case HeroMotion.JumpAttack:
                         return _jumpAttackTimeline.FrameAt(AttackAnimationMs);
@@ -2795,6 +3018,27 @@ namespace Dnf.Render
     public interface ICommandSession : ISkillHoldSession
     {
         bool CommandsEnabled { get; set; }
+    }
+
+    /// <summary>
+    /// 腾空悬停俯冲的参数(证据 E-149):悬停毫秒数 <see cref="HoverMs"/>(状态计时器到这个数才开始俯冲),
+    /// 俯冲的水平速度 <see cref="SpeedX"/> 与竖直速度 <see cref="SpeedZ"/>(引擎速度表里的数,实际速度再乘移动速度属性的千分比,见 <see cref="TownHero.DiveSpeedX"/>),
+    /// 落地放冲击对象所需的最小离地高度 <see cref="ImpactMinHeight"/>(放出技能那一刻的高度不小于它才放)。
+    /// </summary>
+    public sealed class SkillDivePlan
+    {
+        public SkillDivePlan(int hoverMs, int speedX, int speedZ, int impactMinHeight)
+        {
+            HoverMs = hoverMs < 0 ? 0 : hoverMs;
+            SpeedX = speedX;
+            SpeedZ = speedZ;
+            ImpactMinHeight = impactMinHeight;
+        }
+
+        public int HoverMs { get; }
+        public int SpeedX { get; }
+        public int SpeedZ { get; }
+        public int ImpactMinHeight { get; }
     }
 
     /// <summary>
