@@ -6,7 +6,8 @@ using System.Collections.Generic;
 // E-138(蓄力后跳起来砸下去的那一类技能,状态 0x24:按住技能键蓄力、松开或蓄满才出招,跳跃距离与高度按蓄力档位插值,位移由动画时间脚本化,命中窗口由计时器重武装);
 // E-139(单段位移攻击类技能,状态 0x1d:起滑的"顺着按"两个数替换基础两个数、学了某个被动技能后命中名单按计时器多次重新武装);
 // E-141(增益类技能,状态 0x11:施法动作只播 [buff motion],状态正常结束时才挂属性附加体,持续时间与数值取自技能数据的哪一列由技能自己的挂附加体代码决定);
-// E-149(腾空悬停后俯冲类技能,状态 0x19:只在跳跃状态里放,动画定在空中攻击动作的最后一帧,悬停一小段后水平与竖直一起冲下去,落地按起跳高度放脚下的冲击对象,再进坐姿)。
+// E-149(腾空悬停后俯冲类技能,状态 0x19:只在跳跃状态里放,动画定在空中攻击动作的最后一帧,悬停一小段后水平与竖直一起冲下去,落地按起跳高度放脚下的冲击对象,再进坐姿);
+// E-154(两段自动接续类技能,状态 0x20:第一段动画播完、不用再按键就接第二段,第二段一开始放一个主角的被动对象,身体只在第一段里打人)。
 namespace Dnf.Play
 {
     /// <summary>
@@ -294,13 +295,14 @@ namespace Dnf.Play
     /// 放法:起手放第 0 段;这一段的动画播过 <see cref="ChainFromFrame"/> 帧之后再按一次同一个技能键,就换成下一段(不再扣蓝、不再进冷却)。
     /// 滑行:起滑速度与加速度取 [static data] 的第 <see cref="SlideSpeedIndex"/>、<see cref="SlideAccelIndex"/> 个数;进入每一段那一刻看方向键——
     /// 没按方向键用这两个数,按着朝向一侧的方向键再加上第 <see cref="ForwardSpeedIndex"/>、<see cref="ForwardAccelIndex"/> 个数,按着别的方向(反向、上下)就不滑。
+    /// 标了 <see cref="AutoChain"/> 的配方不看按键:每一段的动画播完就自己接下一段(证据 E-154)。
     /// </summary>
     public sealed class SkillRecipe
     {
         public SkillRecipe(int skillId, IEnumerable<SkillStageSpec> stages, int slideSpeedIndex, int slideAccelIndex, int forwardSpeedIndex, int forwardAccelIndex,
             int chainFromFrame, bool slideFollowsHeldDirection = true, IEnumerable<SkillObjectSpec> objects = null, SkillHopSpec hop = null,
             bool forwardReplacesBase = false, int multiHitPassiveSkillId = 0, int multiHitCountIndex = -1, SkillDiveSpec dive = null,
-            SkillJumpAttackSpec jumpAttack = null)
+            SkillJumpAttackSpec jumpAttack = null, bool autoChain = false)
         {
             if (dive != null && hop != null)
             {
@@ -310,8 +312,13 @@ namespace Dnf.Play
             {
                 throw new ArgumentException("空中攻击强化类的配方不能同时是蓄力跳跃或悬停俯冲", nameof(jumpAttack));
             }
+            if (autoChain && (hop != null || dive != null || jumpAttack != null))
+            {
+                throw new ArgumentException("自动接续的配方不能同时是蓄力跳跃、悬停俯冲或空中攻击强化", nameof(autoChain));
+            }
             Dive = dive;
             JumpAttack = jumpAttack;
+            AutoChain = autoChain;
             ForwardReplacesBase = forwardReplacesBase;
             MultiHitPassiveSkillId = multiHitPassiveSkillId;
             MultiHitCountIndex = multiHitCountIndex;
@@ -332,6 +339,10 @@ namespace Dnf.Play
             if (hop != null && Stages.Count < 2)
             {
                 throw new ArgumentException("蓄力跳跃的配方要有蓄力与跳跃两段", nameof(stages));
+            }
+            if (autoChain && Stages.Count < 2)
+            {
+                throw new ArgumentException("自动接续的配方至少要有两段", nameof(stages));
             }
         }
 
@@ -367,6 +378,12 @@ namespace Dnf.Play
 
         /// <summary>当前段的动画播到第几帧(从 0 数)以后,再按同一个技能键才算接下一段。</summary>
         public int ChainFromFrame { get; }
+
+        /// <summary>
+        /// 自动接续(证据 E-154,状态 0x20):这一段的动画播完(本来要结束技能的那一刻)就自己换成下一段,不看按键,再按技能键也不接段
+        /// (<see cref="ChainFromFrame"/> 不起作用)。接段与按键接段一样不扣蓝、不进冷却、算新的一击;中途被打断就不接了。最后一段播完技能才结束。
+        /// </summary>
+        public bool AutoChain { get; }
 
         /// <summary>
         /// 进入一段时的起滑要不要看按着的方向键(证据 E-129、E-131):true 时按"没按/顺着按/按别的方向就不滑"算;
@@ -601,6 +618,26 @@ namespace Dnf.Play
                 },
                 slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
                 jumpAttack: new SkillJumpAttackSpec(motionIndexA: 23, motionIndexB: 24, effectFrame: 2, effectsA: new[] { 4, 6 }, effectsB: new[] { 5, 7 })),
+
+            // 两段自动接续类技能(状态 0x20,证据 E-154):第一段是 [etc motion] 第 14 项(动画里带攻击框),攻击信息取 [etc attack info] 第 17 项,
+            // 伤害取 [level info] 的百分比第 0 列(没有固定值列),一进状态就把预载表第 0、1 个特效放进两个图层;这一段播完不用再按键,客户端的逐帧块看到动画结束标志
+            // 就换第二段:[etc motion] 第 15 项(整个动作里没有攻击框,所以身体不打人),放预载表第 2 个特效,并在主角脚下放被动对象(编号是基础职业的那个,
+            // 状态码按职业判断二选一,另一个职业的没做),伤害取 [level info] 的百分比第 2 列与固定值第 3 列。两段都不滑行(进入块把两个滑行速度清零)。
+            // 没做:对象创建参数里按两个引擎参数名查表得到的前向与离地偏移(表的来源没找到,按 0 放)、传给对象的 [static data] 第 1 个数(用途没读到)、
+            // 第二段第 3 帧起的武器特效与声音、动画速度比率、第二段的 [level info] 第 1 列伤害(身体没有攻击框所以用不上)、不是"客户端权威"时的第一种变体。
+            new SkillRecipe(58,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 14, attackInfoIndex: 17, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0,
+                        moreEffects: new[] { 1 }),
+                    new SkillStageSpec(motionIndex: 15, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: 2, effectFrame: 0),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                objects: new[]
+                {
+                    new SkillObjectSpec(objectId: 20022, stage: 1, frame: 0, damageRateColumn: 2, damageFixedColumn: 3),
+                },
+                autoChain: true),
         },
         new[]
         {

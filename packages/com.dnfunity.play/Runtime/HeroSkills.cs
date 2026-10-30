@@ -718,6 +718,10 @@ namespace Dnf.Play
             {
                 return null;           // 蓄力跳跃类技能:两段之间按"松开或蓄满"自动衔接,再按技能键不接段(证据 E-138)
             }
+            if (recipe.AutoChain)
+            {
+                return null;           // 自动接续类技能:每一段播完自己接下一段,不看按键(证据 E-154)
+            }
             int next = hero.SkillStage + 1;
             if (next >= recipe.Stages.Count || hero.CurrentFrame < recipe.ChainFromFrame)
             {
@@ -729,6 +733,36 @@ namespace Dnf.Play
                 return null;
             }
             return BeginStage(slot, next, hero, heldX, heldY, true, MultiHitWindows(slot)) ? slot : null;
+        }
+
+        /// <summary>
+        /// 自动接段(证据 E-154;<see cref="TownHero.SkillFollowUp"/> 的实现):主角正在放一个自动接续的配方技能(<see cref="SkillRecipe.AutoChain"/>),
+        /// 这一段的动画播完、本来要结束技能的那一刻问到这里。后面还有一段、那一段要求的技能也学过,就换成下一段(新动画从头播、新的一击)并返回 true;
+        /// 否则(没有下一段、不是自动接续的技能、没在放主体阶段)返回 false,技能照常结束。接段不扣蓝、不进冷却:魔法值与冷却在起手那一刻已经算过。
+        /// </summary>
+        public bool FollowUp(TownHero hero)
+        {
+            if (hero == null || hero.Motion != HeroMotion.Skill || hero.SkillWindingUp)
+            {
+                return false;
+            }
+            HeroSkillSlot slot = SlotOfSkill(hero.SkillId);
+            SkillRecipe recipe = slot?.Recipe;
+            if (recipe == null || !recipe.AutoChain)
+            {
+                return false;
+            }
+            int next = hero.SkillStage + 1;
+            if (next >= recipe.Stages.Count)
+            {
+                return false;
+            }
+            int need = recipe.Stages[next].RequiresSkill;
+            if (need != 0 && (SkillLevelOf == null || SkillLevelOf(need) <= 0))
+            {
+                return false;
+            }
+            return BeginStage(slot, next, hero, 0, 0, true, MultiHitWindows(slot));
         }
 
         /// <summary>

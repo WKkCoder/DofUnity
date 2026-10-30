@@ -931,7 +931,7 @@ namespace Dnf.Play
         /// <summary>放出来的技能次数(冷却中、忙碌或没绑定的按键不算)。</summary>
         public int SkillCasts { get; private set; }
 
-        /// <summary>多段技能接上下一段的次数(证据 E-129;不算进 <see cref="SkillCasts"/>,接段不是新的一次施放)。</summary>
+        /// <summary>多段技能接上下一段的次数(证据 E-129;含自动接续类技能自己接上的,E-154;不算进 <see cref="SkillCasts"/>,接段不是新的一次施放)。</summary>
         public int SkillChains { get; private set; }
 
         /// <summary>靠出招指令(而不是快捷键)放出来的技能次数(M47,E-140;也算进 <see cref="SkillCasts"/>)。</summary>
@@ -1382,6 +1382,7 @@ namespace Dnf.Play
             _dropSprites = _assets;
             _room = room ?? throw new ArgumentNullException(nameof(room));
             _room.Hero.TakeOverJumpAttack = TakeOverHeroJumpAttack;       // 空中按攻击键时让学过的强化技能接管这一击(M56,E-150)
+            _room.Hero.SkillFollowUp = FollowUpHeroSkill;                 // 自动接续类技能的一段播完时接下一段(M60,E-154)
             _monsters = new List<MonsterActor>(monsters ?? new List<MonsterActor>());
             foreach (RoomObject o in room.Content.Objects)
             {
@@ -2377,6 +2378,20 @@ namespace Dnf.Play
 
         /// <summary>这一次挥击里放出来的分段特效,按预载表下标索引(被动对象等它们播到关键帧标志,证据 E-137)。</summary>
         private readonly Dictionary<int, AnimatedEffect> _stageEffectInstances = new Dictionary<int, AnimatedEffect>();
+
+        /// <summary>
+        /// 技能的一段动画播完时问一下有没有下一段(<see cref="TownHero.SkillFollowUp"/> 的实现,证据 E-154):主角死了不接;
+        /// 其余交给 <see cref="HeroSkills.FollowUp"/>(只有自动接续的配方技能、后面还有一段时才接)。
+        /// </summary>
+        private bool FollowUpHeroSkill(TownHero hero)
+        {
+            if (HeroDead || Skills == null || !Skills.FollowUp(hero))
+            {
+                return false;
+            }
+            SkillChains++;
+            return true;
+        }
 
         /// <summary>
         /// 攻击键在空中按下、普通的空中攻击要开始的那一刻(<see cref="TownHero.TakeOverJumpAttack"/> 的实现,证据 E-150):

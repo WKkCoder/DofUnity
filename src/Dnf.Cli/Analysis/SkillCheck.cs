@@ -284,6 +284,7 @@ internal static class SkillCheck
         int recipeMultiHits = 0;
         int recipeDives = 0;
         int recipeJumpAttacks = 0;
+        int recipeAutoChains = 0;
         var recipeProblems = new List<string>();
         foreach (SkillRecipe recipe in SkillRecipes.Default.All)
         {
@@ -515,6 +516,30 @@ internal static class SkillCheck
                     recipeProblems.Add(label + " 悬停俯冲:没有\"落地放\"的对象");
                 }
             }
+            if (recipe.AutoChain)
+            {
+                // 自动接续(M60,证据 E-154):每一段的动作读得到、有帧;配方说"身体打人"的段,动画里确有攻击框,说"身体不打人"的段,动画里一个攻击框也没有
+                // (否则要么丢了真实的命中,要么多出不该有的命中);放对象的段下标落在配方里。只数不打印具体的动作与帧
+                recipeAutoChains++;
+                for (int i = 0; i < recipe.Stages.Count; i++)
+                {
+                    AniFile? stageAni = assets.LoadAni(chr.CustomAnimationPath(recipe.Stages[i].MotionIndex) ?? "");
+                    if (stageAni == null || stageAni.Frames.Length == 0)
+                    {
+                        recipeProblems.Add(label + " 自动接续:第 " + i + " 段动作读不到或没有帧");
+                        continue;
+                    }
+                    bool hasBox = stageAni.Frames.Any(fr => fr.Boxes.Any(b => b.Type == AniBoxType.Attack));
+                    if (hasBox != recipe.Stages[i].HasOwnStrike)
+                    {
+                        recipeProblems.Add(label + " 自动接续:第 " + i + " 段动画里" + (hasBox ? "有" : "没有") + "攻击框,配方却标" + (recipe.Stages[i].HasOwnStrike ? "有" : "没有") + "自己的命中");
+                    }
+                }
+                if (recipe.Objects.Any(o => o.Stage < 1))
+                {
+                    recipeProblems.Add(label + " 自动接续:有对象在第一段就放(状态码里它是接上第二段那一刻放的)");
+                }
+            }
             if (recipe.JumpAttack != null)
             {
                 // 空中攻击强化(M56,证据 E-150):配方只有一段、不带自己的攻击信息(借空中攻击的,伤害取 [level info] 的百分比列);指令是单独一个攻击键;
@@ -610,7 +635,7 @@ internal static class SkillCheck
         }
         Report(recipeCount == SkillRecipes.Default.Count && recipeProblems.Count == 0,
             "技能配方 " + recipeCount + " 个(共 " + recipeStages + " 段、放对象 " + recipeObjects + " 个、带蓄力 " + recipeHolds + " 段、等特效标志的对象 " + recipeGates
-            + " 个、定结束帧 " + recipeEndFrames + " 段、蓄力跳跃 " + recipeHops + " 个、多段命中 " + recipeMultiHits + " 个、悬停俯冲 " + recipeDives + " 个、空中攻击强化 " + recipeJumpAttacks + " 个)在真实数据里都读得通"
+            + " 个、定结束帧 " + recipeEndFrames + " 段、蓄力跳跃 " + recipeHops + " 个、多段命中 " + recipeMultiHits + " 个、悬停俯冲 " + recipeDives + " 个、空中攻击强化 " + recipeJumpAttacks + " 个、自动接续 " + recipeAutoChains + " 个)在真实数据里都读得通"
             + "(动作、攻击信息、特效、对象、蓄力、结束帧、[static data]、[level info] 列;问题 " + recipeProblems.Count + " 条)");
 
         // 7. 出招指令(M47,证据 E-140):整个职业技能的 [command] 在真实数据里读得通,而且输入层认得出来——
@@ -972,6 +997,66 @@ internal static class SkillCheck
             Report(jumpSkills > 0 && jumpProblems.Count == 0 && jumpGroundPlain == jumpSkills && jumpPlainWhenOff == jumpSkills && jumpCycles == jumpSkills * 2 && jumpEffectCycles == jumpCycles && jumpBoxCycles == jumpCycles,
                 "空中攻击强化类技能 " + jumpSkills + " 个:地面上按攻击键是普通攻击 " + jumpGroundPlain + " 个;关着出招指令时空中按攻击键是普通空中攻击 " + jumpPlainWhenOff
                 + " 个;开着时在最高点按攻击键接管、扣魔法值、两跳交替两种动作、每一击放一次特效、同一跳不再接管、落地回站立走完 " + jumpCycles + " 跳(放了特效 " + jumpEffectCycles + " 跳、武器图层有攻击框 " + jumpBoxCycles + " 跳;问题 " + jumpProblems.Count + " 条)");
+
+            // 7d. 两段自动接续类技能(M60,证据 E-154)的真实会话:表里的每个这类技能——按各自的指令放出来;第一段播完不按任何键就自己接上第二段(算一次接段、不算新的施放),
+            // 第二段一开始放出配方里的被动对象(.obj 在真实数据里读得到、放得出来),整个技能播完回到站立;魔法值与冷却只在起手那一刻算。只打印汇总数。
+            int autoSkills = 0;
+            int autoCycles = 0;
+            int autoObjects = 0;
+            var autoProblems = new List<string>();
+            foreach (SkillRecipe recipe in SkillRecipes.Default.All)
+            {
+                if (!recipe.AutoChain)
+                {
+                    continue;
+                }
+                autoSkills++;
+                string label = "自动接续 #" + autoSkills;
+                SkillDef? def = catalog.Find(recipe.SkillId);
+                if (def == null || def.Command.IsEmpty || caster.Skills.LevelOf(def.Id) <= 0)
+                {
+                    autoProblems.Add(label + ":技能不在目录里、没有指令或没学会");
+                    continue;
+                }
+                RoomCombatSession session = NewSession(assets, opts, caster);
+                HeroSkillSlot? slot = session.Skills.SlotOfSkill(def.Id);
+                TownHero caster1 = session.Hero;
+                int mpBefore = session.Vitals?.Mp ?? 0;
+                foreach (CommandStep step in CommandSteps.Of(def.Command, caster1.FacingLeft))
+                {
+                    session.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Keys);
+                }
+                if (slot == null || caster1.Motion != HeroMotion.Skill || caster1.SkillId != def.Id || session.SkillCasts != 1 || session.SkillChains != 0 || caster1.SkillStage != 0)
+                {
+                    autoProblems.Add(label + ":打指令没有放出这个技能的第一段(或没排进槽里)");
+                    continue;
+                }
+                int stageSeen = 0;
+                int ms = 0;
+                while (caster1.Motion == HeroMotion.Skill && ms < 20000)
+                {
+                    session.Update(10, 0, 0, false, false, SkillKeys.None);
+                    ms += 10;
+                    stageSeen = Math.Max(stageSeen, caster1.SkillStage);
+                }
+                bool ok = stageSeen == recipe.Stages.Count - 1 && session.SkillChains == recipe.Stages.Count - 1 && session.SkillCasts == 1
+                    && session.HeroObjectsSpawned == recipe.Objects.Count && caster1.Motion == HeroMotion.Rest && caster1.SkillId == 0 && slot.CooldownLeftMs > 0
+                    && (session.Vitals == null || session.Vitals.Mp == mpBefore - slot.ConsumeMp);
+                if (!ok)
+                {
+                    autoProblems.Add(label + ":没有按规则自己接完各段(见到的段 " + stageSeen + "、接段 " + session.SkillChains + " 次、放对象 " + session.HeroObjectsSpawned + " 个、动作 " + caster1.Motion + "、魔法值或冷却不对)");
+                    continue;
+                }
+                autoCycles++;
+                autoObjects += session.HeroObjectsSpawned;
+            }
+            foreach (string line in autoProblems)
+            {
+                Console.WriteLine("    " + line);
+            }
+            Report(autoSkills > 0 && autoProblems.Count == 0 && autoCycles == autoSkills,
+                "两段自动接续类技能 " + autoSkills + " 个:按各自的指令放出第一段,不按任何键各段自己接上、第二段放出对象 " + autoObjects + " 个、整个技能播完回到站立走完 " + autoCycles
+                + " 个(魔法值与冷却只在起手算;问题 " + autoProblems.Count + " 条)");
 
             // 8. 增益类技能(M48,证据 E-141):表里的每个增益在真实数据里都读得通——技能在目录里、是主动技能、指令的扳机是增益键、[static data] 与 [level info] 的列够用、
             // 每一级的持续时间与数值都是正数;真实会话里按各自的指令打一遍:施法动作是角色的 [buff motion](没有攻击框),施法正常结束那一步挂上增益,数值与持续时间等于槽里读出来的,

@@ -114,8 +114,8 @@ public class SkillChainTests
                 Assert.True((st.MotionIndex >= 0 || r.Dive != null || r.JumpAttack != null) && st.EffectFrame >= 0 && st.EffectIndex >= -1 && st.CastHoldFrames >= 0);
                 if (st.HasOwnStrike)
                 {
-                    // 蓄力跳跃类与悬停俯冲类技能自己的伤害没有固定值列(只取百分比列)
-                    Assert.True(st.DamageRateColumn >= 0 && (st.DamageFixedColumn >= 0 || r.Hop != null || r.Dive != null));
+                    // 蓄力跳跃类与悬停俯冲类技能自己的伤害没有固定值列(只取百分比列);自动接续类(E-154)的第一段也只取百分比列
+                    Assert.True(st.DamageRateColumn >= 0 && (st.DamageFixedColumn >= 0 || r.Hop != null || r.Dive != null || r.AutoChain));
                 }
                 else
                 {
@@ -139,6 +139,11 @@ public class SkillChainTests
                 Assert.True(h.HoldMinIndex >= 0 && h.HoldMaxIndex >= 0 && h.DistanceMinIndex >= 0 && h.DistanceMaxIndex >= 0 && h.HeightMinIndex >= 0 && h.HeightMaxIndex >= 0
                     && h.SpeedMinIndex >= 0 && h.SpeedMaxIndex >= 0 && h.HitsMinIndex >= 0 && h.HitsMaxIndex >= 0 && h.RepeatAttackInfoIndex >= 0);
                 Assert.True(0 < h.RiseFrame && h.RiseFrame < h.LandFrame && h.HitStartFrame < h.HitEndFrame && h.HitStartFrame >= 1);
+            }
+            if (r.AutoChain)
+            {
+                // 自动接续类(E-154):至少两段,不是蓄力跳跃、悬停俯冲或空中攻击强化(这三类各有自己的接段办法),按键不接段所以不需要接段帧
+                Assert.True(r.Stages.Count >= 2 && r.Hop == null && r.Dive == null && r.JumpAttack == null);
             }
             if (r.Dive != null)
             {

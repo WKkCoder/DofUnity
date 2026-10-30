@@ -1321,6 +1321,12 @@ namespace Dnf.Render
         }
 
         /// <summary>
+        /// 技能的这一段动画播完、本来要结束技能的那一刻问一下"有没有下一段"(自动接续类技能,证据 E-154):回调里调 <see cref="ChainSkillMotion"/> 接上下一段并返回 true,
+        /// 主角就接着放;返回 false(或没有回调)技能照常结束。只在动画自然播完时问(被打断、起手阶段的普攻动画、后跳等都不问)。
+        /// </summary>
+        public Func<TownHero, bool> SkillFollowUp { get; set; }
+
+        /// <summary>
         /// 空中攻击开始时问一下"这一击要不要换成技能"(M56,证据 E-150):返回 true 就是换,<paramref name="skillId"/> 是技能编号,
         /// <paramref name="etcIndex"/> 是 [etc motion] 里这一击播的动作的下标;返回 false(或这个动作读不到)就是普通的空中攻击。
         /// 回调只在这一击确实要开始的那一刻调用(腾空、这一跳还没用过空中攻击、攻击键按下),所以可以在里面扣魔法值、翻交替模式;
@@ -1747,9 +1753,9 @@ namespace Dnf.Render
             {
                 StepStageRearm((int)_motionMs);
             }
-            if (_motionMs >= duration)
+            if (_motionMs >= duration && (SkillFollowUp == null || !SkillFollowUp(this)))
             {
-                FinishSkill();
+                FinishSkill();     // 动画播完:自动接续的技能先问一下有没有下一段(证据 E-154),没有才结束
             }
         }
 
