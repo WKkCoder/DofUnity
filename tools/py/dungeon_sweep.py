@@ -44,6 +44,7 @@ ACTS = re.compile(r"脚本\(E-130\):进过的房间里出招带 \.act 触发器�
 SUMMONS = re.compile(r"召唤\(E-134\):脚本召唤出怪物 (\d+) 只,被拒绝 (\d+) 次,召唤物被打死 (\d+) 只")
 SWITCH = re.compile(r"脚本跨招开关\(E-145\):落到存在的招与触发器 (\d+) 次,落空 (\d+) 次,指向未接线的动作族 (\d+) 次")
 FAMILY = re.compile(r"脚本非出招动作族\(E-146\):进过的房间里装了站立、行走、受击、倒地、过程或最后一幕触发器的怪物 (\d+) 只,运行器启动 (\d+) 次,\[SET ACTION\] 落实 (\d+) 次、没落实 (\d+) 次")
+FILES = re.compile(r"脚本换动作文件\(E-151\):换上 (\d+) 次,记成待换 (\d+) 次,这一版没有对应动作的族 (\d+) 次,序号越界 (\d+) 次,文件读不到 (\d+) 次")
 MIX = re.compile(r"怪物构成\(E-147\):进过的房间里共 (\d+) 只,\.ai 脚本指挥 (\d+) 只,默认 AI 走位大脑 (\d+) 只,默认 AI 占位 (\d+) 只")
 UNS_BEH = re.compile(r"脚本没做的行为\(E-147,实际执行次数\):(.*)")
 UNS_TRG = re.compile(r"脚本读不懂的触发器标签\(E-147,运行器每次开始算一次\):(.*)")
@@ -122,6 +123,9 @@ def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=5000
     fm = FAMILY.search(text)
     if fm:
         rec["family_monsters"], rec["family_runs"], rec["family_set_applied"], rec["family_set_unhosted"] = (int(fm.group(i)) for i in range(1, 5))
+    fl = FILES.search(text)
+    if fl:
+        rec["files_applied"], rec["files_deferred"], rec["files_unhosted"], rec["files_rejected"], rec["files_missing"] = (int(fl.group(i)) for i in range(1, 6))
     mx = MIX.search(text)
     if mx:
         rec["mon_total"], rec["mon_scripted"], rec["mon_brain"], rec["mon_placeholder"] = (int(mx.group(i)) for i in range(1, 5))
@@ -248,6 +252,11 @@ def main(argv):
     with_family = sum(1 for r in results if r.get("family_runs", 0) > 0)
     print("非出招动作族(只在本机,E-146):有宿主运行过的副本 %d 个;怪物 %d 只,运行器启动 %d 次,[SET ACTION] 落实 %d 次、没落实 %d 次"
           % (with_family, fam_sums["family_monsters"], fam_sums["family_runs"], fam_sums["family_set_applied"], fam_sums["family_set_unhosted"]))
+    file_keys = ["files_applied", "files_deferred", "files_unhosted", "files_rejected", "files_missing"]
+    file_sums = {k: sum(r.get(k, 0) for r in results) for k in file_keys}
+    with_files = sum(1 for r in results if r.get("files_applied", 0) + r.get("files_deferred", 0) + r.get("files_unhosted", 0) > 0)
+    print("换动作文件(只在本机,E-151):脚本换过动作文件的副本 %d 个;换上 %d 次,记成待换 %d 次,没有对应动作的族 %d 次,序号越界 %d 次,文件读不到 %d 次"
+          % (with_files, file_sums["files_applied"], file_sums["files_deferred"], file_sums["files_unhosted"], file_sums["files_rejected"], file_sums["files_missing"]))
     mix = {}
     for r in results:
         d = r["dungeon"].split("/")[1]

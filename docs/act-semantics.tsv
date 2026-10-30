@@ -148,7 +148,7 @@ beh	0xa9	[SHAKING]	参数 1 不小于 0 时调用场景的震屏(参数 0 为振
 beh	0xaa	[PARTICLE]	以拥有者坐标加三轴偏移生成粒子,不随朝向镜像,不用目标集合	中	粒子类型与朝向处理
 beh	0xac	[SAY SPEECH]	对目标显示语句:ActiveObject 族走带语音界面的虚槽 0x6c4,PassiveObject 族走虚槽 0x460	中	字符串来源
 beh	0xad	[DELETE APPENDAGE]	按名/[%]/float匹配owner下appendage并detach	低	0x4d分支、00982c90规则、param布局
-beh	0xb5	[CHANGE ACTION FILE]	给目标换成另一个动作脚本文件;不保留当前帧与内部子状态,换文件后靠后面的 [SET ACTION] 重新切入	中	已加载的动作脚本是否复用
+beh	0xb5	[CHANGE ACTION FILE]	给怪物目标换另一个动作脚本文件:参数是族号(0 待机 1 行走 2 后退 3 冲刺 4 冲刺攻击 5 坐下 6 与 7 受击 8 倒地 9 翻倒 10 跳跃 11 跳跃攻击 12 出招列表 13 自定义列表;大于 13 不存)+ 序号 + 路径(相对当前脚本所在目录);被换的若正是正在跑的动作,旧动作标成可丢弃并挂替换指针,下一次设当前动作时才改取新的(正在跑的继续跑,新动作下一次进入这一族起生效)	中	新动作对旧动作运行期状态(触发器开关、变量)的继承、六个没有对应动作的族在原版里何时被用到、没有族码写法的含义
 beh	0xb9	[FLASH SCREEN]	全屏闪光（七参数时间/alpha/RGB，EX 第八模式）	中	010c6b3e 以后渲染调用未切片
 beh	0xc3	[SET DAMAGE BOX]	对0x019d91e8目标开关受击盒(0x368),三档:开、关、复位;OFF时按帧清0x534/0x540(M40)	高	帧槽0x534/0x540命名;复位档的确切含义
 beh	0xc4	[SET TEAM]	valueOf整数调setTeam(0x228)	高	team枚举

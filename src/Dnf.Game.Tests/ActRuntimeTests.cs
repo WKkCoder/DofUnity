@@ -163,6 +163,12 @@ public sealed partial class ActRuntimeTests
         public void SpawnPassive(IActEntity owner, int index, int level, float x, float y, float z, bool facingLeft)
             => Spawns.Add((owner, index, level, x, y, z, facingLeft));
 
+        /// <summary>M57(E-151):[CHANGE ACTION FILE] 交给宿主的请求。</summary>
+        public List<(IActEntity target, ActFileSlot slot, int index, string path, string from)> FileChanges { get; } = new();
+
+        public void ChangeActionFile(IActEntity target, ActFileSlot slot, int index, string path, string fromProgram)
+            => FileChanges.Add((target, slot, index, path, fromProgram));
+
         public void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into)
         {
             if (Sets.TryGetValue(selector, out List<IActEntity> list))

@@ -397,6 +397,12 @@ namespace Dnf.Game.Act
         TriggerSwitch,
         SetFrame,
         Teleport,
+
+        /// <summary>
+        /// [CHANGE ACTION FILE] 族 [序号] "路径":把怪物某一族动作(待机、行走、受击、倒地……)或某一招的 .act 换成另一个文件(E-151)。
+        /// 客户端执行块在 0x010ca404(行为码 0xb5):族码 0 到 13,按路径新建一个动作对象换进怪物的动作表,旧的稍后销毁;
+        /// 被换的动作此刻正在跑时它继续跑完,新动作从下一次进入这一族(或脚本再次 [SET ACTION] 到它)起生效。
+        /// </summary>
         ChangeActionFile,
 
         /// <summary>[DIM] "名字" [=] 表达式:给运行器的变量赋值(E-132)。</summary>
@@ -440,6 +446,28 @@ namespace Dnf.Game.Act
         None = 0,
         JumpOut = 1,
         MagicCircle = 2,
+    }
+
+    /// <summary>
+    /// [CHANGE ACTION FILE] 换的是哪一族动作。数值是客户端执行块的族码(E-151,与 .mob 里各 action 标签在怪物动作表里的顺序一致:
+    /// 待机 0、行走 1、后退 2、冲刺 3、冲刺攻击 4、坐下 5、受击 6 与 7(同一族名,靠序号 0/1 分)、倒地 8、翻倒 9、跳跃 10、跳击 11、出招列表 12、自定义列表 13);
+    /// 代码里只按名字用。受击、出招、自定义三族带序号。
+    /// </summary>
+    public enum ActFileSlot : byte
+    {
+        Stay = 0,
+        Move = 1,
+        MoveBack = 2,
+        Dash = 3,
+        DashAttack = 4,
+        Sit = 5,
+        Damage = 6,
+        Down = 8,
+        Overturn = 9,
+        Jump = 10,
+        JumpAttack = 11,
+        Attack = 12,
+        Custom = 13,
     }
 
     /// <summary>[SET DAMAGE BOX] 的三档:开、关、什么都不做。没写档位的行写成关(客户端的"其它档位只关盒"分支)。</summary>
@@ -658,6 +686,17 @@ namespace Dnf.Game.Act
 
         /// <summary>这条 [ACTIVE STATUS] 比应有的少写的整数个数(缺的按 0 处理;审计用,应当总是 0,否则同样说明个数对不上)。</summary>
         public int StatusMissing { get; internal set; }
+
+        // ---- [CHANGE ACTION FILE]
+
+        /// <summary>换哪一族动作。</summary>
+        public ActFileSlot FileSlot { get; internal set; }
+
+        /// <summary>受击(0、1)、出招、自定义三族的序号;没写序号是 0,其余族没有序号也是 0。</summary>
+        public int FileIndex { get; internal set; }
+
+        /// <summary>新 .act 的路径,原样(相对写这条行为的 .act 所在目录,E-151:全库 98% 的写法按这个规则能找到文件)。</summary>
+        public string FilePath { get; internal set; }
 
         public override string ToString() => Kind + " " + Tag;
     }

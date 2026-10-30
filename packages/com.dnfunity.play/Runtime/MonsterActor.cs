@@ -135,7 +135,9 @@ namespace Dnf.Play
 
         // 倒地状态机(证据 E-082、E-083;与主角共用 KnockdownFlight,E-105):阶段 0 首次腾空、1 落地后颠一下、2 躺着;类型见 Knockdown.TypeOf
         private readonly int _weight;
-        private readonly KnockdownFlight _flight;
+        private KnockdownFlight _flight;          // 倒地动画换了([CHANGE ACTION FILE])后,下一次开始倒地时重建(SyncFlightAnimation)
+        private AniFile _flightAni;               // 现在这个倒地状态机是按哪个倒地动画建的
+        private readonly MonsterAnis _anis;       // 这一只自己的一套动画(开头是模型的,脚本换文件只改这一份,M57)
         private bool _dyingFromDown;
         private readonly Dictionary<int, List<AniBox>> _strikeBoxes = new Dictionary<int, List<AniBox>>();
 
@@ -301,9 +303,11 @@ namespace Dnf.Play
             int attackSpeed = 0, int hitRecovery = 0, int weight = 0)
         {
             _model = model ?? throw new ArgumentNullException(nameof(model));
+            _anis = new MonsterAnis(model);
             HitRecovery = hitRecovery;
             _weight = weight;
             _flight = new KnockdownFlight(weight, new DownAnimation(model.Down));
+            _flightAni = model.Down;
             Index = index;
             Spawn = spawn;
             Code = spawn.Code;
@@ -338,7 +342,7 @@ namespace Dnf.Play
             bool any = false;
             for (int i = 0; i < records.Count; i++)
             {
-                if (i >= _model.Attacks.Count || _model.Attacks[i] == null)
+                if (i >= _anis.Attacks.Length || _anis.Attacks[i] == null)
                 {
                     chooser.Disable(i);
                 }
@@ -786,7 +790,7 @@ namespace Dnf.Play
             switch (kind)
             {
                 case ActActionKind.Attack:
-                    if ((uint)index >= (uint)_model.Attacks.Count || _model.Attacks[index] == null)
+                    if ((uint)index >= (uint)_anis.Attacks.Length || _anis.Attacks[index] == null)
                     {
                         return;
                     }
@@ -1158,26 +1162,26 @@ namespace Dnf.Play
                 switch (Phase)
                 {
                     case MonsterPhase.Walk:
-                        ani = _model.Move;
+                        ani = _anis.Move;
                         break;
                     case MonsterPhase.Attack:
-                        ani = _attackIndex < _model.Attacks.Count ? _model.Attacks[_attackIndex] : null;
+                        ani = _attackIndex < _anis.Attacks.Length ? _anis.Attacks[_attackIndex] : null;
                         break;
                     case MonsterPhase.Hurt:
                         ani = _hurtAni;
                         break;
                     case MonsterPhase.Dying:
-                        ani = _model.Down ?? _model.Damage1;
+                        ani = _anis.Down ?? _anis.Damage1;
                         break;
                     default:
-                        ani = _model.Waiting;
+                        ani = _anis.Waiting;
                         break;
                 }
-                return ani ?? _model.Waiting ?? _model.Move;
+                return ani ?? _anis.Waiting ?? _anis.Move;
             }
         }
 
-        public string CurrentAnimationPath => _model.PathOf(CurrentAni);
+        public string CurrentAnimationPath => _anis.PathOf(CurrentAni);
 
         public int CurrentFrame
         {
@@ -1329,6 +1333,10 @@ namespace Dnf.Play
 
         private void EnterPhase(MonsterPhase next)
         {
+            if (_pendingFamily != null || _pendingAttack != null)
+            {
+                ApplyPendingFor(next);       // [CHANGE ACTION FILE] 换了当时正在跑的那一族:这一次进入才换上(M57,E-151)
+            }
             Phase = next;
             _phaseMs = 0;
             if (next == MonsterPhase.Attack)
@@ -1429,7 +1437,7 @@ namespace Dnf.Play
                 return cached;
             }
             var boxes = new List<AniBox>();
-            AniFile ani = attackIndex >= 0 && attackIndex < _model.Attacks.Count ? _model.Attacks[attackIndex] : null;
+            AniFile ani = attackIndex >= 0 && attackIndex < _anis.Attacks.Length ? _anis.Attacks[attackIndex] : null;
             if (ani != null)
             {
                 foreach (AniFrame frame in ani.Frames)
@@ -1552,7 +1560,7 @@ namespace Dnf.Play
             }
             if (near)
             {
-                if (_chooser == null && _cooldownMs <= 0 && _model.Attacks.Count > 0 && _model.Attacks[0] != null)
+                if (_chooser == null && _cooldownMs <= 0 && _anis.Attacks.Length > 0 && _anis.Attacks[0] != null)
                 {
                     _attackIndex = 0;
                     EnterPhase(MonsterPhase.Attack);
@@ -1780,7 +1788,7 @@ namespace Dnf.Play
                             return;
                         }
                     }
-                    else if (_cooldownMs <= 0 && _model.Attacks.Count > 0 && _model.Attacks[0] != null)
+                    else if (_cooldownMs <= 0 && _anis.Attacks.Length > 0 && _anis.Attacks[0] != null)
                     {
                         bool geometric = heroBoxes != null && heroBoxes.Count > 0 && StrikeBoxes().Count > 0;
                         bool near = geometric
@@ -1875,6 +1883,7 @@ namespace Dnf.Play
         /// </summary>
         private void BeginDown(KnockdownRequest request, int rollHorizontal, int rollHeight, bool pushToLeft)
         {
+            SyncFlightAnimation();
             _hovering = false;                 // 被打得倒地:悬停结束,从当前高度起飞行(E-133)
             _hoverFalling = false;
             _hoverVz = 0;
@@ -1882,7 +1891,7 @@ namespace Dnf.Play
             _flight.Place(X, Y, Z, FacingLeft);
             _flight.Begin(request, rollHorizontal, rollHeight, pushToLeft);
             TakeFlightPose();
-            _hurtAni = _model.Down;
+            _hurtAni = _anis.Down;
             _hurtOnClock = false;
             _hurtSpanMs = 0;
             EnterPhase(MonsterPhase.Hurt);
@@ -1993,6 +2002,7 @@ namespace Dnf.Play
             {
                 return false;
             }
+            ApplyPendingHurt();                                // 每一次挨打都是重新进入受击、倒地几族:记成待换的文件此刻换上(M57)
             if (Phase == MonsterPhase.Attack && _actRunner != null)
             {
                 _actRunner.OnDamage(ActTarget);                // 出招时挨了打:唤醒带 [ON DAMAGE] 的触发器(E-130;挨打者当作攻击者就是主角)
@@ -2008,7 +2018,7 @@ namespace Dnf.Play
             _pushMs = 0;
             if (Hp == 0)
             {
-                if (down.IsSet && _model.Down != null)
+                if (down.IsSet && _anis.Down != null)
                 {
                     // 已死而且有倒地动作:请求倒地(E-079 第 3 步),列表是这一击自己的推力与抬升,阶段 0;
                     // 倒地流程照常走(腾空、颠一下),躺下的那一刻已死 → 进入死亡(E-082 阶段 2),白闪淡出后消失(E-084)
@@ -2035,7 +2045,7 @@ namespace Dnf.Play
                 _pushMs = oldPushMs;
                 return false;
             }
-            if (down.IsSet && _model.Down != null && (knockDown || (down.ReactionDamage && (_flight.Active || Z > 0))))
+            if (down.IsSet && _anis.Down != null && (knockDown || (down.ReactionDamage && (_flight.Active || Z > 0))))
             {
                 // 输出二:已经落过地(阶段 ≥ 1)的倒地中、又挨了不弹起的一击 → 1(E-079 第 7 步)
                 int outputTwo = _flight.Active && _flight.Stage >= 1 && !down.Bounce ? 1 : 0;
@@ -2052,13 +2062,13 @@ namespace Dnf.Play
                 Z = 0;
             }
             AniFile ani;
-            if (knockDown && _model.Down != null)
+            if (knockDown && _anis.Down != null)
             {
-                ani = _model.Down;
+                ani = _anis.Down;
             }
             else
             {
-                ani = (_hurtCount++ % 2 == 0 ? _model.Damage1 : _model.Damage2) ?? _model.Damage1 ?? _model.Damage2 ?? _model.Waiting;
+                ani = (_hurtCount++ % 2 == 0 ? _anis.Damage1 : _anis.Damage2) ?? _anis.Damage1 ?? _anis.Damage2 ?? _anis.Waiting;
                 knockDown = false;
             }
             _hurtAni = ani;
@@ -2152,7 +2162,7 @@ namespace Dnf.Play
         public int HeadHeight()
         {
             int top = 0;
-            AniFile wait = _model.Waiting;
+            AniFile wait = _anis.Waiting;
             if (wait != null && wait.Frames.Length > 0)
             {
                 foreach (AniBox box in wait.Frames[0].Boxes)
@@ -2179,7 +2189,7 @@ namespace Dnf.Play
             {
                 return null;
             }
-            return MonsterSprites.SpriteAt(assets, ani, _model.PathOf(ani), frame, projection, (int)Math.Floor(X), (int)Math.Floor(Y), (int)Math.Floor(Z),
+            return MonsterSprites.SpriteAt(assets, ani, _anis.PathOf(ani), frame, projection, (int)Math.Floor(X), (int)Math.Floor(Y), (int)Math.Floor(Z),
                 !FacingLeft, MonsterSprites.ObjectIdBase + Index, DeathSilhouette, DeathTintAlpha);
         }
     }

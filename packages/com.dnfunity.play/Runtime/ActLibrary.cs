@@ -118,6 +118,7 @@ namespace Dnf.Play
         private readonly Dictionary<string, ActProgram> _programs = new Dictionary<string, ActProgram>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<int, PassiveTemplate> _templates = new Dictionary<int, PassiveTemplate>();
         private readonly HashSet<int> _summonCodes = new HashSet<int>();
+        private readonly Dictionary<string, PassiveAction> _swapActions = new Dictionary<string, PassiveAction>(StringComparer.OrdinalIgnoreCase);
 
         public ActLibrary(DnfAssets assets, GameData data)
         {
@@ -218,6 +219,25 @@ namespace Dnf.Play
             return new PassiveAction(program, _assets.LoadAni(aniPath), aniPath);
         }
 
+        /// <summary>
+        /// [CHANGE ACTION FILE] 换进来的动作(M57,E-151):<paramref name="actPath"/> 已是 PVF 规范路径(见 <see cref="PvfPath.ResolveRelativeTo"/>)。
+        /// 结果缓存(读不到也记 null 不重试),所以预读过的换文件第一次用到时不再读盘。.act 没有主动画时动作只带程序,动画是 null。
+        /// </summary>
+        public PassiveAction SwapAction(string actPath)
+        {
+            if (string.IsNullOrEmpty(actPath))
+            {
+                return null;
+            }
+            if (_swapActions.TryGetValue(actPath, out PassiveAction cached))
+            {
+                return cached;
+            }
+            PassiveAction action = Action(actPath, null);
+            _swapActions[actPath] = action;
+            return action;
+        }
+
         /// <summary>被动对象 <paramref name="index"/> 的模板;配不出来返回 null(也缓存,不重试)。</summary>
         public PassiveTemplate Passive(int index)
         {
@@ -244,6 +264,12 @@ namespace Dnf.Play
             {
                 foreach (ActBehavior b in group.Items)
                 {
+                    if (b.Kind == ActBehaviorKind.ChangeActionFile && b.FilePath != null)
+                    {
+                        // 脚本运行中要换进来的动作文件:预先读好(动画一并载入),并顺着它自己的脚本往下读(M57)
+                        Preload(SwapAction(PvfPath.ResolveRelativeTo(program.Path, b.FilePath))?.Program, depth + 1);
+                        continue;
+                    }
                     if (b.Kind == ActBehaviorKind.Summon && b.Index != null)
                     {
                         foreach (int code in b.Index.Candidates())

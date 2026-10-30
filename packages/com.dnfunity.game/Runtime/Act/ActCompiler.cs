@@ -783,6 +783,8 @@ namespace Dnf.Game.Act
                     return ParseSpeed(cur, tag);
                 case "[SET ACTION]":
                     return ParseSetAction(cur, tag);
+                case "[CHANGE ACTION FILE]":
+                    return ParseChangeActionFile(cur, tag);
                 case "[DESTROY]":
                 case "[DESTROY BY FORCE]":
                     return new ActBehavior { Kind = ActBehaviorKind.Destroy, Tag = tag, Force = tag == "[DESTROY BY FORCE]" };
@@ -1289,6 +1291,70 @@ namespace Dnf.Game.Act
                 }
             }
             return b;
+        }
+
+        /// <summary>
+        /// [CHANGE ACTION FILE]:紧跟一个族关键字(与 [SET ACTION] 同一套写法:[STAY] [MOVE] [DAMAGE] n [ATTACK] n [DOWN] [SIT] [OVERTURN] [MOVEBACK] [DASH] [DASHATTACK] [JUMP] [JUMPATTACK] [CUSTOM] n),
+        /// 带序号的族可以不写序号(客户端读不到就是 0),最后是新 .act 的路径字符串(E-151)。族关键字或路径缺失的写法按没做处理。
+        /// </summary>
+        private static ActBehavior ParseChangeActionFile(ActCursor cur, string tag)
+        {
+            ActFileSlot slot;
+            bool indexed = false;
+            switch (cur.TakeOpen())
+            {
+                case "[STAY]":
+                    slot = ActFileSlot.Stay;
+                    break;
+                case "[MOVE]":
+                    slot = ActFileSlot.Move;
+                    break;
+                case "[MOVEBACK]":
+                    slot = ActFileSlot.MoveBack;
+                    break;
+                case "[DASH]":
+                    slot = ActFileSlot.Dash;
+                    break;
+                case "[DASHATTACK]":
+                    slot = ActFileSlot.DashAttack;
+                    break;
+                case "[SIT]":
+                    slot = ActFileSlot.Sit;
+                    break;
+                case "[DAMAGE]":
+                    slot = ActFileSlot.Damage;
+                    indexed = true;
+                    break;
+                case "[DOWN]":
+                    slot = ActFileSlot.Down;
+                    break;
+                case "[OVERTURN]":
+                    slot = ActFileSlot.Overturn;
+                    break;
+                case "[JUMP]":
+                    slot = ActFileSlot.Jump;
+                    break;
+                case "[JUMPATTACK]":
+                    slot = ActFileSlot.JumpAttack;
+                    break;
+                case "[ATTACK]":
+                    slot = ActFileSlot.Attack;
+                    indexed = true;
+                    break;
+                case "[CUSTOM]":
+                    slot = ActFileSlot.Custom;
+                    indexed = true;
+                    break;
+                default:
+                    return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };     // [LAST] 等没有族码的写法:客户端的族码表里没有它们
+            }
+            int index = indexed ? cur.Int() : 0;
+            string path = cur.TakeString();
+            if (string.IsNullOrEmpty(path))
+            {
+                return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
+            }
+            return new ActBehavior { Kind = ActBehaviorKind.ChangeActionFile, Tag = tag, FileSlot = slot, FileIndex = index, FilePath = path };
         }
 
         private static ActBehavior ParseDirection(ActCursor cur, string tag)

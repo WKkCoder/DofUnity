@@ -365,6 +365,20 @@ internal sealed class AvatarFixture : IDisposable
     public static readonly (ushort Type, int[] Values) BlobStrikeBox = ((ushort)15, new[] { 10, -10, 0, 40, 20, 50 });
 
     /// <summary>
+    /// M57([CHANGE ACTION FILE],证据 E-151)的换文件素材:各族"换进来的"动画(路径如下)。形状与原来的相同,只是路径不同,好从 CurrentAnimationPath 认出来;
+    /// 有两处不同:倒地 B 躺着那一帧停 1500 毫秒(原来 500);出招 B 的攻击框(<see cref="BlobAwayBox"/>)在出招方向的反面很远处,永远够不着主角。
+    /// </summary>
+    public const string SwapStayAni = "monster/blob/animation_blob/stayb.ani";
+    public const string SwapMoveAni = "monster/blob/animation_blob/moveb.ani";
+    public const string SwapDamage1Ani = "monster/blob/animation_blob/damage1b.ani";
+    public const string SwapDamage2Ani = "monster/blob/animation_blob/damage2b.ani";
+    public const string SwapDownAni = "monster/blob/animation_blob/downb.ani";
+    public const string SwapStrikeAni = "monster/blob/animation_blob/strikeaway.ani";
+
+    /// <summary>出招 B 的攻击框(类型 15):x 从 −200 起宽 40(出招方向的反面),y 从 −10 起深 20,z 从 0 起高 50。</summary>
+    public static readonly (ushort Type, int[] Values) BlobAwayBox = ((ushort)15, new[] { -200, -10, 0, 40, 20, 50 });
+
+    /// <summary>
     /// 会扔东西的迷你怪物(M15,证据 E-103):出招动画 <see cref="BlobThrowAni"/> 四帧各 80 毫秒(只有受击框,自己不伤人);.mob 里一个 [throw attack] 块:
     /// 第 0 招、放 1 个被动对象 <see cref="ShotObjectId"/>、发射帧 1(动画到第 2 帧、160 毫秒时发射)、起点偏移 (<see cref="ShotStartX"/>, 0, <see cref="ShotStartZ"/>)、
     /// 发射声音 <see cref="ShotThrowSound"/>。投射物:.ptl <see cref="ShotParticle"/> 沿 x 轴直线飞,速度 <see cref="ShotSpeed"/>(像素/秒)、[life time] <see cref="ShotLifeMs"/> 毫秒;
@@ -574,6 +588,17 @@ internal sealed class AvatarFixture : IDisposable
         {
             return Tag("[CREATE PASSIVEOBJECT]").Tag("[INDEX]").Int(index).Tag("[POS]").Int(x, y, z).Tag("[/CREATE PASSIVEOBJECT]");
         }
+
+        /// <summary>[CHANGE ACTION FILE] 的一条记录(M57):<paramref name="slot"/> 是 "[STAY]"、"[ATTACK]" 之类的族标签,受击、出招要带序号 <paramref name="index"/>。</summary>
+        public Script ChangeFile(string slot, int? index, string path)
+        {
+            Tag("[CHANGE ACTION FILE]").Tag(slot);
+            if (index.HasValue)
+            {
+                Int(index.Value);
+            }
+            return Str(path);
+        }
     }
 
     private int Intern(string text)
@@ -611,6 +636,12 @@ internal sealed class AvatarFixture : IDisposable
     private const string DownActAni = "../Animation_Blob/Down.ani";
     private const string LastActAni = "../Animation_Blob/Last.ani";
     private const string StrikeActAni = "../Animation_Blob/Strike.ani";
+    private const string SwapStayActAni = "../Animation_Blob/StayB.ani";
+    private const string SwapMoveActAni = "../Animation_Blob/MoveB.ani";
+    private const string SwapDamage1ActAni = "../Animation_Blob/Damage1B.ani";
+    private const string SwapDamage2ActAni = "../Animation_Blob/Damage2B.ani";
+    private const string SwapDownActAni = "../Animation_Blob/DownB.ani";
+    private const string SwapStrikeActAni = "../Animation_Blob/StrikeAway.ani";
 
     /// <summary>每只 act_&lt;名字&gt; 怪物的出招 .act 文件名表(同一个 .act 可以出现在不同怪物里)。</summary>
     private static readonly (string Name, string[] Acts)[] ActMobs =
@@ -672,6 +703,16 @@ internal sealed class AvatarFixture : IDisposable
         ("f_last", new[] { "ActPlain" }, new[] { "[last action]", "FLast" }),
         ("f_xstay", new[] { "ActXStayOff" }, new[] { "[waiting action]", "FStay" }),
         ("f_xunh", new[] { "ActXUnh" }, new string[0]),
+        // M57(证据 E-151):[CHANGE ACTION FILE] 的换文件怪物(换的目标 .act 见 ActScripts 里"M57"一段)
+        ("f_swapfam", new[] { "ActSwapFam" }, new string[0]),
+        ("f_swapstay", new[] { "ActPlain" }, new[] { "[waiting action]", "FSwapStay" }),
+        ("f_swapstayset", new[] { "ActPlain" }, new[] { "[waiting action]", "FSwapStaySet" }),
+        ("f_swapself", new[] { "ActSwapSelf" }, new string[0]),
+        ("f_swapslot", new[] { "ActSwapSlot", "ActPlain" }, new string[0]),
+        ("f_swapfromstay", new[] { "ActPlain" }, new[] { "[waiting action]", "FSwapAtk" }),
+        ("f_swapbad", new[] { "ActSwapBad" }, new string[0]),
+        ("f_swapsub", new[] { "ActSwapSub" }, new string[0]),
+        ("f_swapmoveset", new[] { "ActPlain" }, new[] { "[move action]", "FSwapMoveSet" }),
     };
 
     private IEnumerable<(string Name, byte[] Data)> ActScripts()
@@ -932,6 +973,70 @@ internal sealed class AvatarFixture : IDisposable
             .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
             .Trigger(r => r.Tag("[FRAME]").Int(2, 2), 0)
             .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        // M57(证据 E-151):[CHANGE ACTION FILE]。B 系列是换进来的文件:动画路径与原来的不同,从 CurrentAnimationPath 认得出
+        yield return (BlobActionDir + "/stayb.act", ActWith(SwapStayActAni)
+            .Trigger(r => r.Tag("[LIMIT]").Int(1).Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/moveb.act", ActMotion(SwapMoveActAni));
+        yield return (BlobActionDir + "/damage1b.act", ActWith(SwapDamage1ActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/damage2b.act", ActMotion(SwapDamage2ActAni));
+        yield return (BlobActionDir + "/downb.act", ActMotion(SwapDownActAni));
+        yield return (BlobActionDir + "/actaway.act", ActWith(SwapStrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/sub/stayc.act", ActMotion("../../Animation_Blob/StayB.ani"));
+        // 出招脚本一开始就把整套族换掉:出招不属于这几族,没有一族在跑,全部当场换上
+        yield return (BlobActionDir + "/actswapfam.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.ChangeFile("[STAY]", null, "StayB.act").ChangeFile("[MOVE]", null, "MoveB.act")
+                .ChangeFile("[DAMAGE]", 0, "Damage1B.act").ChangeFile("[DAMAGE]", 1, "Damage2B.act").ChangeFile("[DOWN]", null, "DownB.act"))
+            .Build());
+        // 待机脚本自己换待机文件:待机正在跑,记成待换
+        yield return (BlobActionDir + "/fswapstay.act", ActWith(StayActAni)
+            .Trigger(r => r.Tag("[LIMIT]").Int(1).Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.ChangeFile("[STAY]", null, "StayB.act"))
+            .Build());
+        // 换完立刻再设一次待机:重新进入待机,新文件当场换上
+        yield return (BlobActionDir + "/fswapstayset.act", ActWith(StayActAni)
+            .Trigger(r => r.Tag("[LIMIT]").Int(1).Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.ChangeFile("[STAY]", null, "StayB.act").Tag("[SET ACTION]").Tag("[STAND]").Tag("[NOW]"))
+            .Build());
+        // 出招脚本换自己这一招:正在跑,记成待换
+        yield return (BlobActionDir + "/actswapself.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.ChangeFile("[ATTACK]", 0, "ActAway.act"))
+            .Build());
+        // 出招脚本换第 1 招再切过去:第 1 招没在跑,当场换上
+        yield return (BlobActionDir + "/actswapslot.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.ChangeFile("[ATTACK]", 1, "ActAway.act").Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[NOW]"))
+            .Build());
+        // 行走脚本换行走文件,再设一次行走:行走正在跑,换的记成待换,重新进入行走时换上
+        yield return (BlobActionDir + "/fswapmoveset.act", ActWith(MoveActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.ChangeFile("[MOVE]", null, "MoveB.act").Tag("[SET ACTION]").Tag("[MOVE]").Tag("[NOW]"))
+            .Build());
+        // 待机脚本给第 0 招换上带触发器的程序:这只怪物原来没有任何出招程序
+        yield return (BlobActionDir + "/fswapatk.act", ActWith(StayActAni)
+            .Trigger(r => r.Tag("[LIMIT]").Int(1).Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.ChangeFile("[ATTACK]", 0, "ActAway.act"))
+            .Build());
+        // 四条不该换上的记录:受击序号越界、出招序号越界、冲刺族(没有宿主)、文件不存在
+        yield return (BlobActionDir + "/actswapbad.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.ChangeFile("[DAMAGE]", 2, "Damage1B.act").ChangeFile("[ATTACK]", 5, "ActAway.act")
+                .ChangeFile("[DASH]", null, "StayB.act").ChangeFile("[STAY]", null, "Missing.act"))
+            .Build());
+        // 路径相对写这条脚本的 .act 所在目录,可以带子目录
+        yield return (BlobActionDir + "/actswapsub.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.ChangeFile("[STAY]", null, "sub/StayC.act"))
             .Build());
         yield return (BlobActionDir + "/actxstayoff.act", ActWith(ThrowActAni)
             .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
@@ -1474,6 +1579,14 @@ internal sealed class AvatarFixture : IDisposable
             (BlobAnimationDir + "/attack1.ani", BuildBlobAni(false, (0, 80, BlobHurtBox), (1, 80, BlobHurtBox), (2, 80, BlobHurtBox))),
             (BlobStrikeAni, BuildBlobBoxesAni(false, (0, 80, new[] { BlobHurtBox }), (1, 80, new[] { BlobHurtBox }),
                 (2, 80, new[] { BlobHurtBox, BlobStrikeBox }), (3, 80, new[] { BlobHurtBox }))),
+            // M57:换进来的动画(见 SwapStayAni 的说明)
+            (SwapStayAni, BuildBlobAni(true, (0, 100, BlobHurtBox), (1, 100, BlobHurtBox))),
+            (SwapMoveAni, BuildBlobAni(true, (2, 100, BlobHurtBox), (3, 100, BlobHurtBox))),
+            (SwapDamage1Ani, BuildBlobAni(false, (4, 10000, BlobHurtBox))),
+            (SwapDamage2Ani, BuildBlobAni(false, (5, 10000, BlobHurtBox))),
+            (SwapDownAni, BuildBlobAni(false, (6, 80, BlobHurtBox), (7, 10000, default), (8, 1500, default))),
+            (SwapStrikeAni, BuildBlobBoxesAni(false, (0, 80, new[] { BlobHurtBox }), (1, 80, new[] { BlobHurtBox }),
+                (2, 80, new[] { BlobHurtBox, BlobAwayBox }), (3, 80, new[] { BlobHurtBox }))),
             // 可走区域:两个矩形 (10,20,100,50) 与 (100,60,30,40),拼成一个 L 形
             (AreaMap, NewScript().Tag("[virtual movable area]").Int(10, 20, 100, 50, 100, 60, 30, 40).Build()),
         };

@@ -210,6 +210,8 @@ internal static class DungeonCheck
         Console.WriteLine("脚本跨招开关(E-145):落到存在的招与触发器 " + session.ActSwitchApplied + " 次,落空 " + session.ActSwitchMissed + " 次,指向未接线的动作族 " + session.ActSwitchUnhosted + " 次");
         Console.WriteLine("脚本非出招动作族(E-146):进过的房间里装了站立、行走、受击、倒地、过程或最后一幕触发器的怪物 " + session.FamilyActMonsters + " 只,运行器启动 " + session.FamilyRunsStarted
             + " 次,[SET ACTION] 落实 " + session.FamilySetActionApplied + " 次、没落实 " + session.FamilySetActionUnhosted + " 次");
+        Console.WriteLine("脚本换动作文件(E-151):换上 " + session.ActionFilesApplied + " 次,记成待换 " + session.ActionFilesDeferred + " 次,这一版没有对应动作的族 "
+            + session.ActionFilesUnhosted + " 次,序号越界 " + session.ActionFilesRejected + " 次,文件读不到 " + session.ActionFilesMissing + " 次");
         session.CountMonsterAi(out int aiScripted, out int aiBrain, out int aiPlaceholder);
         Console.WriteLine("怪物构成(E-147):进过的房间里共 " + (aiScripted + aiBrain + aiPlaceholder) + " 只,.ai 脚本指挥 " + aiScripted + " 只,默认 AI 走位大脑 " + aiBrain
             + " 只,默认 AI 占位 " + aiPlaceholder + " 只");

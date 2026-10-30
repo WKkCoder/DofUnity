@@ -143,6 +143,15 @@ namespace Dnf.Game.Act
         void NoteUnsupportedTrigger(string tag)
         {
         }
+
+        /// <summary>
+        /// [CHANGE ACTION FILE](E-151):把怪物 <paramref name="target"/> 的一族动作(<paramref name="slot"/>,受击、出招、自定义三族再带 <paramref name="index"/>)
+        /// 换成 <paramref name="path"/> 这个 .act;<paramref name="path"/> 是脚本里的原样写法,相对写这条行为的程序 <paramref name="fromProgram"/> 所在的目录。
+        /// 路径读不到、序号越界、这一族怪物没有的情形由场景自己决定怎么办(客户端:序号越界跳过);默认什么都不做。
+        /// </summary>
+        void ChangeActionFile(IActEntity target, ActFileSlot slot, int index, string path, string fromProgram)
+        {
+        }
     }
 
     /// <summary>
@@ -913,6 +922,16 @@ namespace Dnf.Game.Act
                     }
                     case ActBehaviorKind.Restore:
                         Restore(b, targets);
+                        break;
+                    case ActBehaviorKind.ChangeActionFile:
+                        // 客户端 0x010ca404 起的块:对集合里每个怪物(主角没有 .mob 式的动作表,被动对象也没有)各换一次;怪物自己决定正在跑的那一族怎么收尾
+                        foreach (IActEntity t in targets)
+                        {
+                            if (t.Kind == ActEntityKind.Monster)
+                            {
+                                _host.ChangeActionFile(t, b.FileSlot, b.FileIndex, b.FilePath, _program.Path);
+                            }
+                        }
                         break;
                     case ActBehaviorKind.ActiveStatus:
                         // 客户端 0x010bbec6 起的块:对集合里每个"活动对象"(类型位 0x11,主角与怪物;被动对象没有)调一次挂状态,源头是行为拥有者(E-144)

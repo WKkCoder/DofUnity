@@ -486,6 +486,17 @@ namespace Dnf.Play
 
         public int FamilySetActionUnhosted => Sum(s => s.FamilySetActionUnhosted);
 
+        /// <summary>怪物脚本的 [CHANGE ACTION FILE](证据 E-151):换上、记成待换、没有对应动作的族、序号越界、文件读不到的总次数(各房间之和)。</summary>
+        public int ActionFilesApplied => Sum(s => s.ActionFilesApplied);
+
+        public int ActionFilesDeferred => Sum(s => s.ActionFilesDeferred);
+
+        public int ActionFilesUnhosted => Sum(s => s.ActionFilesUnhosted);
+
+        public int ActionFilesRejected => Sum(s => s.ActionFilesRejected);
+
+        public int ActionFilesMissing => Sum(s => s.ActionFilesMissing);
+
         /// <summary>整座副本进过的房间里的怪物按"谁来指挥"分类的个数(脚本、默认 AI 走位大脑、默认 AI 占位;各房间之和,证据 E-147)。</summary>
         public void CountMonsterAi(out int scripted, out int brain, out int placeholder)
         {

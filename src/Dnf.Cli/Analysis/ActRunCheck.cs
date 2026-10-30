@@ -479,6 +479,149 @@ internal static class ActRunCheck
         tally.WithSwitches += any ? 1 : 0;
     }
 
+    /// <summary>
+    /// 换动作文件 [CHANGE ACTION FILE](M57,E-151)按"怪物"的汇总:一只怪物的出招 .act 与有宿主的几族 .act(待机、行走、坐下、受击、倒地、翻倒、最后一幕、过程)
+    /// 加上顺着换文件能到的 .act(换进来的文件里还能再换)里的记录。落到宿主上的:受击序号小于 2、出招序号小于招式个数、族在宿主表里;
+    /// 越界的客户端同样跳过;后退、冲刺、冲刺攻击、跳跃、跳击、自定义这一版怪物没有对应动作,只记数。
+    /// </summary>
+    private sealed class ActionFileTally
+    {
+        public int Monsters;
+        public int Records;
+        public int Unreadable;
+        public int Resolved;
+        public int Missing;
+        public int NoAnimation;
+        public int IndexRejected;
+        public int Unhosted;
+        public int NestedPrograms;
+        public readonly SortedDictionary<string, int> BySlot = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        public readonly HashSet<string> Writers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        public readonly HashSet<string> Targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        public void Print()
+        {
+            Console.WriteLine("  换动作文件 [CHANGE ACTION FILE](E-151,按怪物):含换文件记录的怪物 " + Monsters + " 个,记录 " + Records + " 条(写的 .act " + Writers.Count + " 个,换进来的 .act "
+                + Targets.Count + " 个;按族:" + Join(BySlot, 16) + ");换进来的文件读得到 " + Resolved + " 条、读不到 " + Missing + " 条(" + Percent(Resolved, Records) + "),其中没有主动画 "
+                + NoAnimation + " 条;序号越界 " + IndexRejected + " 条,没有对应动作的族 " + Unhosted + " 条;换进来的文件里还有换文件记录的 " + NestedPrograms + " 个;写法读不通 " + Unreadable + " 条");
+        }
+
+        public object ToJson() => new
+        {
+            Monsters, Records, Writers = Writers.Count, Targets = Targets.Count, Resolved, Missing, NoAnimation, IndexRejected, Unhosted, NestedPrograms, Unreadable, BySlot,
+        };
+    }
+
+    private static readonly string[] HostedFamilyTags =
+    {
+        "[waiting action]", "[move action]", "[sit action]", "[damage action 1]", "[damage action 2]", "[down action]", "[overturn action]", "[last action]", "[proc action]",
+    };
+
+    private static void CountActionFileSwaps(MonsterDef def, ScriptLine[] doc, Func<string?, ActProgram?> program, ActionFileTally tally)
+    {
+        var seen = new HashSet<ActProgram>();
+        var targets = new HashSet<ActProgram>();
+        var work = new Queue<ActProgram>();
+
+        void Add(ActProgram? p)
+        {
+            if (p != null && seen.Add(p))
+            {
+                work.Enqueue(p);
+            }
+        }
+
+        foreach (string raw in def.AttackList)
+        {
+            Add(string.IsNullOrEmpty(raw) ? null : program(PvfPath.ResolveRelativeTo(def.Path, raw)));
+        }
+        foreach (ScriptLine line in doc)
+        {
+            bool family = false;
+            foreach (string tag in HostedFamilyTags)
+            {
+                family |= line.TagIs(tag);
+            }
+            if (!family)
+            {
+                continue;
+            }
+            foreach (ScriptValue v in line.Values)
+            {
+                if (v.Kind == ScriptValueKind.String && !string.IsNullOrEmpty(v.Text) && v.Text.EndsWith(".act", StringComparison.OrdinalIgnoreCase))
+                {
+                    Add(program(PvfPath.ResolveRelativeTo(def.Path, v.Text)));
+                }
+            }
+        }
+        bool any = false;
+        while (work.Count > 0)
+        {
+            ActProgram p = work.Dequeue();
+            bool writes = false;
+            foreach (ActBehaviorGroup g in p.Behaviors)
+            {
+                foreach (ActBehavior b in g.Items)
+                {
+                    if (b.Kind == ActBehaviorKind.Unsupported && b.Tag == "[CHANGE ACTION FILE]")
+                    {
+                        any = true;
+                        tally.Unreadable++;
+                        continue;
+                    }
+                    if (b.Kind != ActBehaviorKind.ChangeActionFile)
+                    {
+                        continue;
+                    }
+                    any = true;
+                    writes = true;
+                    tally.Records++;
+                    string slot = b.FileSlot.ToString();
+                    tally.BySlot[slot] = tally.BySlot.TryGetValue(slot, out int n) ? n + 1 : 1;
+                    if (b.FileSlot == ActFileSlot.Damage && (uint)b.FileIndex >= 2u)
+                    {
+                        tally.IndexRejected++;
+                    }
+                    else if (b.FileSlot == ActFileSlot.Attack && (uint)b.FileIndex >= (uint)def.AttackList.Length)
+                    {
+                        tally.IndexRejected++;
+                    }
+                    else if (b.FileSlot == ActFileSlot.MoveBack || b.FileSlot == ActFileSlot.Dash || b.FileSlot == ActFileSlot.DashAttack || b.FileSlot == ActFileSlot.Jump
+                        || b.FileSlot == ActFileSlot.JumpAttack || b.FileSlot == ActFileSlot.Custom)
+                    {
+                        tally.Unhosted++;
+                    }
+                    ActProgram? target = program(PvfPath.ResolveRelativeTo(p.Path, b.FilePath ?? string.Empty));
+                    if (target == null)
+                    {
+                        tally.Missing++;
+                        continue;
+                    }
+                    tally.Resolved++;
+                    tally.Targets.Add(target.Path);
+                    if (target.BaseAniPath == null)
+                    {
+                        tally.NoAnimation++;
+                    }
+                    targets.Add(target);
+                    Add(target);
+                }
+            }
+            if (writes)
+            {
+                tally.Writers.Add(p.Path);
+                if (targets.Contains(p))
+                {
+                    tally.NestedPrograms++;
+                }
+            }
+        }
+        if (any)
+        {
+            tally.Monsters++;
+        }
+    }
+
     private static string Percent(long a, long b) => b == 0 ? "-" : (a * 100.0 / b).ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + "%";
 
     private static string Join(SortedDictionary<string, int> map, int limit)
@@ -611,6 +754,7 @@ internal static class ActRunCheck
             ("坐 [sit action]", new[] { "[sit action]" }),
         };
         var familySwitch = new FamilySwitchTally();
+        var fileSwap = new ActionFileTally();
         var otherTallies = new Tally[otherKinds.Length];
         var otherPrograms = new Dictionary<string, ActProgram>[otherKinds.Length];
         var otherMonsters = new int[otherKinds.Length];
@@ -628,6 +772,7 @@ internal static class ActRunCheck
                 continue;
             }
             CountFamilySwitches(def, doc, Program, familySwitch);
+            CountActionFileSwaps(def, doc, Program, fileSwap);
             for (int k = 0; k < otherKinds.Length; k++)
             {
                 bool any = false;
@@ -673,6 +818,7 @@ internal static class ActRunCheck
         }
         Console.WriteLine();
         familySwitch.Print();
+        fileSwap.Print();
 
         // ---- 第二部分:顺着 [CREATE PASSIVEOBJECT] 能到的被动对象
         var reached = new SortedSet<int>();
@@ -824,6 +970,8 @@ internal static class ActRunCheck
         Report(reached.Count > 0 && missingObjects * 50 <= reached.Count, "怪物出招能放出的被动对象的 .obj 读不到的不超过 2%(" + missingObjects + "/" + reached.Count + ")");
         Report(reached.Count > 0 && templates * 100 >= reached.Count * 95, "能放出的被动对象里模板(基础动画读得到)配得出的不低于 95%(" + templates + "/" + reached.Count + ")");
         Report(withRunnable > 0 && withSpawn > 0, "有怪物带运行器认得的触发器,也有怪物的招式会放被动对象");
+        Report(fileSwap.Records > 0 && fileSwap.Resolved * 100 >= fileSwap.Records * 95,
+            "[CHANGE ACTION FILE] 换进来的 .act 读得到的不低于 95%(" + fileSwap.Resolved + "/" + fileSwap.Records + ")");
 
         if (opts.JsonFile != null)
         {
@@ -833,6 +981,7 @@ internal static class ActRunCheck
                 monsterActs = monsterTally.ToJson(),
                 crossSlotSwitches = crossSwitch.ToJson(),
                 familySwitches = familySwitch.ToJson(),
+                actionFileSwaps = fileSwap.ToJson(),
                 reachedObjects = reached.Count, templates, missingObjects, objectsWithTriggers, objectsRunnable, objectsAllRunnable, objectsDepth2,
                 objectActs = objectTally.ToJson(),
                 allObjects = allIds.Length, readable, basicAct, oldStyle, etcActs, anyTrig, allRun, timeLimit, endOfAnim, neither,

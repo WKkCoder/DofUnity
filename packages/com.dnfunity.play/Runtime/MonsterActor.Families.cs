@@ -127,19 +127,19 @@ namespace Dnf.Play
                     {
                         return null;
                     }
-                    if (ReferenceEquals(_hurtAni, _model.Down))
+                    if (ReferenceEquals(_hurtAni, _anis.Down))
                     {
                         return Host(MonsterActFamily.Down);
                     }
-                    if (ReferenceEquals(_hurtAni, _model.Overturn))
+                    if (ReferenceEquals(_hurtAni, _anis.Overturn))
                     {
                         return Host(MonsterActFamily.Overturn);
                     }
-                    if (ReferenceEquals(_hurtAni, _model.Damage1))
+                    if (ReferenceEquals(_hurtAni, _anis.Damage1))
                     {
                         return Host(MonsterActFamily.Damage1);
                     }
-                    return ReferenceEquals(_hurtAni, _model.Damage2) ? Host(MonsterActFamily.Damage2) : null;
+                    return ReferenceEquals(_hurtAni, _anis.Damage2) ? Host(MonsterActFamily.Damage2) : null;
                 default:
                     return null;
             }
@@ -329,7 +329,7 @@ namespace Dnf.Play
             switch (kind)
             {
                 case ActActionKind.Attack:
-                    if ((uint)index >= (uint)_model.Attacks.Count || _model.Attacks[index] == null)
+                    if ((uint)index >= (uint)_anis.Attacks.Length || _anis.Attacks[index] == null)
                     {
                         FamilySetActionUnhosted++;
                         return;
@@ -349,14 +349,14 @@ namespace Dnf.Play
                     break;
                 case ActActionKind.Stand:
                 case ActActionKind.Default:
-                    if (Phase == MonsterPhase.Walk)
+                    if (Phase == MonsterPhase.Walk || (Phase == MonsterPhase.Wait && HasPendingFamily(MonsterActFamily.Stay)))
                     {
-                        EnterPhase(MonsterPhase.Wait);
+                        EnterPhase(MonsterPhase.Wait);       // 待机里再设一次待机:正常是原地不动,但待机文件刚被换过时要重新进入才换上新的(M57,E-151)
                     }
                     FamilySetActionApplied++;
                     break;
                 case ActActionKind.Move:
-                    if (Phase == MonsterPhase.Wait && _model.Move != null)
+                    if ((Phase == MonsterPhase.Wait && _anis.Move != null) || (Phase == MonsterPhase.Walk && HasPendingFamily(MonsterActFamily.Move)))
                     {
                         EnterPhase(MonsterPhase.Walk);
                     }

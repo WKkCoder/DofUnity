@@ -1216,6 +1216,31 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>脚本 [CHANGE ACTION FILE] 换上的次数(含先记成待换、进入那一族时才换上的;M57,E-151)。</summary>
+        public int ActionFilesApplied => SumMonsters(m => m.ActionFilesApplied);
+
+        /// <summary>换的时候这一族(这一招)正在跑、记成待换的次数。</summary>
+        public int ActionFilesDeferred => SumMonsters(m => m.ActionFilesDeferred);
+
+        /// <summary>写到这一版怪物没有对应动作的族(后退、冲刺、冲刺攻击、跳跃、跳击、自定义)的次数:只记数。</summary>
+        public int ActionFilesUnhosted => SumMonsters(m => m.ActionFilesUnhosted);
+
+        /// <summary>序号越界被拒绝的次数(客户端同样跳过)。</summary>
+        public int ActionFilesRejected => SumMonsters(m => m.ActionFilesRejected);
+
+        /// <summary>要换的文件读不出来的次数(路径不存在)。</summary>
+        public int ActionFilesMissing { get; private set; }
+
+        private int SumMonsters(Func<MonsterActor, int> counter)
+        {
+            int n = 0;
+            foreach (MonsterActor m in _monsters)
+            {
+                n += counter(m);
+            }
+            return n;
+        }
+
         private readonly Dictionary<string, int> _unsupportedBehaviors = new Dictionary<string, int>(StringComparer.Ordinal);
         private readonly Dictionary<string, int> _unsupportedTriggers = new Dictionary<string, int>(StringComparer.Ordinal);
 
@@ -3292,6 +3317,27 @@ namespace Dnf.Play
             m.SetFamilyActs(MonsterFamilyActs.Build(_acts, m.Model.FamilyActs), _actWorld);
         }
 
+        /// <summary>
+        /// 脚本的 [CHANGE ACTION FILE] 落到一只怪物上(M57,E-151):路径相对写这条脚本的 .act 所在目录(客户端同样);读得出来才换,读不出来记一次缺失。
+        /// 换的细节(正在跑的一族等下一次进入、序号校验、这一版没有的族只记数)见 <see cref="MonsterActor.ApplyActionFile"/>。
+        /// </summary>
+        private void ChangeActionFile(IActEntity target, ActFileSlot slot, int index, string path, string fromProgram)
+        {
+            MonsterActor m = MonsterActor.From(target);
+            if (m == null || _acts == null)
+            {
+                return;
+            }
+            PassiveAction action = _acts.SwapAction(PvfPath.ResolveRelativeTo(fromProgram, path));
+            if (action == null)
+            {
+                ActionFilesMissing++;
+                return;
+            }
+            _acts.Preload(action.Program);
+            m.ApplyActionFile(slot, index, action, _actWorld);
+        }
+
         /// <summary>被动对象各走一步(这一步里新放出来的从下一步起走)。</summary>
         private void UpdatePassives(double deltaMs)
         {
@@ -3600,6 +3646,11 @@ namespace Dnf.Play
             public void Shake(int strength, int durationMs)
             {
                 _session._shake.Start(strength, durationMs);
+            }
+
+            public void ChangeActionFile(IActEntity target, ActFileSlot slot, int index, string path, string fromProgram)
+            {
+                _session.ChangeActionFile(target, slot, index, path, fromProgram);
             }
 
             public void NoteUnsupportedBehavior(string tag)
