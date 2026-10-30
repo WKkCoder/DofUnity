@@ -838,6 +838,8 @@ namespace Dnf.Game.Act
                 }
                 case "[TELEPORT]":
                     return ParseTeleport(cur, tag);
+                case "[SET POS FORCE]":
+                    return ParseSetPosForce(cur, tag);
                 case "[SUMMON MONSTER]":
                     return ParseSummon(cur, tag);
                 case "[SET HP]":
@@ -1114,6 +1116,79 @@ namespace Dnf.Game.Act
             b.PosY = b.PosY ?? ActValue.Literal(0);
             b.PosZ = b.PosZ ?? ActValue.Literal(0);
             return b;
+        }
+
+        private static readonly Dictionary<string, ActForceCode> ForceCodes = new Dictionary<string, ActForceCode>(StringComparer.Ordinal)
+        {
+            { "[X START]", ActForceCode.XStart },
+            { "[Y START]", ActForceCode.YStart },
+            { "[Z START]", ActForceCode.ZStart },
+            { "[X END]", ActForceCode.XEnd },
+            { "[Y END]", ActForceCode.YEnd },
+            { "[Z END]", ActForceCode.ZEnd },
+            { "[USE MY DIRECTION]", ActForceCode.UseMyDirection },
+            { "[NOT USE OBJECT DIRECTION]", ActForceCode.NotUseObjectDirection },
+            { "[USE TARGET POS]", ActForceCode.UseTargetPos },
+            { "[USE MY BASEPOS]", ActForceCode.UseMyBasePos },
+            { "[USE MAP POS]", ActForceCode.UseMapPos },
+            { "[MOVE UNIFORM]", ActForceCode.MoveUniform },
+            { "[MOVE ACCELATE]", ActForceCode.MoveAccelate },
+            { "[MOVE REDUCE]", ActForceCode.MoveReduce },
+            { "[MOVE TARGET]", ActForceCode.MoveTarget },
+            { "[MOVE ME]", ActForceCode.MoveMe },
+        };
+
+        /// <summary>
+        /// [SET POS FORCE] 记号… [/SET POS FORCE](装载函数 0x01340140 逐个比标签、把码推进向量,执行块 0x010bfa89 按顺序读,E-152):
+        /// 记号按出现顺序全部留下(<see cref="ActBehavior.ForceTokens"/>),语义在运行器里按客户端的"后写的算、计数累加"规则读。
+        /// 0 到 5 号后面是一个值表达式;读不出值(全库 3 个块写成 [LASTATTACK POSITION],那是客户端值读取函数 0x01330240 的另一种写法,这一版没做)
+        /// 或带 [MOVE ACCELATE](插值函数没读)的块整个记成不支持。
+        /// </summary>
+        private static ActBehavior ParseSetPosForce(ActCursor cur, string tag)
+        {
+            var tokens = new List<ActForceToken>();
+            bool unsupported = false;
+            while (!cur.End && !cur.TakeClose(tag))
+            {
+                string t = cur.TakeOpen();
+                if (t == null)
+                {
+                    cur.Skip();
+                    continue;
+                }
+                if (!ForceCodes.TryGetValue(t, out ActForceCode code))
+                {
+                    if (t == "[LASTATTACK POSITION]")
+                    {
+                        unsupported = true;
+                    }
+                    continue;
+                }
+                if (code == ActForceCode.MoveAccelate)
+                {
+                    unsupported = true;
+                    continue;
+                }
+                if (code <= ActForceCode.ZEnd)
+                {
+                    ActValue value = cur.Value();
+                    if (value == null)
+                    {
+                        unsupported = true;
+                        continue;
+                    }
+                    tokens.Add(new ActForceToken(code, value));
+                }
+                else
+                {
+                    tokens.Add(new ActForceToken(code, null));
+                }
+            }
+            if (unsupported)
+            {
+                return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
+            }
+            return new ActBehavior { Kind = ActBehaviorKind.SetPosForce, Tag = tag, ForceTokens = tokens.ToArray() };
         }
 
         /// <summary>

@@ -143,7 +143,7 @@ beh	0x7d	[SET FRAME]	参数大于 0 时,设置当前动作所关联动画的当�
 beh	0x7e	[CASTING]	参数 1 大于 0 时写拥有者(CollisionObject 族)的施法相关字段	中	字段含义
 beh	0x7f	[ABS CASTING]	本机控制实体上按两整数创建绝对读条(gauge+0x280对象,常量20000)	中	paramA/B与[CASTING]差异、目标集合检查
 beh	0x81	[DIM]	在 action+0x120 按变量名读写 int；支持 =/+/-/GET TIME	高	GET TIME 的时间单位(按常数量级推断为毫秒)
-beh	0x83	[SET POS FORCE]	对目标施加强制位移（起止点与多种移动模式）	中	010b3ca0 插值细节未读
+beh	0x83	[SET POS FORCE]	清空动作的强制位移表后按序读记号(轴起点终点与个数、基准点、朝向来源、插值方式、被移动者),给每个活动对象目标登记一条记录;每次更新按基准点加偏移(两个值时线性插值)重算落点并摆过去,落点不能站只改高度(M58,E-152)	高	加速插值 011b9ef0 未读;[LASTATTACK POSITION] 取值未做;可抓取谓词(虚槽 380)未做;时间轴两个字段的确切含义
 beh	0xa9	[SHAKING]	参数 1 不小于 0 时调用场景的震屏(参数 0 为振幅、参数 1 为持续毫秒);逐帧随机偏移、无衰减、到时归零(M40)	高	系数 0.5 的分支(全局浮点比较)
 beh	0xaa	[PARTICLE]	以拥有者坐标加三轴偏移生成粒子,不随朝向镜像,不用目标集合	中	粒子类型与朝向处理
 beh	0xac	[SAY SPEECH]	对目标显示语句:ActiveObject 族走带语音界面的虚槽 0x6c4,PassiveObject 族走虚槽 0x460	中	字符串来源

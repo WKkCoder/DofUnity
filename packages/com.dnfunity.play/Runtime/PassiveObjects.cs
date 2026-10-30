@@ -226,6 +226,24 @@ namespace Dnf.Play
             return true;
         }
 
+        /// <summary>当前动作动画的总时长([SET POS FORCE] 的起止插值拿它当"全程",E-152)。</summary>
+        int IActEntity.MotionDurationMs => (int)_action.Timeline.TotalMilliseconds;
+
+        /// <summary>
+        /// [SET POS FORCE] 作用到被动对象([MOVE ME] 由被动对象自己当拥有者时):直接摆过去,不查可走区(与 [TELEPORT] 同一条推断),
+        /// 不改版本号(每帧调用)。
+        /// </summary>
+        void IActEntity.ForcePosition(float x, float y, float z)
+        {
+            if (Finished)
+            {
+                return;
+            }
+            X = x;
+            Y = y;
+            Z = Math.Max(0.0, z);
+        }
+
         /// <summary>被动对象没有自己的等级:取链条上最早那只怪物的([SUMMON MONSTER] 里 [LEVEL] -1 之类的写法落到创建者的等级,推断,E-134)。</summary>
         int IActEntity.Level => Owner.Level;
 
@@ -510,6 +528,19 @@ namespace Dnf.Play
             }
             _hero.Teleport(rx, ry);
             return true;
+        }
+
+        /// <summary>
+        /// [SET POS FORCE] 作用到主角(怪物把主角抓住拖到身边之类,E-152):落点在可走区里就把 X、Y 摆过去,不在就不动(客户端不合法时只改高度,
+        /// 而主角的高度归腾空状态机管,这一版不动它;主角被脚本强行抬到半空、藏到画面外的写法没做)。每帧调用,和 <see cref="Teleport"/> 一样不动作与朝向。
+        /// </summary>
+        public void ForcePosition(float x, float y, float z)
+        {
+            IWalkArea walk = _hero.Walk;
+            if (walk == null || walk.IsUnrestricted || walk.Contains(x, y))
+            {
+                _hero.Teleport(x, y);
+            }
         }
     }
 }

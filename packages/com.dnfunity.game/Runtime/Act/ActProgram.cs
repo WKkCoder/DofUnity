@@ -435,6 +435,78 @@ namespace Dnf.Game.Act
         /// 和受击处理对每个 .atk 状态槽调的是同一个函数(E-144),所以挂上的规则就是 E-136 那一套。
         /// </summary>
         ActiveStatus,
+
+        /// <summary>
+        /// [SET POS FORCE] 一串轴与旗标记号:把每个目标(主角与怪物这类"活动对象")登记进运行器的"强制位移表",之后每次更新由运行器按表摆位置(E-152)。
+        /// 客户端执行块在 0x010bfa89(行为码 0x83):先清空这个动作上的位移表(0x010a7560),再按记号顺序读值装成 0x38 字节的记录、每个目标一条;
+        /// 每帧的消费者在动作更新里(0x010a5042 起)。
+        /// </summary>
+        SetPosForce,
+    }
+
+    /// <summary>
+    /// [SET POS FORCE] 块里一个记号的码(与客户端装载函数 0x01340140 推进记号向量的码一致,E-152):0 到 5 是三个轴的起点与终点,后面带一个值表达式;
+    /// 7 到 16 是旗标。码 6 在装载函数里没有对应的标签(执行块里把方向设成"取目标的",等于缺省),不出现。
+    /// </summary>
+    public enum ActForceCode : byte
+    {
+        XStart = 0,
+        YStart = 1,
+        ZStart = 2,
+        XEnd = 3,
+        YEnd = 4,
+        ZEnd = 5,
+        UseMyDirection = 7,
+        NotUseObjectDirection = 8,
+        UseTargetPos = 9,
+        UseMyBasePos = 10,
+        UseMapPos = 11,
+
+        /// <summary>[MOVE UNIFORM] 与 [MOVE REDUCE] 在客户端走同一个线性插值函数(0x011b98c0,记录偏移 0x28 不等于 1 的都走它)。</summary>
+        MoveUniform = 12,
+
+        /// <summary>[MOVE ACCELATE] 走另一个插值函数(0x011b9ef0 → 0x011b9a50,没读),全库没有这个写法;含它的块这一版记成不支持。</summary>
+        MoveAccelate = 13,
+
+        MoveReduce = 14,
+        MoveTarget = 15,
+        MoveMe = 16,
+    }
+
+    /// <summary>[SET POS FORCE] 里按出现顺序排下来的一个记号;只有 0 到 5 号带值。</summary>
+    public readonly struct ActForceToken
+    {
+        public ActForceToken(ActForceCode code, ActValue value)
+        {
+            Code = code;
+            Value = value;
+        }
+
+        public ActForceCode Code { get; }
+
+        public ActValue Value { get; }
+    }
+
+    /// <summary>
+    /// [SET POS FORCE] 的基准点:默认取目标自己([USE TARGET POS]),[USE MY BASEPOS] 取行为拥有者,[USE MAP POS] 是地图绝对坐标(0,0,0)。
+    /// 数值是客户端记录里的取值(记录偏移 0x2c)。
+    /// </summary>
+    public enum ActForceOrigin : byte
+    {
+        Target = 0,
+        Owner = 1,
+        Map = 2,
+    }
+
+    /// <summary>
+    /// [SET POS FORCE] 的朝向来源(决定 X 偏移取正取负):默认取目标的朝向,[USE MY DIRECTION] 取拥有者的,[NOT USE OBJECT DIRECTION] 恒当朝右。
+    /// 数值是客户端记录里的取值(记录偏移 0x30)。
+    /// </summary>
+    public enum ActForceDirection : byte
+    {
+        Target = 0,
+        Owner = 1,
+        Right = 2,
     }
 
     /// <summary>
@@ -686,6 +758,11 @@ namespace Dnf.Game.Act
 
         /// <summary>这条 [ACTIVE STATUS] 比应有的少写的整数个数(缺的按 0 处理;审计用,应当总是 0,否则同样说明个数对不上)。</summary>
         public int StatusMissing { get; internal set; }
+
+        // ---- [SET POS FORCE]
+
+        /// <summary>块里的记号,按文件里出现的顺序(执行时也按这个顺序求值,值表达式里的随机数就按这个顺序抽,与客户端执行块一致)。</summary>
+        public IReadOnlyList<ActForceToken> ForceTokens { get; internal set; }
 
         // ---- [CHANGE ACTION FILE]
 

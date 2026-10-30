@@ -990,9 +990,19 @@ namespace Dnf.Play
             X = rx;
             Y = ry;
             Z = Math.Max(0.0, z);
+            SettleHeight();
+            _motionVersion++;
+            return true;
+        }
+
+        /// <summary>
+        /// 高度被脚本直接改过([TELEPORT]、[SET POS FORCE])之后的善后:悬停中的怪物重新向悬停高度靠拢(比悬停高度低就给够得着的初速,高就落下来);
+        /// 不悬停而被摆到半空的怪物受重力落下(推断)。
+        /// </summary>
+        private void SettleHeight()
+        {
             if (_hovering)
             {
-                // 悬停中的怪物瞬移之后重新向悬停高度靠拢(比悬停高度低就给够得着的初速,高就落下来)
                 _hoverVz = Z < _hoverHeight ? Math.Sqrt(2.0 * PassiveObject.Gravity * (_hoverHeight - Z)) : 0.0;
             }
             else
@@ -1000,8 +1010,40 @@ namespace Dnf.Play
                 _hoverVz = 0;
                 _hoverFalling = Z > 0;
             }
-            _motionVersion++;
-            return true;
+        }
+
+        /// <summary>
+        /// [SET POS FORCE] 每帧摆位置(客户端 0x010a58d9 起,E-152):(x, y) 能站(在可走区里、没压在门体上,与 [TELEPORT] 同一条规则)就整个摆,
+        /// 不能就只改高度,X、Y 留在原处;高度直接取传入的值(小于 0 当 0)。与 [TELEPORT] 的区别:不在附近找落点,
+        /// 也不改"动画帧变了"的版本号(每帧都调,不能打断同一次更新里后面的触发器)。倒地飞行中、死亡的怪物不动。
+        /// </summary>
+        private void ActForcePosition(float x, float y, float z)
+        {
+            if (!IsAlive || Phase == MonsterPhase.Gone || Phase == MonsterPhase.Dying || _flight.Active)
+            {
+                return;
+            }
+            if (CanStandAt(x, y, _lastWalk, false, false))
+            {
+                X = x;
+                Y = y;
+            }
+            Z = Math.Max(0.0, z);
+            SettleHeight();
+        }
+
+        /// <summary>
+        /// 当前动画的总时长(真实毫秒):出招阶段动画按倍速放,总时长也按倍速折算,与脚本计时(真实时间)对得上;没有动画是 0。
+        /// [SET POS FORCE] 的起止插值拿它当"全程"(E-152)。
+        /// </summary>
+        private int ActMotionDurationMs()
+        {
+            double total = Duration(CurrentAni);
+            if (Phase == MonsterPhase.Attack && AttackRate > 0)
+            {
+                total /= AttackRate;
+            }
+            return (int)total;
         }
 
         /// <summary>怪物在 .act 脚本里的身份:位置、朝向取自怪物,脚本的"作用"落到怪物自己的方法上。</summary>
@@ -1088,6 +1130,13 @@ namespace Dnf.Play
             public bool Teleport(float x, float y, float z)
             {
                 return _m.ActTeleport(x, y, z);
+            }
+
+            public int MotionDurationMs => _m.ActMotionDurationMs();
+
+            public void ForcePosition(float x, float y, float z)
+            {
+                _m.ActForcePosition(x, y, z);
             }
 
             public void SetActionTrigger(ActTriggerPool pool, int slot, int trigger, ActTriggerCommand command)

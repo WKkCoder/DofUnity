@@ -57,6 +57,68 @@ internal static class ActRunCheck
         /// <summary>引用了含 [ACTIVE STATUS] 的行为组的触发器,按 [DO BEHAVIOR] 的目标选择器(目标是 [CHECKUP OBJECT] 的取最近一个 [WHICH] 的选择器)分的条数。</summary>
         public readonly SortedDictionary<string, int> ActiveStatusTargets = new(StringComparer.Ordinal);
 
+        /// <summary>
+        /// [SET POS FORCE](M58,E-152)按块计:读通的块数、读不通的块数(含 [MOVE ACCELATE]、[LASTATTACK POSITION]、值读不出的)、动的是拥有者的块数、
+        /// 值里带随机的块数,以及基准点、朝向来源、各轴写了几个值(0、1、2、更多)的分布。
+        /// </summary>
+        public int ForceBlocks;
+        public int ForceBroken;
+        public int ForceMoveMe;
+        public int ForceRandom;
+        public readonly SortedDictionary<string, int> ForceOrigins = new(StringComparer.Ordinal);
+        public readonly SortedDictionary<string, int> ForceDirections = new(StringComparer.Ordinal);
+        public readonly SortedDictionary<string, int> ForceAxes = new(StringComparer.Ordinal);
+
+        private static void Bump(SortedDictionary<string, int> map, string key)
+        {
+            map.TryGetValue(key, out int n);
+            map[key] = n + 1;
+        }
+
+        private void CountForce(ActBehavior b)
+        {
+            ForceBlocks++;
+            ActForceOrigin origin = ActForceOrigin.Target;
+            ActForceDirection direction = ActForceDirection.Target;
+            bool moveMe = false;
+            bool random = false;
+            var counts = new int[3];
+            foreach (ActForceToken t in b.ForceTokens)
+            {
+                switch (t.Code)
+                {
+                    case ActForceCode.XStart:
+                    case ActForceCode.YStart:
+                    case ActForceCode.ZStart:
+                        counts[(int)t.Code]++;
+                        random |= !t.Value.IsConstant;
+                        break;
+                    case ActForceCode.XEnd:
+                    case ActForceCode.YEnd:
+                    case ActForceCode.ZEnd:
+                        counts[(int)t.Code - 3]++;
+                        random |= !t.Value.IsConstant;
+                        break;
+                    case ActForceCode.UseMyDirection: direction = ActForceDirection.Owner; break;
+                    case ActForceCode.NotUseObjectDirection: direction = ActForceDirection.Right; break;
+                    case ActForceCode.UseTargetPos: origin = ActForceOrigin.Target; break;
+                    case ActForceCode.UseMyBasePos: origin = ActForceOrigin.Owner; break;
+                    case ActForceCode.UseMapPos: origin = ActForceOrigin.Map; break;
+                    case ActForceCode.MoveTarget: moveMe = false; break;
+                    case ActForceCode.MoveMe: moveMe = true; break;
+                }
+            }
+            ForceMoveMe += moveMe ? 1 : 0;
+            ForceRandom += random ? 1 : 0;
+            Bump(ForceOrigins, origin.ToString());
+            Bump(ForceDirections, direction.ToString());
+            string[] axes = { "X", "Y", "Z" };
+            for (int i = 0; i < 3; i++)
+            {
+                Bump(ForceAxes, axes[i] + ":" + (counts[i] > 2 ? "3+" : counts[i].ToString()));
+            }
+        }
+
         public void Add(ActProgram program)
         {
             Programs++;
@@ -180,6 +242,14 @@ internal static class ActRunCheck
                     {
                         ActiveStatusBroken++;
                     }
+                    if (b.Kind == ActBehaviorKind.SetPosForce)
+                    {
+                        CountForce(b);
+                    }
+                    else if (b.Kind == ActBehaviorKind.Unsupported && b.Tag == "[SET POS FORCE]")
+                    {
+                        ForceBroken++;
+                    }
                     if (b.Kind == ActBehaviorKind.CreatePassive)
                     {
                         spawns = true;
@@ -210,6 +280,8 @@ internal static class ActRunCheck
                 + " 条,整数多写 " + ActiveStatusSpill + " 个、少写 " + ActiveStatusMissing + " 个");
             Console.WriteLine("  引用含 [ACTIVE STATUS] 行为组的触发器,按目标选择器:" + Join(ActiveStatusTargets, 18));
             Console.WriteLine("  [TRIGGER] 开关读通 " + TriggerSwitchPools.Values.Sum() + " 条(按作用的动作族:" + Join(TriggerSwitchPools, 12) + "),读不通 " + TriggerSwitchBroken + " 条");
+            Console.WriteLine("  [SET POS FORCE] 读通 " + ForceBlocks + " 块(动自己 " + ForceMoveMe + ",值带随机 " + ForceRandom + ";基准点:" + Join(ForceOrigins, 6) + ";朝向来源:"
+                + Join(ForceDirections, 6) + ";各轴写了几个值:" + Join(ForceAxes, 12) + "),读不通 " + ForceBroken + " 块");
             Console.WriteLine("  读不通的 [CREATE PASSIVEOBJECT] " + CreateBroken + " 条(缺 [INDEX] " + CreateNoIndex + ",缺 [POS] " + CreateNoPos + ")");
             Console.WriteLine("  读不懂的触发器标签(种数 " + UnsupportedTriggerTags.Count + ",按触发器条数):" + Join(UnsupportedTriggerTags, 25));
             Console.WriteLine("  读不懂的行为标签(种数 " + UnsupportedBehaviorTags.Count + ",按行为组个数):" + Join(UnsupportedBehaviorTags, 25));
@@ -222,6 +294,7 @@ internal static class ActRunCheck
             UnsupportedTriggerTags, UnsupportedBehaviorTags, BehaviorKinds, SetActionTargets,
             ActiveStatusKinds, ActiveStatusBroken, ActiveStatusSpill, ActiveStatusMissing, ActiveStatusTargets,
             TriggerSwitchPools, TriggerSwitchBroken,
+            ForceBlocks, ForceBroken, ForceMoveMe, ForceRandom, ForceOrigins, ForceDirections, ForceAxes,
         };
     }
 
@@ -972,6 +1045,9 @@ internal static class ActRunCheck
         Report(withRunnable > 0 && withSpawn > 0, "有怪物带运行器认得的触发器,也有怪物的招式会放被动对象");
         Report(fileSwap.Records > 0 && fileSwap.Resolved * 100 >= fileSwap.Records * 95,
             "[CHANGE ACTION FILE] 换进来的 .act 读得到的不低于 95%(" + fileSwap.Resolved + "/" + fileSwap.Records + ")");
+        int forceAll = monsterTally.ForceBlocks + monsterTally.ForceBroken;
+        Report(forceAll > 0 && monsterTally.ForceBlocks * 100 >= forceAll * 95,
+            "怪物出招里的 [SET POS FORCE] 读通的不低于 95%(" + monsterTally.ForceBlocks + "/" + forceAll + ")");
 
         if (opts.JsonFile != null)
         {

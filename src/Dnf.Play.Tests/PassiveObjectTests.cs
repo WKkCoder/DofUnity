@@ -434,8 +434,9 @@ public partial class PassiveObjectTests
         public MonsterActor Monster { get; }
 
         /// <param name="frozenHero">主角被钉在原地(可走区只有脚下一小块):推不动,每一击都打在同一处。</param>
+        /// <param name="attackSpeed">怪物的攻击速度属性(千分比,缺省 0 = 倍速 1;2000 就是出招动画放两倍速)。</param>
         /// <param name="ranged">给了就装成怪物的 [attack kind](出生 3 秒后才抽签,射程里 100% 出招);缺省走"够近就出招"的占位。</param>
-        public ActArena(string mob, int monsterX = 340, bool useVitals = true, int hp = 1000, bool ranged = false, bool attach = true, bool frozenHero = false)
+        public ActArena(string mob, int monsterX = 340, bool useVitals = true, int hp = 1000, bool ranged = false, bool attach = true, bool frozenHero = false, int attackSpeed = 0)
         {
             Assets = DnfAssets.Open(_fx.Root);
             var tiles = new List<TileFile>();
@@ -454,7 +455,7 @@ public partial class PassiveObjectTests
 
             MonsterModel model = MonsterModel.Read(Assets, AvatarFixture.ActMobPath(mob));
             var spawn = new RoomMonsterSpawn(1, 0, 0, monsterX, HeroY, 0, 1, 0, "[fixed]", "[normal]");
-            Monster = new MonsterActor(0, spawn, model, 1, 100, 222.5, 1500, 0) { PhysicalAttack = 40 };
+            Monster = new MonsterActor(0, spawn, model, 1, 100, 222.5, 1500, attackSpeed) { PhysicalAttack = 40 };
             if (ranged)
             {
                 Monster.SetAttackKinds(new[] { new AttackKindRecord(100f, 0f, 0f, true, 400, 0, 20, 0, 30, 0, 30, 0) }, 1u);

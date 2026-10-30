@@ -426,6 +426,7 @@ internal sealed class AvatarFixture : IDisposable
     /// xon(第 0 招帧 1 把第 1 招的触发器 0 打开再立即切第 1 招;第 1 招的触发器 0 出生时是关着的,帧 1 放 <see cref="ActShotId"/>)与对照 xonctl(同 xon 但不开它)、
     /// xself(第 0 招帧 1 用 [ATTACK] 0 1 [ON] 点名自己这一招,打开帧 3 才放 <see cref="ActShotId"/> 的触发器 1)与对照 xselfctl(不开)、
     /// xmiss(第 0 招帧 1 依次写三条落空的开关:没有的招、越界的触发器、[MOVE] 动作族)。
+    /// M58(证据 E-152)[SET POS FORCE]:force(出招开始起每帧把主角摆到自己前方 30 像素)与 forceme(出招开始起每帧把自己摆到主角右侧 50 像素)。
     /// </summary>
     public const int ActForeverId = 9206;
 
@@ -667,6 +668,8 @@ internal sealed class AvatarFixture : IDisposable
         ("hover", new[] { "ActHover" }),
         ("land", new[] { "ActLand" }),
         ("tele", new[] { "ActTele" }),
+        ("force", new[] { "ActForce" }),
+        ("forceme", new[] { "ActForceMe" }),
         ("shake", new[] { "ActShake" }),
         ("summon", new[] { "ActSummon" }),
         ("summontimed", new[] { "ActSummonTimed" }),
@@ -839,6 +842,18 @@ internal sealed class AvatarFixture : IDisposable
         yield return (BlobActionDir + "/acttele.act", ActWith(ThrowActAni)
             .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
             .Behavior(b => b.Tag("[TELEPORT]").Tag("[POS]").Int(50, 0, 30).Tag("[/TELEPORT]"))
+            .Build());
+        // M58(证据 E-152):[SET POS FORCE]。force:出招开始起,每帧把攻击目标(主角)摆到自己前方 30 像素、同一深度、高度 0(基准取自己、朝向取自己的);
+        // forceme:出招开始起,每帧把自己摆到攻击目标右侧偏移 50 像素、同一深度处(基准缺省取目标、朝向缺省取目标的、[MOVE ME])
+        yield return (BlobActionDir + "/actforce.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0, "[TARGET]")
+            .Behavior(b => b.Tag("[SET POS FORCE]").Tag("[USE MY BASEPOS]").Tag("[USE MY DIRECTION]")
+                .Tag("[X START]").Int(30).Tag("[Y START]").Int(0).Tag("[Z START]").Int(0).Tag("[/SET POS FORCE]"))
+            .Build());
+        yield return (BlobActionDir + "/actforceme.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0, "[TARGET]")
+            .Behavior(b => b.Tag("[SET POS FORCE]").Tag("[MOVE ME]")
+                .Tag("[X START]").Int(50).Tag("[Y START]").Int(0).Tag("[Z START]").Int(0).Tag("[/SET POS FORCE]"))
             .Build());
         yield return (BlobActionDir + "/actshake.act", ActWith(ThrowActAni)
             .Trigger(r => r.Tag("[ON SET ACTION]"), 0)

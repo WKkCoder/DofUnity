@@ -72,6 +72,20 @@ namespace Dnf.Game.Act
         bool Teleport(float x, float y, float z);
 
         /// <summary>
+        /// 当前动作(动画)的总时长,毫秒(按真实时间,已除掉对象自己的动作倍速);不知道是 0。[SET POS FORCE] 的起止插值拿它当"全程"
+        /// (客户端 0x010a5410 起:动作计时对象播放区间两端之差,E-152)。
+        /// </summary>
+        int MotionDurationMs => 0;
+
+        /// <summary>
+        /// [SET POS FORCE] 每帧把对象摆到 (x, y, z)(E-152;客户端 0x010a58d9 起):先问 (x, y, 0) 是不是合法位置(虚槽 0xe0),合法才整个摆(虚槽 0x98);
+        /// 不合法只改高度,X 与 Y 留在原处。合法与否、高度怎么落实由对象自己决定;默认什么都不做。
+        /// </summary>
+        void ForcePosition(float x, float y, float z)
+        {
+        }
+
+        /// <summary>
         /// 等级([SUMMON MONSTER] 的 [LEVEL] 取它:怪物与主角各自的等级,被动对象取创建它的怪物的;没有等级概念的返回 0,E-134)。
         /// </summary>
         int Level { get; }
@@ -172,6 +186,21 @@ namespace Dnf.Game.Act
             public List<IActEntity> Targets;
         }
 
+        /// <summary>
+        /// 一条强制位移记录(E-152):对应客户端 0x38 字节的记录——目标、三个轴的起点与终点和"写了几个值"、基准点来源、朝向来源、被移动的是谁。
+        /// 值在执行时求定,之后每次更新按目标当时的位置重新算落点。
+        /// </summary>
+        private sealed class ForcedMove
+        {
+            public IActEntity Target;
+            public readonly int[] Start = new int[3];
+            public readonly int[] End = new int[3];
+            public readonly int[] Count = new int[3];
+            public ActForceOrigin Origin;
+            public ActForceDirection Direction;
+            public bool MoveMe;
+        }
+
         /// <summary>"这条触发器不带事件记录"的标记(与 <see cref="ActRecordKind.Unsupported"/> 共用同一个值,事件数组里不会出现真正的 Unsupported)。</summary>
         private const ActRecordKind NoEvent = ActRecordKind.Unsupported;
 
@@ -191,6 +220,10 @@ namespace Dnf.Game.Act
         private readonly List<IActEntity> _targets = new List<IActEntity>();
         private readonly Dictionary<string, int> _vars = new Dictionary<string, int>(StringComparer.Ordinal);
         private readonly List<Delayed> _delayed = new List<Delayed>();
+
+        /// <summary>[SET POS FORCE] 的强制位移表(客户端:动作上偏移 0x43c 的记录队列,每次执行这条行为先清空;动作重来时也清空,E-152)。</summary>
+        private readonly List<ForcedMove> _forced = new List<ForcedMove>();
+
         private float _time;
         private int _lastFrame = -1;
         private bool _loopReset;
@@ -320,6 +353,7 @@ namespace Dnf.Game.Act
             _victim = null;
             _attacker = null;
             _delayed.Clear();      // 排队的延迟行为随动作重来作废(推断);变量不清,留到下一次(E-132)
+            _forced.Clear();       // 强制位移表属于动作,动作重来时清空(E-152)
             foreach (string tag in _unsupportedTriggerTags)
             {
                 _host.NoteUnsupportedTrigger(tag);
@@ -372,6 +406,7 @@ namespace Dnf.Game.Act
             }
             _lastFrame = frame;
             _frame = frame;
+            ApplyForcedMoves();
         }
 
         /// <summary>主角被此对象的攻击命中(<paramref name="victim"/>);唤醒带 [ON ATTACKSUCCESS] 的触发器。</summary>
@@ -907,6 +942,9 @@ namespace Dnf.Game.Act
                     case ActBehaviorKind.Summon:
                         Summon(b, targets);
                         break;
+                    case ActBehaviorKind.SetPosForce:
+                        SetPosForce(b, targets);
+                        break;
                     case ActBehaviorKind.SetHp:
                     {
                         // 值先取一次(客户端 0x010b95c9:hp 在目标循环之前求值),再对每个活着的目标设置(E-134)
@@ -952,6 +990,161 @@ namespace Dnf.Game.Act
                     return;
                 }
             }
+        }
+
+        /// <summary>
+        /// [SET POS FORCE](客户端执行块 0x010bfa89,E-152):先清空这个动作的强制位移表,再把记号按出现顺序读一遍(值表达式此刻求定,所有目标共用;
+        /// 每个轴的"写了几个值"逐个累加,终点写在起点前面或单独写终点时起点同取这个值),最后给每个活动对象(主角与怪物,被动对象不收;
+        /// 客户端问虚槽 0x30 的类型位 0x11,再问"可抓取"虚槽 0x380,后一条这一版不查)登记一条记录。落点每次更新重新算,见 <see cref="ApplyForcedMoves"/>。
+        /// 缺省:基准取目标自己、朝向取目标的、被移动的是目标、线性插值。
+        /// </summary>
+        private void SetPosForce(ActBehavior b, List<IActEntity> targets)
+        {
+            _forced.Clear();
+            var template = new ForcedMove();
+            foreach (ActForceToken token in b.ForceTokens)
+            {
+                switch (token.Code)
+                {
+                    case ActForceCode.XStart:
+                    case ActForceCode.YStart:
+                    case ActForceCode.ZStart:
+                    {
+                        int axis = (int)token.Code;
+                        template.Start[axis] = token.Value.Eval(_rand);
+                        template.Count[axis]++;
+                        break;
+                    }
+                    case ActForceCode.XEnd:
+                    case ActForceCode.YEnd:
+                    case ActForceCode.ZEnd:
+                    {
+                        int axis = (int)token.Code - (int)ActForceCode.XEnd;
+                        int value = token.Value.Eval(_rand);
+                        template.End[axis] = value;
+                        if (template.Count[axis]++ == 0)
+                        {
+                            template.Start[axis] = value;
+                        }
+                        break;
+                    }
+                    case ActForceCode.UseMyDirection:
+                        template.Direction = ActForceDirection.Owner;
+                        break;
+                    case ActForceCode.NotUseObjectDirection:
+                        template.Direction = ActForceDirection.Right;
+                        break;
+                    case ActForceCode.UseTargetPos:
+                        template.Origin = ActForceOrigin.Target;
+                        break;
+                    case ActForceCode.UseMyBasePos:
+                        template.Origin = ActForceOrigin.Owner;
+                        break;
+                    case ActForceCode.UseMapPos:
+                        template.Origin = ActForceOrigin.Map;
+                        break;
+                    case ActForceCode.MoveTarget:
+                        template.MoveMe = false;
+                        break;
+                    case ActForceCode.MoveMe:
+                        template.MoveMe = true;
+                        break;
+                }
+            }
+            foreach (IActEntity t in targets)
+            {
+                if (t.Kind == ActEntityKind.Passive)
+                {
+                    continue;
+                }
+                var move = new ForcedMove { Target = t, Origin = template.Origin, Direction = template.Direction, MoveMe = template.MoveMe };
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    move.Start[axis] = template.Start[axis];
+                    move.End[axis] = template.End[axis];
+                    move.Count[axis] = template.Count[axis];
+                }
+                _forced.Add(move);
+            }
+        }
+
+        /// <summary>
+        /// 每次更新对强制位移表里每条记录重新算落点并摆过去(客户端动作更新里 0x010a5042 起的消费者,E-152):
+        /// 基准点取目标当时的位置、拥有者当时的位置或地图原点(0,0,0);朝向取目标的、拥有者的或恒朝右,朝左时 X 的偏移取反(Y、Z 不取反);
+        /// 每个轴按"写了几个值"取:0 个取目标自己此刻的坐标(不管被移动的是谁),1 个是基准加这个值,2 个是基准加起点到终点的线性插值
+        /// (进度 = 动作已过的时间 / 动作总时长,到时间或总时长不明就取终点;浮点按单精度算、向零截断),多于 2 个落 0(客户端没给这个分支赋值)。
+        /// 被移动的是拥有者([MOVE ME])或目标;落点交给对象的 <see cref="IActEntity.ForcePosition"/>。
+        /// </summary>
+        private void ApplyForcedMoves()
+        {
+            if (_forced.Count == 0)
+            {
+                return;
+            }
+            int elapsed = (int)(_time * 1000f);
+            int duration = _owner.MotionDurationMs;
+            for (int i = 0; i < _forced.Count; i++)
+            {
+                ForcedMove f = _forced[i];
+                IActEntity target = f.Target;
+                if (!target.IsAlive)
+                {
+                    continue;
+                }
+                IActEntity origin = f.Origin == ActForceOrigin.Owner ? _owner : f.Origin == ActForceOrigin.Target ? target : null;
+                bool right;
+                switch (f.Direction)
+                {
+                    case ActForceDirection.Owner:
+                        right = !_owner.FacingLeft;
+                        break;
+                    case ActForceDirection.Right:
+                        right = true;
+                        break;
+                    default:
+                        right = !target.FacingLeft;
+                        break;
+                }
+                float x = ForceAxis(f, 0, origin == null ? 0f : origin.X, right, elapsed, duration, target.X);
+                float y = ForceAxis(f, 1, origin == null ? 0f : origin.Y, right, elapsed, duration, target.Y);
+                float z = ForceAxis(f, 2, origin == null ? 0f : origin.Z, right, elapsed, duration, target.Z);
+                (f.MoveMe ? _owner : target).ForcePosition(x, y, z);
+            }
+        }
+
+        private static float ForceAxis(ForcedMove f, int axis, float origin, bool right, int elapsed, int duration, float current)
+        {
+            int offset;
+            switch (f.Count[axis])
+            {
+                case 0:
+                    return current;
+                case 1:
+                    offset = f.Start[axis];
+                    break;
+                case 2:
+                    offset = ForceLerp(f.Start[axis], f.End[axis], elapsed, duration);
+                    break;
+                default:
+                    return 0f;
+            }
+            return axis == 0 && !right ? origin - offset : origin + offset;
+        }
+
+        /// <summary>客户端的线性插值函数 0x011b98c0:到时间(含总时长为 0)取终点,时间不大于 0 取起点,其余 起点 + (终点 - 起点) × 已过 / 总长,单精度,向零截断。</summary>
+        internal static int ForceLerp(int start, int end, int elapsed, int duration)
+        {
+            if (elapsed >= duration)
+            {
+                return end;
+            }
+            if (elapsed <= 0)
+            {
+                return start;
+            }
+            float s = start;
+            float e = end;
+            return (int)((e - s) * elapsed / duration + s);
         }
 
         /// <summary>

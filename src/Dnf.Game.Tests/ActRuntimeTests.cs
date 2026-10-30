@@ -112,6 +112,26 @@ public sealed partial class ActRuntimeTests
             return true;
         }
 
+        /// <summary>M58(E-152):[SET POS FORCE] 的"全程"毫秒数;缺省 0 = 不知道,插值直接取终点。</summary>
+        public int MotionDurationMs { get; set; }
+
+        /// <summary>[SET POS FORCE] 每帧摆过来的位置(落点合法,照单全收;<see cref="RejectForce"/> 为真时模拟"不合法只改高度")。</summary>
+        public List<(float x, float y, float z)> Forced { get; } = new();
+
+        public bool RejectForce { get; set; }
+
+        public void ForcePosition(float x, float y, float z)
+        {
+            Log.Add("force:" + F(x) + "," + F(y) + "," + F(z));
+            Forced.Add((x, y, z));
+            if (!RejectForce)
+            {
+                X = x;
+                Y = y;
+            }
+            Z = z;
+        }
+
         public int Level { get; set; }
 
         public void SetHp(int hp)
