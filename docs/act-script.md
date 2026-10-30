@@ -81,7 +81,7 @@
 1. 检查拥有者有效;逐个触发器看三道门:`[ENABLE]`(`+0x1c`;`[TRIGGER] n [ON]/[OFF]` 写的就是这一字节,帧 0 复位不碰它,E-134)为 0 跳过、“已完成”位(`+0x1d`,帧 0 复位时清零)非 0 跳过、`[LIMIT]`(`+0x18`)大于 0 且已触发次数(`+0x14`)达到上限跳过。
 2. 目标集合初始为 {拥有者};依次处理触发器里的每条记录(记录是 0x40 字节的堆对象,类型号在 +0,参数向量在 +0x30..+0x34):
    - `[WHICH]`(0x1f)用选择器函数 `0x010d25e0` **重新选择**目标集合;
-   - `[FRAME]`(1)用 `0x010d1320`;`[CHECKED NO]`(0x27)用比较函数 `0x00977450` 比集合大小;`[SAVE TARGET OBJECT]`(0x3d)用 `0x010d1f40` 把集合存进槽位;
+   - `[FRAME]`(1)用 `0x010d1320`;`[CHECKED NO]`(0x27)用比较函数 `0x00977450` 比集合大小;`[SAVE TARGET OBJECT]`(0x3d)用 `0x010d1f40` 把选择结果的第一个对象存进拥有者的槽位(空选择不写,E-157);
    - `[DO BEHAVIOR]`(0)与 `[DIRECT DO BEHAVIOR]`(0x2b):本运行器的事件已经出现且集合非空(或之前 `[CHECKED NO]` 放过了空集合)时,触发次数加一,调用 `0x010d1850` 去执行第 k 个 `[BEHAVIOR]`;
    - `[DELAY DO BEHAVIOR]`(0x5c)把行为排进延迟队列(`0x006c8420`,调用点 `0x010adbc5`):判空与次数规则同 `[DO BEHAVIOR]`,行为组号或延迟为负数就不排队,排队后同样“动作状态没变就置完成字节(`+0x1d`)”;这个字节只被 `[FRAME]` 与事件触发器检查(M39,E-132);
    - 其它条件交给 `checkTriggerEvent`(`0x010d3630`)逐对象过滤。别的运行器负责的事件记录(7、8、9、0xa 到 0x12、0x58)会让这条触发器在本运行器里直接跳过。
@@ -89,7 +89,7 @@
 
 ### 条件与行为
 
-- **条件**分两种:逐对象过滤(`[IS INDEX]`、`[IS OBJECT TYPE]`、`[HP]`、`[DISTANCE]`、`[IS IN POS]`、`[AREA]`、`[IS TEAM]` 等,不满足的对象被删出集合)和整体真假(`[IF]`、`[TRIGGER CHECK]`、`[CHECK PLAYER NUM]`、`[REALDUNGEON CHECKUP]` 等,不改集合)。`[IS OBJECT TYPE]` 等判断用对象的种类码,是相等比较不是继承(见 `docs/engine-objects.md`)。
+- **条件**分两种:逐对象过滤(`[IS INDEX]`、`[IS OBJECT TYPE]`、`[HP]`、`[DISTANCE]`、`[IS IN POS]`、`[AREA]`、`[IS TEAM]` 等,不满足的对象被删出集合)和整体真假(`[IF]`、`[CHECK DISTANCE]`、`[CHECK PLAYER NUM]`、`[REALDUNGEON CHECKUP]` 等,不改集合;`[TRIGGER CHECK]` 没写族时是整体真假、写了族是逐对象过滤;`[GET TARGET]` 整理集合,工作集为空时整个不通过)。`[IS OBJECT TYPE]` 等判断用对象的种类码,是相等比较不是继承(见 `docs/engine-objects.md`)。
 - **行为**由 `doBehavior` 对目标集合执行;大多数行为遍历集合,对每个对象按它的类型调不同的虚槽(例如 `[ATTACKRECT]` 开关攻击判定矩形、`[SET DIRECTION]` 设朝向、`[SET ACTION]` 按"动作族码"换内置状态)。`[SET ACTION]`(0x77)把 `[STAND]`、`[ATTACK] n`、`[CUSTOM] n`、`[DAMAGE]` 等写成内置状态号,再写进拥有者的"待切换状态"(`+0x400/+0x404`),实际切换发生在对象自己的状态机里——(推断)所以 `.act` 主要是把事件接到状态切换与对象创建上,具体的战斗逻辑在对象自己的状态机、Squirrel 脚本和成百个 C++ 子类里。
 - 行为里有些参数是**值表达式**(可带随机、运算,由 `valueOf` 求值)和**符号码**(`[>=]` 之类的比较码,见上)。
 
@@ -123,3 +123,5 @@
 **怪物脚本换动作文件(M57,E-151)**:又认得 `[CHANGE ACTION FILE]`。写法:标签后跟一个族关键字(与 `[SET ACTION]` 同一套;受击、出招、自定义带序号,序号可省当 0)和新 `.act` 的路径字符串(相对执行它的 `.act` 所在目录);没有族关键字或没有路径的写法(如“最后一幕”)客户端的族码表里没有,按没做记数。客户端的行为(静态读码):对每个怪物目标按族号(0 到 13)新建动作对象换进它的动作表;被换的若正是正在跑的动作,旧动作被标成可丢弃并挂替换指针,下一次设当前动作时才改取新的——**正在跑的继续跑,新动作从这一族下一次被进入(或脚本再次 `[SET ACTION]`)起生效**。我们:`ActRunner` 对怪物目标调 `IActHost.ChangeActionFile`(默认空实现);`MonsterActor.ApplyActionFile` 换这一族的动画与触发器程序,没在跑的马上换,正在跑的记成待换;`ActLibrary.SwapAction` 缓存换进来的动作(程序与主动画),`Preload` 提前读并跟着读它的被动对象(深度 3)。后退、冲刺、冲刺攻击、跳跃、跳击、自定义六个族这版怪物没有动作,只记数。真实数据:含换文件记录的怪物 200 个、记录 1343 条,换进来的文件读得到 1327 条(98.8%),序号越界 0,没有对应动作的族 46,写法读不通 21(汇总数,本机脚本扫描,非 REA)。
 
 **怪物脚本强制位移(M58,E-152)**:又认得 `[SET POS FORCE]`。写法:块里按出现顺序排下的记号——三个轴的 `[X START]`、`[Y START]`、`[Z START]` 与 `[X END]`、`[Y END]`、`[Z END]`(后面各跟一个值表达式)、基准点 `[USE TARGET POS]`(缺省)、`[USE MY BASEPOS]`、`[USE MAP POS]`,朝向来源 `[USE MY DIRECTION]`、`[NOT USE OBJECT DIRECTION]`(缺省取目标的),插值 `[MOVE UNIFORM]`、`[MOVE REDUCE]`(线性)与 `[MOVE ACCELATE]`(没读),被移动者 `[MOVE TARGET]`(缺省)、`[MOVE ME]`。客户端的行为(静态读码):执行时先清空这个动作的强制位移表,再给目标集合里每个活动对象登记一条记录;此后**每次更新**重算落点:基准加偏移,每个轴写 0 个值取目标自己的坐标、1 个值是基准加起点、2 个值是基准加起点到终点的线性插值(进度 = 动作已过时间 / 动作全程,单精度、向零截断)、更多个值落 0,朝左时只有 X 的偏移取反;落点能站才整个摆,不能就只改高度。我们:`ActCompiler.ParseSetPosForce` 按序留下全部记号(读不出值或带 `[MOVE ACCELATE]` 的块整个记成不支持);`ActRunner` 的强制位移表与 `ApplyForcedMoves`;`IActEntity` 的 `MotionDurationMs` 与 `ForcePosition`(怪物、被动对象、主角各自实现)。没做:加速插值、`[LASTATTACK POSITION]`、“可抓取”谓词、主角的高度。真实数据:怪物出招的 `.act` 里 149 块,读通 146 块,其余动作与被动对象全部读通(汇总数,本机脚本扫描,非 REA)。
+
+**挑目标、距离、可抓取、触发器开关读取与保存目标槽(M61,E-155、E-156、E-157)**:又认得六个条件写法。`[GET TARGET] n 键 [HIGH]/[LOW]`:键 `[RANDOM]`、`[DISTANCE]`、`[LEVEL]`、`[HP]`、`[LAST ATTACKSUCCESS]`(`[MP]` 不认),随机没有方向;工作集为空整个触发器不通过,否则按键整理再留前 n 个(n 小于个数才删;距离按整数距离,`[HIGH]` 从尾取;生命 `[HIGH]` 是原版笔误,不排序)。`[CHECK DISTANCE] x y`:整体真假,拥有者是生物类且场上有敌对、活着的角色在横向与纵深范围内(位置取整数,含等号)。`[IS GRABABLE] n`:逐对象过滤,被动对象剔除,n 为 1 留能抓的、别的值留不能抓的。`[TRIGGER CHECK] [种类 [动作序号]] 序号 [ON]/[OFF]`:没写种类是自己这一动作的第 n 个触发器开关的整体真假(越界不通过),写了族是逐对象过滤(`IActEntity.GetActionTrigger`;`[DEFAULT]` 不认,`[CUSTOM]` 与 `[DEFAULT]` 池没有宿主,回答没有)。`[SAVE TARGET OBJECT] [选择器] 槽号` 与 `[LOAD TARGET] 槽号`:槽表在行为拥有者对象上(`IActEntity.SetSavedTarget`/`GetSavedTarget`),只存选择结果的第一个对象,空选择不动槽,不随运行器与这一招结束而清掉;取出时已死的对象当没有。没做:`[GET TARGET]` 的 `[MP]` 键、被动对象的 `[CUSTOM]` 开关板、`[CHECK DISTANCE]` 里两个没读出语义的虚槽(按成立、按假)。

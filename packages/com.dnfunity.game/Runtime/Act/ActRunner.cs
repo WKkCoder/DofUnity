@@ -112,6 +112,32 @@ namespace Dnf.Game.Act
         void SetActionTrigger(ActTriggerPool pool, int slot, int trigger, ActTriggerCommand command)
         {
         }
+
+        /// <summary>
+        /// [TRIGGER CHECK] 的读侧(E-156):这一族动作上第 <paramref name="trigger"/> 个触发器现在开着吗。
+        /// 没有这一族动作、没装触发器、序号越界(客户端:取不到触发器池,或个数不大于序号)返回 null,这个对象会被剔出工作集。
+        /// 开关属于拥有者的动作容器(与 <see cref="SetActionTrigger"/> 同一份),没有动作容器的对象(主角、被动对象)默认就是 null。
+        /// </summary>
+        bool? GetActionTrigger(ActTriggerPool pool, int slot, int trigger) => null;
+
+        /// <summary>
+        /// [IS GRABABLE] 要的"此刻能不能被抓"(客户端对生物类对象调虚槽 0x380;基类实现 0x0081ecb0 要求没有冰冻(异常状态 1)与石化(异常状态 7)等,
+        /// 主角各职业的外层实现(0x00ca7e00、0x00ce5110)在个别技能状态里再返回不能抓;E-156)。
+        /// 抓取等级、免疫计数等其余几项没读出来,默认只看活着(推断);有异常状态的对象(主角)覆盖它。
+        /// </summary>
+        bool IsGrabbable => IsAlive;
+
+        /// <summary>
+        /// [SAVE TARGET OBJECT] 的落点(E-157):把 <paramref name="target"/> 存进这个对象(行为拥有者)的槽表第 <paramref name="slot"/> 格。
+        /// 客户端的槽表是拥有者对象身上的一张映射(存取函数 0x007ff0b0 与 0x007fe6e0 的 this 是运行器的 +0x94,即拥有者),
+        /// 不随某一招或某一个运行器结束清掉;没有槽表的对象(主角)什么都不存,默认空实现。
+        /// </summary>
+        void SetSavedTarget(int slot, IActEntity target)
+        {
+        }
+
+        /// <summary>[LOAD TARGET] 的来源(E-157):槽表第 <paramref name="slot"/> 格存下的对象;没有存过或没有槽表返回 null。</summary>
+        IActEntity GetSavedTarget(int slot) => null;
     }
 
     /// <summary>运行器对世界的请求:随机数、生成被动对象、解析选择器。</summary>
@@ -514,6 +540,7 @@ namespace Dnf.Game.Act
                     case ActRecordKind.FrontSide:
                     case ActRecordKind.IsInPos:
                     case ActRecordKind.IsChild:
+                    case ActRecordKind.IsGrabbable:
                         FilterSet(rec);
                         break;
                     case ActRecordKind.IsDirectionLeft:
@@ -529,6 +556,33 @@ namespace Dnf.Game.Act
                         }
                         break;
                     case ActRecordKind.GetTarget:
+                        if (!ApplyGetTarget(rec))
+                        {
+                            return;
+                        }
+                        break;
+                    case ActRecordKind.CheckDistance:
+                        if (!CheckDistance(rec))
+                        {
+                            return;
+                        }
+                        break;
+                    case ActRecordKind.SaveTarget:
+                        ApplySaveTarget(rec);
+                        break;
+                    case ActRecordKind.TriggerCheck:
+                        if (rec.TriggerPool == ActTriggerPool.Own)
+                        {
+                            // 种类 3 是整体真假(客户端 0x010d8564 起):自己这个动作的第 n 个触发器开着且要 [ON],或关着且要 [OFF] 才通过;序号越界不通过(推断)
+                            if ((uint)rec.Number >= (uint)_enabled.Length || _enabled[rec.Number] != rec.Flag)
+                            {
+                                return;
+                            }
+                        }
+                        else
+                        {
+                            FilterSet(rec);
+                        }
                         break;
                     case ActRecordKind.If:
                         if (!ActCompares.Test(Eval(rec.Left), rec.Sign, Eval(rec.Right)))
@@ -642,6 +696,17 @@ namespace Dnf.Game.Act
                     bool child = ReferenceEquals(e.Master, _owner);
                     return rec.Number != 0 ? child : !child;
                 }
+                case ActRecordKind.IsGrabbable:
+                    // 客户端 0x010d7bd0 起的块(E-156):对象要转得成生物类(被动对象转不过去,剔除),再取虚槽 0x380 的"能否被抓";
+                    // 参数为 1 留下能抓的,别的值留下不能抓的
+                    return e.Kind != ActEntityKind.Passive && e.IsGrabbable == (rec.Number == 1);
+                case ActRecordKind.TriggerCheck:
+                {
+                    // 非自身的写法逐对象过滤(客户端 0x010d85bb 起):取不到那一族动作的触发器池或序号不小于个数就剔除;
+                    // 开关与要求一致([ON] 要开着、[OFF] 要关着)才留下
+                    bool? on = e.GetActionTrigger(rec.TriggerPool, rec.TriggerSlot, rec.Number);
+                    return on.HasValue && on.Value == rec.Flag;
+                }
                 default:
                     return true;
             }
@@ -696,6 +761,16 @@ namespace Dnf.Game.Act
                     break;
                 case ActSelector.WorkingSet:
                     break;
+                case ActSelector.LoadTarget:
+                {
+                    // 取拥有者槽表里存下的那个对象(客户端选择器码 0x15;E-157);已经死掉的不算(推断:客户端槽里是指针,销毁时的清理没读出来)
+                    IActEntity saved = _owner.GetSavedTarget(partyIndex);
+                    if (saved != null && saved.IsAlive)
+                    {
+                        into.Add(saved);
+                    }
+                    break;
+                }
                 default:
                     _host.Resolve(_owner, selector, partyIndex, into);
                     break;
@@ -715,6 +790,170 @@ namespace Dnf.Game.Act
             }
             int limit = rec.Percent ? unchecked(max * rec.Number) / 100 : rec.Number;
             return ActCompares.Test(e.Hp, rec.Sign, limit);
+        }
+
+        private int[] _keys = new int[8];
+
+        private readonly List<IActEntity> _scratch = new List<IActEntity>();
+
+        /// <summary>
+        /// [SAVE TARGET OBJECT](客户端记录码 0x3d,每帧运行器 0x010ad580 里直接处理,存的函数 0x010d1f40,E-157):
+        /// 把选择结果里的第一个对象存进拥有者的槽表;结果为空不动槽(函数结尾只在收集到的个数不为 0 时才调存槽函数 0x007ff0b0)。
+        /// 选择器是工作集就取当前的工作集(客户端选择码 9),别的选择器各取它的结果。这一步不是条件,不影响触发器通不通过。
+        /// </summary>
+        private void ApplySaveTarget(ActRecord rec)
+        {
+            IActEntity first = null;
+            if (rec.Selector == ActSelector.WorkingSet)
+            {
+                first = _set.Count > 0 ? _set[0] : null;
+            }
+            else
+            {
+                _scratch.Clear();
+                Select(rec.Selector, -1, _scratch);
+                first = _scratch.Count > 0 ? _scratch[0] : null;
+                _scratch.Clear();
+            }
+            if (first != null)
+            {
+                _owner.SetSavedTarget(rec.Number, first);
+            }
+        }
+
+        /// <summary>
+        /// [CHECK DISTANCE] x 范围 y 范围(客户端条件码 0x3e,块在 0x010d44f4,E-156):整体真假,不改工作集。
+        /// 拥有者要转得成生物类(被动对象转不过去,条件不通过);它的虚槽 0x64 要返回非零(语义没读出来,按成立,推断);
+        /// 再调 0x008791a0(拥有者, x, y):场上角色类对象(类型码 0x11)里,有一个与拥有者敌对(0x00872c60)、不在 0xc8–0xcc 号状态(死亡一类,按"活着")、
+        /// 横向差的绝对值不大于 x 且纵深差的绝对值不大于 y 的,就通过;位置按整数比较。判定函数的返回值在条件块里是真正被用的(之前读成"丢掉返回值"是反编译的错觉)。
+        /// </summary>
+        private bool CheckDistance(ActRecord rec)
+        {
+            if (_owner.Kind == ActEntityKind.Passive)
+            {
+                return false;
+            }
+            _scratch.Clear();
+            _host.Resolve(_owner, ActSelector.AllEnemy, -1, _scratch);
+            int ox = (int)_owner.X;
+            int oy = (int)_owner.Y;
+            bool found = false;
+            for (int i = 0; i < _scratch.Count && !found; i++)
+            {
+                IActEntity e = _scratch[i];
+                found = e.IsAlive && e.Kind == ActEntityKind.Character
+                    && Math.Abs((int)e.X - ox) <= rec.Ints[0] && Math.Abs((int)e.Y - oy) <= rec.Ints[1];
+            }
+            _scratch.Clear();
+            return found;
+        }
+
+        /// <summary>
+        /// [GET TARGET] n 键 [HIGH]/[LOW](客户端判定函数 0x010d3630 里条件码 0x2c 的块,E-155):工作集非空时按键整理顺序,再只留前 n 个(从尾巴往外删);
+        /// 工作集一开始就是空的,这条条件当场不通过(块开头 0x010d7ccb 测个数为零就跳到"返回假"的出口 0x010d3ed3),整个触发器不触发,返回假。键:[RANDOM] 洗牌(模式 9);[DISTANCE] 对拥有者的整数距离(模式 5,按距离入多重映射再从头 [LOW] 或从尾 [HIGH] 取,
+        /// 距离相同的 [HIGH] 与插入顺序相反);[LEVEL]、[HP] 走稳定排序的比较函数(模式 6、7):[LOW] 小的在前,[LEVEL] [HIGH] 大的在前,
+        /// 而 [HP] [HIGH] 的比较函数(0x010d1160)两次都取同一个对象的生命,恒为"不小于",等于不排序——原版自己的笔误,照搬;
+        /// [LAST ATTACKSUCCESS](模式 10)把"拥有者最近命中的对象"里与工作集重合的那个挪到最前([HIGH])或最后([LOW])。
+        /// 个数 n 为负的写法客户端行为未定义(要从空数组里删),这里当作不截断(推断)。
+        /// </summary>
+        private bool ApplyGetTarget(ActRecord rec)
+        {
+            int count = _set.Count;
+            if (count == 0)
+            {
+                return false;
+            }
+            switch (rec.TargetKey)
+            {
+                case ActTargetKey.Random:
+                    for (int i = count - 1; i > 0; i--)
+                    {
+                        int j = _rand(i + 1);
+                        IActEntity tmp = _set[i];
+                        _set[i] = _set[j];
+                        _set[j] = tmp;
+                    }
+                    break;
+                case ActTargetKey.Distance:
+                    SortSetByKey(rec.TargetKey, false);
+                    if (rec.Descending)
+                    {
+                        _set.Reverse();
+                    }
+                    break;
+                case ActTargetKey.Level:
+                    SortSetByKey(rec.TargetKey, rec.Descending);
+                    break;
+                case ActTargetKey.Hp:
+                    if (!rec.Descending)
+                    {
+                        SortSetByKey(rec.TargetKey, false);
+                    }
+                    break;
+                case ActTargetKey.LastAttackSuccess:
+                    if (_victim != null)
+                    {
+                        int at = _set.IndexOf(_victim);
+                        if (at >= 0)
+                        {
+                            _set.RemoveAt(at);
+                            if (rec.Descending)
+                            {
+                                _set.Insert(0, _victim);
+                            }
+                            else
+                            {
+                                _set.Add(_victim);
+                            }
+                        }
+                    }
+                    break;
+            }
+            int max = rec.Number;
+            if (max >= 0 && max < _set.Count)
+            {
+                _set.RemoveRange(max, _set.Count - max);
+            }
+            return true;
+        }
+
+        private int TargetKeyOf(ActTargetKey key, IActEntity e)
+        {
+            switch (key)
+            {
+                case ActTargetKey.Distance: return (int)Distance(_owner, e);
+                case ActTargetKey.Hp: return e.Hp;
+                case ActTargetKey.Level: return e.Level;
+                default: return 0;
+            }
+        }
+
+        /// <summary>稳定的插入排序(集合很小):<paramref name="descending"/> 为假小的在前,为真大的在前;键相同的保持原有顺序。</summary>
+        private void SortSetByKey(ActTargetKey key, bool descending)
+        {
+            int n = _set.Count;
+            if (_keys.Length < n)
+            {
+                _keys = new int[n * 2];
+            }
+            for (int i = 0; i < n; i++)
+            {
+                _keys[i] = TargetKeyOf(key, _set[i]);
+            }
+            for (int i = 1; i < n; i++)
+            {
+                IActEntity item = _set[i];
+                int k = _keys[i];
+                int j = i;
+                while (j > 0 && (descending ? k > _keys[j - 1] : k < _keys[j - 1]))
+                {
+                    _set[j] = _set[j - 1];
+                    _keys[j] = _keys[j - 1];
+                    j--;
+                }
+                _set[j] = item;
+                _keys[j] = k;
+            }
         }
 
         /// <summary>求表达式:整数、变量(没赋过读 0)、[GET TIME](宿主毫秒时钟的低 32 位,溢出回绕,差值照样对);加减按 32 位回绕。</summary>

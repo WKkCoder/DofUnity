@@ -684,6 +684,9 @@ internal sealed class AvatarFixture : IDisposable
         ("xself", new[] { "ActXSelf" }),
         ("xselfctl", new[] { "ActXSelfCtl" }),
         ("xmiss", new[] { "ActXMiss" }),
+        // M61(证据 E-157):[SAVE TARGET OBJECT] 与 [LOAD TARGET]:第 0 招存下主角、切到第 1 招再取出来放被动对象(对照那只没存,取到空槽)
+        ("xsave", new[] { "ActXSave", "ActXLoad" }),
+        ("xsavectl", new[] { "ActXSaveCtl", "ActXLoad" }),
     };
 
     /// <summary>
@@ -706,6 +709,9 @@ internal sealed class AvatarFixture : IDisposable
         ("f_last", new[] { "ActPlain" }, new[] { "[last action]", "FLast" }),
         ("f_xstay", new[] { "ActXStayOff" }, new[] { "[waiting action]", "FStay" }),
         ("f_xunh", new[] { "ActXUnh" }, new string[0]),
+        // M61(证据 E-156):坐下族有 .act(复用站立的那份),[TRIGGER CHECK] 要从各族的开关板里读
+        ("f_sit", new[] { "ActPlain" }, new[] { "[sit action]", "FStay" }),
+        ("f_down", new[] { "ActPlain" }, new[] { "[down action]", "FDown" }),
         // M57(证据 E-151):[CHANGE ACTION FILE] 的换文件怪物(换的目标 .act 见 ActScripts 里"M57"一段)
         ("f_swapfam", new[] { "ActSwapFam" }, new string[0]),
         ("f_swapstay", new[] { "ActPlain" }, new[] { "[waiting action]", "FSwapStay" }),
@@ -931,6 +937,19 @@ internal sealed class AvatarFixture : IDisposable
             .Behavior(b => b.Tag("[TRIGGER]").Tag("[ATTACK]").Int(5, 0).Tag("[OFF]")
                 .Tag("[TRIGGER]").Tag("[ATTACK]").Int(0, 7).Tag("[OFF]")
                 .Tag("[TRIGGER]").Tag("[MOVE]").Int(0).Tag("[OFF]"))
+            .Build());
+        // M61(证据 E-157):[SAVE TARGET OBJECT] [TARGET] 3 存主角后切到第 1 招;第 1 招帧 1 取槽 3 当目标放被动对象(槽空就没有目标,什么都不放)
+        yield return (BlobActionDir + "/actxsave.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1).Tag("[SAVE TARGET OBJECT]").Tag("[TARGET]").Int(3), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[NOW]"))
+            .Build());
+        yield return (BlobActionDir + "/actxsavectl.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[NOW]"))
+            .Build());
+        yield return (BlobActionDir + "/actxload.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1).Tag("[WHICH]").Tag("[LOAD TARGET]").Int(3), 0, "[CHECKUP OBJECT]")
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
             .Build());
         // M53(证据 E-146):非出招动作族的 .act。放出来的 ActForeverId 对象不会消失,会话里的被动对象数就是触发次数
         yield return (BlobActionDir + "/fstay.act", ActWith(StayActAni)

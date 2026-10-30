@@ -369,6 +369,32 @@ namespace Dnf.Play
         }
 
         /// <summary>
+        /// 脚本的 [TRIGGER CHECK] 读侧(E-156):按动作族取第 <paramref name="trigger"/> 个触发器现在开着吗;
+        /// 这一族没装程序、序号越界、或是还没有宿主的族([DEFAULT]、[CUSTOM])返回 null(客户端:取不到触发器池或序号不小于个数,对象被剔除)。
+        /// [ATTACK] 走每招一份的开关(<see cref="ActTriggerState"/>),其余族走族宿主的开关数组。
+        /// </summary>
+        internal bool? ActReadTrigger(ActTriggerPool pool, int slot, int trigger)
+        {
+            switch (pool)
+            {
+                case ActTriggerPool.Attack:
+                    return ActTriggerState(slot, trigger);
+                case ActTriggerPool.Stay:
+                    return FamilyTriggerState(MonsterActFamily.Stay, trigger);
+                case ActTriggerPool.Move:
+                    return FamilyTriggerState(MonsterActFamily.Move, trigger);
+                case ActTriggerPool.Sit:
+                    return FamilyTriggerState(MonsterActFamily.Sit, trigger);
+                case ActTriggerPool.Down:
+                    return FamilyTriggerState(MonsterActFamily.Down, trigger);
+                case ActTriggerPool.Proc:
+                    return FamilyTriggerState(MonsterActFamily.Proc, trigger);
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>
         /// 脚本的 [TRIGGER] 族写法指向站立、行走、坐下、倒地或过程这几族(E-145 的池号 → E-146 的宿主):写这一族的开关数组,
         /// 正在跑的运行器经 <see cref="ActRunner.ApplyTrigger"/>(复位清它的次数、单次位与计时),没在跑就直接写开关;
         /// 这一族没装程序或序号越界算落空(客户端:池为空或个数不大于序号就跳过)。[DEFAULT]、[CUSTOM] 还没有宿主,由调用方记 Unhosted。

@@ -1143,6 +1143,24 @@ namespace Dnf.Play
             {
                 _m.ActSwitchTrigger(pool, slot, trigger, command);
             }
+
+            public bool? GetActionTrigger(ActTriggerPool pool, int slot, int trigger)
+            {
+                return _m.ActReadTrigger(pool, slot, trigger);
+            }
+
+            private Dictionary<int, IActEntity> _saved;
+
+            /// <summary>[SAVE TARGET OBJECT] 的槽表:挂在怪物身上,各招各族共用,不随出招结束清掉(E-157)。</summary>
+            public void SetSavedTarget(int slot, IActEntity target)
+            {
+                (_saved ?? (_saved = new Dictionary<int, IActEntity>()))[slot] = target;
+            }
+
+            public IActEntity GetSavedTarget(int slot)
+            {
+                return _saved != null && _saved.TryGetValue(slot, out IActEntity target) ? target : null;
+            }
         }
 
         /// <summary>

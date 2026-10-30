@@ -13,7 +13,7 @@ func	0x00977450	符号码比较	PRIMER 已核对	高	—
 func	0x010d1320	FRAME	PRIMER 已核对	高	—
 func	0x010d17d0	targetsErase	评估函数删目标	中	缺 cl2 导出
 func	0x010d1850	DO BEHAVIOR 入口	解析目标后 010d1550 执行 k	高	目标码全集
-func	0x010d1f40	SAVE TARGET OBJECT	007ff0b0 写槽位	高	槽位语义
+func	0x010d1f40	SAVE TARGET OBJECT	收集选择结果后个数不为 0 才调 007ff0b0 写槽位(this = 运行器 +0x94 的拥有者,映射在 +0x164);只存第一个	高	销毁对象时是否清槽
 func	0x010d25e0	WHICH	按 selector 码重填目标集	高	PARTY/ TARGET 分支
 func	0x01330670	LOAD/CHECKUP	01330670 目标子句加载	中	字符串完整映射
 func	0x01566d7c	虚表	010a59e0 shake + 010a5ec0 碰撞	中	类名 RTTI
@@ -38,7 +38,7 @@ sel	0x11	AI CHARACTER	AI	高
 sel	0x12	CREATE OBJECT	创建对象	高	
 sel	0x13	DESTROY OBJECT	销毁对象	中	
 sel	0x14	PASSIVE	被动对象	高	
-sel	0x15	LOAD TARGET	脚本槽	中	
+sel	0x15	LOAD TARGET	取拥有者槽表里按槽号存下的对象(010d25e0 的块);没存过为空	中	销毁后的槽是否清掉没读到(按已死不取)
 sel	0x16	PARTY TARGET	队伍块	低	
 sel	0x17	PLAYER	玩家槽	中	
 sel	0x18	SUMMON OBJECT	己方召唤:创建者(父对象)是拥有者的对象(块 0x010d25e0,E-134)	中	服务端怎样记创建者
@@ -83,16 +83,16 @@ cond	0x27	CHECKED NO	00977450 比 target 数	高	—
 cond	0x28	[IF]	整体：左右表达式列表求值整数比较；不改集合	中	010ae520/字符串求值细节
 cond	0x29	[IS AI TARGET]	AI +0x7b0 设目标，非过滤	低	全库 0 次
 cond	0x2b	DIRECT DO BEHAVIOR	同 0x00	高	直接差异在行为层
-cond	0x2c	[GET TARGET]	在已有目标非空时按 mode 排序/随机/距离/上次命中扩充集合并截断至 maxN	中	00879690/00cee000 排序键；mode5 与 010d25e0 细节
-cond	0x2d	[IS GRABABLE]	按 vtbl+0x380 与参数 0/1 过滤可抓取/不可抓取	高	—
-cond	0x2e	[TRIGGER CHECK]	读指定触发器池第 N 条的 [ENABLE]；种类 3 为整段真假，否则按目标过滤；[ON]/[OFF] 对应 P=0/1	中	种类 0xe 双对象池；是否还检查触发次数
+cond	0x2c	[GET TARGET]	按 mode 随机/距离/等级/生命/最近命中整理工作集并留前 maxN;工作集一开始为空则整个触发器不通过(0x010d7ccb 到 0x010d3ed3);[HP][HIGH] 的比较函数 0x010d1160 恒真,不排序(原版笔误)	高	[MP] 键;随机洗牌序列与客户端不逐个对应
+cond	0x2d	[IS GRABABLE]	逐对象:转成生物类(被动对象剔除)后取虚槽 0x380;参数为 1 留能抓的,别的值留不能抓的	高	主角侧只近似为活着且没有冰冻、石化
+cond	0x2e	[TRIGGER CHECK]	读指定触发器池第 N 条的开关;种类 3(没写族)为整体真假,否则逐对象过滤;[ON]/[OFF] 对应 P=0/1;不认 [DEFAULT]	中	被动对象的 [CUSTOM] 开关板与 [DEFAULT]/[CUSTOM] 池没有宿主;是否还检查触发次数没确认
 cond	0x38	[IS END MAP]	拥有者近地图右缘且 X 轴速度>0	中	左端 x≤150 特例；函数 0x0046ef10
 cond	0x39	[IS END MAP VERTICALLY]	拥有者近地图上缘且 Y 轴速度>0	中	函数 0x0062d080
 cond	0x3a	[IS DAMAGEBOX ENABLE]	目标伤害盒开关与参数 0/1 一致	中	全库仅 1 例
 cond	0x3b	[IS VISIBLE]	目标可见性字节等于参数	高	+0x1d4 语义
 cond	0x3c	AXIS INDEX	仅 5ec0 轴掩码	高	—
-cond	0x3d	SAVE TARGET OBJECT	010d1f40	高	—
-cond	0x3e	[CHECK DISTANCE]	拥有者经 008791a0 做全局距离判定，不改目标集	中	008791a0 语义
+cond	0x3d	SAVE TARGET OBJECT	每帧运行器 0x010ad580 里直接处理;010d1f40 只存选择结果的第一个对象,空选择不写;槽表在拥有者对象上	高	—
+cond	0x3e	[CHECK DISTANCE]	整体真假:拥有者要是生物类(被动对象失败),vtbl+0x64 非零,008791a0 在场上角色类对象里找敌对、活着、横向与纵深差不大于 x、y 的;不改目标集	中	拥有者 vtbl+0x64 与候选 vtbl+0x670 的语义(按成立、按假)
 cond	0x3f	(无标签)	owner+0x14c gate	低	加载标签
 cond	0x40	[CHECK AREA]	查询区域命中则删目标（param1/2）	低	函数 0x008791a0；param0/3 未用
 cond	0x41	[FRONTSIDE]	目标正面朝向动作拥有者（X 轴+getDirection 0左/1右）	高	+0x36c 槽名

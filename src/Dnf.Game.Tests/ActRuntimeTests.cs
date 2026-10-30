@@ -160,6 +160,24 @@ public sealed partial class ActRuntimeTests
             Log.Add("trigger:" + pool + ":" + slot + ":" + trigger + ":" + command);
             ActionTriggers.Add((pool, slot, trigger, command));
         }
+
+        /// <summary>M61(E-156):[IS GRABABLE] 看的"能不能被抓";没设就取活着,与接口默认一致。</summary>
+        public bool? Grabbable { get; set; }
+
+        public bool IsGrabbable => Grabbable ?? IsAlive;
+
+        /// <summary>M61(E-156):[TRIGGER CHECK] 读到的各族触发器开关;没登记的返回 null(没有这一族动作)。</summary>
+        public Dictionary<(ActTriggerPool pool, int slot, int trigger), bool> ActionTriggerStates { get; } = new();
+
+        public bool? GetActionTrigger(ActTriggerPool pool, int slot, int trigger)
+            => ActionTriggerStates.TryGetValue((pool, slot, trigger), out bool on) ? (bool?)on : null;
+
+        /// <summary>M61(E-157):[SAVE TARGET OBJECT] 的槽表(挂在拥有者身上,跨运行器保留)。</summary>
+        public Dictionary<int, IActEntity> SavedTargets { get; } = new();
+
+        public void SetSavedTarget(int slot, IActEntity target) => SavedTargets[slot] = target;
+
+        public IActEntity GetSavedTarget(int slot) => SavedTargets.TryGetValue(slot, out IActEntity t) ? t : null;
     }
 
     private sealed class Host : IActHost
@@ -169,7 +187,17 @@ public sealed partial class ActRuntimeTests
         public List<(IActEntity owner, int index, int level, float x, float y, float z, bool left)> Spawns { get; } = new();
         public Dictionary<ActSelector, List<IActEntity>> Sets { get; } = new();
 
-        public int Random(int n) => Randoms.Count > 0 ? Randoms.Dequeue() % n : 0;
+        /// <summary>M61:每次向宿主要随机数时给的上界(洗牌每一轮的范围),测试用。</summary>
+        public List<int> RandomBounds { get; } = new();
+
+        public int Random(int n)
+        {
+            RandomBounds.Add(n);
+            return Randoms.Count > 0 ? Randoms.Dequeue() % n : 0;
+        }
+
+        /// <summary>M61:为真时宿主的选择结果里连死了的对象也给(测运行器自己的"活着"过滤),缺省与真实宿主一样只给活着的。</summary>
+        public bool ListDeadToo { get; set; }
 
         public List<(int strength, int ms)> Shakes { get; } = new();
 
@@ -193,7 +221,7 @@ public sealed partial class ActRuntimeTests
         {
             if (Sets.TryGetValue(selector, out List<IActEntity> list))
             {
-                into.AddRange(list.Where(e => e.IsAlive));
+                into.AddRange(ListDeadToo ? list : list.Where(e => e.IsAlive));
             }
         }
     }

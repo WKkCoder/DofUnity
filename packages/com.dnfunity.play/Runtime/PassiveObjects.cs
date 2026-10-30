@@ -259,6 +259,19 @@ namespace Dnf.Play
             }
         }
 
+        private Dictionary<int, IActEntity> _savedTargets;
+
+        /// <summary>[SAVE TARGET OBJECT] 的槽表:挂在被动对象身上,切动作(换运行器)也保留(客户端的槽表属于拥有者对象,E-157)。</summary>
+        void IActEntity.SetSavedTarget(int slot, IActEntity target)
+        {
+            (_savedTargets ?? (_savedTargets = new Dictionary<int, IActEntity>()))[slot] = target;
+        }
+
+        IActEntity IActEntity.GetSavedTarget(int slot)
+        {
+            return _savedTargets != null && _savedTargets.TryGetValue(slot, out IActEntity target) ? target : null;
+        }
+
         // ------------------------------------------------------------------ 推进
 
         private void SwitchAction(PassiveAction next)
@@ -431,9 +444,11 @@ namespace Dnf.Play
         private readonly Func<int> _hpMax;
         private readonly Func<int> _level;
         private readonly Action<ActiveStatusEntry, IActEntity> _status;
+        private readonly Func<bool> _grabbable;
 
+        /// <param name="grabbable">[IS GRABABLE] 要的"此刻能不能被抓"(会话按冰冻、石化等异常状态给,E-156);没给就只看活着。</param>
         public HeroActEntity(TownHero hero, Func<bool> alive, Func<int> hp = null, Func<int> hpMax = null, Func<int> level = null,
-            Action<ActiveStatusEntry, IActEntity> status = null)
+            Action<ActiveStatusEntry, IActEntity> status = null, Func<bool> grabbable = null)
         {
             _hero = hero ?? throw new ArgumentNullException(nameof(hero));
             _alive = alive ?? (() => true);
@@ -441,7 +456,11 @@ namespace Dnf.Play
             _hpMax = hpMax ?? (() => 0);
             _level = level ?? (() => 1);
             _status = status;
+            _grabbable = grabbable;
         }
+
+        /// <summary>主角此刻能不能被抓(E-156):活着,且没有被冰冻或石化(客户端基类 0x0081ecb0 的两项状态检查;其余检查没读出来,推断)。</summary>
+        public bool IsGrabbable => IsAlive && (_grabbable == null || _grabbable());
 
         public ActEntityKind Kind => ActEntityKind.Character;
 

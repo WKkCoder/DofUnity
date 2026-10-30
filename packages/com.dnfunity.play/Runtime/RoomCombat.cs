@@ -3301,7 +3301,7 @@ namespace Dnf.Play
                 }
                 return;
             }
-            _heroEntity = new HeroActEntity(_room.Hero, () => !HeroDead, () => Vitals?.Hp ?? 0, () => Vitals?.HpMax ?? 0, () => Vitals?.Level ?? 1, ApplyActStatus);
+            _heroEntity = new HeroActEntity(_room.Hero, () => !HeroDead, () => Vitals?.Hp ?? 0, () => Vitals?.HpMax ?? 0, () => Vitals?.Level ?? 1, ApplyActStatus, HeroGrabbable);
             _actWorld = new ActWorld(this);
             foreach (MonsterActor m in _monsters)
             {
@@ -3840,6 +3840,15 @@ namespace Dnf.Play
             {
                 _statusHeld = hero.HoldHurt(_heroStatus.LockRemainingMs, attackerFacingLeft) || _statusHeld;
             }
+        }
+
+        /// <summary>
+        /// 脚本的 [IS GRABABLE] 问主角此刻能不能被抓(E-156):基类的检查里异常状态一项是"没有冰冻(1)也没有石化(7)"(客户端 0x0081ecb0 → 虚槽 0x540);
+        /// 没装状态系统(无伤害模式)就都算能抓。
+        /// </summary>
+        private bool HeroGrabbable()
+        {
+            return _heroStatus == null || (!_heroStatus.Has(ActiveStatusKind.Freeze) && !_heroStatus.Has(ActiveStatusKind.Stone));
         }
 
         /// <summary>

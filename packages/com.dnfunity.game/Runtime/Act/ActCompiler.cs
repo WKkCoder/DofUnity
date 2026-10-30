@@ -539,9 +539,25 @@ namespace Dnf.Game.Act
                         records.Add(new ActRecord { Kind = ActRecordKind.IsChild, Tag = tag, Number = cur.Int() });     // 全库 14 处都是一个整数 1(E-134)
                         break;
                     case "[GET TARGET]":
-                        // 在已有目标上排序、随机取、按距离取并截断到最多 N 个(E-130 读码);单人房间里目标最多一个,不改集合
+                        records.Add(ParseGetTarget(cur, tag, unsupported));
+                        break;
+                    case "[CHECK DISTANCE]":
+                        records.Add(ParseCheckDistance(cur, tag, unsupported));
+                        break;
+                    case "[IS GRABABLE]":
+                        if (cur.AtNumber)
+                        {
+                            records.Add(new ActRecord { Kind = ActRecordKind.IsGrabbable, Tag = tag, Number = cur.Int() });
+                            break;
+                        }
+                        AddUnsupported(records, unsupported, tag);
                         cur.SkipToHead(IsTriggerHead);
-                        records.Add(new ActRecord { Kind = ActRecordKind.GetTarget, Tag = tag });
+                        break;
+                    case "[TRIGGER CHECK]":
+                        records.Add(ParseTriggerCheck(cur, tag, unsupported));
+                        break;
+                    case "[SAVE TARGET OBJECT]":
+                        records.Add(ParseSaveTarget(cur, tag, unsupported));
                         break;
                     default:
                         AddUnsupported(records, unsupported, tag);
@@ -571,6 +587,144 @@ namespace Dnf.Game.Act
             }
             AddUnsupported(records, unsupported, tag);
             cur.SkipToHead(IsTriggerHead);
+        }
+
+        /// <summary>
+        /// [GET TARGET] n 键 [HIGH]/[LOW](客户端加载函数 0x0134b27c 起的块,E-155):n 是最多留几个;键是 [RANDOM]、[DISTANCE]、[HP]、[LEVEL]、
+        /// [LAST ATTACKSUCCESS]([MP] 也有,这一版不认);除 [RANDOM] 外键后面还要读一个方向标签,[HIGH] 记 0xb、[LOW] 记 0xc,
+        /// 都不是的写法客户端报"不用的标签"并按"不是 [HIGH]"当 [LOW] 处理(执行块只问方向参数是不是 0xb)。
+        /// 键后面的 [DISTANCE]、[HP] 同时也是触发器的条件标签:不在这里吃掉,主循环会把它们误读成条件(E-155 之前全库约 126 条触发器因此读不懂)。
+        /// </summary>
+        private static ActRecord ParseGetTarget(ActCursor cur, string tag, List<string> unsupported)
+        {
+            int max = cur.Int();
+            string key = cur.TakeOpen();
+            ActTargetKey kind;
+            switch (key)
+            {
+                case "[RANDOM]":
+                    kind = ActTargetKey.Random;
+                    break;
+                case "[DISTANCE]":
+                    kind = ActTargetKey.Distance;
+                    break;
+                case "[HP]":
+                    kind = ActTargetKey.Hp;
+                    break;
+                case "[LEVEL]":
+                    kind = ActTargetKey.Level;
+                    break;
+                case "[LAST ATTACKSUCCESS]":
+                    kind = ActTargetKey.LastAttackSuccess;
+                    break;
+                default:
+                {
+                    string name = tag + " " + (key ?? "?");
+                    AddUnsupportedTag(unsupported, name);
+                    cur.SkipToHead(IsTriggerHead);
+                    return new ActRecord { Kind = ActRecordKind.Unsupported, Tag = name };
+                }
+            }
+            bool high = false;
+            if (kind != ActTargetKey.Random)
+            {
+                if (cur.AtOpen("[HIGH]"))
+                {
+                    cur.Skip();
+                    high = true;
+                }
+                else if (cur.AtOpen("[LOW]"))
+                {
+                    cur.Skip();
+                }
+            }
+            return new ActRecord { Kind = ActRecordKind.GetTarget, Tag = tag, Number = max, TargetKey = kind, Descending = high };
+        }
+
+        /// <summary>
+        /// [CHECK DISTANCE] x 范围 y 范围(客户端条件码 0x3e,加载块读两个整数,判定块在 0x010d44f4,E-156)。
+        /// 后面常跟的 [ZPOS]、[BACKSIDE]、[IS TARGET STATE] 等是各自独立的条件标签,不在这里吃。
+        /// </summary>
+        private static ActRecord ParseCheckDistance(ActCursor cur, string tag, List<string> unsupported)
+        {
+            if (cur.AtNumber)
+            {
+                int x = cur.Int();
+                if (cur.AtNumber)
+                {
+                    int y = cur.Int();
+                    return new ActRecord { Kind = ActRecordKind.CheckDistance, Tag = tag, Ints = new[] { x, y } };
+                }
+            }
+            AddUnsupportedTag(unsupported, tag);
+            cur.SkipToHead(IsTriggerHead);
+            return new ActRecord { Kind = ActRecordKind.Unsupported, Tag = tag };
+        }
+
+        /// <summary>
+        /// [TRIGGER CHECK] [种类 [动作序号]] 触发器序号 [ON]/[OFF](客户端条件码 0x2e,加载块 0x0134b3xx 起,判定块 0x010d84fe 起,E-156)。
+        /// 种类的写法与 [TRIGGER] 行为一样,只是这里不认 [DEFAULT](加载块的种类表里没有它,客户端载入报错)。[ON] 记 0、[OFF] 记 1,别的写法客户端报错。
+        /// </summary>
+        private static ActRecord ParseTriggerCheck(ActCursor cur, string tag, List<string> unsupported)
+        {
+            if (TryParseTriggerPool(cur, false, out ActTriggerPool pool, out int slot, out int n))
+            {
+                bool on = cur.AtOpen("[ON]");
+                if (on || cur.AtOpen("[OFF]"))
+                {
+                    cur.Skip();
+                    return new ActRecord
+                    {
+                        Kind = ActRecordKind.TriggerCheck, Tag = tag, Number = n, Flag = on, TriggerPool = pool, TriggerSlot = slot,
+                    };
+                }
+            }
+            AddUnsupportedTag(unsupported, tag);
+            cur.SkipToHead(IsTriggerHead);
+            return new ActRecord { Kind = ActRecordKind.Unsupported, Tag = tag };
+        }
+
+        /// <summary>
+        /// [SAVE TARGET OBJECT] [选择器] 槽号(客户端加载块 0x0134xxxx,记录码 0x3d;E-157)。选择器只认六个标签:
+        /// [TARGET]、[SUMMON MASTER]、[LAST ATTACKSUCCESS]、[CHARACTER ATTACKSUCCESS]、[LAST ATTACKER]、[LAST ACTIVE ATTACKER];
+        /// 别的标签(含 [CHECKUP OBJECT] 与全库 4 处笔误 [LAST ATTACKSUUCCESS])被当作"选择器标签"吃掉并落到默认的工作集;没写标签也是工作集。
+        /// 后面必须是槽号;碰上别的记录头(缺槽号)读不懂。
+        /// </summary>
+        private static ActRecord ParseSaveTarget(ActCursor cur, string tag, List<string> unsupported)
+        {
+            ActSelector selector = ActSelector.WorkingSet;
+            if (cur.AtOpen(out string name) && !IsTriggerHead(name))
+            {
+                cur.Skip();
+                switch (name)
+                {
+                    case "[TARGET]":
+                        selector = ActSelector.Target;
+                        break;
+                    case "[SUMMON MASTER]":
+                        selector = ActSelector.SummonMaster;
+                        break;
+                    case "[LAST ATTACKSUCCESS]":
+                        selector = ActSelector.LastAttackSuccess;
+                        break;
+                    case "[CHARACTER ATTACKSUCCESS]":
+                        selector = ActSelector.CharacterAttackSuccess;
+                        break;
+                    case "[LAST ATTACKER]":
+                        selector = ActSelector.LastAttacker;
+                        break;
+                    case "[LAST ACTIVE ATTACKER]":
+                        selector = ActSelector.LastActiveAttacker;
+                        break;
+                }
+            }
+            if (cur.TryInt(out int slot))
+            {
+                return new ActRecord { Kind = ActRecordKind.SaveTarget, Tag = tag, Selector = selector, Number = slot };
+            }
+            AddUnsupportedTag(unsupported, tag);
+            cur.SkipToHead(IsTriggerHead);
+            return new ActRecord { Kind = ActRecordKind.Unsupported, Tag = tag };
         }
 
         private static ActRecord ParseWhich(ActCursor cur, List<string> unsupported)
@@ -605,12 +759,14 @@ namespace Dnf.Game.Act
             }
             else if (selector == ActSelector.LoadTarget)
             {
-                cur.Ints();
-                rec.Kind = ActRecordKind.Unsupported;     // 读取脚本槽里存下的目标:要 [SAVE TARGET OBJECT] 的状态,这一版不做
-                if (!unsupported.Contains(rec.Tag))
+                // [LOAD TARGET] 槽号:取拥有者槽表里存下的那个对象(客户端选择器码 0x15,取出块在 0x010d25e0 里;E-157)
+                if (!cur.TryInt(out int slot))
                 {
-                    unsupported.Add(rec.Tag);
+                    AddUnsupportedTag(unsupported, rec.Tag);
+                    cur.SkipToHead(IsTriggerHead);
+                    return new ActRecord { Kind = ActRecordKind.Unsupported, Tag = rec.Tag };
                 }
+                rec.PartyIndex = slot;
             }
             return rec;
         }
@@ -627,9 +783,20 @@ namespace Dnf.Game.Act
             {
                 rec.Selector = ActSelector.WorkingSet;
             }
-            else if (sel != null && Selectors.TryGetValue(sel, out ActSelector s) && s != ActSelector.LoadTarget)
+            else if (sel != null && Selectors.TryGetValue(sel, out ActSelector s))
             {
                 rec.Selector = s;
+                if (s == ActSelector.LoadTarget)
+                {
+                    // [DO BEHAVIOR] [LOAD TARGET] 槽号 行为组号(E-157)
+                    if (!cur.TryInt(out int slot))
+                    {
+                        AddUnsupportedTag(unsupported, tag + " [LOAD TARGET] (no slot)");
+                        cur.SkipToHead(IsTriggerHead);
+                        return new ActRecord { Kind = ActRecordKind.Unsupported, Tag = tag };
+                    }
+                    rec.PartyIndex = slot;
+                }
             }
             else
             {
@@ -898,53 +1065,10 @@ namespace Dnf.Game.Act
         private static ActBehavior ParseTriggerSwitch(ActCursor cur, string tag)
         {
             var unsupported = new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
-            ActTriggerPool pool = ActTriggerPool.Own;
-            int slot = -1;
-            if (!cur.AtNumber)
+            if (!TryParseTriggerPool(cur, true, out ActTriggerPool pool, out int slot, out int n))
             {
-                switch (cur.TakeOpen())
-                {
-                    case "[MOVE]":
-                        pool = ActTriggerPool.Move;
-                        break;
-                    case "[STAY]":
-                        pool = ActTriggerPool.Stay;
-                        break;
-                    case "[SIT]":
-                        pool = ActTriggerPool.Sit;
-                        break;
-                    case "[DOWN]":
-                        pool = ActTriggerPool.Down;
-                        break;
-                    case "[DEFAULT]":
-                        pool = ActTriggerPool.Default;
-                        break;
-                    case "[PROC]":
-                        pool = ActTriggerPool.Proc;
-                        break;
-                    case "[ATTACK]":
-                        pool = ActTriggerPool.Attack;
-                        break;
-                    case "[CUSTOM]":
-                        pool = ActTriggerPool.Custom;
-                        break;
-                    default:
-                        return unsupported;
-                }
-                if (pool == ActTriggerPool.Attack || pool == ActTriggerPool.Custom)
-                {
-                    if (!cur.AtNumber)
-                    {
-                        return unsupported;
-                    }
-                    slot = cur.Int();
-                }
-                if (!cur.AtNumber)
-                {
-                    return unsupported;
-                }
+                return unsupported;
             }
-            int n = cur.Int();
             ActTriggerCommand command;
             switch (cur.TakeOpen())
             {
@@ -964,6 +1088,68 @@ namespace Dnf.Game.Act
             {
                 Kind = ActBehaviorKind.TriggerSwitch, Tag = tag, TriggerIndex = n, Command = command, TriggerPool = pool, TriggerSlot = slot,
             };
+        }
+
+        /// <summary>
+        /// [TRIGGER] 与 [TRIGGER CHECK] 共用的"哪一族动作的第几个触发器"写法:[种类 [动作序号]] 触发器序号(E-145、E-156)。
+        /// 没写种类:当前 .act 自己;[ATTACK]、[CUSTOM] 先写动作序号,其余种类每族只有一个动作;<paramref name="allowDefault"/> 控制认不认 [DEFAULT]。
+        /// 缺序号、不认得的种类返回 false。
+        /// </summary>
+        private static bool TryParseTriggerPool(ActCursor cur, bool allowDefault, out ActTriggerPool pool, out int slot, out int index)
+        {
+            pool = ActTriggerPool.Own;
+            slot = -1;
+            index = 0;
+            if (!cur.AtNumber)
+            {
+                switch (cur.TakeOpen())
+                {
+                    case "[MOVE]":
+                        pool = ActTriggerPool.Move;
+                        break;
+                    case "[STAY]":
+                        pool = ActTriggerPool.Stay;
+                        break;
+                    case "[SIT]":
+                        pool = ActTriggerPool.Sit;
+                        break;
+                    case "[DOWN]":
+                        pool = ActTriggerPool.Down;
+                        break;
+                    case "[DEFAULT]":
+                        if (!allowDefault)
+                        {
+                            return false;
+                        }
+                        pool = ActTriggerPool.Default;
+                        break;
+                    case "[PROC]":
+                        pool = ActTriggerPool.Proc;
+                        break;
+                    case "[ATTACK]":
+                        pool = ActTriggerPool.Attack;
+                        break;
+                    case "[CUSTOM]":
+                        pool = ActTriggerPool.Custom;
+                        break;
+                    default:
+                        return false;
+                }
+                if (pool == ActTriggerPool.Attack || pool == ActTriggerPool.Custom)
+                {
+                    if (!cur.AtNumber)
+                    {
+                        return false;
+                    }
+                    slot = cur.Int();
+                }
+                if (!cur.AtNumber)
+                {
+                    return false;
+                }
+            }
+            index = cur.Int();
+            return true;
         }
 
         /// <summary>

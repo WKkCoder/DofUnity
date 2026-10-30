@@ -1306,3 +1306,29 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --room --map 
 
 **没做**:对象创建参数里按引擎参数名查表得到的前向与离地偏移(表的来源没找到,按 0 放)与 1 个像素的深度偏移;传给对象的 `[static data]` 第 1 个数;第二段第 3 帧起的武器特效与声音;动画速度比率;第二段百分比第 1 列的身体伤害(没有攻击框所以用不上);非客户端权威时的变体(模式 0);另一个职业的对象编号;对象基础动作里那一帧长停留客户端怎么提前结束(按动画原样放);其余主角技能状态。
 
+## 48 怪物 .act 的挑目标、距离、可抓取、触发器开关读取与保存目标槽(M61,证据 E-155、E-156、E-157)
+
+**读到了什么**(静态读码:Ghidra 无头反编译 `DNF.exe` 普通代码段里的条件判定函数 `0x010d3630`、每帧运行器 `0x010ad580`、事件运行器、存目标函数 `0x010d1f40`、选择器块 `0x010d25e0`、加载函数 `0x0134b27c` 起的几个块,以及 `0x008791a0`、`0x0081ecb0`、`0x00872c60`;受保护区的调用当黑盒;没有新录像、没有连服务器;怪物、坐标、触发器内容不入库):
+
+- **`[GET TARGET] n 键 [HIGH]/[LOW]`**(条件码 0x2c):键是随机、距离、等级、生命、魔法值、最近命中;方向 `[HIGH]` 记 0xb、`[LOW]` 记 0xc。**工作集一开始是空的整个触发器不通过**;非空时按键整理再从尾巴删到 n 个(n 小于个数才删)。距离键按整数距离走多重映射(`[HIGH]` 从尾取);生命键的 `[HIGH]` 比较函数是恒真的笔误(不排序)。键标签 `[DISTANCE]`、`[HP]` 同时也是条件标签,以前的读法把它们当成独立条件,整条读不懂。
+- **`[CHECK DISTANCE] x y`**(条件码 0x3e):整体真假,不改工作集。拥有者要是生物类(被动对象失败);场上角色类对象里有一个敌对、活着、横向差的绝对值不大于 x 且纵深差的绝对值不大于 y 的就通过,位置按整数比较。
+- **`[IS GRABABLE] n`**(条件码 0x2d):逐对象过滤;被动对象剔除,生物类取“能否被抓”;n 为 1 留能抓的,别的值留不能抓的。主角的“能否被抓”基类是异常状态里没有冰冻、没有石化。
+- **`[TRIGGER CHECK] [种类 [动作序号]] 序号 [ON]/[OFF]`**(条件码 0x2e):没写种类是整体真假——自己的第 n 个触发器的开关与要求一致才通过;写了族是逐对象过滤——取对象那一族动作的触发器池,开关与要求一致才留下。
+- **`[SAVE TARGET OBJECT] [选择器] 槽号`**(记录码 0x3d)与 **`[LOAD TARGET] 槽号`**(选择器码 0x15):存的是选择结果的第一个对象,空选择不动槽;槽表是拥有者对象身上的一张映射,不随运行器与这一招结束而清掉。
+
+**代码**:
+
+- Game 层:`ActTargetKey`;`ActRecordKind` 新增 `CheckDistance`、`IsGrabbable`、`SaveTarget`(`GetTarget`、`TriggerCheck` 早就有,这次读全参数、换了判定);`ActRecord.TriggerPool`、`TriggerSlot`;`ActCompiler.ParseGetTarget`、`ParseCheckDistance`、`ParseTriggerCheck`、`ParseSaveTarget`,`TryParseTriggerPool` 与 `[TRIGGER]` 行为共用,`[WHICH]` 与 `[DO BEHAVIOR]` 里读 `[LOAD TARGET]` 的槽号;`ActRunner` 的 `ApplyGetTarget`、`CheckDistance`、`ApplySaveTarget`、`Select` 里的 `LoadTarget`,`Keep` 里 `IsGrabbable`、`TriggerCheck` 两个逐对象分支;`IActEntity` 新增 `GetActionTrigger`(默认没有)、`IsGrabbable`(默认等于活着)、`SetSavedTarget`/`GetSavedTarget`(默认空实现)。
+- Play 层:`MonsterActor.ActReadTrigger`(出招走每招一份的开关、站立行走坐下倒地过程走各族宿主的开关数组、`[DEFAULT]`/`[CUSTOM]` 回答没有);`HeroActEntity` 带“能否被抓”回调,`RoomCombatSession.HeroGrabbable` 提供(没有冰冻与石化);怪物的 `ActBody` 与被动对象各自有保存目标槽表。
+
+**运行时的样子**:怪物的出招脚本里“挑最近的一个主角”“主角在 x、y 范围内才放”“只对没被抓住/能被抓住的放”“别的招的开关还开着才放”“第 0 招存下主角、第 1 招拿存下的主角当目标”这类写法现在真的会起作用;空工作集挑目标时整个触发器不放(以前这类触发器整条读不懂、从不触发)。
+
+**验证**:
+
+- 单元测试新增 85 条(全套 3705 条;数据全是合成的):Game `ActRuntimeTests.GetTarget.cs` 25 条、`ActRuntimeTests.Conditions.cs` 27 条、`ActRuntimeTests.SavedTargets.cs` 18 条,Play `PassiveObjectTests.Conditions.cs` 15 条(怪物按池回答开关、主角能否被抓、怪物与被动对象的槽表、怪物两招之间存取目标;合成怪物 `xsave`、`xsavectl`、`f_sit`、`f_down`)。
+- 变异检查 79 处(写法与方向、各键与方向反转、洗牌次数与上界、截断边界与负数、空集合、距离与整数截断、死亡与角色类、能抓与不能抓、自己与逐对象的开关、池映射、保存目标的选择器与槽号与空选择、槽表归属)全部让对应单测变红;第一轮 9 处没变红(洗牌次数、距离与位置截断、死亡过滤的冗余、自己序号越界差一、方向读法、池映射一处只在“只有这一族有程序”的怪物上才分得出、缺槽号吃记录头、一处变异的测试分组选错),补测试与合成怪物之后全部变红。
+- 真实数据(命令行,本机,汇总数,非 REA):`dnf act-run-check`:怪物出招 `.act` 的触发器 13476 条,运行器认得的从 13000 条(96.5%)到 13351 条(99.1%),读不懂的触发器标签从 30 种到 22 种;被动对象自己的 `.act` 从 4491/4870(92.2%)到 4798/4870(98.5%)。
+- 全库副本扫描 300/346 与开伤害扫描 274/346 都不变(通关数与上一轮一样);`tools/verify-all.sh` 26 项全部通过;EditMode:57 通过、10 条 GPU 对拍跳过;macOS 链路 69 次运行退出码 0。这一轮没有构建 Windows 与 Android。
+
+**没做**:`[GET TARGET]` 的 `[MP]` 键;`[CHECK DISTANCE]` 里两个虚槽的语义(按成立、按假);主角“能否被抓”的其余检查;被动对象的 `[CUSTOM]` 开关板与 `[DEFAULT]`/`[CUSTOM]` 池的宿主(`[TRIGGER CHECK]` 在被动对象上的大头);销毁对象时清槽(按“已死不取”近似);下一批读不懂的条件:`[IS TARGET STATE]`、`[IS TEAM]`、`[IS END MAP]`、`[ZSPEED]`、`[FACE TO FACE]`、`[WITHIN SIGHT]`、`[CHECK STUCK]`、`[AREA]`。
+

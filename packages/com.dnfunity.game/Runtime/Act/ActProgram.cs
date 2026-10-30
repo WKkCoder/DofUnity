@@ -290,6 +290,35 @@ namespace Dnf.Game.Act
 
         /// <summary>[IS CHILD] n:逐对象过滤,n 非 0 留下"创建者(召唤者)就是拥有者"的,n 为 0 留下不是的(E-134)。</summary>
         IsChild,
+
+        /// <summary>
+        /// [CHECK DISTANCE] x 范围 y 范围:整体真假,不改工作集(客户端条件码 0x3e,块在 0x010d44f4;E-156)。
+        /// 拥有者要是生物类对象;场上有一个敌对的角色类对象,横向与纵深的差都在范围内才通过。
+        /// </summary>
+        CheckDistance,
+
+        /// <summary>[IS GRABABLE] n:逐对象过滤(客户端条件码 0x2d;E-156)。n 为 1 留下"能被抓"的生物类对象,否则留下"不能被抓"的生物类对象;被动对象一律剔除。</summary>
+        IsGrabbable,
+
+        /// <summary>
+        /// [SAVE TARGET OBJECT] [选择器] 槽号:把选择结果里的第一个对象存进拥有者的槽表(客户端记录码 0x3d,存的函数 0x010d1f40,E-157)。
+        /// 选择器没写(或写了认不得的标签,含 [CHECKUP OBJECT])是工作集;结果为空不动槽。不是条件,不会让触发器不通过。
+        /// </summary>
+        SaveTarget,
+    }
+
+    /// <summary>
+    /// [GET TARGET] 的排序键(客户端加载函数 0x0134b27c 起的块给每种键一个模式号:RANDOM 9、DISTANCE 5、LEVEL 6、HP 7、MP 8、LAST ATTACKSUCCESS 10;E-155)。
+    /// MP 这一版没有对象接口,不认(全库没有用到)。
+    /// </summary>
+    public enum ActTargetKey : byte
+    {
+        None,
+        Random,
+        Distance,
+        Hp,
+        Level,
+        LastAttackSuccess,
     }
 
     /// <summary>触发器里的一条记录(条件、事件或 [DO BEHAVIOR])。字段按种类取用。</summary>
@@ -317,17 +346,23 @@ namespace Dnf.Game.Act
         /// <summary>[WHICH] 的选择器或 [DO BEHAVIOR] 的目标。</summary>
         public ActSelector Selector { get; internal set; }
 
-        /// <summary>[PARTY TARGET] 的队伍位置编号;没有是 -1。</summary>
+        /// <summary>[PARTY TARGET] 的队伍位置编号,或 [LOAD TARGET] 的槽号(都是"选择器的参数");没有是 -1。</summary>
         public int PartyIndex { get; internal set; } = -1;
 
         /// <summary>[DO BEHAVIOR] 的行为组编号(值表达式)。</summary>
         public ActValue Behavior { get; internal set; }
 
-        /// <summary>[IS INDEX]、[IS NOT INDEX] 的编号表;[IS OBJECT TYPE] 的对象种类(<see cref="ActEntityKind"/> 的整数);[TRIGGER CHECK] 的触发器编号;[IS IN POS] 的 X、Y、Z。</summary>
+        /// <summary>[IS INDEX]、[IS NOT INDEX] 的编号表;[IS OBJECT TYPE] 的对象种类(<see cref="ActEntityKind"/> 的整数);[IS IN POS] 的 X、Y、Z;[CHECK DISTANCE] 的横向与纵深范围。</summary>
         public int[] Ints { get; internal set; } = Array.Empty<int>();
 
-        /// <summary>[TRIGGER CHECK]:要求目标触发器开着(true)还是关着(false)。</summary>
+        /// <summary>[TRIGGER CHECK]:要求目标触发器开着([ON],true)还是关着([OFF],false)。触发器序号放在 <see cref="Number"/>。</summary>
         public bool Flag { get; internal set; }
+
+        /// <summary>[TRIGGER CHECK] 看哪一族动作的触发器池(没写种类是 <see cref="ActTriggerPool.Own"/>:当前 .act 自己,整体真假;其余逐对象过滤,E-156)。</summary>
+        public ActTriggerPool TriggerPool { get; internal set; }
+
+        /// <summary>[TRIGGER CHECK] [ATTACK] 与 [CUSTOM] 的动作序号;别的写法是 -1。</summary>
+        public int TriggerSlot { get; internal set; } = -1;
 
         /// <summary>[IF] 的左、右表达式。</summary>
         public ActExpression Left { get; internal set; }
@@ -336,6 +371,12 @@ namespace Dnf.Game.Act
 
         /// <summary>[HP]:阈值是最大生命的百分比([%])而不是绝对点数([POINT])。[DELAY DO BEHAVIOR] 的延迟毫秒放在 <see cref="Number"/>。</summary>
         public bool Percent { get; internal set; }
+
+        /// <summary>[GET TARGET] n 键 [HIGH]/[LOW]:取的排序键;个数 n 放在 <see cref="Number"/>(E-155)。</summary>
+        public ActTargetKey TargetKey { get; internal set; }
+
+        /// <summary>[GET TARGET]:写了 [HIGH]("大的在前")为真;[LOW]、没写、[RANDOM] 为假。</summary>
+        public bool Descending { get; internal set; }
 
         public override string ToString() => Kind + " " + Tag;
     }
