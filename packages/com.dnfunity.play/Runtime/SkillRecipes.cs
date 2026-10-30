@@ -252,6 +252,44 @@ namespace Dnf.Play
     }
 
     /// <summary>
+    /// 空中攻击强化类技能的特别部分(客户端状态 7,即跳跃攻击状态,带一个技能号参数;证据 E-150)。放法:在腾空的跳跃状态里按攻击键(普通的空中攻击键),
+    /// 技能学过、魔法值够就把这一击换成技能:动作不再是 [jumpattack motion],而是 [etc motion] 里两项交替(<see cref="MotionIndexA"/>、<see cref="MotionIndexB"/>)——
+    /// 客户端有一个"上一次放了哪种"的字段(-1 没放过、0 刚放了第一种、1 刚放了第二种),下一次放的种类是:字段为 0 就放第二种,否则第一种;
+    /// 每放一次就把字段改成这次的种类,所以两种动作交替,而且跨跳跃保留(字段只在主角对象创建时与一个我们没读通的特殊状态里清回 -1)。
+    /// 命中用空中攻击自己的攻击信息(进入块里没有换攻击信息),伤害换成技能的百分比(.skl [level info] 当前等级的 <see cref="SkillStageSpec.DamageRateColumn"/> 列,
+    /// 取配方第 0 段的列;客户端把"这一列减 100"存成伤害加成,我们与别的技能一致按这一列当总百分比)。
+    /// 特效:动画播到第 <see cref="EffectFrame"/> 帧时放一次,第一种放 <see cref="EffectsA"/> 里的预载特效,第二种放 <see cref="EffectsB"/> 里的。
+    /// 下标与帧号都是客户端状态码里写死的常量,不是数据值。没有的:某个成长类型学了别的技能时的伤害加成与速度调整、普通空中攻击在学了这个技能后多出的一个特效、
+    /// 特效的图层(上下两层)与播放倍率、命中后的成长类型专属附加效果、对战模式的变体。
+    /// </summary>
+    public sealed class SkillJumpAttackSpec
+    {
+        public SkillJumpAttackSpec(int motionIndexA, int motionIndexB, int effectFrame, IEnumerable<int> effectsA, IEnumerable<int> effectsB)
+        {
+            MotionIndexA = motionIndexA;
+            MotionIndexB = motionIndexB;
+            EffectFrame = effectFrame < 0 ? 0 : effectFrame;
+            EffectsA = new List<int>(effectsA ?? Array.Empty<int>()).AsReadOnly();
+            EffectsB = new List<int>(effectsB ?? Array.Empty<int>()).AsReadOnly();
+        }
+
+        /// <summary>第一种动作在 [etc motion] 里的下标。</summary>
+        public int MotionIndexA { get; }
+
+        /// <summary>第二种动作在 [etc motion] 里的下标。</summary>
+        public int MotionIndexB { get; }
+
+        /// <summary>特效在动画播到第几帧(从 0 数)时放。</summary>
+        public int EffectFrame { get; }
+
+        /// <summary>第一种动作放的预载特效下标。</summary>
+        public IReadOnlyList<int> EffectsA { get; }
+
+        /// <summary>第二种动作放的预载特效下标。</summary>
+        public IReadOnlyList<int> EffectsB { get; }
+    }
+
+    /// <summary>
     /// 一个多段地面技能的放法(证据 E-129):各段(<see cref="Stages"/>)、起滑速度与加速度取 .skl [static data] 的哪几个数、接下一段的条件。
     /// 放法:起手放第 0 段;这一段的动画播过 <see cref="ChainFromFrame"/> 帧之后再按一次同一个技能键,就换成下一段(不再扣蓝、不再进冷却)。
     /// 滑行:起滑速度与加速度取 [static data] 的第 <see cref="SlideSpeedIndex"/>、<see cref="SlideAccelIndex"/> 个数;进入每一段那一刻看方向键——
@@ -261,13 +299,19 @@ namespace Dnf.Play
     {
         public SkillRecipe(int skillId, IEnumerable<SkillStageSpec> stages, int slideSpeedIndex, int slideAccelIndex, int forwardSpeedIndex, int forwardAccelIndex,
             int chainFromFrame, bool slideFollowsHeldDirection = true, IEnumerable<SkillObjectSpec> objects = null, SkillHopSpec hop = null,
-            bool forwardReplacesBase = false, int multiHitPassiveSkillId = 0, int multiHitCountIndex = -1, SkillDiveSpec dive = null)
+            bool forwardReplacesBase = false, int multiHitPassiveSkillId = 0, int multiHitCountIndex = -1, SkillDiveSpec dive = null,
+            SkillJumpAttackSpec jumpAttack = null)
         {
             if (dive != null && hop != null)
             {
                 throw new ArgumentException("一个配方不能既是蓄力跳跃又是悬停俯冲", nameof(dive));
             }
+            if (jumpAttack != null && (hop != null || dive != null))
+            {
+                throw new ArgumentException("空中攻击强化类的配方不能同时是蓄力跳跃或悬停俯冲", nameof(jumpAttack));
+            }
             Dive = dive;
+            JumpAttack = jumpAttack;
             ForwardReplacesBase = forwardReplacesBase;
             MultiHitPassiveSkillId = multiHitPassiveSkillId;
             MultiHitCountIndex = multiHitCountIndex;
@@ -344,6 +388,13 @@ namespace Dnf.Play
         /// 动画是空中攻击动作),只能在跳跃状态里放(<see cref="HeroSkills.Cast"/> 走 <see cref="TownHero.BeginSkillDive"/>)。
         /// </summary>
         public SkillDiveSpec Dive { get; }
+
+        /// <summary>
+        /// 空中攻击强化类技能的参数(证据 E-150);不是这一类技能为 null。有它的配方只有一段占位(伤害百分比列取这一段的
+        /// <see cref="SkillStageSpec.DamageRateColumn"/>、固定值列取 <see cref="SkillStageSpec.DamageFixedColumn"/>,没有自己的攻击信息:命中沿用空中攻击的攻击信息),
+        /// 由攻击键在空中接管(<see cref="HeroSkills.TakeOverJumpAttack"/>)或快捷键直接放(<see cref="HeroSkills.Cast"/> 走 <see cref="TownHero.BeginJumpAttackSkill"/>)。
+        /// </summary>
+        public SkillJumpAttackSpec JumpAttack { get; }
     }
 
     /// <summary>
@@ -539,6 +590,17 @@ namespace Dnf.Play
                     new SkillObjectSpec(objectId: 20016, stage: 0, frame: 0, damageRateColumn: 2, damageFixedColumn: 1, onLanding: true),
                 },
                 dive: new SkillDiveSpec(hoverMs: 200, speedX: 470, speedZ: -900, effectIndex: 0, impactHeightIndex: 3)),
+
+            // 空中攻击强化类技能(状态 7 带技能号参数,证据 E-150):在跳跃状态里按攻击键,这一击换成 [etc motion] 第 23、24 项(两项交替,上一次放了哪项记在
+            // 主角字段里);命中沿用空中攻击的攻击信息,伤害取 [level info] 的百分比第 0 列(没有固定值列);动画播到第 2 帧放一次预载表里的特效:第一种放第 4、6 个,
+            // 第二种放第 5、7 个。没做:某个成长类型学了别的技能时的伤害加成与速度调整、普通空中攻击学了这个技能后多出的一个特效、特效图层与倍率、成长类型专属的命中附加效果、对战模式变体。
+            new SkillRecipe(17,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: -1, attackInfoIndex: -1, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                jumpAttack: new SkillJumpAttackSpec(motionIndexA: 23, motionIndexB: 24, effectFrame: 2, effectsA: new[] { 4, 6 }, effectsB: new[] { 5, 7 })),
         },
         new[]
         {

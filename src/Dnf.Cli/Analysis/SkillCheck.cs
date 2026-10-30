@@ -283,6 +283,7 @@ internal static class SkillCheck
         int recipeHops = 0;
         int recipeMultiHits = 0;
         int recipeDives = 0;
+        int recipeJumpAttacks = 0;
         var recipeProblems = new List<string>();
         foreach (SkillRecipe recipe in SkillRecipes.Default.All)
         {
@@ -320,7 +321,7 @@ internal static class SkillCheck
             for (int i = 0; i < recipe.Stages.Count; i++)
             {
                 SkillStageSpec st = recipe.Stages[i];
-                if (recipe.Dive == null && !InLibrary(chr.CustomAnimationPath(st.MotionIndex)))      // 悬停俯冲没有 [etc motion] 的下标(动画是空中攻击动作,下面单独查)
+                if (recipe.Dive == null && recipe.JumpAttack == null && !InLibrary(chr.CustomAnimationPath(st.MotionIndex)))      // 悬停俯冲没有 [etc motion] 的下标(动画是空中攻击动作,下面单独查)
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:动作读不到");
                 }
@@ -328,7 +329,7 @@ internal static class SkillCheck
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:攻击信息读不到");
                 }
-                if (!st.HasOwnStrike && recipe.Objects.Count == 0 && recipe.Hop == null)
+                if (!st.HasOwnStrike && recipe.Objects.Count == 0 && recipe.Hop == null && recipe.JumpAttack == null)
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:没有自己的命中,配方却没有放对象");
                 }
@@ -514,6 +515,40 @@ internal static class SkillCheck
                     recipeProblems.Add(label + " 悬停俯冲:没有\"落地放\"的对象");
                 }
             }
+            if (recipe.JumpAttack != null)
+            {
+                // 空中攻击强化(M56,证据 E-150):配方只有一段、不带自己的攻击信息(借空中攻击的,伤害取 [level info] 的百分比列);指令是单独一个攻击键;
+                // 两种动作的 [etc motion] 下标落在表内、动画在库里、帧数够到特效帧(攻击框在武器图层里,由下面的真实会话检查);两种放的预载特效下标都在预载表里、动画在库里;1 级的百分比读出来是正数;具体数不打印
+                recipeJumpAttacks++;
+                SkillJumpAttackSpec ja = recipe.JumpAttack;
+                if (recipe.Stages.Count != 1 || recipe.Stages[0].HasOwnStrike)
+                {
+                    recipeProblems.Add(label + " 空中攻击强化:配方不是借空中攻击信息的单段");
+                }
+                if (def.Command.IsEmpty || def.Command.Length != 1 || def.Command.Trigger != CommandKey.Attack)
+                {
+                    recipeProblems.Add(label + " 空中攻击强化:指令不是单独的攻击键");
+                }
+                foreach (int motionIndex in new[] { ja.MotionIndexA, ja.MotionIndexB })
+                {
+                    AniFile? m = assets.LoadAni(chr.CustomAnimationPath(motionIndex) ?? "");
+                    if (m == null || m.Frames.Length <= ja.EffectFrame)
+                    {
+                        recipeProblems.Add(label + " 空中攻击强化:动作读不到,或帧数不到特效帧");
+                    }
+                }
+                foreach (int effectIndex in ja.EffectsA.Concat(ja.EffectsB))
+                {
+                    if (effectIndex >= effectPaths.Count || !InLibrary(PvfPath.ResolveRelativeTo(chr.Path, effectPaths[effectIndex])))
+                    {
+                        recipeProblems.Add(label + " 空中攻击强化:特效读不到(预载表里有 " + effectPaths.Count + " 个)");
+                    }
+                }
+                if (def.GetLevel(1, recipe.Stages[0].DamageRateColumn, false) <= 0)
+                {
+                    recipeProblems.Add(label + " 空中攻击强化:1 级的百分比伤害读出来不是正数");
+                }
+            }
             for (int i = 0; i < recipe.Objects.Count; i++)
             {
                 SkillObjectSpec o = recipe.Objects[i];
@@ -575,7 +610,7 @@ internal static class SkillCheck
         }
         Report(recipeCount == SkillRecipes.Default.Count && recipeProblems.Count == 0,
             "技能配方 " + recipeCount + " 个(共 " + recipeStages + " 段、放对象 " + recipeObjects + " 个、带蓄力 " + recipeHolds + " 段、等特效标志的对象 " + recipeGates
-            + " 个、定结束帧 " + recipeEndFrames + " 段、蓄力跳跃 " + recipeHops + " 个、多段命中 " + recipeMultiHits + " 个、悬停俯冲 " + recipeDives + " 个)在真实数据里都读得通"
+            + " 个、定结束帧 " + recipeEndFrames + " 段、蓄力跳跃 " + recipeHops + " 个、多段命中 " + recipeMultiHits + " 个、悬停俯冲 " + recipeDives + " 个、空中攻击强化 " + recipeJumpAttacks + " 个)在真实数据里都读得通"
             + "(动作、攻击信息、特效、对象、蓄力、结束帧、[static data]、[level info] 列;问题 " + recipeProblems.Count + " 条)");
 
         // 7. 出招指令(M47,证据 E-140):整个职业技能的 [command] 在真实数据里读得通,而且输入层认得出来——
@@ -804,6 +839,139 @@ internal static class SkillCheck
             Report(diveSkills > 0 && diveProblems.Count == 0 && diveGroundBlocked == diveSkills && diveCycles == diveSkills * 2,
                 "悬停俯冲类技能 " + diveSkills + " 个:地面上打指令放不出 " + diveGroundBlocked + " 个;腾空时(刚离地与最高点各一次)打指令放出自己、定住最后一帧、悬停、俯冲、落地、坐姿、回到站立走完 "
                 + diveCycles + " 次,其中放了冲击对象 " + diveImpacts + " 次、因起点太低没放 " + diveNoImpacts + " 次(问题 " + diveProblems.Count + " 条)");
+
+            // 7c. 空中攻击强化类技能(M56,证据 E-150)的真实会话:表里的每个这类技能(指令是单独一个攻击键)——地面上按攻击键是普通攻击(不放它、不扣蓝);
+            // 出招指令关着(自动机的默认)时空中按攻击键是普通的空中攻击;开着时主角起跳升到最高点按攻击键:这一击换成它(技能号、[etc motion] 里这一次该放的那一种动作、
+            // 扣魔法值、算一次接管、交替模式变成这一次的种类),动画播到特效帧放一次预载特效,挥完这一跳再按攻击键没有反应;落地后再跳一次放另一种动作(两种交替)。只打印汇总数。
+            int jumpSkills = 0;
+            int jumpGroundPlain = 0;
+            int jumpPlainWhenOff = 0;
+            int jumpCycles = 0;
+            int jumpEffectCycles = 0;
+            int jumpBoxCycles = 0;
+            var jumpBoxes = new HeroStrikeBoxes(assets);
+            var jumpProblems = new List<string>();
+            foreach (SkillRecipe recipe in SkillRecipes.Default.All)
+            {
+                if (recipe.JumpAttack == null)
+                {
+                    continue;
+                }
+                jumpSkills++;
+                string label = "空中攻击强化 #" + jumpSkills;
+                SkillDef? def = catalog.Find(recipe.SkillId);
+                if (def == null || def.Command.IsEmpty || def.Command.Length != 1 || def.Command.Trigger != CommandKey.Attack || caster.Skills.LevelOf(def.Id) <= 0)
+                {
+                    jumpProblems.Add(label + ":技能不在目录里、指令不是单独的攻击键或没学会");
+                    continue;
+                }
+
+                RoomCombatSession ground = NewSession(assets, opts, caster);
+                ground.Update(10, 0, 0, true, false, SkillKeys.None);
+                if (ground.SkillCasts != 0 || ground.JumpSkillCasts != 0 || ground.Hero.JumpAttackSkillId != 0 || ground.Hero.Motion == HeroMotion.Skill
+                    || (ground.Vitals != null && ground.Vitals.Mp != ground.Vitals.MpMax))
+                {
+                    jumpProblems.Add(label + ":地面上按攻击键不该放出它(或扣了魔法值)");
+                }
+                else
+                {
+                    jumpGroundPlain++;
+                }
+
+                RoomCombatSession off = NewSession(assets, opts, caster);
+                off.CommandsEnabled = false;
+                bool liftedOff = LiftOff(off, 6.0);
+                off.Update(10, 0, 0, true, false, SkillKeys.None);
+                if (!liftedOff || off.Hero.Motion != HeroMotion.JumpAttack || off.Hero.JumpAttackSkillId != 0 || off.SkillCasts != 0
+                    || (off.Vitals != null && off.Vitals.Mp != off.Vitals.MpMax))
+                {
+                    jumpProblems.Add(label + ":关着出招指令时空中按攻击键应当是普通的空中攻击");
+                }
+                else
+                {
+                    jumpPlainWhenOff++;
+                }
+
+                RoomCombatSession session = NewSession(assets, opts, caster);
+                HeroSkillSlot? slot = session.Skills.SlotOfSkill(def.Id);
+                TownHero jumper = session.Hero;
+                for (int round = 0; slot != null && round < 2; round++)
+                {
+                    bool lifted = LiftOff(session, 20.0);
+                    if (lifted)
+                    {
+                        double last = jumper.Z;
+                        for (int t = 0; t < 3000 && jumper.Z >= last && jumper.Motion == HeroMotion.Jump; t += 10)
+                        {
+                            last = jumper.Z;
+                            session.Update(10, 0, 0, false, false, SkillKeys.None);
+                        }
+                    }
+                    int mpBefore = session.Vitals?.Mp ?? 0;
+                    int effectsBefore = session.JumpSkillEffects;
+                    session.Update(10, 0, 0, true, false, SkillKeys.None);
+                    string? wantPath = chr.CustomAnimationPath(round == 0 ? recipe.JumpAttack.MotionIndexA : recipe.JumpAttack.MotionIndexB);
+                    bool started = lifted && jumper.Motion == HeroMotion.JumpAttack && jumper.JumpAttackSkillId == def.Id
+                        && session.JumpSkillCasts == round + 1 && session.SkillCasts == round + 1 && session.Skills.JumpAttackMode == round
+                        && string.Equals(jumper.CurrentAnimationPath, wantPath, StringComparison.OrdinalIgnoreCase)
+                        && (session.Vitals == null || session.Vitals.Mp == mpBefore - slot.ConsumeMp);
+                    if (!started)
+                    {
+                        jumpProblems.Add(label + " 第 " + (round + 1) + " 跳:空中按攻击键没有接管成这个技能(动作、魔法值、计数或交替模式不对,或没跳起来)");
+                        break;
+                    }
+                    int ms = 0;
+                    var boxFrames = new HashSet<int>();
+                    while (jumper.Motion == HeroMotion.JumpAttack && ms < 3000)
+                    {
+                        if (jumpBoxes.At(jumper, jumper.CurrentFrame).Count > 0)
+                        {
+                            boxFrames.Add(jumper.CurrentFrame);
+                        }
+                        session.Update(10, 0, 0, false, false, SkillKeys.None);
+                        ms += 10;
+                    }
+                    bool effectOnce = session.JumpSkillEffects == effectsBefore + 1;
+                    if (boxFrames.Count > 0)
+                    {
+                        jumpBoxCycles++;
+                    }
+                    int castsBefore = session.SkillCasts;
+                    session.Update(10, 0, 0, true, false, SkillKeys.None);
+                    bool noSecond = session.SkillCasts == castsBefore && jumper.Motion != HeroMotion.JumpAttack;
+                    int rest = 0;
+                    while (jumper.Motion != HeroMotion.Rest && rest < 5000)
+                    {
+                        session.Update(10, 0, 0, false, false, SkillKeys.None);
+                        rest += 10;
+                    }
+                    if (!noSecond || jumper.Motion != HeroMotion.Rest || jumper.JumpAttackSkillId != 0)
+                    {
+                        jumpProblems.Add(label + " 第 " + (round + 1) + " 跳:同一跳里不该再接管、落地后应回到站立且技能痕迹清掉");
+                        break;
+                    }
+                    jumpCycles++;
+                    if (effectOnce)
+                    {
+                        jumpEffectCycles++;
+                    }
+                    else
+                    {
+                        jumpProblems.Add(label + " 第 " + (round + 1) + " 跳:动画播到特效帧该放一次预载特效(这一击放了 " + (session.JumpSkillEffects - effectsBefore) + " 次)");
+                    }
+                }
+                if (slot == null)
+                {
+                    jumpProblems.Add(label + ":没排进技能槽");
+                }
+            }
+            foreach (string line in jumpProblems)
+            {
+                Console.WriteLine("    " + line);
+            }
+            Report(jumpSkills > 0 && jumpProblems.Count == 0 && jumpGroundPlain == jumpSkills && jumpPlainWhenOff == jumpSkills && jumpCycles == jumpSkills * 2 && jumpEffectCycles == jumpCycles && jumpBoxCycles == jumpCycles,
+                "空中攻击强化类技能 " + jumpSkills + " 个:地面上按攻击键是普通攻击 " + jumpGroundPlain + " 个;关着出招指令时空中按攻击键是普通空中攻击 " + jumpPlainWhenOff
+                + " 个;开着时在最高点按攻击键接管、扣魔法值、两跳交替两种动作、每一击放一次特效、同一跳不再接管、落地回站立走完 " + jumpCycles + " 跳(放了特效 " + jumpEffectCycles + " 跳、武器图层有攻击框 " + jumpBoxCycles + " 跳;问题 " + jumpProblems.Count + " 条)");
 
             // 8. 增益类技能(M48,证据 E-141):表里的每个增益在真实数据里都读得通——技能在目录里、是主动技能、指令的扳机是增益键、[static data] 与 [level info] 的列够用、
             // 每一级的持续时间与数值都是正数;真实会话里按各自的指令打一遍:施法动作是角色的 [buff motion](没有攻击框),施法正常结束那一步挂上增益,数值与持续时间等于槽里读出来的,

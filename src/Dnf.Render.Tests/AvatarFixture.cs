@@ -202,6 +202,26 @@ internal sealed class AvatarFixture : IDisposable
     public const string SitAni = "character/test/animation/sit.ani";
     public const int SitFrameMs = 100;
 
+    /// <summary>
+    /// 空中攻击强化类技能(M56,证据 E-150)的合成数据:技能编号 <see cref="JumpSkill"/>,指令是单独一个攻击键(不放进快捷栏,靠攻击键在空中接管空中攻击),
+    /// 耗蓝 <see cref="JumpSkillMp"/>、冷却 <see cref="JumpSkillCoolMs"/> 毫秒(比一跳的时间长:放完之后的下一跳还在冷却里);[level info] 一列百分比(第 1 级 <see cref="JumpSkillRate1"/>、第 2 级 <see cref="JumpSkillRate2"/>);
+    /// [etc motion] 第 7、8 项是两种动作:<see cref="JumpSkillAAni"/>(四帧 × 50 毫秒,第 2 帧有攻击框,x 从 +20 起宽 40)、<see cref="JumpSkillBAni"/>
+    /// (三帧 × 60 毫秒,第 1 帧有攻击框,x 从 +100 起宽 40;所以站在身前 +40 的怪只被第一种打中、站在 +120 的只被第二种打中),两种的框都又高又深(空中也打得到地上的怪);
+    /// 预载特效九个:下标 4 到 7 各是不同的文件(<see cref="ChainEffect1"/>、<see cref="ChainEffect2"/>、<see cref="WaveEffect"/>、<see cref="WaveEffect2"/>),
+    /// 其余是鬼斩的第一层特效(充数)。数全是测试用的。
+    /// </summary>
+    public const int JumpSkill = 910;
+    public const int JumpSkillRate1 = 220;
+    public const int JumpSkillRate2 = 250;
+    public const int JumpSkillMp = 9;
+    public const int JumpSkillCoolMs = 4000;
+    public const string JumpSkillAAni = "character/test/animation/jumpskilla.ani";
+    public const string JumpSkillBAni = "character/test/animation/jumpskillb.ani";
+    public const int JumpSkillAFrameMs = 50;
+    public const int JumpSkillBFrameMs = 60;
+    public const int JumpSkillAEtcIndex = 7;
+    public const int JumpSkillBEtcIndex = 8;
+
     /// <summary>空中攻击动画最后一帧的攻击框(悬停俯冲把动画定在这一帧):x 从 +100 起宽 40,y 从 −10 起深 20,z 从 0 起高 50;与第 1 帧的框(x 从 +20 起)不重合。</summary>
     public static readonly (ushort Type, int[] Values) DiveHoldBox = ((ushort)15, new[] { 100, -10, 0, 40, 20, 50 });
 
@@ -1037,7 +1057,7 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[skill]").Int(181, 2, HardAttackSkill, 1, UpperSlashSkill, UpperSlashLevel, BackStepSkill, 1, 174, 1)
                 // 技能动作与攻击信息(两个表的下标不对应:护身动作没有攻击信息,鬼斩在动作表里是第 1 项、在攻击信息表里是第 0 项)
                 .Tag("[etc motion]").Str("Animation/Guard.ani").Str("Animation/HardAttack.ani").Str("Animation/ChainA.ani").Str("Animation/ChainB.ani").Str("Animation/WaveCast.ani")
-                .Str("Animation/HopReady.ani").Str("Animation/Hop.ani")
+                .Str("Animation/HopReady.ani").Str("Animation/Hop.ani").Str("Animation/JumpSkillA.ani").Str("Animation/JumpSkillB.ani")
                 .Tag("[etc attack info]").Str("AttackInfo/HardAttack.atk").Str("AttackInfo/ChainA.atk").Str("AttackInfo/ChainB.atk")
                 .Str("AttackInfo/HopFirst.atk").Str("AttackInfo/HopRepeat.atk").Str("AttackInfo/Dive.atk")
                 .Tag("[attack motion]").Str("animation/attack1.ani").Str("Animation/Attack2.ani").Str("animation/attack3.ani").Build()),
@@ -1047,7 +1067,7 @@ internal sealed class AvatarFixture : IDisposable
             ("skill/testskill.lst", NewScript()
                 .Int(181).Str("test/passive.skl").Int(HardAttackSkill).Str("test/hardattack.skl").Int(UpperSlashSkill).Str("test/upperslash.skl")
                 .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Int(ChainSkill).Str("test/chain.skl").Int(WaveSkill).Str("test/wave.skl").Int(HopSkill).Str("test/hop.skl").Int(QuickStandSkill).Str("test/quickstand.skl").Int(JumpCommandSkill).Str("test/jumpcommand.skl")
-                .Int(JumpBuffSkill).Str("test/jumpbuff.skl").Int(MagicBuffSkill).Str("test/magicbuff.skl").Int(ProcBuffSkill).Str("test/procbuff.skl").Int(DiveSkill).Str("test/dive.skl").Build()),
+                .Int(JumpBuffSkill).Str("test/jumpbuff.skl").Int(MagicBuffSkill).Str("test/magicbuff.skl").Int(ProcBuffSkill).Str("test/procbuff.skl").Int(DiveSkill).Str("test/dive.skl").Int(JumpSkill).Str("test/jumpskill.skl").Build()),
             // 腾空悬停俯冲类技能:指令单键技能,[static data] 四个数(第 3 个是落地放冲击对象的最小离地高度),[level info] 三列 (俯冲百分比、冲击固定值、冲击百分比)
             ("skill/test/dive.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Paren("(SKILL)").Tag("[maximum level]").Int(10)
@@ -1055,6 +1075,11 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[static data]").Int(1, 2, 3, DiveImpactMinHeight)
                 .Tag("[level info]").Int(3, DiveRate1, DiveImpactFixed1, DiveImpactRate1, DiveRate2, DiveImpactFixed2, DiveImpactRate2).Build()),
             (DiveAtk, NewScript().Tag("[damage reaction]").Tag("[damage]").Tag("[push aside]").Int(DivePushAside).Build()),
+            // 空中攻击强化类技能:指令单键"攻击",[cool time] 比一跳长,[level info] 一列(百分比)
+            ("skill/test/jumpskill.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[command]").Paren("(ATTACK)").Tag("[maximum level]").Int(10)
+                .Tag("[consume MP]").Int(JumpSkillMp, JumpSkillMp).Tag("[cool time]").Int(JumpSkillCoolMs, JumpSkillCoolMs)
+                .Tag("[level info]").Int(1, JumpSkillRate1, JumpSkillRate2).Build()),
             // 增益类技能:跳跃力类(加成在 [static data],持续时间在 [level info] 一列)与魔法攻击力类(持续时间与加成是 [level info] 的两列)
             ("skill/test/jumpbuff.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Paren("(BUFF)").Tag("[maximum level]").Int(10)
@@ -1108,7 +1133,7 @@ internal sealed class AvatarFixture : IDisposable
             (ChainBAtk, NewScript().Tag("[damage reaction]").Tag("[down]").Tag("[push aside]").Int(ChainBPushAside).Build()),
             // 技能预载脚本(与原版 sqr/common.nut 同形):常量、职业函数、按技能编号分支、依次预载特效;前面放一个别的技能的分支做干扰
             ("sqr/common.nut", Encoding.ASCII.GetBytes(
-                "SKILL_OTHER_TEST <- 902;\r\nSKILL_CHAIN_TEST <- 901;\r\nSKILL_WAVE_TEST <- 903;\r\nSKILL_HOP_TEST <- 904;\r\nSKILL_DIVE_TEST <- 905;\r\n"
+                "SKILL_OTHER_TEST <- 902;\r\nSKILL_CHAIN_TEST <- 901;\r\nSKILL_WAVE_TEST <- 903;\r\nSKILL_HOP_TEST <- 904;\r\nSKILL_DIVE_TEST <- 905;\r\nSKILL_JUMP_TEST <- 910;\r\n"
                 + "function sq_LoadSkillEffect_Swordman(obj, skillIndex)\r\n{\r\n"
                 + "\tif (skillIndex == SKILL_OTHER_TEST)\r\n\t{\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Other.ani\");\r\n\t}\r\n"
                 + "\telse if (skillIndex == SKILL_CHAIN_TEST)\r\n\t{\r\n\t\t// comment\r\n"
@@ -1118,7 +1143,13 @@ internal sealed class AvatarFixture : IDisposable
                 + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/WaveSlash2.ani\");\r\n\t}\r\n"
                 + "\telse if (skillIndex == SKILL_HOP_TEST)\r\n\t{\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain1.ani\");\r\n"
                 + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain2.ani\");\r\n\t}\r\n"
-                + "\telse if (skillIndex == SKILL_DIVE_TEST)\r\n\t{\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain1.ani\");\r\n\t}\r\n}\r\n")),
+                + "\telse if (skillIndex == SKILL_DIVE_TEST)\r\n\t{\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain1.ani\");\r\n\t}\r\n"
+                + "\telse if (skillIndex == SKILL_JUMP_TEST)\r\n\t{\r\n"
+                + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/HardAttack1.ani\");\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/HardAttack1.ani\");\r\n"
+                + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/HardAttack1.ani\");\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/HardAttack1.ani\");\r\n"
+                + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain1.ani\");\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/Chain2.ani\");\r\n"
+                + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/WaveSlash.ani\");\r\n\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/WaveSlash2.ani\");\r\n"
+                + "\t\tobj.sq_LoadSkillEffectAni(skillIndex, \"Effect/Animation/HardAttack1.ani\");\r\n\t}\r\n}\r\n")),
             ("skill/test/passive.skl", NewScript().Tag("[type]").Str("[passive]").Build()),
             ("skill/test/hardattack.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Str("UP").Tag("[maximum level]").Int(10)
@@ -1209,6 +1240,11 @@ internal sealed class AvatarFixture : IDisposable
             (JumpAttackAni, BuildBoxAni((0, 100, null), (1, 50, new[] { ((ushort)15, new[] { 20, -10, 0, 40, 20, 50 }) }), (0, 50, new[] { DiveHoldBox }))),
             // 坐姿动作:三帧,没有攻击框(俯冲落地后播一遍)
             (SitAni, BuildBoxAni((0, SitFrameMs, null), (1, SitFrameMs, null), (0, SitFrameMs, null))),
+            // 空中攻击强化技能的两种动作:A 四帧 × 50 毫秒、框在第 2 帧(身前 +20 起宽 40);B 三帧 × 60 毫秒、框在第 1 帧(身前 +100 起宽 40);框都又高又深
+            (JumpSkillAAni, BuildBoxAni((0, JumpSkillAFrameMs, null), (1, JumpSkillAFrameMs, null),
+                (0, JumpSkillAFrameMs, new[] { ((ushort)15, new[] { 20, -40, -100, 40, 80, 200 }) }), (1, JumpSkillAFrameMs, null))),
+            (JumpSkillBAni, BuildBoxAni((0, JumpSkillBFrameMs, null),
+                (1, JumpSkillBFrameMs, new[] { ((ushort)15, new[] { 100, -40, -100, 40, 80, 200 }) }), (0, JumpSkillBFrameMs, null))),
             // 三段普攻:四帧 × 100、三帧 × 100、两帧 × 200 毫秒;攻击框(类型 15)在武器图层的动画里,第三段的基础动画自己带一个;
             // 每帧带站立高度的受击框(原版的出招动画也带受击框;M49 的霸体测试要靠它让怪物打得中出招中的主角)
             (Attack1Ani, BuildBoxAni((0, 100, new[] { HeroHurtBox }), (1, 100, new[] { HeroHurtBox }), (0, 100, new[] { HeroHurtBox }), (1, 100, new[] { HeroHurtBox }))),

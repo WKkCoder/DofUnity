@@ -752,6 +752,14 @@ namespace Dnf.Play
         /// <summary>俯冲落地时放出冲击对象的次数(放出技能那一刻离地高度够才放;读不到对象模板时不放也不计),给检查与测试用。</summary>
         public int DiveImpacts { get; private set; }
 
+        /// <summary>攻击键在空中接管成强化技能的次数(证据 E-150;快捷键放的不计在内,它们算在 <see cref="SkillCasts"/> 里),给检查与测试用。</summary>
+        public int JumpSkillCasts { get; private set; }
+
+        /// <summary>空中攻击强化技能的动画播到特效帧、放出预载特效的次数(一次挥击最多一次;每次放的特效个数不计),给检查与测试用。</summary>
+        public int JumpSkillEffects { get; private set; }
+
+        private long _jumpEffectSwing = -1;
+
         /// <summary>此刻主角这一击用的攻击信息(普攻、奔跑攻击、空中攻击与各个技能各取各的;蓄力跳跃类技能的第一个窗口与重武装窗口用的不是同一项),给检查与测试用。</summary>
         public HeroStrikeInfo CurrentHeroStrike => CurrentStrikeInfo(Hero);
 
@@ -1348,6 +1356,7 @@ namespace Dnf.Play
             _assets = assets ?? throw new ArgumentNullException(nameof(assets));
             _dropSprites = _assets;
             _room = room ?? throw new ArgumentNullException(nameof(room));
+            _room.Hero.TakeOverJumpAttack = TakeOverHeroJumpAttack;       // 空中按攻击键时让学过的强化技能接管这一击(M56,E-150)
             _monsters = new List<MonsterActor>(monsters ?? new List<MonsterActor>());
             foreach (RoomObject o in room.Content.Objects)
             {
@@ -1931,6 +1940,7 @@ namespace Dnf.Play
                 SpawnStageEffect(_room.Hero);
                 UpdateHopLanding(_room.Hero);
                 UpdateDive(_room.Hero);
+                SpawnJumpSkillEffect(_room.Hero);
             }
             EmitHeroCues();
             UpdateRevive(deltaMs, reviveKey);
@@ -2343,6 +2353,77 @@ namespace Dnf.Play
         /// <summary>这一次挥击里放出来的分段特效,按预载表下标索引(被动对象等它们播到关键帧标志,证据 E-137)。</summary>
         private readonly Dictionary<int, AnimatedEffect> _stageEffectInstances = new Dictionary<int, AnimatedEffect>();
 
+        /// <summary>
+        /// 攻击键在空中按下、普通的空中攻击要开始的那一刻(<see cref="TownHero.TakeOverJumpAttack"/> 的实现,证据 E-150):
+        /// 与出招指令同一个开关(<see cref="CommandsEnabled"/>,自动机默认不放技能);主角没死,学过的强化技能(<see cref="HeroSkills.TakeOverJumpAttack"/>)
+        /// 冷却好、魔法值够就接管,扣蓝、进冷却、翻交替模式,计入 <see cref="SkillCasts"/> 与 <see cref="JumpSkillCasts"/>;不接管就是普通的空中攻击。
+        /// </summary>
+        private bool TakeOverHeroJumpAttack(TownHero hero, out int skillId, out int etcIndex)
+        {
+            skillId = 0;
+            etcIndex = -1;
+            if (!CommandsEnabled || HeroDead || !Skills.TakeOverJumpAttack(hero, Vitals, out skillId, out etcIndex))
+            {
+                skillId = 0;
+                etcIndex = -1;
+                return false;
+            }
+            SkillCasts++;
+            JumpSkillCasts++;
+            return true;
+        }
+
+        /// <summary>
+        /// 这一击的攻击信息:空中攻击自己的([jumpattack info]),换成强化技能的那一击把伤害换成技能的(.skl [level info] 当前等级的百分比列与固定值列,
+        /// 列号取配方第 0 段;证据 E-150),其余(击退、击倒、停顿等)都沿用空中攻击的攻击信息。
+        /// </summary>
+        private HeroStrikeInfo JumpStrikeOf(TownHero hero)
+        {
+            HeroSkillSlot slot = hero.JumpAttackSkillId == 0 ? null : Skills.SlotOfSkill(hero.JumpAttackSkillId);
+            SkillRecipe recipe = slot?.Recipe;
+            if (recipe?.JumpAttack == null || slot.Def == null)
+            {
+                return _jumpStrike;
+            }
+            SkillStageSpec stage = recipe.Stages[0];
+            return _jumpStrike.WithSkillDamage(slot.Def.GetLevel(slot.Level, stage.DamageRateColumn, false), slot.Def.GetLevel(slot.Level, stage.DamageFixedColumn, false));
+        }
+
+        /// <summary>
+        /// 空中攻击强化技能的特效(证据 E-150):换成技能的这一击(按 <see cref="TownHero.SwingNumber"/> 区分)动画播到配方的特效帧时放一次预载特效,
+        /// 挂在主角身上跟着走;放哪几个看这次放的是第一种还是第二种(<see cref="HeroSkills.JumpAttackMode"/>:这一击放出来之后它就是这一击的种类,
+        /// 到这一击结束之前不会再变)。动画没播到特效帧就被打断、落地打断时不放。预载表里没有这个下标或读不到动画的特效跳过。
+        /// </summary>
+        private void SpawnJumpSkillEffect(TownHero hero)
+        {
+            if (hero.JumpAttackSkillId == 0)
+            {
+                _jumpEffectSwing = -1;
+                return;
+            }
+            HeroSkillSlot slot = Skills.SlotOfSkill(hero.JumpAttackSkillId);
+            SkillJumpAttackSpec spec = slot?.Recipe?.JumpAttack;
+            if (spec == null || _jumpEffectSwing == hero.SwingNumber || hero.CurrentFrame < spec.EffectFrame)
+            {
+                return;
+            }
+            _jumpEffectSwing = hero.SwingNumber;
+            JumpSkillEffects++;
+            foreach (int index in Skills.JumpAttackMode == 1 ? spec.EffectsB : spec.EffectsA)
+            {
+                if (index < 0 || index >= slot.StageEffects.Count)
+                {
+                    continue;
+                }
+                AnimatedEffect effect = AnimatedEffect.Create(_assets, slot.StageEffects[index], hero.X, hero.Y, hero.Z, hero.FacingLeft);
+                if (effect != null)
+                {
+                    _effects.Add(effect);
+                    _followEffects.Add(effect);
+                }
+            }
+        }
+
         private void ResolveHits()
         {
             TownHero hero = _room.Hero;
@@ -2592,7 +2673,7 @@ namespace Dnf.Play
                 case HeroAttackKind.Dash:
                     return _dashStrike;
                 case HeroAttackKind.Jump:
-                    return _jumpStrike;
+                    return JumpStrikeOf(hero);
                 case HeroAttackKind.Skill:
                     // 有自己攻击信息与伤害数的技能(鬼斩)用自己的;借普攻动作放的技能(上挑)沿用那一段普攻的攻击信息
                     HeroSkillSlot slot = Skills.SlotOfSkill(hero.SkillId);

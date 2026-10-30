@@ -399,6 +399,11 @@ namespace Dnf.Render
         private string _jumpAttackPath;
         private AniTimeline _jumpAttackTimeline;
 
+        // 空中攻击强化类技能(M56,证据 E-150):这一击的动画换成 [etc motion] 里的一项;_jumpSkillId 为 0 就是普通的空中攻击
+        private EtcMotion _jumpSkillMotion;
+        private int _jumpSkillId;
+        private int _jumpSkillStarts;
+
         // 技能动作:.chr 的 [etc motion] 里按需载入的几段动画(键是小写文件名),与当前正在播的那一段
         private sealed class EtcMotion
         {
@@ -791,7 +796,7 @@ namespace Dnf.Render
                         path = _dashAttackPath;
                         break;
                     case HeroMotion.JumpAttack:
-                        path = _jumpAttackPath;
+                        path = AirAttackPath;
                         break;
                     case HeroMotion.Skill:
                         path = _skillWindupStage >= 0 ? _attackPaths[_skillWindupStage] : _skillMotion.Path;
@@ -1313,6 +1318,89 @@ namespace Dnf.Render
             StartHop(m, hop);
             StartStageRearm(m, rearmWindows);
             return true;
+        }
+
+        /// <summary>
+        /// 空中攻击开始时问一下"这一击要不要换成技能"(M56,证据 E-150):返回 true 就是换,<paramref name="skillId"/> 是技能编号,
+        /// <paramref name="etcIndex"/> 是 [etc motion] 里这一击播的动作的下标;返回 false(或这个动作读不到)就是普通的空中攻击。
+        /// 回调只在这一击确实要开始的那一刻调用(腾空、这一跳还没用过空中攻击、攻击键按下),所以可以在里面扣魔法值、翻交替模式;
+        /// 回调返回 true 前应当用 <see cref="HasEtcMotion"/> 确认动作读得到。
+        /// </summary>
+        public delegate bool JumpAttackTakeover(TownHero hero, out int skillId, out int etcIndex);
+
+        /// <summary>空中攻击的接管回调(证据 E-150);没有就一直是普通的空中攻击。</summary>
+        public JumpAttackTakeover TakeOverJumpAttack { get; set; }
+
+        /// <summary>[etc motion] 第 <paramref name="index"/> 项的动画读得到(越界、读不到或没有帧都是 false)。</summary>
+        public bool HasEtcMotion(int index)
+        {
+            return EtcAt(index) != null;
+        }
+
+        /// <summary>
+        /// 正在挥的空中攻击是哪个技能换的(证据 E-150);普通的空中攻击与不在空中挥击时为 0。换成技能的这一击,动画是技能指定的 [etc motion] 项,
+        /// 其余(重力、落地打断、受击规则、攻击种类 <see cref="HeroAttackKind.Jump"/>)与普通的空中攻击完全一样。
+        /// </summary>
+        public int JumpAttackSkillId => Motion == HeroMotion.JumpAttack ? _jumpSkillId : 0;
+
+        /// <summary>空中攻击被技能换掉的累计次数(技能的特效等按它的变化放一次)。</summary>
+        public int JumpSkillStarts => _jumpSkillStarts;
+
+        // 空中攻击此刻的动画、路径与时间轴:换成技能的那一击用技能的动作,其余用 [jumpattack motion]
+        private bool JumpAttackIsSkill => Motion == HeroMotion.JumpAttack && _jumpSkillId != 0 && _jumpSkillMotion != null;
+
+        private AniFile AirAttackAni => JumpAttackIsSkill ? _jumpSkillMotion.Ani : _jumpAttack;
+
+        private string AirAttackPath => JumpAttackIsSkill ? _jumpSkillMotion.Path : _jumpAttackPath;
+
+        private AniTimeline AirAttackTimeline => JumpAttackIsSkill ? _jumpSkillMotion.Timeline : _jumpAttackTimeline;
+
+        /// <summary>
+        /// 直接放一个空中攻击强化类技能(快捷键放;证据 E-150):只在腾空的跳跃状态里、这一跳还没用过空中攻击时放得出来
+        /// (起跳蹲姿、落地段、后跳与别的状态都不行,返回 false,状态不变);放出来就是一次空中攻击挥击(新的一击),动画换成 [etc motion] 第 <paramref name="etcIndex"/> 项。
+        /// </summary>
+        public bool BeginJumpAttackSkill(int skillId, int etcIndex)
+        {
+            if (skillId == 0 || Motion != HeroMotion.Jump || _backStep || _prepMs >= 0 || _landingMs >= 0 || _airAttackUsed || _jumpAttack == null)
+            {
+                return false;
+            }
+            EtcMotion m = EtcAt(etcIndex);
+            if (m == null)
+            {
+                return false;
+            }
+            StartAirAttack(skillId, m);
+            return true;
+        }
+
+        /// <summary>空中攻击挥击开始:换成技能的就带着技能号与动作,普通的清掉上一次的技能痕迹;这一跳的空中攻击算用掉了。</summary>
+        private void StartAirAttack(int skillId, EtcMotion skillMotion)
+        {
+            _jumpSkillId = skillMotion == null ? 0 : skillId;
+            _jumpSkillMotion = skillMotion;
+            if (skillMotion != null)
+            {
+                _jumpSkillStarts++;
+            }
+            Motion = HeroMotion.JumpAttack;
+            AttackStage = 0;
+            _motionMs = 0;
+            _airAttackUsed = true;
+            SwingNumber++;
+        }
+
+        /// <summary>攻击键在空中按下的那一刻:先问技能要不要接管(<see cref="TakeOverJumpAttack"/>),不接管就是普通的空中攻击。</summary>
+        private void BeginAirAttack()
+        {
+            EtcMotion skillMotion = null;
+            int skillId = 0;
+            if (TakeOverJumpAttack != null && TakeOverJumpAttack(this, out int takenId, out int etcIndex))
+            {
+                skillMotion = EtcAt(etcIndex);
+                skillId = takenId;
+            }
+            StartAirAttack(skillId, skillMotion);
         }
 
         /// <summary>
@@ -2592,11 +2680,7 @@ namespace Dnf.Render
             }
             if (attackPressed && Motion == HeroMotion.Jump && !_airAttackUsed && _jumpAttack != null)
             {
-                Motion = HeroMotion.JumpAttack;
-                AttackStage = 0;
-                _motionMs = 0;
-                _airAttackUsed = true;
-                SwingNumber++;
+                BeginAirAttack();
             }
             _airMs += deltaMs;
             if (_descending)
@@ -2660,17 +2744,18 @@ namespace Dnf.Render
             }
         }
 
-        /// <summary>空中攻击一击的墙钟时长(毫秒);没有这个动作为 0。</summary>
+        /// <summary>空中攻击一击的墙钟时长(毫秒);没有这个动作为 0。换成技能的那一击是技能动作的时长(证据 E-150)。</summary>
         public double JumpAttackDurationMs
         {
             get
             {
-                if (_jumpAttackTimeline == null)
+                AniTimeline timeline = AirAttackTimeline;
+                if (timeline == null)
                 {
                     return 0.0;
                 }
                 double rate = AttackAnimationRate > 0.0 ? AttackAnimationRate : 1.0;
-                return Math.Ceiling(_jumpAttackTimeline.TotalMilliseconds / rate);
+                return Math.Ceiling(timeline.TotalMilliseconds / rate);
             }
         }
 
@@ -2842,7 +2927,7 @@ namespace Dnf.Render
                     case HeroMotion.Jump:
                         return _jump;
                     case HeroMotion.JumpAttack:
-                        return _jumpAttack;
+                        return AirAttackAni;
                     case HeroMotion.Hurt:
                         return _hurtAni;
                     case HeroMotion.Down:
@@ -2872,7 +2957,7 @@ namespace Dnf.Render
                     case HeroMotion.Jump:
                         return _jumpPath;
                     case HeroMotion.JumpAttack:
-                        return _jumpAttackPath;
+                        return AirAttackPath;
                     case HeroMotion.Hurt:
                         return _hurtPath;
                     case HeroMotion.Down:
@@ -2904,7 +2989,7 @@ namespace Dnf.Render
                         }
                         return (_skillWindupStage >= 0 ? _attackTimelines[_skillWindupStage] : _skillMotion.Timeline).FrameAt(AttackAnimationMs);
                     case HeroMotion.JumpAttack:
-                        return _jumpAttackTimeline.FrameAt(AttackAnimationMs);
+                        return AirAttackTimeline.FrameAt(AttackAnimationMs);
                     case HeroMotion.Jump:
                         return JumpFrame();
                     case HeroMotion.Hurt:

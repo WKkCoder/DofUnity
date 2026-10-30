@@ -447,13 +447,14 @@ namespace Dnf.Play
             return null;
         }
 
-        /// <summary>把另一份技能表里同编号技能的剩余冷却带过来(换房间时冷却不清零)。</summary>
+        /// <summary>把另一份技能表里同编号技能的剩余冷却带过来(换房间时冷却不清零);空中攻击强化动作的交替模式也跟着带过来(E-150,客户端字段跟着主角对象走)。</summary>
         public void CopyCooldownsFrom(HeroSkills other)
         {
             if (other == null || ReferenceEquals(other, this))
             {
                 return;
             }
+            JumpAttackMode = other.JumpAttackMode;
             foreach (HeroSkillSlot s in AllSlots())
             {
                 foreach (HeroSkillSlot o in other.AllSlots())
@@ -657,7 +658,8 @@ namespace Dnf.Play
                     break;
                 default:
                     began = slot.Recipe != null
-                        ? (slot.Recipe.Dive != null ? BeginDive(slot, hero) : BeginStage(slot, 0, hero, heldX, heldY, false, MultiHitWindows(slot)))
+                        ? (slot.Recipe.Dive != null ? BeginDive(slot, hero)
+                            : (slot.Recipe.JumpAttack != null ? BeginJumpAttack(slot, hero) : BeginStage(slot, 0, hero, heldX, heldY, false, MultiHitWindows(slot))))
                         : slot.Buff != null && hero.BeginBuffMotion(slot.SkillId);   // 增益类:原地播 [buff motion],施法正常结束时才挂增益(E-141,由房间会话挂)
                     break;
             }
@@ -806,6 +808,88 @@ namespace Dnf.Play
             }
             int minHeight = slot.Def == null ? int.MaxValue : slot.Def.GetStatic(dive.ImpactHeightIndex, false);
             return hero.BeginSkillDive(slot.SkillId, new SkillDivePlan(dive.HoverMs, dive.SpeedX, dive.SpeedZ, minHeight));
+        }
+
+        /// <summary>
+        /// "上一次放的是哪种空中攻击强化动作"(证据 E-150,客户端主角字段):-1 没放过、0 刚放了第一种、1 刚放了第二种。
+        /// 下一次放的种类:这个字段为 0 就放第二种,否则放第一种(所以两种交替);只在放出来(<see cref="Cast"/> 或攻击键接管)时更新。
+        /// 客户端的字段跟着主角对象走、跨跳跃跨房间保留,所以换房间时带过去(<see cref="CopyCooldownsFrom"/>)。
+        /// </summary>
+        public int JumpAttackMode { get; private set; } = -1;
+
+        private int NextJumpAttackVariant()
+        {
+            return JumpAttackMode == 0 ? 1 : 0;
+        }
+
+        /// <summary>
+        /// 空中攻击强化类技能起手(快捷键放,证据 E-150):只在腾空的跳跃状态里、这一跳还没用过空中攻击时放得出来(返回 false,不扣蓝、不进冷却、不翻交替模式)。
+        /// 放出来的动作按交替模式取配方的第一种或第二种。
+        /// </summary>
+        private bool BeginJumpAttack(HeroSkillSlot slot, TownHero hero)
+        {
+            SkillJumpAttackSpec spec = slot.Recipe?.JumpAttack;
+            if (spec == null)
+            {
+                return false;
+            }
+            int variant = NextJumpAttackVariant();
+            if (!hero.BeginJumpAttackSkill(slot.SkillId, variant == 0 ? spec.MotionIndexA : spec.MotionIndexB))
+            {
+                return false;
+            }
+            JumpAttackMode = variant;
+            return true;
+        }
+
+        /// <summary>这条指令正好是单独一个攻击键(攻击键当扳机、前面没有别的键)。</summary>
+        private static bool IsAttackKeyOnly(SkillCommand c)
+        {
+            return c != null && !c.IsEmpty && c.Length == 1 && c.Trigger == CommandKey.Attack;
+        }
+
+        /// <summary>
+        /// 学过的、指令是单独攻击键的空中攻击强化技能(先找快捷槽,再找只靠指令放的槽);没有返回 null。攻击键在空中按下时由它接管普通的空中攻击。
+        /// </summary>
+        public HeroSkillSlot AttackKeyJumpSkill()
+        {
+            foreach (HeroSkillSlot s in AllSlots())
+            {
+                if (s.Recipe?.JumpAttack != null && s.Level > 0 && IsAttackKeyOnly(s.Def?.Command))
+                {
+                    return s;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 攻击键在空中按下、普通的空中攻击要开始的那一刻,看有没有强化技能可以接管(证据 E-150;<see cref="TownHero.TakeOverJumpAttack"/> 的实现):
+        /// 技能学过、冷却好了、魔法值够(没给 <paramref name="vitals"/> 当够)、要播的动作读得到,就扣魔法值、进冷却、翻交替模式,返回 true 并给出技能号与动作下标;
+        /// 否则返回 false,这一击仍是普通的空中攻击(魔法值不够时退回普通攻击是推断:客户端的"可用"检查在受保护区里)。
+        /// </summary>
+        public bool TakeOverJumpAttack(TownHero hero, HeroVitals vitals, out int skillId, out int etcIndex)
+        {
+            skillId = 0;
+            etcIndex = -1;
+            HeroSkillSlot slot = hero == null ? null : AttackKeyJumpSkill();
+            if (slot == null || !slot.Ready || (vitals != null && (!vitals.IsAlive || vitals.Mp < slot.ConsumeMp)))
+            {
+                return false;
+            }
+            SkillJumpAttackSpec spec = slot.Recipe.JumpAttack;
+            int variant = NextJumpAttackVariant();
+            int etc = variant == 0 ? spec.MotionIndexA : spec.MotionIndexB;
+            if (!hero.HasEtcMotion(etc))
+            {
+                return false;
+            }
+            vitals?.TrySpendMp(slot.ConsumeMp);
+            slot.CooldownLeftMs = slot.CooldownMs;
+            JumpAttackMode = variant;
+            skillId = slot.SkillId;
+            etcIndex = etc;
+            return true;
         }
 
         /// <summary>
