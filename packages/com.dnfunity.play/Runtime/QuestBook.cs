@@ -108,6 +108,9 @@ namespace Dnf.Play
 
         public int Gold { get; set; }
 
+        /// <summary>转职任务给的新成长类型下标(完成时角色换成这个成长类型);没有这种奖励是 −1。</summary>
+        public int Growtype { get; set; } = -1;
+
         /// <summary>固定给的物品。</summary>
         public List<QuestRewardLine> Rewards { get; } = new List<QuestRewardLine>();
 
@@ -140,7 +143,7 @@ namespace Dnf.Play
         /// <summary>细节:任务名(带进度)或物品名,是数据文字,取不到时是占位的 <c>QUEST 编号</c>。</summary>
         public string Detail { get; private set; }
 
-        /// <summary>完成时的奖励概要(占位英文,如 <c>EXP 100  GOLD 20</c>),其它提示是空串。</summary>
+        /// <summary>完成时的奖励概要(占位英文,如 <c>EXP 100  GOLD 20</c>;换了成长类型的转职任务再加 <c>JOB CHANGE</c>),其它提示是空串。</summary>
         public string Extra { get; }
 
         internal void Update(string detail)
@@ -246,6 +249,9 @@ namespace Dnf.Play
         public int Completed { get; private set; }
 
         public int Abandoned { get; private set; }
+
+        /// <summary>靠转职任务奖励换过多少次成长类型(这一次运行里;日志用)。</summary>
+        public int JobChanges { get; private set; }
 
         /// <summary>任务的计数被击杀事件推进过多少次、拿到过多少件任务物品(日志用)。</summary>
         public int KillsCounted { get; private set; }
@@ -450,6 +456,7 @@ namespace Dnf.Play
             QuestReward reward = QuestRules.ComputeReward(def, hero, _catalog.Parameters, -1);
             row.Exp = reward.Exp;
             row.Gold = reward.Gold;
+            row.Growtype = reward.Growtype;
             foreach (QuestItem item in reward.Items)
             {
                 row.Rewards.Add(Line(item));
@@ -611,11 +618,21 @@ namespace Dnf.Play
             {
                 _hero.AddItem(g.Key, g.Value);
             }
+            // 转职奖励:换成长类型(技能清空后重给白送的、点数回到总额、属性按新成长类型重算,都由 ChangeGrowtype 做);已经是这个成长类型就什么也不换
+            bool jobChanged = reward.Growtype >= 0 && _hero.ChangeGrowtype(reward.Growtype);
+            if (jobChanged)
+            {
+                JobChanges++;
+            }
             Completed++;
             _readyNoted.Remove(questId);
             string extra = reward.Exp > 0 || reward.Gold > 0
                 ? "EXP " + reward.Exp.ToString(CultureInfo.InvariantCulture) + "  GOLD " + reward.Gold.ToString(CultureInfo.InvariantCulture)
                 : null;
+            if (jobChanged)
+            {
+                extra = extra == null ? "JOB CHANGE" : extra + "  JOB CHANGE";
+            }
             Notify(QuestNoticeKind.Completed, questId, "QUEST COMPLETE", NameOf(def), extra);
             _dirty = true;
             return QuestActionResult.Ok;

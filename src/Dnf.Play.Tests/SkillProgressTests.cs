@@ -68,7 +68,7 @@ public class SkillProgressTests
         };
     }
 
-    private static HeroProgress Hero(int level, bool grant = true)
+    internal static HeroProgress Hero(int level, bool grant = true)
     {
         HeroProgress p = Progress(level: level);
         p.AttachSkills(Catalog(), ChrLines(), grant);

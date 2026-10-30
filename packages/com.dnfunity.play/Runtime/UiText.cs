@@ -87,6 +87,7 @@ namespace Dnf.Play
             { "CLOSE", "关闭" },
             { "REWARD", "奖励" },
             { "CHOOSE ONE", "选择一件奖励" },
+            { "JOB CHANGE", "转职" },
             { "QUEST ACCEPTED", "任务已接取" },
             { "QUEST READY", "任务可以交了" },
             { "QUEST COMPLETE", "任务完成" },
@@ -182,6 +183,8 @@ namespace Dnf.Play
 
         private static readonly string[,] PatternPairs =
         {
+            // 转职任务完成时的概要(M59):要排在"EXP {0}  GOLD {1}"前面,否则后一条把"JOB CHANGE"当成金币的一部分吞掉
+            { "EXP {0}  GOLD {1}  JOB CHANGE", "经验 {0}  金币 {1}  转职" },
             { "EXP {0}  GOLD {1}", "经验 {0}  金币 {1}" },
             { "PROGRESS {0}", "进度 {0}" },
             { "SP {0}  AP {1}", "技能点 {0}  觉醒点 {1}" },

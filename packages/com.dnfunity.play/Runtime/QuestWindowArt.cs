@@ -238,7 +238,8 @@ namespace Dnf.Play
             int fixedShown = Math.Min(row.Rewards.Count, MaxRewardLines);
             int choiceShown = Math.Min(row.Choices.Count, MaxChoiceLines);
             bool hasGold = row.Exp > 0 || row.Gold > 0;
-            if (fixedShown == 0 && choiceShown == 0 && !hasGold)
+            bool hasJob = row.Growtype >= 0;
+            if (fixedShown == 0 && choiceShown == 0 && !hasGold && !hasJob)
             {
                 return DetailBottom;
             }
@@ -284,6 +285,12 @@ namespace Dnf.Play
                 y -= LineHeight;
                 SpriteFrame gold = art.Text(GoldText(row), LineScale, OverlayArt.Orange);
                 into.Add(OverlayArt.Place(gold, innerX + 6, y, order++, "quest-reward-gold"));
+            }
+            if (hasJob)
+            {
+                y -= LineHeight;
+                SpriteFrame job = art.Text(JobChangeText, LineScale, OverlayArt.Orange);
+                into.Add(OverlayArt.Place(job, innerX + 6, y, order++, "quest-reward-job"));
             }
             y -= LineHeight;
             SpriteFrame reward = art.Text("REWARD", LineScale, OverlayArt.Yellow);
@@ -376,6 +383,9 @@ namespace Dnf.Play
             string name = art.HasFonts && !string.IsNullOrEmpty(line.Name) ? line.Name : "ITEM " + line.Code.ToString(CultureInfo.InvariantCulture);
             return line.Count > 1 ? name + (art.HasFonts && !string.IsNullOrEmpty(line.Name) ? " x" : " X") + line.Count.ToString(CultureInfo.InvariantCulture) : name;
         }
+
+        /// <summary>转职奖励的一行(占位英文;任务奖励是换成长类型时在奖励区里多这一行)。</summary>
+        public const string JobChangeText = "JOB CHANGE";
 
         /// <summary>经验与金币一行(占位英文;两项都写,有一项是 0 也写)。</summary>
         public static string GoldText(QuestRow row)

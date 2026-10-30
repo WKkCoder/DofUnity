@@ -65,6 +65,14 @@ internal static class QuestCheck
         Console.WriteLine("  支持的任务按类型:" + string.Join(" ", supported.GroupBy(q => q.Kind).OrderBy(g => (int)g.Key).Select(g => (int)g.Key + "=" + g.Count())) + ";按分类:"
             + string.Join(" ", supported.GroupBy(q => q.Grade).OrderBy(g => (int)g.Key).Select(g => (int)g.Key + "=" + g.Count())));
 
+        // 3a. 转职任务(M59,证据 E-153):奖励种类是换成长类型的,新的成长类型下标要在 1 到 5 之内(整库,不只是这一步支持的)
+        List<QuestDef> growQuests = all.Where(q => q.IsGrowtypeReward).ToList();
+        int growBad = growQuests.Count(q => QuestRules.GrowtypeOf(q) < 0);
+        Console.WriteLine("  转职任务(奖励种类是换成长类型)" + growQuests.Count + " 个:新成长类型下标 "
+            + string.Join(" ", growQuests.GroupBy(q => QuestRules.GrowtypeOf(q)).OrderBy(g => g.Key).Select(g => g.Key + "×" + g.Count()))
+            + ";这一步支持的 " + growQuests.Count(q => QuestRules.IsSupported(q, monsters.Contains)) + " 个");
+        Report(growBad == 0, "转职任务的新成长类型下标都在 1 到 " + (SkillRules.GrowtypeCount - 1) + " 之内(越界或没写的 " + growBad + " 个)");
+
         // 3b. 文字:名字与三段对话在整库里取不取得到、写法里有没有要特殊处理的字符(只打印个数,不打印文字)
         var library = new StrLibrary(path => assets.Pvf.TryGetEntry(path, out PvfEntry entry) ? assets.Pvf.Read(entry) : null);
         var texts = new (string Label, Func<QuestDef, QuestText> Pick)[]
@@ -374,6 +382,10 @@ internal static class QuestCheck
         if (reward.Exp < 0 || reward.Gold < 0 || (q.Grade == QuestGrade.NormalRepeat && reward.Exp != 0))
         {
             return "reward";
+        }
+        if (q.IsGrowtypeReward != (reward.Growtype >= 0) || (reward.Growtype >= 0 && (reward.Growtype == hero.GrowType || reward.Items.Count != 0)))
+        {
+            return "growtype-reward";
         }
         if (!QuestRules.Complete(q, log) || log.IsActive(q.Id))
         {

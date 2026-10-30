@@ -70,6 +70,12 @@ namespace Dnf.Game
         public int QuestPoint { get; set; }
 
         public int QuestPiece { get; set; }
+
+        /// <summary>
+        /// 转职奖励(奖励种类 <c>[grow type]</c>)给的新成长类型下标;没有这种奖励为 −1。
+        /// 服务端 <c>quest_reward</c> 0x0866ea92 对这个类型做的是:新值当第一成长类型、第二成长类型保持原样,走 <c>set_grow_type</c>。
+        /// </summary>
+        public int Growtype { get; set; } = -1;
     }
 
     /// <summary>任务的规则:哪些任务这一步支持、能不能接、完成条件、奖励。全是纯函数,状态在 <see cref="QuestLog"/>。</summary>
@@ -121,11 +127,20 @@ namespace Dnf.Game
             {
                 return "hidden";
             }
-            if (q.JobChange == 1)
+            bool growReward = q.IsGrowtypeReward;
+            if (q.JobChange == 1 && !growReward)
             {
+                // 转职任务(标志 1)的奖励就是换成长类型;不换成长类型的这类任务这一步不做
                 return "job-change";
             }
-            if (q.RewardType != null && !string.Equals(q.RewardType, "[item]", StringComparison.OrdinalIgnoreCase))
+            if (growReward)
+            {
+                if (GrowtypeOf(q) < 0)
+                {
+                    return "reward-shape";
+                }
+            }
+            else if (q.RewardType != null && !string.Equals(q.RewardType, "[item]", StringComparison.OrdinalIgnoreCase))
             {
                 return "reward-type";
             }
@@ -172,6 +187,20 @@ namespace Dnf.Game
         public static bool IsSupported(QuestDef q, Func<int, bool> monsterExists = null)
         {
             return UnsupportedReason(q, monsterExists) == null;
+        }
+
+        /// <summary>
+        /// 转职奖励给的新成长类型下标(奖励种类 <c>[grow type]</c> 时 <c>[reward int data]</c> 的第一个整数);不是这种奖励或数据不合法返回 −1。
+        /// 合法 = 1 到 <see cref="SkillRules.GrowtypeCount"/> − 1:0 是转职前,不是转出去的目标;更大的没有对应的成长块与技能表。
+        /// </summary>
+        public static int GrowtypeOf(QuestDef q)
+        {
+            if (q == null || !q.IsGrowtypeReward || q.RewardData.Count < 1)
+            {
+                return -1;
+            }
+            int value = q.RewardData[0];
+            return value >= 1 && value < SkillRules.GrowtypeCount ? value : -1;
         }
 
         private static string KillGroupsReason(QuestDef q, Func<int, bool> monsterExists)
@@ -441,6 +470,8 @@ namespace Dnf.Game
                     reward.Gold = (int)(amount * q.GoldPercent / 100);
                 }
             }
+
+            reward.Growtype = GrowtypeOf(q);
 
             List<QuestItem> choices = SelectableRewards(q, hero);
             if (selection >= 0 && selection < choices.Count)

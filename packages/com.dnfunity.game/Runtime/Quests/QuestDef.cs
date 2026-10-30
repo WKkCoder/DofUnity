@@ -215,7 +215,10 @@ namespace Dnf.Game
         /// <summary>可接的角色:<c>[target character]</c> 的各项;没写时用 <c>[job]</c> 与 <c>[grow type]</c> 拼出一项(都没写 = 所有职业所有转职)。</summary>
         public List<QuestTarget> Targets { get; } = new List<QuestTarget>();
 
-        /// <summary><c>[job change quest]</c>:转职任务标志(0 无;1 脚本自相矛盾;2 必须匹配转职方向;10 与 20 不看转职方向)。</summary>
+        /// <summary>
+        /// <c>[job change quest]</c>:转职任务标志(0 无;1 与 2 是转职任务,服务端 <c>isDoingJobChangeQuest</c> 0x086ad48a 把这两个值当"正在做转职任务";
+        /// 10 与 20 匹配职业时不看转职方向)。1 的任务奖励是换成长类型(<see cref="IsGrowtypeReward"/>)。
+        /// </summary>
         public int JobChange { get; set; }
 
         /// <summary>前置任务(<c>[pre required quest]</c>):每一行是一组,组内要全部完成,各组之间只要有一组满足就行。</summary>
@@ -226,6 +229,15 @@ namespace Dnf.Game
 
         /// <summary>奖励种类(<c>[reward type]</c> 的关键字;没写等于 <c>[item]</c>)。</summary>
         public string RewardType { get; set; } = "[item]";
+
+        /// <summary>奖励种类里"换成长类型"(转职)的关键字。</summary>
+        public const string GrowtypeRewardType = "[grow type]";
+
+        /// <summary>奖励种类是不是换成长类型:是的话 <see cref="RewardData"/> 第一个整数是新的成长类型下标(服务端 <c>quest_reward</c> 0x0866ea92 的奖励类型 1)。</summary>
+        public bool IsGrowtypeReward => string.Equals(RewardType, GrowtypeRewardType, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary><c>[reward int data]</c> 里的整数,按脚本次序原样保留(物品类奖励另有 <see cref="Rewards"/> 的解析结果;非物品类奖励的数值从这里取)。</summary>
+        public List<int> RewardData { get; } = new List<int>();
 
         /// <summary>固定奖励(<c>[reward int data]</c>:每项 编号 + 数量,可带 <c>[job]</c> 限定职业;编号 0 是"金币"标记)。</summary>
         public List<QuestItem> Rewards { get; } = new List<QuestItem>();
@@ -429,6 +441,7 @@ namespace Dnf.Game
                         break;
                     case "[reward int data]":
                         ReadRewardItems(line, q.Rewards);
+                        q.RewardData.AddRange(line.Ints());
                         break;
                     case "[reward selection int data]":
                         ReadRewardItems(line, q.SelectRewards);

@@ -459,6 +459,42 @@ public class QuestWindowTests
     }
 
     [Fact]
+    public void AJobChangeRewardGetsItsOwnLineInTheRewardArea()
+    {
+        (QuestWindow w, _, _) = Opened(shop: 3);
+        QuestRow row = w.SelectedRow;
+        Assert.Equal(-1, row.Growtype);
+        Assert.DoesNotContain("quest-reward-job", Tags(QuestWindowArt.Build(w, FontArt())));
+        row.Growtype = 2;
+        List<SceneSprite> sprites = QuestWindowArt.Build(w, FontArt());
+        string[] tags = Tags(sprites);
+        Assert.Equal(1, tags.Count(t => t == "quest-reward-job"));
+        SceneSprite job = sprites.Single(s => s.AnimationPath == "quest-reward-job");
+        SceneSprite gold = sprites.Single(s => s.AnimationPath == "quest-reward-gold");
+        SceneSprite head = sprites.Single(s => s.AnimationPath == "quest-reward-head");
+        Assert.True(job.ScreenY + job.Frame.Height <= gold.ScreenY, "转职一行在金币一行上面");
+        Assert.True(head.ScreenY + head.Frame.Height <= job.ScreenY, "转职一行在奖励标题下面");
+        AssertInsideScreen(sprites);
+    }
+
+    [Fact]
+    public void AJobChangeRewardAloneStillOpensTheRewardArea()
+    {
+        (QuestWindow w, _, _) = Opened(shop: 3);
+        QuestRow row = w.SelectedRow;
+        row.Exp = 0;
+        row.Gold = 0;
+        row.Rewards.Clear();
+        row.Choices.Clear();
+        Assert.DoesNotContain("quest-reward-head", Tags(QuestWindowArt.Build(w, FontArt())));
+        row.Growtype = 1;
+        string[] tags = Tags(QuestWindowArt.Build(w, FontArt()));
+        Assert.Contains("quest-reward-head", tags);
+        Assert.Contains("quest-reward-job", tags);
+        Assert.DoesNotContain("quest-reward-gold", tags);
+    }
+
+    [Fact]
     public void TheReadyRowDrawsTheRewardCursorOnTheChosenLine()
     {
         (QuestWindow w, QuestBook book, _) = Opened();

@@ -48,6 +48,9 @@ public class UiTextTests
     [InlineData("COINS 3", "复活币 3")]
     [InlineData("ATK P +120", "物理攻击 +120")]
     [InlineData("ATK M +80", "魔法攻击 +80")]
+    [InlineData("EXP 100  GOLD 20", "经验 100  金币 20")]
+    [InlineData("EXP 100  GOLD 20  JOB CHANGE", "经验 100  金币 20  转职")]      // 转职任务完成的概要:不能被短句式吞掉尾巴
+    [InlineData("JOB CHANGE", "转职")]
     public void PatternPhrasesCarryTheirNumbersAcross(string english, string chinese)
     {
         Assert.Equal(chinese, UiText.Translate(english));
@@ -176,6 +179,7 @@ public class UiTextTests
         {
             Check(text);
         }
+        Check(QuestWindowArt.JobChangeText);
         Check(QuestWindowArt.HintText(QuestWindowMode.Journal, false));
         Check(QuestWindowArt.HintText(QuestWindowMode.Npc, false));
         Check(QuestWindowArt.HintText(QuestWindowMode.Npc, true));
