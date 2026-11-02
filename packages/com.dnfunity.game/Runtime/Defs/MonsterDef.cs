@@ -93,6 +93,7 @@ namespace Dnf.Game
             CategoryNames = BlockStrings("[category]", "[/category]");
             AttackActions = BlockStrings("[attack action]", "[/attack action]");
             ActionList = BlockStrings("[action list]", "[/action list]");
+            EtcActions = BlockStrings("[etc action]", "[/etc action]");
             Cooltimes = BlockInts("[cooltime]", "[/cooltime]");
             AttackMotions = BlockStrings("[attack motion]", "[/attack motion]");
             AttackInfos = BlockStrings("[attack info]", "[/attack info]");
@@ -192,6 +193,18 @@ namespace Dnf.Game
 
         /// <summary>[action list] 块里的 .act 路径(原样):与 [attack action] 二选一的另一种写法,脚本怪物里 214 个用它(证据 E-128)。</summary>
         public string[] ActionList { get; }
+
+        /// <summary>
+        /// [etc action] 块里的 .act 路径(原样,相对 .mob 目录):怪物的自定义动作列表,脚本 [SET ACTION] [CUSTOM] n 与 [TRIGGER] [CUSTOM] a i 的 n、a 就是它的下标
+        /// (M62-b,证据 E-159;对应关系是推断,依据全库扫描:怪物自己的 .act 里 [CUSTOM] n 的 n 落在这张表里的占绝大多数)。没有这个块是空数组。
+        /// </summary>
+        public string[] EtcActions { get; }
+
+        /// <summary>规范化的 [etc action] 路径;空串或越界返回 null。</summary>
+        public string EtcActionPath(int index)
+        {
+            return ResolveAt(EtcActions, index);
+        }
 
         /// <summary>
         /// 脚本怪物的招式列表:[attack action] 与 [action list] 二选一(两个标签不会同时出现),.ai 的动作脚本返回的就是这个列表的下标;

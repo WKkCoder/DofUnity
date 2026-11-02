@@ -85,7 +85,7 @@ cond	0x29	[IS AI TARGET]	AI +0x7b0 设目标，非过滤	低	全库 0 次
 cond	0x2b	DIRECT DO BEHAVIOR	同 0x00	高	直接差异在行为层
 cond	0x2c	[GET TARGET]	按 mode 随机/距离/等级/生命/最近命中整理工作集并留前 maxN;工作集一开始为空则整个触发器不通过(0x010d7ccb 到 0x010d3ed3);[HP][HIGH] 的比较函数 0x010d1160 恒真,不排序(原版笔误)	高	[MP] 键;随机洗牌序列与客户端不逐个对应
 cond	0x2d	[IS GRABABLE]	逐对象:转成生物类(被动对象剔除)后取虚槽 0x380;参数为 1 留能抓的,别的值留不能抓的	高	主角侧只近似为活着且没有冰冻、石化
-cond	0x2e	[TRIGGER CHECK]	读指定触发器池第 N 条的开关;种类 3(没写族)为整体真假,否则逐对象过滤;[ON]/[OFF] 对应 P=0/1;不认 [DEFAULT];被动对象(另一个类 0x019d920c)只答 [CUSTOM](虚槽 0x450)、[DEFAULT](字段 +0x130)、[PROC](虚槽 0x14c),别的族对象被剔除(E-158)	中	怪物的 [DEFAULT]/[CUSTOM] 池没有宿主(被动对象 M62 起有);是否还检查触发次数没确认
+cond	0x2e	[TRIGGER CHECK]	读指定触发器池第 N 条的开关;种类 3(没写族)为整体真假,否则逐对象过滤;[ON]/[OFF] 对应 P=0/1;不认 [DEFAULT];被动对象(另一个类 0x019d920c)只答 [CUSTOM](虚槽 0x450)、[DEFAULT](字段 +0x130)、[PROC](虚槽 0x14c),别的族对象被剔除(E-158)	中	怪物的 [CUSTOM] 池(M62-b 起)有宿主、[DEFAULT] 池没有宿主(被动对象 M62 起都有);是否还检查触发次数没确认
 cond	0x38	[IS END MAP]	拥有者近地图右缘且 X 轴速度>0	中	左端 x≤150 特例；函数 0x0046ef10
 cond	0x39	[IS END MAP VERTICALLY]	拥有者近地图上缘且 Y 轴速度>0	中	函数 0x0062d080
 cond	0x3a	[IS DAMAGEBOX ENABLE]	目标伤害盒开关与参数 0/1 一致	中	全库仅 1 例
@@ -135,7 +135,7 @@ beh	0x73	[DESTROY] / [DESTROY BY FORCE]	分类型调用销毁/死亡虚函数；
 beh	0x74	[SET HP]	一个值在目标循环前求一次,对活着的目标写血量(+0x2a0 一带);hp<=0 时另有怪物/AI 旁路(块 0x010b95c9,E-134)	中	0x211/0x111 类型码、011a0930 旁路没读通
 beh	0x75	[ATTACKRECT]	开、关、重置目标对象的攻击判定矩形(虚槽 0x360 / 0x208)	高	—
 beh	0x76	[SET DIRECTION]	设置目标朝向(虚槽 0xf0);行为拥有者不是本机控制对象时整段跳过	高	取值编号已读通(E-130:0 左、1 右、2 朝目标、3 反向、4 随机、7 本体朝向、8 本体反向);随机的取余基准与保护区调用未读
-beh	0x77	[SET ACTION]	按动作族码与 ATTACK/CUSTOM 索引切换状态(函数 0x010b1d50 + vtbl+0x172/0xa7)	中	完整关键字→族码表、内置 stateId 全表;非出招动作族里怪物只在待机与行走时接 [ATTACK] n(出招间隔过了才接,推断)、[STAND]/[DEFAULT]、[MOVE],其余族与别的相位只记数(E-146)
+beh	0x77	[SET ACTION]	按动作族码与 ATTACK/CUSTOM 索引切换状态(函数 0x010b1d50 + vtbl+0x172/0xa7)	中	完整关键字→族码表、内置 stateId 全表;非出招动作族里怪物只在待机与行走时接 [ATTACK] n(出招间隔过了才接,推断)、[STAND]/[DEFAULT]、[MOVE],其余族与别的相位只记数(E-146);[CUSTOM] n 在怪物上切进 [etc action] 第 n 项(M62-b,E-159;出招、待机、行走里都接,运行模型是推断,状态机一侧没读)
 beh	0x79	[SEND MESSAGE]	本机控owner时向AI发五类COMMAND组包(0x34/2)	中	对端接收与触发器耦合
 beh	0x7a	[REMOVE CATEGORY]	查类别表后0x28c移除,怪物+0x4f94清零	中	id 0x1a含义、0x28c返回值
 beh	0x7b	[ACTIVE STATUS]	对目标集合里每个活动对象（类型位 0x11：主角与怪物）调受害者一侧的挂状态函数 0x008184e0：种类 0–17、概率（浮点）、等级、持续毫秒、附加整数（个数按种类，与 .atk 状态槽同）、施加者=行为拥有者；与受击处理同一函数	高	种类 14 分支为空；函数内的拒绝条件未展开；怪物侧状态未做；被动对象不挂是推断（E-144）

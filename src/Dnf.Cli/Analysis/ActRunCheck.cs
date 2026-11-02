@@ -411,6 +411,183 @@ internal static class ActRunCheck
     }
 
     /// <summary>
+    /// 怪物自定义动作([etc action],M62-b,E-159)的静态审计(汇总数,本机,非 REA):有多少只怪物写了、各项的 .act 读不读得出、动画循不循环、带不带攻击框与触发器,
+    /// 以及怪物自己各个 .act 里 [SET ACTION] [CUSTOM] n 的 n 落不落在列表里(落在列表里的比例是"n 就是 [etc action] 的下标"这个读法的证据)。
+    /// </summary>
+    private sealed class CustomTally
+    {
+        public int Monsters;
+        public int Entries;
+        public int Holes;
+        public int ActsMissing;
+        public int WithAnimation;
+        public int Looping;
+        public int LoopingNoExit;
+        public int WithAttackBoxes;
+        public int WithTriggers;
+        public int ChangeFileInEtc;
+        public int UsingMonsters;
+        public int Uses;
+        public int UsesInRange;
+        public readonly SortedDictionary<string, int> UsesBySource = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        public readonly SortedDictionary<string, int> SizeHistogram = new SortedDictionary<string, int>(StringComparer.Ordinal);
+
+        public void Print()
+        {
+            Console.WriteLine("怪物的自定义动作(E-159,[etc action]):");
+            Console.WriteLine("  写了列表的怪物 " + Monsters + " 只,共 " + Entries + " 项(各列表长度:" + Join(SizeHistogram, 12) + ",空位 " + Holes + ");.act 读不到 " + ActsMissing + " 项,带主动画 " + WithAnimation
+                + " 项(循环 " + Looping + "、其中脚本里没有 [SET ACTION] 的 " + LoopingNoExit + "、带攻击框 " + WithAttackBoxes + "),带触发器 " + WithTriggers + " 项;自定义动作里的 [CHANGE ACTION FILE] " + ChangeFileInEtc + " 条");
+            Console.WriteLine("  怪物自己的 .act 里 [SET ACTION] [CUSTOM] n:用到的怪物 " + UsingMonsters + " 只,共 " + Uses + " 条,n 落在列表里 " + UsesInRange + " 条;按来源 " + Join(UsesBySource, 12));
+        }
+
+        public object ToJson() => new { Monsters, Entries, Holes, ActsMissing, WithAnimation, Looping, LoopingNoExit, WithAttackBoxes, WithTriggers, ChangeFileInEtc, UsingMonsters, Uses, UsesInRange, UsesBySource, SizeHistogram };
+    }
+
+    /// <summary>程序里有没有 [SET ACTION](任何一族):循环动画的自定义动作靠它(或挨打)才离得开。</summary>
+    private static bool HasSetAction(ActProgram program)
+    {
+        foreach (ActBehaviorGroup group in program.Behaviors)
+        {
+            foreach (ActBehavior b in group.Items)
+            {
+                if (b.Kind == ActBehaviorKind.SetAction)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static CustomTally CountCustoms(GameData data, ActLibrary library, Func<string?, ActProgram?> program)
+    {
+        var tally = new CustomTally();
+        foreach (int id in data.MonsterIds())
+        {
+            MonsterDef? def = data.GetMonster(id);
+            if (def == null || def.EtcActions.Length == 0)
+            {
+                continue;
+            }
+            tally.Monsters++;
+            int count = def.EtcActions.Length;
+            tally.Entries += count;
+            string size = count < 10 ? "0" + count : count.ToString();
+            tally.SizeHistogram[size] = tally.SizeHistogram.TryGetValue(size, out int hist) ? hist + 1 : 1;
+            for (int i = 0; i < count; i++)
+            {
+                string? path = def.EtcActionPath(i);
+                if (path == null)
+                {
+                    tally.Holes++;
+                    continue;
+                }
+                PassiveAction? action = library.Action(path, null);
+                if (action == null)
+                {
+                    tally.ActsMissing++;
+                    continue;
+                }
+                if (action.HasTriggers)
+                {
+                    tally.WithTriggers++;
+                }
+                if (action.Ani != null)
+                {
+                    tally.WithAnimation++;
+                    if (action.Ani.Loops)
+                    {
+                        tally.Looping++;
+                        if (!HasSetAction(action.Program))
+                        {
+                            tally.LoopingNoExit++;
+                        }
+                    }
+                    bool boxes = false;
+                    foreach (AniFrame frame in action.Ani.Frames)
+                    {
+                        foreach (AniBox box in frame.Boxes)
+                        {
+                            if (box.Type == AniBoxType.Attack)
+                            {
+                                boxes = true;
+                            }
+                        }
+                    }
+                    if (boxes)
+                    {
+                        tally.WithAttackBoxes++;
+                    }
+                }
+                foreach (ActBehaviorGroup group in action.Program.Behaviors)
+                {
+                    foreach (ActBehavior b in group.Items)
+                    {
+                        if (b.Kind == ActBehaviorKind.ChangeActionFile)
+                        {
+                            tally.ChangeFileInEtc++;
+                        }
+                    }
+                }
+            }
+            // 怪物自己的各个 .act:出招列表、各动作族、自定义动作本身
+            var files = new List<(string Source, string? Path)>();
+            string[] list = def.AttackList;
+            for (int i = 0; i < list.Length; i++)
+            {
+                files.Add(("出招", string.IsNullOrEmpty(list[i]) ? null : PvfPath.ResolveRelativeTo(def.Path, list[i])));
+            }
+            files.Add(("待机", def.WaitingActionPath));
+            files.Add(("行走", def.MoveActionPath));
+            files.Add(("坐下", def.SitActionPath));
+            files.Add(("受击", def.Damage1ActionPath));
+            files.Add(("受击", def.Damage2ActionPath));
+            files.Add(("倒地", def.DownActionPath));
+            files.Add(("翻倒", def.OverturnActionPath));
+            files.Add(("最后一幕", def.ActionPath("[last action]")));
+            files.Add(("过程", def.ActionPath("[proc action]")));
+            for (int i = 0; i < count; i++)
+            {
+                files.Add(("自定义", def.EtcActionPath(i)));
+            }
+            bool used = false;
+            foreach ((string source, string? path) in files)
+            {
+                ActProgram? p = program(path);
+                if (p == null)
+                {
+                    continue;
+                }
+                foreach (ActBehaviorGroup group in p.Behaviors)
+                {
+                    foreach (ActBehavior b in group.Items)
+                    {
+                        if (b.Kind != ActBehaviorKind.SetAction || b.Action != ActActionKind.Custom || b.ActionIndex == null)
+                        {
+                            continue;
+                        }
+                        foreach (int n in b.ActionIndex.Candidates())
+                        {
+                            tally.Uses++;
+                            used = true;
+                            if ((uint)n < (uint)count)
+                            {
+                                tally.UsesInRange++;
+                            }
+                            tally.UsesBySource[source] = tally.UsesBySource.TryGetValue(source, out int c) ? c + 1 : 1;
+                        }
+                    }
+                }
+            }
+            if (used)
+            {
+                tally.UsingMonsters++;
+            }
+        }
+        return tally;
+    }
+
+    /// <summary>
     /// 实跑的小世界(E-158):只有被动对象自己,没有主角与目标;对象放出的对象也在里面跑(同时最多 <see cref="MaxObjects"/> 个,多了拒绝)。
     /// 用来验证真实脚本在开关板宿主上跑得起来(不抛异常),并数开关的读写;不是战斗模拟。
     /// </summary>
@@ -425,6 +602,7 @@ internal static class ActRunCheck
         public readonly List<PassiveObject> All = new List<PassiveObject>();
         public long Ms;
         public int Refused;
+        public int Summons;
 
         public LiveWorld(ActLibrary library, MonsterActor root)
         {
@@ -457,6 +635,21 @@ internal static class ActRunCheck
 
         public void SummonMonster(IActEntity master, int index, int level, float x, float y, float z, bool facingLeft, int lifetimeMs)
         {
+            Summons++;
+        }
+
+        /// <summary>把世界里还活着的被动对象推进 <paramref name="ms"/> 毫秒(怪物的实跑用;对象的运行器一起跑)。</summary>
+        public void Tick(int ms)
+        {
+            Ms += ms;
+            for (int i = 0; i < All.Count; i++)
+            {
+                PassiveObject o = All[i];
+                if (!o.Finished)
+                {
+                    o.Update(ms);
+                }
+            }
         }
 
         /// <summary>放一个对象进去,按 10 毫秒一步跑 <paramref name="seconds"/> 秒(全部消失就提前结束)。</summary>
@@ -561,6 +754,154 @@ internal static class ActRunCheck
             }
             tally.Spawned += world.All.Count - 1;
             tally.Refused += world.Refused;
+        }
+        return tally;
+    }
+
+    /// <summary>
+    /// 怪物自定义动作的实跑(E-159;汇总数,本机,非 REA):每只写了 [etc action] 的怪物、每一项各放进一个空场地(没有主角与目标;怪物的血量给得很大),
+    /// 直接让脚本的 [SET ACTION] [CUSTOM] n 那条路径把它切进去,按 10 毫秒一步最多跑 60 秒,看抛不抛异常、自己结束还是一直放着。
+    /// 不是战斗模拟:没有主角,依赖主角的条件都不成立;从出招里切进来的路径(出招 → 自定义动作)由全库扫描覆盖。
+    /// </summary>
+    private sealed class LiveCustomTally
+    {
+        public const int MaxSteps = 6000;
+
+        public int Monsters;
+        public int NoModel;
+        public int Entries;
+        public int NotEntered;
+        public int Failed;
+        public int Ended;
+        public int StillRunning;
+        public int StillLooping;
+        public int StillSingle;
+        public int StillSingleLooping;
+        public int Started;
+        public int Finished;
+        public int Rejected;
+        public int Spawned;
+        public int Refused;
+        public int Summons;
+        public readonly SortedDictionary<string, int> EndedBy = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        public readonly SortedDictionary<string, int> Cycles = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        public readonly SortedDictionary<string, int> Errors = new SortedDictionary<string, int>(StringComparer.Ordinal);
+
+        public void Print()
+        {
+            Console.WriteLine("  实跑(空场地、没有主角与目标、每项最多 " + MaxSteps / 100 + " 秒;E-159):怪物 " + Monsters + " 只(模型读不出 " + NoModel + " 只),共 " + Entries + " 项(没切进去 "
+                + NotEntered + " 项,抛异常 " + Failed + " 项);自己结束 " + Ended + " 项(" + Join(EndedBy, 6) + "),到时间还在放 " + StillRunning + " 项(其中循环动画 " + StillLooping + ",只切进过一次的 " + StillSingle + "、其中循环动画 " + StillSingleLooping
+                + ");切进 " + Started + " 次、放完 " + Finished + " 次、落空 " + Rejected + " 次;放出被动对象 " + Spawned + " 个(上限拒绝 " + Refused + " 次),召唤请求 " + Summons + " 次"
+                + (Errors.Count > 0 ? ";异常 " + Join(Errors, 6) : string.Empty));
+            if (Cycles.Count > 0)
+            {
+                Console.WriteLine("    其中反复切进的(平均一轮多久):" + Join(Cycles, 6));
+            }
+        }
+
+        public object ToJson() => new { Monsters, NoModel, Entries, NotEntered, Failed, Ended, StillRunning, StillLooping, StillSingle, StillSingleLooping, Started, Finished, Rejected, Spawned, Refused, Summons, EndedBy, Cycles, Errors };
+    }
+
+    private static string EndedBucket(int steps)
+    {
+        int ms = steps * 10;
+        return ms < 1000 ? "1 秒内" : ms < 5000 ? "1 到 5 秒" : ms < 20000 ? "5 到 20 秒" : "20 秒以上";
+    }
+
+    private static LiveCustomTally RunLiveCustoms(DnfAssets assets, GameData data, ActLibrary library)
+    {
+        var tally = new LiveCustomTally();
+        var walk = new RectUnionArea(new List<WorldRect>());
+        foreach (int id in data.MonsterIds())
+        {
+            MonsterDef? def = data.GetMonster(id);
+            if (def == null || def.EtcActions.Length == 0)
+            {
+                continue;
+            }
+            MonsterModel model;
+            try
+            {
+                model = MonsterModel.Read(assets, def.Path);
+            }
+            catch (Exception)
+            {
+                tally.NoModel++;
+                continue;
+            }
+            tally.Monsters++;
+            for (int n = 0; n < def.EtcActions.Length; n++)
+            {
+                var actor = new MonsterActor(0, new RoomMonsterSpawn(1, 0, 300, 100, 0, 0, 1, 0, "[fixed]", "[normal]"), model, 1, 100000000, 222.5, 1500, 0);
+                var world = new LiveWorld(library, actor);
+                actor.SetFamilyActs(MonsterFamilyActs.Build(library, model.FamilyActs), world);
+                if (!actor.CustomExists(n))
+                {
+                    continue;
+                }
+                tally.Entries++;
+                try
+                {
+                    actor.ActSelf.SetAction(ActActionKind.Custom, n, true, false);
+                    if (!actor.InCustomAction)
+                    {
+                        tally.NotEntered++;
+                        continue;
+                    }
+                    int steps = 0;
+                    for (; steps < LiveCustomTally.MaxSteps; steps++)
+                    {
+                        actor.Update(10, 0, 0, false, walk);
+                        world.Tick(10);
+                        if (!actor.InCustomAction)
+                        {
+                            break;
+                        }
+                    }
+                    if (steps < LiveCustomTally.MaxSteps)
+                    {
+                        tally.Ended++;
+                        string bucket = EndedBucket(steps + 1);
+                        tally.EndedBy[bucket] = tally.EndedBy.TryGetValue(bucket, out int b) ? b + 1 : 1;
+                    }
+                    else
+                    {
+                        tally.StillRunning++;
+                        AniFile? ani = actor.CustomAni(actor.CurrentCustomIndex);
+                        bool looping = ani != null && ani.Loops;
+                        if (looping)
+                        {
+                            tally.StillLooping++;
+                        }
+                        if (actor.CustomActionsStarted == 1)
+                        {
+                            tally.StillSingle++;
+                            if (looping)
+                            {
+                                tally.StillSingleLooping++;
+                            }
+                        }
+                        else
+                        {
+                            int cycle = LiveCustomTally.MaxSteps * 10 / Math.Max(1, actor.CustomActionsStarted);
+                            string key = cycle < 20 ? "不足 20 毫秒" : cycle < 100 ? "20 到 100 毫秒" : cycle < 500 ? "100 到 500 毫秒" : "500 毫秒以上";
+                            tally.Cycles[key] = tally.Cycles.TryGetValue(key, out int k) ? k + 1 : 1;
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    tally.Failed++;
+                    tally.Errors[e.GetType().Name] = tally.Errors.TryGetValue(e.GetType().Name, out int c) ? c + 1 : 1;
+                    continue;
+                }
+                tally.Started += actor.CustomActionsStarted;
+                tally.Finished += actor.CustomActionsFinished;
+                tally.Rejected += actor.CustomActionsRejected;
+                tally.Spawned += world.All.Count;
+                tally.Refused += world.Refused;
+                tally.Summons += world.Summons;
+            }
         }
         return tally;
     }
@@ -1284,6 +1625,11 @@ internal static class ActRunCheck
         LiveBoardTally liveBoards = RunLiveBoards(assets, data, library, boardsAll.Ids);
         Console.WriteLine();
         liveBoards.Print();
+        CustomTally customs = CountCustoms(data, library, Program);
+        Console.WriteLine();
+        customs.Print();
+        LiveCustomTally liveCustoms = RunLiveCustoms(assets, data, library);
+        liveCustoms.Print();
         int templates = 0;
         foreach (int id in reached)
         {
@@ -1325,6 +1671,11 @@ internal static class ActRunCheck
         int boardHit = (boardsAll.ReadByOutcome.TryGetValue("有答案", out int boardReadHit) ? boardReadHit : 0)
             + (boardsAll.WriteByOutcome.TryGetValue("有答案", out int boardWriteHit) ? boardWriteHit : 0);
         Report(liveBoards.Objects > 0 && liveBoards.Failed == 0, "被动对象的开关板实跑(E-158):有跨动作开关读写的对象各跑 10 秒都不抛异常(" + liveBoards.Objects + " 个跑完,抛异常 " + liveBoards.Failed + " 个)");
+        Report(customs.Monsters > 0 && customs.ActsMissing == 0, "怪物的 [etc action] 各项 .act 都读得到(" + customs.Entries + " 项,读不到 " + customs.ActsMissing + " 项)");
+        Report(customs.Uses > 0 && customs.UsesInRange * 100 >= customs.Uses * 95,
+            "怪物自己的 .act 里 [SET ACTION] [CUSTOM] n 的 n 落在 [etc action] 列表里的不低于 95%(" + customs.UsesInRange + "/" + customs.Uses + ")");
+        Report(liveCustoms.Entries > 0 && liveCustoms.Failed == 0 && liveCustoms.NotEntered == 0,
+            "怪物的自定义动作实跑(E-159):每一项都切得进去、各跑最多 60 秒不抛异常(" + liveCustoms.Entries + " 项,没切进去 " + liveCustoms.NotEntered + " 项,抛异常 " + liveCustoms.Failed + " 项)");
         Report(boardAll > 0 && boardHit * 100 >= boardAll * 95,
             "被动对象跨动作的开关读写(E-158)落到自己有触发器的动作上的不低于 95%(" + boardHit + "/" + boardAll + ")");
         int forceAll = monsterTally.ForceBlocks + monsterTally.ForceBroken;
@@ -1347,6 +1698,8 @@ internal static class ActRunCheck
                 boardsReached = boardsReached.ToJson(),
                 boardsAll = boardsAll.ToJson(),
                 liveBoards = liveBoards.ToJson(),
+                monsterCustoms = customs.ToJson(),
+                liveCustoms = liveCustoms.ToJson(),
             };
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(opts.JsonFile))!);
             File.WriteAllText(opts.JsonFile, JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));

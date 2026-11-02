@@ -1254,6 +1254,32 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>场上装了自定义动作列表(.mob 的 [etc action],M62-b,E-159)的怪物数。</summary>
+        public int CustomActMonsters
+        {
+            get
+            {
+                int n = 0;
+                foreach (MonsterActor m in _monsters)
+                {
+                    if (m.HasCustomActions)
+                    {
+                        n++;
+                    }
+                }
+                return n;
+            }
+        }
+
+        /// <summary>怪物切进自定义动作的总次数(E-159)。</summary>
+        public int CustomActionsStarted => SumMonsters(m => m.CustomActionsStarted);
+
+        /// <summary>自定义动作自己放完(动画播完或脚本切回站立)的总次数;被受击、死亡打断的不算。</summary>
+        public int CustomActionsFinished => SumMonsters(m => m.CustomActionsFinished);
+
+        /// <summary>脚本要切的自定义动作不存在(没写列表、序号越界、那一项读不出来)的总次数。</summary>
+        public int CustomActionsRejected => SumMonsters(m => m.CustomActionsRejected);
+
         /// <summary>非出招动作族运行器启动过的总次数(进入一族、过程出生、最后一幕开始都算;E-146)。</summary>
         public int FamilyRunsStarted
         {

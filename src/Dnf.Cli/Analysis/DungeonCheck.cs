@@ -212,6 +212,8 @@ internal static class DungeonCheck
             + " 次(落空 " + session.PassiveBoardWriteMisses + ")");
         Console.WriteLine("脚本非出招动作族(E-146):进过的房间里装了站立、行走、受击、倒地、过程或最后一幕触发器的怪物 " + session.FamilyActMonsters + " 只,运行器启动 " + session.FamilyRunsStarted
             + " 次,[SET ACTION] 落实 " + session.FamilySetActionApplied + " 次、没落实 " + session.FamilySetActionUnhosted + " 次");
+        Console.WriteLine("怪物的自定义动作(E-159):进过的房间里写了 [etc action] 的怪物 " + session.CustomActMonsters + " 只,切进自定义动作 " + session.CustomActionsStarted
+            + " 次,自己放完 " + session.CustomActionsFinished + " 次,要切的不存在 " + session.CustomActionsRejected + " 次");
         Console.WriteLine("脚本换动作文件(E-151):换上 " + session.ActionFilesApplied + " 次,记成待换 " + session.ActionFilesDeferred + " 次,这一版没有对应动作的族 "
             + session.ActionFilesUnhosted + " 次,序号越界 " + session.ActionFilesRejected + " 次,文件读不到 " + session.ActionFilesMissing + " 次");
         session.CountMonsterAi(out int aiScripted, out int aiBrain, out int aiPlaceholder);

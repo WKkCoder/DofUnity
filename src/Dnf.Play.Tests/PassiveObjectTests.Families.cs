@@ -203,12 +203,12 @@ public partial class PassiveObjectTests
         Assert.Equal((0, 1), (u.FamilySetActionApplied, u.FamilySetActionUnhosted));
         Assert.Equal(MonsterPhase.Wait, u.Phase);
 
-        // [TRIGGER] 指向还没有宿主的族([DEFAULT]、[CUSTOM])只记数
+        // [TRIGGER] 指向还没有宿主的族([DEFAULT])只记数;[CUSTOM] 有宿主了(M62-b,E-159),这只怪物没有自定义动作,落空
         using var xunh = new ActArena("f_xunh", useVitals: false);
         MonsterActor x = xunh.Monster;
         Assert.True(xunh.Until(() => x.ActSwitchUnhosted > 0, 100) > 0);
         xunh.Steps(5);
-        Assert.Equal((0, 0, 2), (x.ActSwitchApplied, x.ActSwitchMissed, x.ActSwitchUnhosted));
+        Assert.Equal((0, 1, 1), (x.ActSwitchApplied, x.ActSwitchMissed, x.ActSwitchUnhosted));
     }
 
     [Fact]

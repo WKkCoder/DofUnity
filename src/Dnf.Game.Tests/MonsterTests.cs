@@ -149,6 +149,25 @@ public sealed class MonsterTests
     }
 
     [Fact]
+    public void TheEtcActionListKeepsItsOrderAndItsEmptySlots()
+    {
+        // 自定义动作列表 [etc action](M62-b,E-159):下标就是脚本 [SET ACTION] [CUSTOM] n 的 n;空串占位(那一项没有动作),路径相对 .mob 所在目录
+        MonsterDef def = Def(
+            12,
+            Line("[etc action]", "e/a.act", "", "../shared/b.act"),
+            Line("[/etc action]"),
+            Line("[waiting action]", "w.act"));
+        Assert.Equal(new[] { "e/a.act", "", "../shared/b.act" }, def.EtcActions);
+        Assert.Equal("monster/test/dir/e/a.act", def.EtcActionPath(0));
+        Assert.Null(def.EtcActionPath(1));
+        Assert.Equal("monster/test/shared/b.act", def.EtcActionPath(2));
+        Assert.Null(def.EtcActionPath(3));                          // 越界
+        Assert.Null(def.EtcActionPath(-1));
+        Assert.Empty(Def(13, Line("[waiting action]", "w.act")).EtcActions);          // 没写这个块
+        Assert.Equal(new[] { "x.act" }, Def(14, Line("[etc action]", "x.act"), Line("[/etc action]"), Line("[waiting action]", "w.act")).EtcActions);     // 块外的字符串不算
+    }
+
+    [Fact]
     public void StringsOutsideBlocksAreNotCountedAsBlockItems()
     {
         MonsterDef def = Def(5, Line("[attack action]", "a1.act"), Line("[/attack action]"), Line("[waiting action]", "w.act"));

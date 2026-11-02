@@ -1356,3 +1356,36 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --room --map 
 
 **没做**:怪物的自定义动作宿主(怪物上的 `[SET ACTION] [CUSTOM] n` 与 `[CUSTOM]` 池,下一步);被动对象上 `[ATTACK]` 等池的读写(客户端也答不出,对象被剔除);被动对象的 `[PROC]` 动作(没有);下一批候选:`[IS TARGET STATE]`、`[IS TEAM]`、`[IS END MAP]`、`[ZSPEED]`、`[CASTING]`、`[APPENDAGE]`。
 
+## 50 怪物的自定义动作宿主(M62-b,证据 E-159)
+
+**读到了什么**(静态读码:Ghidra 无头反编译 `DNF.exe` 普通代码段;受保护区的调用当黑盒;只读,不入库):
+
+- 脚本 `[SET ACTION]` 在大型行为解析函数 `0x010b56c0` 里加载:关键字码减 2 当下标查 15 项跳转表(`0x10d0e64`)得到“状态种类”。`[CUSTOM]` 的种类不是常量,而是向目标对象自己的虚槽 `0x5ac` 要的:怪物类里这一槽(`0x00d108c0`)从怪物对象里一个受保护整数容器(偏移 `+0x30dc`,解码函数 `0x011a0de0`)取值,所以自定义状态的种类是怪物类自己的。序号 n 由值表达式求值函数 `0x010a3310` 算出(字面值、`[RANDOM]`、`[RANDOM SELECT]`)。执行块先调目标的“设状态”虚槽 `0x30c`(怪物类上是 `0x008779b0`,头部有几道守卫,含义没读)再调槽 `0x318`。
+- **没读到**:怪物状态机里自定义状态的处理函数——开始、每帧、结束的规则。下面的运行模型因此全是推断。
+
+**数据**(汇总数,本机脚本扫描,非 REA):117 只怪物写了非空的 `[etc action]`,共 225 项(11 个空位占序号),`.act` 全读得到,214 项带 BASE ANI(51 项循环,其中 9 项脚本里没有 `[SET ACTION]`;43 项带攻击框),184 项带触发器,自定义动作里的 `[CHANGE ACTION FILE]` 102 条(没有一条指向自定义槽);怪物自己的 `.act` 里 `[SET ACTION] [CUSTOM] n` 共 230 条,n 落在本怪物列表范围内的 223 条(97.0%),所以 n 就是 `[etc action]` 的下标;按来源:出招 107、自定义 55、待机 34、行走 29、受击 2、过程 2、最后一幕 1。`.ai` 里的 is custom action enable()(节点 0x17)没有任何数据在用,宿主仍返回假。
+
+**代码**(Game 层只多了 `MonsterDef` 的 `[etc action]` 块;运行器与接口没动):
+
+- `MonsterDef.EtcActions`/`EtcActionPath(i)`:`.mob` 的 `[etc action]` 块,路径相对 `.mob`,空位保留。
+- `MonsterFamilyActs.Customs`:按下标装 `PassiveAction`(`.act` 加 BASE ANI;读不出的与空位为空),只有自定义动作的怪物也装(`HasCustoms`)。
+- `MonsterActor.Customs.cs`(新):自定义动作列表、进入(`EnterCustom`)、结束(`FinishCustom`)、动画跨度(`AttackSpanMs`、`CustomPassMs`)、开关板(`CustomTriggerState`、`ActSwitchCustomTrigger`)、路径登记(`_anis.Remember`,画精灵与 `CurrentAnimationPath` 要用)。`MonsterActor`、`.Families`、`.Swaps` 里相应接线(`[SET ACTION] [CUSTOM]` 在出招、待机、行走里的三条入口,`[END]` 排队,换文件)。
+- 审计:`RoomCombat`/`DungeonSession` 的 `CustomActMonsters`、`CustomActionsStarted`/`Finished`/`Rejected`;`dungeon-check` 多一行,`dungeon_sweep.py` 多一行汇总;`act-run-check` 多一段静态审计(含循环动画里脚本没有 `[SET ACTION]` 的个数)、一段实跑(空场地里把每个自定义动作各跑最多 60 秒)与两条检查。
+
+**运行时的样子**(运行模型,推断):
+
+- 自定义动作住在出招阶段里(`CurrentCustomIndex` 不为 −1),放它自己的 BASE ANI,整个动作一个运行器;`[ENABLE]` 开关板按动作各存一份,进出保留;`[TRIGGER] [CUSTOM] a t`、`[TRIGGER CHECK] [CUSTOM] a t` 在怪物上有了宿主,写正在跑的那个动作走运行器(复位清它的次数)。
+- 帧推进倍率恒为 1,不吃出招速率;不算一次出招(不涨出招次数、不抽出招语音、不重置投射物、不通知 `.ai`),每次进入重置判定窗口、攻击信息沿用最近一次出招。
+- 入口:出招里(整串结束按出招结束,进冷却)、站立或行走里(不看出招间隔,结束回待机,不动冷却);别的相位(受击、倒地、死亡)拒绝;越界、空位、没写列表落空并计数。
+- 结束:不循环的播完就结束;循环动画只有脚本 `[STAND]`/`[ATTACK]`/`[CUSTOM]` 或挨打能结束(`[END]` 排队时放完当前一遍);没有动画的跑一步就结束。
+- `[CHANGE ACTION FILE] [ATTACK] i` 在自定义动作里立刻应用;待换的出招在进自定义动作时不应用,留到下一次真正出招。
+
+**验证**:
+
+- 单元测试新增 18 条(全套 3737 条;数据全是合成的):`MonsterTests`(`[etc action]` 块的顺序与空位)1 条;`PassiveObjectTests.Customs.cs` 17 条——出招脚本切进自定义动作并按出招结束、站立里切进不看出招间隔也不动它、站立里的一串连锁、行走里切进、`[END]` 等动画放完再切、不存在的动作被拒、动作之间连锁或离开去出招、循环动画只有脚本或挨打能结束、没有触发器或没有动画照样进出、攻击框每次进入打主角一次且重置判定窗口、开关板进出保留、脚本跨动作写开关与落空计数、脚本读开关、出招速率不作用、自定义动作里换出招文件立刻应用、没有程序库或摘掉后没有自定义动作。
+- 变异检查 48 处(出招起头的串与计数、动画跨度、存在性与开关板、状态机各条路径、待机与行走里的入口、换文件、装配、会话计数、`MonsterDef` 的块与序号)中 46 处让对应单测变红,2 处等价:待切的出招与待切的自定义动作互斥(同时为真不可达);`ActLibrary.Program` 已经拒绝空路径。
+- 真实数据(命令行,本机,汇总数,非 REA):`dnf act-run-check` 实跑——把 214 项非空位各放进空场地(没有主角与目标)跑最多 60 秒:全部切得进去、不抛异常;151 项自己结束(1 秒内 79、1 到 5 秒 45、5 到 20 秒 27),63 项到时间还在放:只切进过一次的 14 项全是循环动画(其中一部分的脚本里没有 `[SET ACTION]`,它们只有挨打才离得开),其余 49 项是脚本反复切进(平均一轮 500 毫秒以上 46 项、20 到 100 毫秒 1 项、不足 20 毫秒 2 项——后两类是每一帧或每几帧又被脚本切回自己,空场地里条件恒真的自循环);切进 14968 次、放完 14365 次、落空 0 次;放出被动对象 1636 个(上限拒绝 6 次)。全库扫描:副本 301/346(+1)、开伤害扫描 276/346(+2);扫描里自定义动作落空 0 次。
+- `tools/verify-all.sh` 26 项全部通过;EditMode:57 通过、10 条 GPU 对拍跳过;macOS 链路 69 次运行退出码 0。这一轮没有构建 Windows 与 Android。
+
+**没做**:怪物状态机一侧自定义状态的开始、每帧、结束规则(读通之前运行模型只是推断);怪物上的 `[DEFAULT]` 池;`.ai` 的 is custom action enable();其余怪物动作族(`[ready action]` 71 只、`[come in action]` 43 只、`[moveback action]`、`[jump action]` 各 29 只、`[dash action]`、`[dashattack action]` 等);下一批候选:`[IS TARGET STATE]`、`[IS TEAM]`、`[IS END MAP]`、`[ZSPEED]`、`[CASTING]`、`[APPENDAGE]`。
+

@@ -481,7 +481,7 @@ namespace Dnf.Play
         /// <summary>写法指到的招或触发器不存在(没有这一招、这一招没装触发器、序号越界)的次数:客户端同样跳过(触发器个数不大于序号就不动,E-145)。</summary>
         public int ActSwitchMissed { get; private set; }
 
-        /// <summary>指向还没有宿主的动作族([DEFAULT]、[CUSTOM])的次数:只记数、不落实。站立、行走、坐下、倒地、过程已有宿主(M53,E-146),落空的算 <see cref="ActSwitchMissed"/>。</summary>
+        /// <summary>指向还没有宿主的动作族([DEFAULT])的次数:只记数、不落实。站立、行走、坐下、倒地、过程已有宿主(M53,E-146),自定义动作也有了(M62-b,E-159),落空的算 <see cref="ActSwitchMissed"/>。</summary>
         public int ActSwitchUnhosted { get; private set; }
 
         /// <summary>
@@ -509,6 +509,9 @@ namespace Dnf.Play
                         break;
                     case ActTriggerPool.Proc:
                         ActSwitchFamilyTrigger(MonsterActFamily.Proc, trigger, command);
+                        break;
+                    case ActTriggerPool.Custom:
+                        ActSwitchCustomTrigger(slot, trigger, command);       // 自定义动作的开关板(M62-b,E-159)
                         break;
                     default:
                         ActSwitchUnhosted++;
@@ -672,8 +675,20 @@ namespace Dnf.Play
             _actFalling = false;
             _attackRectOff = false;
             _deferredAttack = -1;
+            _deferredCustom = -1;
             _motionVersion++;
             _actRunner = null;
+            if (_customIndex >= 0)
+            {
+                // 自定义动作(M62-b):自己的动画、自己的触发器程序与开关板;没有触发器的只放动画
+                PassiveAction custom = _customs[_customIndex];
+                if (custom.HasTriggers && _customHost != null)
+                {
+                    _actRunner = new ActRunner(custom.Program, ActSelf, _customHost, _customEnabled[_customIndex]);
+                    _actSetPending = true;
+                }
+                return;
+            }
             if (_actPrograms == null || (uint)_attackIndex >= (uint)_actPrograms.Length || _actPrograms[_attackIndex] == null)
             {
                 return;
@@ -698,6 +713,7 @@ namespace Dnf.Play
             _actFalling = false;
             _attackRectOff = false;
             _deferredAttack = -1;
+            _deferredCustom = -1;
             _actRunner = null;
         }
 
@@ -797,17 +813,40 @@ namespace Dnf.Play
                     if (atEnd && !now)
                     {
                         _deferredAttack = index;
+                        _deferredCustom = -1;
                         return;
                     }
                     _script?.AttackStarted(index);
                     _attackIndex = index;
                     EnterPhase(MonsterPhase.Attack);
                     break;
+                case ActActionKind.Custom:
+                    if (!CustomExists(index))
+                    {
+                        CustomActionsRejected++;
+                        return;
+                    }
+                    if (atEnd && !now)
+                    {
+                        _deferredCustom = index;
+                        _deferredAttack = -1;
+                        return;
+                    }
+                    EnterCustom(index);
+                    break;
                 case ActActionKind.Stand:
                 case ActActionKind.Default:
                     if (!(atEnd && !now))
                     {
-                        FinishAttack();       // [END] 的回待机等动画播完,本来就是这样
+                        // [END] 的回待机等动画播完,本来就是这样
+                        if (_customIndex >= 0)
+                        {
+                            FinishCustom();
+                        }
+                        else
+                        {
+                            FinishAttack();
+                        }
                     }
                     break;
             }
@@ -840,7 +879,7 @@ namespace Dnf.Play
             }
             AniTimeline timeline = Timeline(ani);
             int f = Math.Max(0, Math.Min(frame, timeline.FrameCount - 1));
-            _phaseMs = timeline.StartMs(f) / AttackRate;
+            _phaseMs = timeline.StartMs(f) / PhaseRate;
             AttackEvalFrame = f - 1;          // 跳过去的帧不判,从目标帧起判
             _motionVersion++;
         }
@@ -1038,10 +1077,10 @@ namespace Dnf.Play
         /// </summary>
         private int ActMotionDurationMs()
         {
-            double total = Duration(CurrentAni);
-            if (Phase == MonsterPhase.Attack && AttackRate > 0)
+            double total = Phase == MonsterPhase.Attack && _customIndex >= 0 ? CustomPassMs() : Duration(CurrentAni);
+            if (Phase == MonsterPhase.Attack && PhaseRate > 0)
             {
-                total /= AttackRate;
+                total /= PhaseRate;
             }
             return (int)total;
         }
@@ -1232,7 +1271,7 @@ namespace Dnf.Play
                         ani = _anis.Move;
                         break;
                     case MonsterPhase.Attack:
-                        ani = _attackIndex < _anis.Attacks.Length ? _anis.Attacks[_attackIndex] : null;
+                        ani = _customIndex >= 0 ? _customs[_customIndex].Ani : (_attackIndex < _anis.Attacks.Length ? _anis.Attacks[_attackIndex] : null);
                         break;
                     case MonsterPhase.Hurt:
                         ani = _hurtAni;
@@ -1260,7 +1299,7 @@ namespace Dnf.Play
                     return -1;
                 }
                 // 倒地时动画自己有时钟:长停留帧在腾空到最高点、落地时才放行,状态切换时还会跳帧(E-082)
-                double ms = _flight.Active || _dyingFromDown ? _flight.AniMs : (Phase == MonsterPhase.Attack ? _phaseMs * AttackRate : _phaseMs);
+                double ms = _flight.Active || _dyingFromDown ? _flight.AniMs : (Phase == MonsterPhase.Attack ? _phaseMs * PhaseRate : _phaseMs);
                 return Timeline(ani).FrameAt((long)ms);
             }
         }
@@ -1352,7 +1391,7 @@ namespace Dnf.Play
                     ApplyPush(deltaMs, walk);
                     break;
                 case MonsterPhase.Attack:
-                    if (_throws != null && TickThrows())
+                    if (_customIndex < 0 && _throws != null && TickThrows())
                     {
                         EnterPhase(MonsterPhase.Attack);          // 记录的剩余次数还在 2 以上:这一招从头再来一遍(证据 E-103)
                         break;
@@ -1365,8 +1404,13 @@ namespace Dnf.Play
                             break;
                         }
                     }
-                    if (_phaseMs * AttackRate >= Duration(CurrentAni))
+                    if (_phaseMs * PhaseRate >= AttackSpanMs())
                     {
+                        if (_deferredCustom >= 0)
+                        {
+                            EnterCustom(_deferredCustom);               // 脚本用 [END] 切到自定义动作:这一段播完再接(M62-b,E-159)
+                            break;
+                        }
                         if (_deferredAttack >= 0)
                         {
                             int next = _deferredAttack;
@@ -1375,7 +1419,14 @@ namespace Dnf.Play
                             EnterPhase(MonsterPhase.Attack);          // 脚本用 [END] 切招:这一招播完再接下一招(E-130)
                             break;
                         }
-                        FinishAttack();
+                        if (_customIndex >= 0)
+                        {
+                            FinishCustom();
+                        }
+                        else
+                        {
+                            FinishAttack();
+                        }
                     }
                     break;
                 default:
@@ -1400,6 +1451,8 @@ namespace Dnf.Play
 
         private void EnterPhase(MonsterPhase next)
         {
+            _customIndex = next == MonsterPhase.Attack ? _nextCustom : -1;       // 进的是自定义动作(M62-b,E-159):出招阶段里放别的动画与程序
+            _nextCustom = -1;
             if (_pendingFamily != null || _pendingAttack != null)
             {
                 ApplyPendingFor(next);       // [CHANGE ACTION FILE] 换了当时正在跑的那一族:这一次进入才换上(M57,E-151)
@@ -1408,10 +1461,13 @@ namespace Dnf.Play
             _phaseMs = 0;
             if (next == MonsterPhase.Attack)
             {
-                SwingNumber++;
+                if (_customIndex < 0)
+                {
+                    SwingNumber++;                  // 自定义动作不是一次"出招":不掷出招语音、不重置投掷
+                    _throws?.Runner.EnterAttack();
+                }
                 AttackEvalFrame = -1;
                 HitHeroThisSwing = false;
-                _throws?.Runner.EnterAttack();
                 BeginActs();
             }
             else

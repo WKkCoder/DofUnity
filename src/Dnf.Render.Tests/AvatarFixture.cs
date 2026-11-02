@@ -375,6 +375,15 @@ internal sealed class AvatarFixture : IDisposable
     public const string SwapDownAni = "monster/blob/animation_blob/downb.ani";
     public const string SwapStrikeAni = "monster/blob/animation_blob/strikeaway.ani";
 
+    /// <summary>
+    /// M62-b(怪物的自定义动作 [etc action],证据 E-159)的动画:A 三帧各 80 毫秒(共 240)、B 两帧各 100(共 200)、循环动画两帧各 100(不会自己播完)、
+    /// 带攻击框的一个(形状与出招动画 <see cref="BlobStrikeAni"/> 相同:第 2 帧即 160 到 240 毫秒带 <see cref="BlobStrikeBox"/>)。
+    /// </summary>
+    public const string CustomAAni = "monster/blob/animation_blob/customa.ani";
+    public const string CustomBAni = "monster/blob/animation_blob/customb.ani";
+    public const string CustomLoopAni = "monster/blob/animation_blob/customloop.ani";
+    public const string CustomStrikeAni = "monster/blob/animation_blob/customstrike.ani";
+
     /// <summary>出招 B 的攻击框(类型 15):x 从 −200 起宽 40(出招方向的反面),y 从 −10 起深 20,z 从 0 起高 50。</summary>
     public static readonly (ushort Type, int[] Values) BlobAwayBox = ((ushort)15, new[] { -200, -10, 0, 40, 20, 50 });
 
@@ -736,6 +745,30 @@ internal sealed class AvatarFixture : IDisposable
         ("f_swapbad", new[] { "ActSwapBad" }, new string[0]),
         ("f_swapsub", new[] { "ActSwapSub" }, new string[0]),
         ("f_swapmoveset", new[] { "ActPlain" }, new[] { "[move action]", "FSwapMoveSet" }),
+        // M62-b(证据 E-159):[etc action] 自定义动作列表。成对写法里 "[etc action]" 的值是用 | 隔开的 .act 名("" 是空位);
+        // 出招驱动 ActCustNow 等把脚本切到列表里的某一项(各 .act 见 ActScripts 里"M62-b"一段)
+        ("f_custnow", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustA|CustB" }),
+        ("f_custend", new[] { "ActCustEnd", "ActPlain" }, new[] { "[etc action]", "CustA" }),
+        ("f_custbad", new[] { "ActCustBad", "ActPlain" }, new[] { "[etc action]", "CustA||CustB" }),
+        ("f_custnone", new[] { "ActCustNow", "ActPlain" }, new string[0]),
+        ("f_custplain", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustAPlain" }),
+        ("f_custnoani", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustNoAni" }),
+        ("f_custstay", new[] { "ActPlain" }, new[] { "[waiting action]", "FStayCust", "[etc action]", "CustA" }),
+        ("f_custmove", new[] { "ActPlain" }, new[] { "[move action]", "FMoveCust", "[etc action]", "CustA" }),
+        ("f_custchain", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustChain|CustB" }),
+        ("f_custatk", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustAtk" }),
+        ("f_custloop", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustLoop" }),
+        ("f_custloopexit", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustLoopExit" }),
+        ("f_custloopend", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustLoopEnd" }),
+        ("f_custstrike", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustStrike" }),
+        ("f_custonce", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustOnce" }),
+        ("f_custgate", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustGate" }),
+        ("f_custsw", new[] { "ActCustSw", "ActPlain" }, new[] { "[etc action]", "CustA|CustGate" }),
+        ("f_custread", new[] { "ActCustRead", "ActPlain" }, new[] { "[etc action]", "CustGate" }),
+        ("f_custend2", new[] { "ActCustEnd", "ActPlain" }, new[] { "[etc action]", "CustStrike" }),
+        ("f_custstaychain", new[] { "ActPlain" }, new[] { "[waiting action]", "FStayCust", "[etc action]", "CustChain|CustB" }),
+        ("f_custswap", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustSwap" }),
+        ("f_custswap2", new[] { "ActCustSwapNow", "ActPlain" }, new[] { "[etc action]", "CustA" }),
     };
 
     private IEnumerable<(string Name, byte[] Data)> ActScripts()
@@ -755,7 +788,16 @@ internal sealed class AvatarFixture : IDisposable
             }
             for (int i = 0; i + 1 < pairs.Length; i += 2)
             {
-                if (!Array.Exists(defaults, d => d.Item1 == pairs[i]))
+                if (pairs[i] == "[etc action]")
+                {
+                    mob.Tag("[etc action]");
+                    foreach (string etc in pairs[i + 1].Split('|'))
+                    {
+                        mob.Str(etc.Length == 0 ? "" : "Action/" + etc + ".act");
+                    }
+                    mob.Tag("[/etc action]");
+                }
+                else if (!Array.Exists(defaults, d => d.Item1 == pairs[i]))
                 {
                     mob.Tag(pairs[i]).Str("Action/" + pairs[i + 1] + ".act");
                 }
@@ -1223,6 +1265,128 @@ internal sealed class AvatarFixture : IDisposable
         yield return (ActBoomAni, BuildBlobBoxesAni(false, (0, 100, new (ushort Type, int[] Values)[0]), (1, 100, new (ushort Type, int[] Values)[0]),
             (2, 100, new (ushort Type, int[] Values)[0])));
         yield return (ActIdleAni, BuildBlobBoxesAni(true, (0, 100, new (ushort Type, int[] Values)[0])));
+        foreach ((string Name, byte[] Data) custom in CustomScripts())
+        {
+            yield return custom;
+        }
+    }
+
+    private const string CustomAActAni = "../Animation_Blob/CustomA.ani";
+    private const string CustomBActAni = "../Animation_Blob/CustomB.ani";
+    private const string CustomLoopActAni = "../Animation_Blob/CustomLoop.ani";
+    private const string CustomStrikeActAni = "../Animation_Blob/CustomStrike.ani";
+
+    /// <summary>
+    /// M62-b(证据 E-159)怪物的自定义动作:动画、自定义动作的 .act(Cust 开头:A 与 B 一出场放一个永不消失的对象,会话里的被动对象数就是进入次数)、
+    /// 切进去的驱动(出招 .act 的 ActCust 开头,站立与行走 .act 的 FStayCust、FMoveCust)。
+    /// </summary>
+    private IEnumerable<(string Name, byte[] Data)> CustomScripts()
+    {
+        yield return (CustomAAni, BuildBlobAni(false, (0, 80, BlobHurtBox), (1, 80, BlobHurtBox), (2, 80, BlobHurtBox)));
+        yield return (CustomBAni, BuildBlobAni(false, (3, 100, BlobHurtBox), (4, 100, BlobHurtBox)));
+        yield return (CustomLoopAni, BuildBlobAni(true, (0, 100, BlobHurtBox), (1, 100, BlobHurtBox)));
+        yield return (CustomStrikeAni, BuildBlobBoxesAni(false, (0, 80, new[] { BlobHurtBox }), (1, 80, new[] { BlobHurtBox }),
+            (2, 80, new[] { BlobHurtBox, BlobStrikeBox }), (3, 80, new[] { BlobHurtBox })));
+
+        yield return (BlobActionDir + "/custa.act", ActWith(CustomAActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/custaplain.act", ActMotion(CustomAActAni));
+        yield return (BlobActionDir + "/custb.act", ActWith(CustomBActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        // 动画读不到的自定义动作:只带程序、没有动画(真实数据里有这样的项)
+        yield return (BlobActionDir + "/custnoani.act", ActWith("../Animation_Blob/Missing.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/custloop.act", ActMotion(CustomLoopActAni));
+        yield return (BlobActionDir + "/custloopexit.act", ActWith(CustomLoopActAni)
+            .Trigger(r => r.Tag("[LIMIT]").Int(1).Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[STAND]").Tag("[NOW]"))
+            .Build());
+        yield return (BlobActionDir + "/custloopend.act", ActWith(CustomLoopActAni)
+            .Trigger(r => r.Tag("[LIMIT]").Int(1).Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[END]"))
+            .Build());
+        yield return (BlobActionDir + "/custstrike.act", ActMotion(CustomStrikeActAni));
+        yield return (BlobActionDir + "/custchain.act", ActWith(CustomAActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(1).Tag("[NOW]"))
+            .Build());
+        yield return (BlobActionDir + "/custatk.act", ActWith(CustomAActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[NOW]"))
+            .Build());
+        // 一次性:出场放一个对象并把自己的触发器 0 关掉(开关板进出保留,下一次进来就不触发了)
+        yield return (BlobActionDir + "/custonce.act", ActWith(CustomAActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0).Tag("[TRIGGER]").Tag("[CUSTOM]").Int(0, 0).Tag("[OFF]"))
+            .Build());
+        // 出生时关着的触发器 0:要别处把它打开才放对象
+        yield return (BlobActionDir + "/custgate.act", ActWith(CustomAActAni)
+            .Trigger(r => r.Tag("[ENABLE]").Tag("[OFF]").Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+
+        yield return (BlobActionDir + "/actcustnow.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(0).Tag("[NOW]"))
+            .Build());
+        yield return (BlobActionDir + "/actcustend.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(0).Tag("[END]"))
+            .Build());
+        // 第 1 帧先切越界的:序号正好等于个数(3)与远远越界的(7);第 2 帧切列表里的空位 1;三次都不该动;第 3 帧切到 2(B)
+        yield return (BlobActionDir + "/actcustbad.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 3)
+            .Trigger(r => r.Tag("[FRAME]").Int(2, 2), 1)
+            .Trigger(r => r.Tag("[FRAME]").Int(3, 3), 2)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(3).Tag("[NOW]"))
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(1).Tag("[NOW]"))
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(2).Tag("[NOW]"))
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(7).Tag("[NOW]"))
+            .Build());
+        // 跨动作开关:先把自定义动作 1 的触发器 0 打开、再往不存在的自定义动作 9 写(落空)、然后切进自定义动作 1
+        yield return (BlobActionDir + "/actcustsw.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[TRIGGER]").Tag("[CUSTOM]").Int(1, 0).Tag("[ON]").Tag("[TRIGGER]").Tag("[CUSTOM]").Int(9, 0).Tag("[ON]")
+                .Tag("[SET ACTION]").Tag("[CUSTOM]").Int(1).Tag("[NOW]"))
+            .Build());
+        // 读侧:第 1 帧读自定义动作 0 的触发器 0(关着:放 X 速度 100;开着:放 Y 速度 50;自定义动作 9 不存在:放 Z 速度 300,不该触发),
+        // 第 2 帧把它打开,第 3 帧再读一次(开着:Y 速度 51)
+        string check = "[TRIGGER CHECK]";
+        yield return (BlobActionDir + "/actcustread.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1).Tag(check).Tag("[CUSTOM]").Int(0, 0).Tag("[OFF]"), 0, "[CHECKUP OBJECT]")
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1).Tag(check).Tag("[CUSTOM]").Int(0, 0).Tag("[ON]"), 1, "[CHECKUP OBJECT]")
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1).Tag(check).Tag("[CUSTOM]").Int(9, 0).Tag("[ON]"), 2, "[CHECKUP OBJECT]")
+            .Trigger(r => r.Tag("[FRAME]").Int(2, 2), 3)
+            .Trigger(r => r.Tag("[FRAME]").Int(3, 3).Tag(check).Tag("[CUSTOM]").Int(0, 0).Tag("[ON]"), 4, "[CHECKUP OBJECT]")
+            .Behavior(b => b.SetSpeed("[X AXIS]", 100))
+            .Behavior(b => b.SetSpeed("[Y AXIS]", 50))
+            .Behavior(b => b.SetSpeed("[Z AXIS]", 300))
+            .Behavior(b => b.Tag("[TRIGGER]").Tag("[CUSTOM]").Int(0, 0).Tag("[ON]"))
+            .Behavior(b => b.SetSpeed("[Y AXIS]", 51))
+            .Build());
+        yield return (BlobActionDir + "/custswap.act", ActWith(CustomAActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.ChangeFile("[ATTACK]", 0, "ActAway.act"))
+            .Build());
+        yield return (BlobActionDir + "/actcustswapnow.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.ChangeFile("[ATTACK]", 0, "ActAway.act").Tag("[SET ACTION]").Tag("[CUSTOM]").Int(0).Tag("[NOW]"))
+            .Build());
+        yield return (BlobActionDir + "/fstaycust.act", ActWith(StayActAni)
+            .Trigger(r => r.Tag("[LIMIT]").Int(1).Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(0).Tag("[NOW]"))
+            .Build());
+        yield return (BlobActionDir + "/fmovecust.act", ActWith(MoveActAni)
+            .Trigger(r => r.Tag("[LIMIT]").Int(1).Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(0).Tag("[NOW]"))
+            .Build());
     }
 
     public AvatarFixture()

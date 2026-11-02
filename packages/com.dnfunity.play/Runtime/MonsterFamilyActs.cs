@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Dnf.Render;
 
 namespace Dnf.Play
@@ -33,6 +34,15 @@ namespace Dnf.Play
         /// <summary>至少一族有触发器。</summary>
         public bool Any { get; private set; }
 
+        /// <summary>
+        /// 自定义动作列表(.mob 的 [etc action],下标就是脚本 [SET ACTION] [CUSTOM] n 的 n;M62-b,证据 E-159):读得出来的项各一个动作(带主动画与触发器程序,
+        /// 没有触发器的也留着——它的动画要放),读不出来的项是 null;没写这个块或一项也读不出来时为 null。
+        /// </summary>
+        public PassiveAction[] Customs { get; private set; }
+
+        /// <summary>至少有一个自定义动作。</summary>
+        public bool HasCustoms => Customs != null;
+
         /// <summary><paramref name="family"/> 的动作;没写 .act 或没有触发器为 null。</summary>
         public PassiveAction Get(MonsterActFamily family)
         {
@@ -50,6 +60,7 @@ namespace Dnf.Play
                 return null;
             }
             var result = new MonsterFamilyActs();
+            result.AddCustoms(library, paths.Etc);
             result.Add(library, MonsterActFamily.Stay, paths.Waiting);
             result.Add(library, MonsterActFamily.Move, paths.Move);
             result.Add(library, MonsterActFamily.Sit, paths.Sit);
@@ -59,7 +70,32 @@ namespace Dnf.Play
             result.Add(library, MonsterActFamily.Overturn, paths.Overturn);
             result.Add(library, MonsterActFamily.Last, paths.Last);
             result.Add(library, MonsterActFamily.Proc, paths.Proc);
-            return result.Any ? result : null;
+            return result.Any || result.HasCustoms ? result : null;
+        }
+
+        private void AddCustoms(ActLibrary library, IReadOnlyList<string> paths)
+        {
+            if (paths == null || paths.Count == 0)
+            {
+                return;
+            }
+            var actions = new PassiveAction[paths.Count];
+            bool any = false;
+            for (int i = 0; i < actions.Length; i++)
+            {
+                PassiveAction action = string.IsNullOrEmpty(paths[i]) ? null : library.Action(paths[i], null);
+                if (action == null)
+                {
+                    continue;
+                }
+                if (action.HasTriggers)
+                {
+                    library.Preload(action.Program);
+                }
+                actions[i] = action;
+                any = true;
+            }
+            Customs = any ? actions : null;
         }
 
         private void Add(ActLibrary library, MonsterActFamily family, string path)

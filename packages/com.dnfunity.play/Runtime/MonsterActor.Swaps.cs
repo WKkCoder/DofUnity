@@ -123,7 +123,7 @@ namespace Dnf.Play
 
         private bool SwapAttack(int index, PassiveAction action, IActHost host)
         {
-            if (Phase == MonsterPhase.Attack && _attackIndex == index)
+            if (Phase == MonsterPhase.Attack && _customIndex < 0 && _attackIndex == index)
             {
                 if (_pendingAttack == null)
                 {
@@ -254,7 +254,7 @@ namespace Dnf.Play
                     ApplyPendingFamily(MonsterActFamily.Move);
                     break;
                 case MonsterPhase.Attack:
-                    if (_pendingAttack != null && (uint)_attackIndex < (uint)_pendingAttack.Length && _pendingAttack[_attackIndex] != null)
+                    if (_customIndex < 0 && _pendingAttack != null && (uint)_attackIndex < (uint)_pendingAttack.Length && _pendingAttack[_attackIndex] != null)
                     {
                         PassiveAction action = _pendingAttack[_attackIndex];
                         _pendingAttack[_attackIndex] = null;

@@ -491,6 +491,15 @@ namespace Dnf.Play
 
         public int FamilyRunsStarted => Sum(s => s.FamilyRunsStarted);
 
+        /// <summary>怪物的自定义动作(.mob 的 [etc action],证据 E-159):装了列表的怪物数、切进去、自己放完、要切的不存在的总次数(各房间之和)。</summary>
+        public int CustomActMonsters => Sum(s => s.CustomActMonsters);
+
+        public int CustomActionsStarted => Sum(s => s.CustomActionsStarted);
+
+        public int CustomActionsFinished => Sum(s => s.CustomActionsFinished);
+
+        public int CustomActionsRejected => Sum(s => s.CustomActionsRejected);
+
         public int FamilySetActionApplied => Sum(s => s.FamilySetActionApplied);
 
         public int FamilySetActionUnhosted => Sum(s => s.FamilySetActionUnhosted);
