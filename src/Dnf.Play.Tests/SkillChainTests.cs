@@ -110,6 +110,13 @@ public class SkillChainTests
             Assert.Equal(r.MultiHitPassiveSkillId > 0, r.MultiHitCountIndex >= 0);      // 多段命中:被动技能编号与次数下标要么都有、要么都没有
             // 单段、不滑行、没有对象与特别部分的身体命中类(E-162,状态 0x41、0x42):进入块只读 [level info] 的百分比列,没有固定值列
             bool bodyHit = r.Stages.Count == 1 && r.Objects.Count == 0 && r.SlideSpeedIndex < 0 && r.Hop == null && r.Dive == null && r.JumpAttack == null && !r.AutoChain;
+            // 姿势→挥击类(E-163,状态 0x40):自动接续、没有对象,第一段是姿势动作(没有自己的命中),后面有一段有自己的命中
+            bool strikeLater = false;
+            foreach (SkillStageSpec later in r.Stages)
+            {
+                strikeLater |= later.HasOwnStrike;
+            }
+            bool poseThenStrike = r.AutoChain && r.Objects.Count == 0 && strikeLater;
             Assert.All(r.Stages, st =>
             {
                 // 悬停俯冲类的动画是空中攻击动作、空中攻击强化类的两种动作写在 SkillJumpAttackSpec 里,都没有这一段的 [etc motion] 下标(E-149、E-150)
@@ -121,7 +128,7 @@ public class SkillChainTests
                 }
                 else
                 {
-                    // 没有自己命中的段(伤害在放出的被动对象上):三个下标都是 -1,配方必须真的放对象
+                    // 没有自己命中的段(伤害在放出的被动对象上):三个下标都是 -1,配方必须真的放对象(姿势→挥击类的姿势段除外,E-163)
                     // (蓄力跳跃类技能的第 0 段是蓄力姿势:没有命中也没有对象;空中攻击强化类借空中攻击自己的攻击信息,只取 [level info] 的百分比列,没有固定值列,E-150)
                     if (r.JumpAttack != null)
                     {
@@ -129,7 +136,7 @@ public class SkillChainTests
                     }
                     else
                     {
-                        Assert.True(st.AttackInfoIndex == -1 && st.DamageRateColumn == -1 && st.DamageFixedColumn == -1 && (r.Objects.Count > 0 || r.Hop != null));
+                        Assert.True(st.AttackInfoIndex == -1 && st.DamageRateColumn == -1 && st.DamageFixedColumn == -1 && (r.Objects.Count > 0 || r.Hop != null || poseThenStrike));
                     }
                 }
             });

@@ -609,6 +609,10 @@ namespace Dnf.Play
         private long _evalSwing = -1;
         private long _evalRearm;
         private int _evalFrame = -1;
+
+        // 关键帧标志事件(M65,证据 E-163):这一击里已触发到的换命中事件(事件下标加 1,0 是还没有),属于哪一击
+        private int _strikeVariant;
+        private long _variantSwing = -1;
         private int _hopLandingsSeen = -1;
         private int _diveStartsSeen = -1;
         private int _diveLandingsSeen = -1;
@@ -742,6 +746,9 @@ namespace Dnf.Play
         /// 蓄力跳跃类技能与多段命中的技能打开过的命中窗口数(每次放出一个第一窗口,加上计时器每响一次重武装的一个;证据 E-138、E-139),给检查与测试用。
         /// </summary>
         public int HopWindows { get; private set; }
+
+        /// <summary>配方里的关键帧标志事件触发过的次数(每个触发的事件加 1,M65,证据 E-163),给检查与测试用。</summary>
+        public int KeyFlagEvents { get; private set; }
 
         /// <summary>腾空悬停俯冲类技能开始俯冲的次数(悬停结束的那一刻放预载特效,证据 E-149),给检查与测试用。</summary>
         public int DiveStarts { get; private set; }
@@ -2575,6 +2582,7 @@ namespace Dnf.Play
         private void ResolveHits()
         {
             TownHero hero = _room.Hero;
+            ApplyKeyFlags(hero);
             if (!hero.IsAttacking || OwnStrikeless(hero))
             {
                 _evalSwing = -1;
@@ -2614,6 +2622,44 @@ namespace Dnf.Play
             {
                 EvaluateFrame(hero, frame);      // 动画定住的那一帧攻击框一直在:主角冲过去时每步都判,已打中的目标由本击的名单挡住(E-149,推断)
             }
+        }
+
+        /// <summary>
+        /// 关键帧标志事件(M65,证据 E-163):这一步主角的技能动画走到的带标志的帧,按配方里这一段的事件表办——
+        /// 事件都清命中名单(主角命中判定的重武装,同一个目标能再挨一下),换命中的事件还把之后的命中换成事件的攻击信息与伤害列。
+        /// "已触发到哪个事件"属于一击,换一击(<see cref="TownHero.SwingNumber"/> 变了)就回到这一段原来的命中。
+        /// 在命中判定之前办,所以动画刚走到标志帧的这一步,新的窗口就已经打开。
+        /// </summary>
+        private void ApplyKeyFlags(TownHero hero)
+        {
+            if (hero.SwingNumber != _variantSwing)
+            {
+                _variantSwing = hero.SwingNumber;
+                _strikeVariant = 0;
+            }
+            if (hero.KeyFlagsThisStep.Count == 0)
+            {
+                return;
+            }
+            HeroSkillSlot slot = hero.Motion == HeroMotion.Skill ? Skills.SlotOfSkill(hero.SkillId) : null;
+            if (slot != null && slot.Recipe != null)
+            {
+                foreach (SkillKeyFlag key in hero.KeyFlagsThisStep)
+                {
+                    int index = key.Stage == hero.SkillStage ? slot.FlagEventIndex(key.Stage, key.Flag) : -1;
+                    if (index < 0)
+                    {
+                        continue;
+                    }
+                    hero.RearmHits();
+                    if (slot.FlagEventChangesStrike(hero.SkillStage, index))
+                    {
+                        _strikeVariant = index + 1;
+                    }
+                    KeyFlagEvents++;
+                }
+            }
+            hero.ConsumeKeyFlags();       // 标志只办一次:主角被命中停顿定住时 Update 不走,这一步读到的标志不清的话下一步还会再办一遍
         }
 
         private void EvaluateFrame(TownHero hero, int frame)
@@ -2825,7 +2871,7 @@ namespace Dnf.Play
                 case HeroAttackKind.Skill:
                     // 有自己攻击信息与伤害数的技能(鬼斩)用自己的;借普攻动作放的技能(上挑)沿用那一段普攻的攻击信息
                     HeroSkillSlot slot = Skills.SlotOfSkill(hero.SkillId);
-                    HeroStrikeInfo? own = slot?.StrikeAt(hero.SkillStage);
+                    HeroStrikeInfo? own = slot?.StrikeAt(hero.SkillStage, _variantSwing == hero.SwingNumber ? _strikeVariant : 0);   // 关键帧标志事件换过命中的取新的(E-163)
                     if (slot != null && slot.HopRepeatStrike.HasValue && hero.HopHits > 0)
                     {
                         // 蓄力跳跃类技能(证据 E-138):窗口数大于 1 时第一个窗口用跳跃段的攻击信息,重武装的窗口(以及窗口数为 1 的唯一窗口)用另一项

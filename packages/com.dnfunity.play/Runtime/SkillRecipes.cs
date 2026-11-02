@@ -8,7 +8,8 @@ using System.Collections.Generic;
 // E-141(增益类技能,状态 0x11:施法动作只播 [buff motion],状态正常结束时才挂属性附加体,持续时间与数值取自技能数据的哪一列由技能自己的挂附加体代码决定);
 // E-149(腾空悬停后俯冲类技能,状态 0x19:只在跳跃状态里放,动画定在空中攻击动作的最后一帧,悬停一小段后水平与竖直一起冲下去,落地按起跳高度放脚下的冲击对象,再进坐姿);
 // E-154(两段自动接续类技能,状态 0x20:第一段动画播完、不用再按键就接第二段,第二段一开始放一个主角的被动对象,身体只在第一段里打人);
-// E-162(单段身体命中类技能,状态 0x41 与 0x42:进入块一次设好动作、攻击信息、伤害列与特效,没有逐帧逻辑,动画播完状态结束)。
+// E-162(单段身体命中类技能,状态 0x41 与 0x42:进入块设好动作、攻击信息、伤害列与特效,动画播完状态结束);
+// E-163(关键帧标志驱动的命中窗口:第二个逐帧函数 0x00cb0700 读动画此刻这一帧的标志字,对上就清命中名单、换攻击信息与伤害列;状态 0x40 的"姿势→升空挥击":第 0 帧停住、主角按 [static data] 脚本升空与后滑;冷却取 [cooltime level info] 指的 [level info] 列)。
 namespace Dnf.Play
 {
     /// <summary>
@@ -19,8 +20,15 @@ namespace Dnf.Play
     public sealed class SkillStageSpec
     {
         public SkillStageSpec(int motionIndex, int attackInfoIndex, int damageRateColumn, int damageFixedColumn, int effectIndex, int effectFrame, int requiresSkill = 0,
-            int castHoldFrames = 0, int[] moreEffects = null, int endFrame = -1)
+            int castHoldFrames = 0, int[] moreEffects = null, int endFrame = -1, SkillFlagEvent[] flagEvents = null, SkillRiseSpec rise = null)
         {
+            var keyEvents = new List<SkillFlagEvent>();
+            if (flagEvents != null)
+            {
+                keyEvents.AddRange(flagEvents);
+            }
+            FlagEvents = keyEvents.AsReadOnly();
+            Rise = rise;
             MotionIndex = motionIndex;
             AttackInfoIndex = attackInfoIndex;
             DamageRateColumn = damageRateColumn;
@@ -83,6 +91,70 @@ namespace Dnf.Play
 
         /// <summary>这一段有自己的命中(攻击信息下标非负);没有的段主角的身体不打人。</summary>
         public bool HasOwnStrike => AttackInfoIndex >= 0;
+
+        /// <summary>
+        /// 这一段的关键帧标志事件(M65,证据 E-163):动画走到带对应标志的帧时清命中名单、可选地换攻击信息与伤害列(<see cref="SkillFlagEvent"/>);
+        /// 没有为空表。同一个标志出现多次时取表里第一项。
+        /// </summary>
+        public IReadOnlyList<SkillFlagEvent> FlagEvents { get; }
+
+        /// <summary>这一段是脚本升空(M65,证据 E-163,<see cref="SkillRiseSpec"/>);不是为 null。</summary>
+        public SkillRiseSpec Rise { get; }
+    }
+
+    /// <summary>
+    /// 关键帧标志事件(M65,证据 E-163):技能的逐帧代码每步读动画此刻这一帧的标志字,对上就做事。三个已读的技能里做的事都是同一类:
+    /// 清命中名单(同一个目标能再挨一下),以及(有的)换攻击信息与伤害列(之后的命中用新的)。
+    /// <see cref="AttackInfoIndex"/>(角色 [etc attack info] 的下标)、<see cref="DamageRateColumn"/>、<see cref="DamageFixedColumn"/>(.skl [level info] 的列)
+    /// 为 -1 的项沿用这一段原来的。
+    /// </summary>
+    public sealed class SkillFlagEvent
+    {
+        public SkillFlagEvent(int flag, int attackInfoIndex = -1, int damageRateColumn = -1, int damageFixedColumn = -1)
+        {
+            Flag = flag;
+            AttackInfoIndex = attackInfoIndex;
+            DamageRateColumn = damageRateColumn;
+            DamageFixedColumn = damageFixedColumn;
+        }
+
+        /// <summary>动画帧上的关键帧标志值。</summary>
+        public int Flag { get; }
+
+        /// <summary>事件之后命中用的攻击信息(角色 [etc attack info] 的下标);-1 沿用这一段原来的。</summary>
+        public int AttackInfoIndex { get; }
+
+        /// <summary>事件之后命中用的伤害百分比列;-1 沿用这一段原来的。</summary>
+        public int DamageRateColumn { get; }
+
+        /// <summary>事件之后命中用的伤害固定值列;-1 沿用这一段原来的。</summary>
+        public int DamageFixedColumn { get; }
+
+        /// <summary>事件换了攻击信息或伤害列(只清命中名单的事件为 false)。</summary>
+        public bool ChangesStrike => AttackInfoIndex >= 0 || DamageRateColumn >= 0 || DamageFixedColumn >= 0;
+    }
+
+    /// <summary>
+    /// 脚本升空的配方参数(M65,证据 E-163):三个数都是技能 [static data] 的下标(取值本身在技能数据里,不进代码)——
+    /// 升空高度(像素)、升空时间(毫秒,动画第 0 帧停留这么久)、向后滑的距离(像素)。运行期翻成 <see cref="Dnf.Render.SkillRisePlan"/>。
+    /// </summary>
+    public sealed class SkillRiseSpec
+    {
+        public SkillRiseSpec(int heightStaticIndex, int durationStaticIndex, int backStaticIndex)
+        {
+            HeightStaticIndex = heightStaticIndex;
+            DurationStaticIndex = durationStaticIndex;
+            BackStaticIndex = backStaticIndex;
+        }
+
+        /// <summary>[static data] 里升空高度的下标。</summary>
+        public int HeightStaticIndex { get; }
+
+        /// <summary>[static data] 里升空时间(毫秒)的下标。</summary>
+        public int DurationStaticIndex { get; }
+
+        /// <summary>[static data] 里后滑距离的下标。</summary>
+        public int BackStaticIndex { get; }
     }
 
     /// <summary>
@@ -640,8 +712,10 @@ namespace Dnf.Play
                 },
                 autoChain: true),
 
-            // 单段身体命中类技能(状态 0x41,证据 E-162):进入块一次设好全部东西,逐帧块走公共后段(里面没有这个状态的分支),动画播完状态结束。
-            // 动作取 [etc motion] 第 120 项,攻击信息取 [etc attack info] 第 84 项,伤害取 [level info] 的百分比第 0 列(没有固定值列);
+            // 单段身体命中类技能(状态 0x41,证据 E-162、E-163):进入块设好动作、攻击信息、伤害列与特效,命中一次;之后每步有两处逐帧逻辑——
+            // 公共后段里的守卫块(0x00cc2961:动画播完发"状态 0"请求站立),和公共后段末尾调用的第二个逐帧函数 0x00cb0700(跳转表 0x00cb2068 里这个状态的分支在 0x00cb1e08):
+            // 动画走到带关键帧标志 1 的帧,就清命中名单并把伤害列换成百分比第 1 列(攻击信息不变)——所以一次挥击有两个命中窗口,后一个窗口的伤害数不同。
+            // 动作取 [etc motion] 第 120 项,攻击信息取 [etc attack info] 第 84 项,第一个窗口的伤害取 [level info] 的百分比第 0 列(没有固定值列);
             // 一进状态就把预载表第 0、1 个特效放进第 1、2 两个图层(都跟着主角);不滑行(进入块把两个轴的滑行速度都清零)。
             // 没做:进入块把主角的一个保护浮点字段(同一个字段在被动对象的创建参数里也有乘法,角色一侧的用途没读通)乘上 [static data] 第 1 个数的千分之一、
             // 按 [static data] 第 2 个数 / 100 设动画变速与特效缩放、非基础职业的音效与特效助手。
@@ -649,18 +723,47 @@ namespace Dnf.Play
                 new[]
                 {
                     new SkillStageSpec(motionIndex: 120, attackInfoIndex: 84, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0,
-                        moreEffects: new[] { 1 }),
+                        moreEffects: new[] { 1 }, flagEvents: new[] { new SkillFlagEvent(flag: 1, damageRateColumn: 1) }),
                 },
                 slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false),
 
-            // 单段身体命中类技能(状态 0x42,证据 E-162):同上,动作取 [etc motion] 第 121 项,攻击信息第 85 项,伤害取 [level info] 的百分比第 0 列;没有预载特效
-            // (进入块只挂两个写死参数的残影特效,不在预载表里);不滑行。没做:同一个保护浮点字段乘上 [static data] 第 0 个数的千分之一、残影、非基础职业的音效助手。
+            // 单段身体命中类技能(状态 0x42,证据 E-162、E-163):同上(守卫块在 0x00cc2a4d;第二个逐帧函数里的分支在 0x00cb1e7b)。动作取 [etc motion] 第 121 项,
+            // 攻击信息第 85 项,第一个窗口的伤害取 [level info] 的百分比第 0 列;关键帧标志 1:清命中名单(攻击信息、伤害列不变);标志 2:清命中名单并把攻击信息换成第 86 项、
+            // 伤害换成百分比第 1 列——所以一次挥击有三个命中窗口。标志 9 只记一个时间戳给 120 毫秒的白闪(纯画面,没做)。没有预载特效
+            // (进入块只挂两个写死参数的残影特效,不在预载表里);不滑行。没做:同一个保护浮点字段乘上 [static data] 第 0 个数的千分之一、残影与白闪、非基础职业的音效助手。
             new SkillRecipe(112,
                 new[]
                 {
-                    new SkillStageSpec(motionIndex: 121, attackInfoIndex: 85, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                    new SkillStageSpec(motionIndex: 121, attackInfoIndex: 85, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0,
+                        flagEvents: new[]
+                        {
+                            new SkillFlagEvent(flag: 1),
+                            new SkillFlagEvent(flag: 2, attackInfoIndex: 86, damageRateColumn: 1),
+                        }),
                 },
                 slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false),
+
+            // 两段自动接续的"姿势→挥击"类技能(状态 0x40,证据 E-163):进入块按参数分两个模式。模式 0 播 [etc motion] 第 112 项(姿势动作,不设攻击信息,身体不打人);
+            // 公共后段里守卫"当前状态 == 0x40"的块(比较在 0x00cc24ef)在这个动画播完那一刻(动画标志位 8)自己发"状态 0x40、参数 [1]、优先级 1",就是模式 1:
+            // 动作取 [etc motion] 第 113 项,攻击信息取 [etc attack info] 第 78 项(进入块调的是虚表槽 0x778 的"动作加攻击信息"包装),伤害取 [level info] 的百分比第 0 列
+            // (没有固定值列),命中只在这一段的开头判一次(默认武器类别:命中计时器的最多次数是 1,第一次响正好清空还没命中过的名单)。
+            // 模式 1 的逐帧逻辑在第二个逐帧函数 0x00cb0700(跳转表 0x00cb2068 里这个状态的分支在 0x00cb1c56):动画第 0 帧(带攻击框,动画里写着很长的停留)停住不动,
+            // 同时主角按 [static data] 的三个数脚本升空——升空高度(第 0 个数)、升空时间(第 1 个数,毫秒)、后滑距离(第 2 个数,像素):
+            // 高度走缓出弧(0x011b9ef0 的缓出模式)、水平沿朝向的反方向整数线性后滑;升空时间一到把动画拨到第 1 帧的开头,之后动画播完剩下的帧。
+            // 模式 1 的动画播完,同一个守卫块发"状态 6、参数 [1, 0, 0]"(状态 6 是腾空的跳跃状态,见 E-149):主角从当时的高度落下来。起手函数 0x0049ead0 只发模式 0。
+            // 冷却不走 [cool time]:这个技能带 [cooltime level info] 1,取 [level info] 第 1 列(SkillDef.CoolTimeColumn,取列值当毫秒是推断)。
+            // 没做:模式 0 把三个取值(虚表槽 0xa0 的前三项)存进主角的保护字段与非基础职业的音效、特效助手;按武器类别(虚表槽 0x7ac,值 1/5)命中计时器的最多次数改取 [static data] 第 5 个数、
+            // 类别 3 的升空高度改乘第 8 个数的百分之一(几个类别各对应哪种武器没读通,这一版按默认类别);模式 1 的音效;状态 6 参数的含义(这一版是普通下落,落地后站立)。
+            // 起手没有技能自己的状态要求:客户端的"能不能用"检查(0x0049c990 转 0x00854460)只排除跳跃、受击、倒地这几类状态。
+            new SkillRecipe(109,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 112, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                    new SkillStageSpec(motionIndex: 113, attackInfoIndex: 78, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0,
+                        rise: new SkillRiseSpec(heightStaticIndex: 0, durationStaticIndex: 1, backStaticIndex: 2)),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                autoChain: true),
         },
         new[]
         {

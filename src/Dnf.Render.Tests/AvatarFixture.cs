@@ -222,6 +222,47 @@ internal sealed class AvatarFixture : IDisposable
     public const int JumpSkillAEtcIndex = 7;
     public const int JumpSkillBEtcIndex = 8;
 
+    /// <summary>
+    /// 姿势→挥击类技能(M65,证据 E-163)的合成数据:技能编号 <see cref="PoseStrikeSkill"/>,没有 [cool time],带 [cooltime level info] 1(冷却取 [level info] 的第 1 列);
+    /// 耗蓝 <see cref="PoseStrikeMp"/>;[level info] 两列 (百分比, 冷却毫秒):第 1 级 (<see cref="PoseStrikeRate1"/>, <see cref="PoseStrikeCool1"/>)、
+    /// 第 2 级 (<see cref="PoseStrikeRate2"/>, <see cref="PoseStrikeCool2"/>)。动作与攻击信息借多段技能的两段:<see cref="ChainAAni"/> 当姿势(动画里带攻击框,
+    /// 用来检查姿势段身体不打人)、<see cref="ChainBAni"/> 当挥击。数全是测试用的。
+    /// </summary>
+    public const int PoseStrikeSkill = 911;
+    public const int PoseStrikeMp = 25;
+    public const int PoseStrikeRate1 = 160;
+    public const int PoseStrikeRate2 = 190;
+    public const int PoseStrikeCool1 = 2600;
+    public const int PoseStrikeCool2 = 2400;
+
+    /// <summary>
+    /// 关键帧标志事件(M65,证据 E-163)的合成数据:技能 <see cref="FlagSkill"/> 播 [etc motion] 第 <see cref="FlagEtcIndex"/> 项 <see cref="FlagAni"/>
+    /// (五帧 × 100 毫秒:第 0 帧有攻击框;第 1 帧带标志 <see cref="FlagA"/>、有框;第 2 帧无框;第 3 帧带标志 <see cref="FlagB"/>、有框;第 4 帧无框),
+    /// [level info] 两列(百分比):1 级 (<see cref="FlagRate0"/>, <see cref="FlagRate1"/>)、2 级 (140, 280);耗蓝 <see cref="FlagMp"/>。数全是测试用的。
+    /// </summary>
+    public const int FlagSkill = 912;
+    public const int FlagMp = 7;
+    public const int FlagRate0 = 130;
+    public const int FlagRate1 = 260;
+    public const int FlagA = 1;
+    public const int FlagB = 2;
+    public const int FlagEtcIndex = 9;
+    public const string FlagAni = "character/test/animation/flag.ani";
+
+    /// <summary>
+    /// 升空出招(M65,证据 E-163)的合成数据:技能 <see cref="RiseSkill"/> 的挥击段播 [etc motion] 第 <see cref="RiseEtcIndex"/> 项 <see cref="RiseAni"/>
+    /// (三帧:第 0 帧停 10000 毫秒是占位、带攻击框,第 1 帧 30 毫秒,第 2 帧 40 毫秒);[static data] 是 (<see cref="RiseHeight"/>, <see cref="RiseMs"/>, <see cref="RiseBack"/>)
+    /// (升空高度、升空毫秒、后滑像素);[level info] 一列百分比 1 级 <see cref="RiseRate1"/>、2 级 170;耗蓝 <see cref="RiseMp"/>。数全是测试用的。
+    /// </summary>
+    public const int RiseSkill = 913;
+    public const int RiseMp = 11;
+    public const int RiseRate1 = 150;
+    public const int RiseHeight = 40;
+    public const int RiseMs = 300;
+    public const int RiseBack = 30;
+    public const int RiseEtcIndex = 10;
+    public const string RiseAni = "character/test/animation/rise.ani";
+
     /// <summary>空中攻击动画最后一帧的攻击框(悬停俯冲把动画定在这一帧):x 从 +100 起宽 40,y 从 −10 起深 20,z 从 0 起高 50;与第 1 帧的框(x 从 +20 起)不重合。</summary>
     public static readonly (ushort Type, int[] Values) DiveHoldBox = ((ushort)15, new[] { 100, -10, 0, 40, 20, 50 });
 
@@ -1464,6 +1505,7 @@ internal sealed class AvatarFixture : IDisposable
                 // 技能动作与攻击信息(两个表的下标不对应:护身动作没有攻击信息,鬼斩在动作表里是第 1 项、在攻击信息表里是第 0 项)
                 .Tag("[etc motion]").Str("Animation/Guard.ani").Str("Animation/HardAttack.ani").Str("Animation/ChainA.ani").Str("Animation/ChainB.ani").Str("Animation/WaveCast.ani")
                 .Str("Animation/HopReady.ani").Str("Animation/Hop.ani").Str("Animation/JumpSkillA.ani").Str("Animation/JumpSkillB.ani")
+                .Str("Animation/Flag.ani").Str("Animation/Rise.ani")
                 .Tag("[etc attack info]").Str("AttackInfo/HardAttack.atk").Str("AttackInfo/ChainA.atk").Str("AttackInfo/ChainB.atk")
                 .Str("AttackInfo/HopFirst.atk").Str("AttackInfo/HopRepeat.atk").Str("AttackInfo/Dive.atk")
                 .Tag("[attack motion]").Str("animation/attack1.ani").Str("Animation/Attack2.ani").Str("animation/attack3.ani").Build()),
@@ -1473,7 +1515,7 @@ internal sealed class AvatarFixture : IDisposable
             ("skill/testskill.lst", NewScript()
                 .Int(181).Str("test/passive.skl").Int(HardAttackSkill).Str("test/hardattack.skl").Int(UpperSlashSkill).Str("test/upperslash.skl")
                 .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Int(ChainSkill).Str("test/chain.skl").Int(WaveSkill).Str("test/wave.skl").Int(HopSkill).Str("test/hop.skl").Int(QuickStandSkill).Str("test/quickstand.skl").Int(JumpCommandSkill).Str("test/jumpcommand.skl")
-                .Int(JumpBuffSkill).Str("test/jumpbuff.skl").Int(MagicBuffSkill).Str("test/magicbuff.skl").Int(ProcBuffSkill).Str("test/procbuff.skl").Int(DiveSkill).Str("test/dive.skl").Int(JumpSkill).Str("test/jumpskill.skl").Build()),
+                .Int(JumpBuffSkill).Str("test/jumpbuff.skl").Int(MagicBuffSkill).Str("test/magicbuff.skl").Int(ProcBuffSkill).Str("test/procbuff.skl").Int(DiveSkill).Str("test/dive.skl").Int(JumpSkill).Str("test/jumpskill.skl").Int(PoseStrikeSkill).Str("test/posestrike.skl").Int(FlagSkill).Str("test/flag.skl").Int(RiseSkill).Str("test/rise.skl").Build()),
             // 腾空悬停俯冲类技能:指令单键技能,[static data] 四个数(第 3 个是落地放冲击对象的最小离地高度),[level info] 三列 (俯冲百分比、冲击固定值、冲击百分比)
             ("skill/test/dive.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Paren("(SKILL)").Tag("[maximum level]").Int(10)
@@ -1481,6 +1523,22 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[static data]").Int(1, 2, 3, DiveImpactMinHeight)
                 .Tag("[level info]").Int(3, DiveRate1, DiveImpactFixed1, DiveImpactRate1, DiveRate2, DiveImpactFixed2, DiveImpactRate2).Build()),
             (DiveAtk, NewScript().Tag("[damage reaction]").Tag("[damage]").Tag("[push aside]").Int(DivePushAside).Build()),
+            // 姿势→挥击类技能:冷却取 [level info] 第 1 列(没有 [cool time]),[level info] 两列 (百分比, 冷却毫秒)
+            ("skill/test/posestrike.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[maximum level]").Int(10)
+                .Tag("[consume MP]").Int(PoseStrikeMp, PoseStrikeMp).Tag("[cooltime level info]").Int(1)
+                .Tag("[level info]").Int(2, PoseStrikeRate1, PoseStrikeCool1, PoseStrikeRate2, PoseStrikeCool2).Build()),
+            // 关键帧标志事件技能:[level info] 两列百分比(第 0 列是第一个窗口、第 1 列是标志 B 之后的窗口)
+            ("skill/test/flag.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[maximum level]").Int(10)
+                .Tag("[consume MP]").Int(FlagMp, FlagMp).Tag("[cool time]").Int(3000, 3000)
+                .Tag("[level info]").Int(2, FlagRate0, FlagRate1, 140, 280).Build()),
+            // 升空出招技能:[static data] 三个数 (升空高度、升空毫秒、后滑像素),[level info] 一列百分比
+            ("skill/test/rise.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[maximum level]").Int(10)
+                .Tag("[consume MP]").Int(RiseMp, RiseMp).Tag("[cool time]").Int(3000, 3000)
+                .Tag("[static data]").Int(RiseHeight, RiseMs, RiseBack)
+                .Tag("[level info]").Int(1, RiseRate1, 170).Build()),
             // 空中攻击强化类技能:指令单键"攻击",[cool time] 比一跳长,[level info] 一列(百分比)
             ("skill/test/jumpskill.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Paren("(ATTACK)").Tag("[maximum level]").Int(10)
@@ -1674,6 +1732,16 @@ internal sealed class AvatarFixture : IDisposable
                 (1, 100, new[] { HopStrikeBox }), (0, 100, new[] { HopStrikeBox }), (1, 100, new[] { HopStrikeBox }), (0, 100, null))),
             (ChainAAni, BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }), (1, 100, null))),
             (ChainBAni, BuildBoxAni((0, 100, null), (1, 100, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }), (0, 100, null))),
+            (FlagAni, BuildFlagBoxAni(
+                (0, 100, 0, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }),
+                (1, 100, FlagA, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }),
+                (0, 100, 0, null),
+                (1, 100, FlagB, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }),
+                (0, 100, 0, null))),
+            (RiseAni, BuildFlagBoxAni(
+                (0, 10000, 0, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }),
+                (1, 30, 0, null),
+                (0, 40, 0, null))),
             (LevelUpEffect, BuildEffectAni(false)),
             // 通关营地:营火动作脚本(相对路径故意混着大小写)与两层动画、NPC 目录与三个 NPC、带 [NPC] 的地图
             (CampfireAct, NewScript()
@@ -1938,6 +2006,30 @@ internal sealed class AvatarFixture : IDisposable
         {
             var f = new TestData.AniFrameSpec { ImageIndex = 0, FrameIndex = frameIndex, X = -5, Y = -8 };
             f.Props.Add((12, TestData.LE32(delay)));
+            if (boxes != null)
+            {
+                f.Boxes.AddRange(boxes);
+            }
+            specs.Add(f);
+        }
+        return TestData.BuildAni(new[] { "Character/Test/Equipment/Avatar/skin/tt_body0000.img" },
+            new (ushort, byte[])[0], specs);
+    }
+
+    /// <summary>
+    /// 同 <see cref="BuildBoxAni"/>,每项多一个关键帧标志(0 表示这一帧不带标志,M65);带标志的帧写帧属性 23。
+    /// </summary>
+    private static byte[] BuildFlagBoxAni(params (int FrameIndex, int DelayMs, int Flag, (ushort Type, int[] Values)[] Boxes)[] frames)
+    {
+        var specs = new List<TestData.AniFrameSpec>();
+        foreach ((int frameIndex, int delay, int flag, (ushort Type, int[] Values)[] boxes) in frames)
+        {
+            var f = new TestData.AniFrameSpec { ImageIndex = 0, FrameIndex = frameIndex, X = -5, Y = -8 };
+            f.Props.Add((12, TestData.LE32(delay)));
+            if (flag != 0)
+            {
+                f.Props.Add((23, TestData.LE32(flag)));
+            }
             if (boxes != null)
             {
                 f.Boxes.AddRange(boxes);

@@ -103,6 +103,12 @@ namespace Dnf.Game
         public int[] ConsumeMp { get; }
         public int[] CoolTime { get; }
 
+        /// <summary>
+        /// [cooltime level info]:冷却取 [level info] 的哪一列(证据 E-163:服务端导入函数 <c>0x08a9792f</c> 把这个数读进脚本结构,客户端载入函数 <c>0x012d6390</c> 写进受保护整数;
+        /// 没有这个标签为 -1)。带这个标签的技能都没有 [cool time],该列的值随等级递减,量级与毫秒相符——取列值当毫秒是推断(消费这个字段的函数没找到)。
+        /// </summary>
+        public int CoolTimeColumn { get; }
+
         /// <summary>[casting time]:两个数(推断:第 1 级与最高级的施法时间,毫秒);没有这个标签时为空。</summary>
         public int[] CastingTime { get; }
         public int RequiredLevel { get; }
@@ -262,6 +268,7 @@ namespace Dnf.Game
             ExecutableStates = table.IntsUnion("[executable states]");
             ConsumeMp = table.Ints("[consume MP]");
             CoolTime = table.Ints("[cool time]");
+            CoolTimeColumn = table.IntOr("[cooltime level info]", -1);
             CastingTime = table.Ints("[casting time]");
             RequiredLevel = table.IntOr("[required level]", 0);
             MaximumLevel = table.IntOr("[maximum level]", 0);

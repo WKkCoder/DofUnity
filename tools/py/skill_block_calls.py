@@ -8,9 +8,14 @@
 只输出地址、虚表槽偏移、参数数字、帧号常量;不输出任何原版数据文件的内容。受保护区(0x01dd9000–0x02c98000)里的目标当黑盒:
 直接跳进去的函数标成 protected,不去读。
 
+另外会列出逐帧函数公共后段(0x00cc19b6–0x00cca2dc)里守卫"当前状态 == 该状态"的块:所有状态(不论走哪个分支)
+跑完自己的分支块后都落到公共后段,动画播完转状态、按键触发后续技能、两段式模式切换都写在这些守卫块里;
+后段末尾还调第二个逐帧函数 0x00cb0700(状态 0x37–0x42 才进,按动画此刻这一帧的关键帧标志办事),它在该状态的分支也一并列出。
+
 用法:
-  re/venv/bin/python tools/py/skill_block_calls.py 0x26            # 一个状态的进入块与逐帧块
+  re/venv/bin/python tools/py/skill_block_calls.py 0x26            # 一个状态的进入块、逐帧块与公共后段守卫块
   re/venv/bin/python tools/py/skill_block_calls.py 0x26 0x3c 0x3e  # 若干个状态
+  re/venv/bin/python tools/py/skill_block_calls.py 0x26 --no-post  # 不列公共后段守卫块
   re/venv/bin/python tools/py/skill_block_calls.py --range 0xcda8d9 0xcdaabf
 """
 import os
@@ -25,6 +30,9 @@ HERO_VTABLE = 0x01706A24          # 剑士类虚表(状态进入槽 +0x29c、逐
 ENTER_TABLE2 = 0x00CE1998         # 进入槽的第二张分派表:65 项,下标 = 新状态号 − 3
 FRAME_BYTE_TABLE = 0x00CCA368     # 逐帧函数:状态号 → 分支号(字节)
 FRAME_JUMP_TABLE = 0x00CCA2DC     # 逐帧函数:分支号 → 地址
+SECOND_JUMP_TABLE = 0x00CB2068    # 第二个逐帧函数 0x00cb0700:状态 0x37..0x42(12 项)→ 地址
+SECOND_FIRST_STATE, SECOND_COUNT = 0x37, 12
+SECOND_END = 0x00CB2055           # 第二个逐帧函数的尾(表里"什么也不做"的状态都跳到这里)
 PROTECTED_LO, PROTECTED_HI = 0x01DD9000, 0x02C98000
 
 # 自己起的名字(读码结论,不是原版符号);只列已经读通的,其余只写地址
@@ -249,6 +257,60 @@ def report(sc, label, start, end):
             print("  %08x  %s (%s)" % (addr, name, fmt(args)))
 
 
+# 逐帧函数的公共后段:所有状态(不只是缺省分支的那些)的分支块跑完后都会落到这里,里面是一串
+# "读当前状态号,等于 N 才执行"的守卫块(动画播完转状态、按键触发后续技能、模式切换等)。
+POST_LO, POST_HI = 0x00CC19B6, 0x00CCA2DC
+
+
+def second_case(pe, state):
+    """第二个逐帧函数里这个状态的分支范围 (起, 止);状态不在表里或分支就是函数尾(什么也不做)时返回 None。"""
+    idx = state - SECOND_FIRST_STATE
+    if not 0 <= idx < SECOND_COUNT:
+        return None
+    table = read_dwords(pe, SECOND_JUMP_TABLE, SECOND_COUNT)
+    start = table[idx]
+    if start >= SECOND_END:
+        return None
+    nxt = [x for x in sorted(set(table)) if x > start]
+    return start, (nxt[0] if nxt else SECOND_END)
+
+
+def post_guards(pe, state):
+    """公共后段里守卫"当前状态 == state"的块:返回 [(比较地址, 块首, 块尾)]。
+
+    识别方式:`call 0x011a0de0`(读受保护整数)读 `[esi+0x3094]`(当前状态容器)之后紧跟
+    `cmp dword ptr [ebp-X], state` 与一条条件跳转;块 = 跳转后的下一条指令到跳转目标。
+    """
+    import capstone
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    code = pe.read(POST_LO, POST_HI - POST_LO)
+    insns = []
+    pos = 0
+    while pos < len(code):
+        got = False
+        for insn in md.disasm(code[pos:], POST_LO + pos):
+            got = True
+            pos = insn.address + insn.size - POST_LO
+            insns.append(insn)
+        if not got:
+            pos += 1
+    want = (", 0x%x" % state, ", %d" % state)
+    out = []
+    for i, ins in enumerate(insns):
+        if ins.mnemonic != "cmp" or not ins.op_str.startswith("dword ptr [ebp - ") or not ins.op_str.endswith(want):
+            continue
+        window = insns[max(0, i - 7):i]
+        if not (any(w.mnemonic == "call" and w.op_str == "0x11a0de0" for w in window)
+                and any("+ 0x3094]" in w.op_str for w in window)):
+            continue
+        if i + 1 >= len(insns):
+            continue
+        j = insns[i + 1]
+        if j.mnemonic.startswith("j") and j.op_str.startswith("0x"):
+            out.append((ins.address, j.address + j.size, int(j.op_str, 16)))
+    return out
+
+
 def main():
     argv = sys.argv[1:]
     if not argv:
@@ -258,12 +320,21 @@ def main():
     if argv[0] == "--range":
         report(sc, "范围", int(argv[1], 16), int(argv[2], 16))
         return
-    for a in argv:
+    no_post = "--no-post" in argv
+    for a in [x for x in argv if x != "--no-post"]:
         state = int(a, 16) if a.startswith("0x") else int(a)
         (es, ee), (fs, fe, case) = state_ranges(pe, state)
         print("#### 状态 0x%x" % state)
         report(sc, "进入块", es, ee)
         report(sc, "逐帧块(分支 %d)" % case, fs, fe)
+        if no_post:
+            continue
+        for cmp_addr, bs, be in post_guards(pe, state):
+            if be > bs:
+                report(sc, "公共后段守卫块(比较在 0x%x)" % cmp_addr, bs, be)
+        second = second_case(pe, state)
+        if second is not None:
+            report(sc, "第二个逐帧函数 0x00cb0700 的分支(关键帧标志)", second[0], second[1])
 
 
 if __name__ == "__main__":

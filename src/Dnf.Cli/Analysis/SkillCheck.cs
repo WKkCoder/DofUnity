@@ -100,6 +100,30 @@ internal static class SkillCheck
         Report(missingPre == 0, "前置技能都在目录里、没有指向自己(不合格的 " + missingPre + " 条)");
         Report(!HasCycle(catalog), "前置技能没有环");
 
+        // 冷却列(M65,证据 E-163):带 [cooltime level info] 的技能没有 [cool time]、列号落在 [level info] 的列数里、各级读出来的冷却都是正数;只数不打印具体数
+        int coolColumnSkills = 0;
+        int coolColumnBad = 0;
+        foreach (SkillDef def in catalog.Skills)
+        {
+            if (def.CoolTimeColumn < 0)
+            {
+                continue;
+            }
+            coolColumnSkills++;
+            // 表按 [maximum level] 排满,可学的最高级(成长类型的上限)可能低得多;冷却随等级递减,表尾可以降到零以下,所以只查学得到的那些级
+            int reachable = def.GrowtypeMaxLevels.Length == 0 ? def.MaximumLevel : Math.Min(def.MaximumLevel, def.GrowtypeMaxLevels.Max());
+            bool coolOk = def.CoolTime.Length == 0 && def.CoolTimeColumn < def.LevelInfo.Columns && def.LevelInfo.IsConsistent && def.LevelInfo.Levels >= reachable;
+            for (int lv = 1; coolOk && lv <= reachable; lv++)
+            {
+                coolOk = def.GetLevel(lv, def.CoolTimeColumn, false) > 0;
+            }
+            if (!coolOk)
+            {
+                coolColumnBad++;
+            }
+        }
+        Report(coolColumnBad == 0, "带 [cooltime level info] 的技能 " + coolColumnSkills + " 个:都没有 [cool time]、列号落在 [level info] 的列里、学得到的各级读出来的冷却是正数(不合格的 " + coolColumnBad + " 个)");
+
         // 2. 白送
         int badGrant = 0;
         for (int g = 0; g < SkillRules.GrowtypeCount; g++)
@@ -285,6 +309,8 @@ internal static class SkillCheck
         int recipeDives = 0;
         int recipeJumpAttacks = 0;
         int recipeAutoChains = 0;
+        int recipeFlagEvents = 0;
+        int recipeRises = 0;
         var recipeProblems = new List<string>();
         foreach (SkillRecipe recipe in SkillRecipes.Default.All)
         {
@@ -330,8 +356,9 @@ internal static class SkillCheck
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:攻击信息读不到");
                 }
-                if (!st.HasOwnStrike && recipe.Objects.Count == 0 && recipe.Hop == null && recipe.JumpAttack == null)
+                if (!st.HasOwnStrike && recipe.Objects.Count == 0 && recipe.Hop == null && recipe.JumpAttack == null && !(recipe.AutoChain && recipe.Stages.Any(other => other.HasOwnStrike)))
                 {
+                    // (姿势→挥击类的姿势段:没有命中也不放对象,后面有一段自己的命中,M65,E-163)
                     recipeProblems.Add(label + " 第 " + i + " 段:没有自己的命中,配方却没有放对象");
                 }
                 foreach (int effectIndex in st.EffectIndices)
@@ -353,6 +380,61 @@ internal static class SkillCheck
                 if (st.RequiresSkill != 0 && catalog.Find(st.RequiresSkill) == null)
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:要求的技能不在目录里");
+                }
+                if (st.FlagEvents.Count > 0)
+                {
+                    // 关键帧标志事件(M65,证据 E-163):这一段的动画里确有带这个标志的帧(否则事件永远不触发);换命中的事件,攻击信息读得到、
+                    // 伤害列在 [level info] 里、1 级的百分比是正数;这一段自己有命中(事件是在原来的命中上开新窗口);只数不打印标志之外的东西
+                    AniFile? flagMotion = assets.LoadAni(chr.CustomAnimationPath(st.MotionIndex) ?? "");
+                    if (!st.HasOwnStrike)
+                    {
+                        recipeProblems.Add(label + " 第 " + i + " 段:带关键帧标志事件,但这一段没有自己的命中");
+                    }
+                    foreach (SkillFlagEvent ev in st.FlagEvents)
+                    {
+                        recipeFlagEvents++;
+                        if (flagMotion == null || !flagMotion.Frames.Any(fr => fr.TryGetKeyFrameFlag(out int kf) && kf == ev.Flag))
+                        {
+                            recipeProblems.Add(label + " 第 " + i + " 段:动作里没有带标志 " + ev.Flag + " 的帧");
+                        }
+                        if (ev.AttackInfoIndex >= 0 && !InLibrary(chr.CustomAttackInfoPath(ev.AttackInfoIndex)))
+                        {
+                            recipeProblems.Add(label + " 第 " + i + " 段:标志 " + ev.Flag + " 的事件换的攻击信息读不到");
+                        }
+                        if (Math.Max(ev.DamageRateColumn, ev.DamageFixedColumn) >= def.LevelInfo.Columns)
+                        {
+                            recipeProblems.Add(label + " 第 " + i + " 段:标志 " + ev.Flag + " 的事件换的伤害列超出 [level info] 的 " + def.LevelInfo.Columns + " 列");
+                        }
+                        else if (ev.DamageRateColumn >= 0 && def.GetLevel(1, ev.DamageRateColumn, false) <= 0)
+                        {
+                            recipeProblems.Add(label + " 第 " + i + " 段:标志 " + ev.Flag + " 的事件换的百分比列 1 级读出来不是正数");
+                        }
+                    }
+                }
+                if (st.Rise != null)
+                {
+                    // 脚本升空(M65,证据 E-163):三个 [static data] 下标都在、升空高度与升空毫秒为正、后滑不为负;动作至少两帧(升空时间到了把动画拨到第 1 帧),
+                    // 第 0 帧带攻击框(升空期间动画停在这一帧上,命中就是这一帧的框);这一段自己有命中。只数不打印具体的数
+                    recipeRises++;
+                    SkillRiseSpec rise = st.Rise;
+                    int[] riseIndices = { rise.HeightStaticIndex, rise.DurationStaticIndex, rise.BackStaticIndex };
+                    if (riseIndices.Any(ix => ix < 0 || ix >= def.StaticData.Length))
+                    {
+                        recipeProblems.Add(label + " 第 " + i + " 段:升空要的 [static data] 下标超出技能的 " + def.StaticData.Length + " 个数");
+                    }
+                    else if (def.GetStatic(rise.HeightStaticIndex, false) <= 0 || def.GetStatic(rise.DurationStaticIndex, false) <= 0 || def.GetStatic(rise.BackStaticIndex, false) < 0)
+                    {
+                        recipeProblems.Add(label + " 第 " + i + " 段:升空高度、升空时间不是正数,或后滑距离是负数");
+                    }
+                    AniFile? riseMotion = assets.LoadAni(chr.CustomAnimationPath(st.MotionIndex) ?? "");
+                    if (riseMotion == null || riseMotion.Frames.Length < 2 || !riseMotion.Frames[0].Boxes.Any(b => b.Type == AniBoxType.Attack))
+                    {
+                        recipeProblems.Add(label + " 第 " + i + " 段:升空段的动作不足两帧,或第 0 帧没有攻击框");
+                    }
+                    if (!st.HasOwnStrike)
+                    {
+                        recipeProblems.Add(label + " 第 " + i + " 段:升空段没有自己的命中");
+                    }
                 }
                 if (st.HasOwnStrike && def.GetLevel(1, st.DamageRateColumn, false) <= 0)
                 {
@@ -635,7 +717,7 @@ internal static class SkillCheck
         }
         Report(recipeCount == SkillRecipes.Default.Count && recipeProblems.Count == 0,
             "技能配方 " + recipeCount + " 个(共 " + recipeStages + " 段、放对象 " + recipeObjects + " 个、带蓄力 " + recipeHolds + " 段、等特效标志的对象 " + recipeGates
-            + " 个、定结束帧 " + recipeEndFrames + " 段、蓄力跳跃 " + recipeHops + " 个、多段命中 " + recipeMultiHits + " 个、悬停俯冲 " + recipeDives + " 个、空中攻击强化 " + recipeJumpAttacks + " 个、自动接续 " + recipeAutoChains + " 个)在真实数据里都读得通"
+            + " 个、定结束帧 " + recipeEndFrames + " 段、蓄力跳跃 " + recipeHops + " 个、多段命中 " + recipeMultiHits + " 个、悬停俯冲 " + recipeDives + " 个、空中攻击强化 " + recipeJumpAttacks + " 个、自动接续 " + recipeAutoChains + " 个、关键帧标志事件 " + recipeFlagEvents + " 个、脚本升空 " + recipeRises + " 段)在真实数据里都读得通"
             + "(动作、攻击信息、特效、对象、蓄力、结束帧、[static data]、[level info] 列;问题 " + recipeProblems.Count + " 条)");
 
         // 7. 出招指令(M47,证据 E-140):整个职业技能的 [command] 在真实数据里读得通,而且输入层认得出来——
@@ -1003,6 +1085,8 @@ internal static class SkillCheck
             int autoSkills = 0;
             int autoCycles = 0;
             int autoObjects = 0;
+            int autoQuickCasts = 0;
+            int autoRises = 0;
             var autoProblems = new List<string>();
             foreach (SkillRecipe recipe in SkillRecipes.Default.All)
             {
@@ -1013,12 +1097,14 @@ internal static class SkillCheck
                 autoSkills++;
                 string label = "自动接续 #" + autoSkills;
                 SkillDef? def = catalog.Find(recipe.SkillId);
-                if (def == null || def.Command.IsEmpty || caster.Skills.LevelOf(def.Id) <= 0)
+                // 子职业技能默认主角学不了:按成长类型 0 到 5 各试一个新主角、花光点数,取第一个学会它的(M65)
+                HeroProgress? autoCaster = def == null ? null : CasterWhoKnows(assets, level, def.Id);
+                if (def == null || def.Command.IsEmpty || autoCaster == null)
                 {
                     autoProblems.Add(label + ":技能不在目录里、没有指令或没学会");
                     continue;
                 }
-                RoomCombatSession session = NewSession(assets, opts, caster);
+                RoomCombatSession session = NewSession(assets, opts, autoCaster);
                 HeroSkillSlot? slot = session.Skills.SlotOfSkill(def.Id);
                 TownHero caster1 = session.Hero;
                 int mpBefore = session.Vitals?.Mp ?? 0;
@@ -1026,22 +1112,52 @@ internal static class SkillCheck
                 {
                     session.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Keys);
                 }
-                if (slot == null || caster1.Motion != HeroMotion.Skill || caster1.SkillId != def.Id || session.SkillCasts != 1 || session.SkillChains != 0 || caster1.SkillStage != 0)
+                bool started = slot != null && caster1.Motion == HeroMotion.Skill && caster1.SkillId == def.Id && session.SkillCasts == 1 && session.SkillChains == 0 && caster1.SkillStage == 0;
+                if (!started && caster1.Motion == HeroMotion.Skill && caster1.SkillId != def.Id)
                 {
-                    autoProblems.Add(label + ":打指令没有放出这个技能的第一段(或没排进槽里)");
+                    // 同一条指令先落到了别的技能上(子职业技能与基础技能的指令常常撞车;指令层的取舍是快捷槽在前、编号小的在前,E-140):
+                    // 换一局新会话,把这个技能放进快捷栏第 1 格,按那个键放
+                    autoCaster = CasterWhoKnows(assets, level, def.Id);
+                    if (autoCaster != null && autoCaster.Skills.AssignQuick(0, def.Id))
+                    {
+                        session = NewSession(assets, opts, autoCaster);
+                        slot = session.Skills.SlotOfSkill(def.Id);
+                        caster1 = session.Hero;
+                        mpBefore = session.Vitals?.Mp ?? 0;
+                        session.Update(10, 0, 0, false, false, slot?.Key ?? SkillKeys.None);
+                        started = slot != null && slot.Key != SkillKeys.None && caster1.Motion == HeroMotion.Skill && caster1.SkillId == def.Id && session.SkillCasts == 1
+                            && session.SkillChains == 0 && caster1.SkillStage == 0;
+                        if (started)
+                        {
+                            autoQuickCasts++;
+                        }
+                    }
+                }
+                if (!started || slot == null)
+                {
+                    autoProblems.Add(label + ":没有放出这个技能的第一段(指令没放出来,或没排进槽里)");
                     continue;
                 }
                 int stageSeen = 0;
                 int ms = 0;
-                while (caster1.Motion == HeroMotion.Skill && ms < 20000)
+                double maxHeight = 0.0;
+                bool hasRise = recipe.Stages.Any(st => st.Rise != null);
+                while ((caster1.Motion == HeroMotion.Skill || caster1.Motion == HeroMotion.Jump) && ms < 20000)    // 升空类技能结束在空中:等它落地回到站立
                 {
                     session.Update(10, 0, 0, false, false, SkillKeys.None);
                     ms += 10;
                     stageSeen = Math.Max(stageSeen, caster1.SkillStage);
+                    maxHeight = Math.Max(maxHeight, caster1.Z);
                 }
+                // 升空类技能:放的过程中真的升到了空中,而且最后落回地面(站立、离地高度 0);别的技能一直在地面
                 bool ok = stageSeen == recipe.Stages.Count - 1 && session.SkillChains == recipe.Stages.Count - 1 && session.SkillCasts == 1
                     && session.HeroObjectsSpawned == recipe.Objects.Count && caster1.Motion == HeroMotion.Rest && caster1.SkillId == 0 && slot.CooldownLeftMs > 0
-                    && (session.Vitals == null || session.Vitals.Mp == mpBefore - slot.ConsumeMp);
+                    && (session.Vitals == null || session.Vitals.Mp == mpBefore - slot.ConsumeMp)
+                    && caster1.Z == 0.0 && (hasRise ? maxHeight > 0.0 : maxHeight == 0.0);
+                if (ok && hasRise)
+                {
+                    autoRises++;
+                }
                 if (!ok)
                 {
                     autoProblems.Add(label + ":没有按规则自己接完各段(见到的段 " + stageSeen + "、接段 " + session.SkillChains + " 次、放对象 " + session.HeroObjectsSpawned + " 个、动作 " + caster1.Motion + "、魔法值或冷却不对)");
@@ -1055,8 +1171,78 @@ internal static class SkillCheck
                 Console.WriteLine("    " + line);
             }
             Report(autoSkills > 0 && autoProblems.Count == 0 && autoCycles == autoSkills,
-                "两段自动接续类技能 " + autoSkills + " 个:按各自的指令放出第一段,不按任何键各段自己接上、第二段放出对象 " + autoObjects + " 个、整个技能播完回到站立走完 " + autoCycles
-                + " 个(魔法值与冷却只在起手算;问题 " + autoProblems.Count + " 条)");
+                "自动接续类技能 " + autoSkills + " 个:按各自的指令放出第一段(指令撞车的 " + autoQuickCasts + " 个改按快捷键放),不按任何键各段自己接上、放出对象 " + autoObjects + " 个、整个技能播完回到站立走完 " + autoCycles
+                + " 个(其中升空出招 " + autoRises + " 个:升到空中、落回地面;魔法值与冷却只在起手算;问题 " + autoProblems.Count + " 条)");
+
+            // 7e. 带关键帧标志事件的技能(M65,证据 E-163)的真实会话:表里每个这类技能放进快捷栏第 1 格、按键放出来、动画播完;
+            // 会话触发的事件数等于"动作里带标志、而且这一段的事件表里有这个标志"的帧数(每帧一次),放完回到站立。只打印汇总数。
+            int flagSkills = 0;
+            int flagCycles = 0;
+            int flagTriggers = 0;
+            var flagProblems = new List<string>();
+            foreach (SkillRecipe recipe in SkillRecipes.Default.All)
+            {
+                if (!recipe.Stages.Any(st => st.FlagEvents.Count > 0))
+                {
+                    continue;
+                }
+                flagSkills++;
+                string label = "标志事件 #" + flagSkills;
+                SkillDef? def = catalog.Find(recipe.SkillId);
+                HeroProgress? flagCaster = def == null ? null : CasterWhoKnows(assets, level, def.Id);
+                if (def == null || flagCaster == null || !flagCaster.Skills.AssignQuick(0, def.Id))
+                {
+                    flagProblems.Add(label + ":技能不在目录里、没学会或排不进快捷栏");
+                    continue;
+                }
+                RoomCombatSession flagSession = NewSession(assets, opts, flagCaster);
+                HeroSkillSlot? flagSlot = flagSession.Skills.SlotOfSkill(def.Id);
+                if (flagSlot == null || flagSlot.Key == SkillKeys.None)
+                {
+                    flagProblems.Add(label + ":没有排进快捷槽");
+                    continue;
+                }
+                flagSession.Update(10, 0, 0, false, false, flagSlot.Key);
+                if (flagSession.Hero.Motion != HeroMotion.Skill || flagSession.Hero.SkillId != def.Id)
+                {
+                    flagProblems.Add(label + ":按键没有放出这个技能");
+                    continue;
+                }
+                int flagMs = 10;
+                while (flagSession.Hero.Motion == HeroMotion.Skill && flagMs < 20000)
+                {
+                    flagSession.Update(10, 0, 0, false, false, SkillKeys.None);
+                    flagMs += 10;
+                }
+                int expectedEvents = 0;
+                for (int i = 0; i < recipe.Stages.Count; i++)
+                {
+                    SkillStageSpec st = recipe.Stages[i];
+                    AniFile? stageAni = assets.LoadAni(chr.CustomAnimationPath(st.MotionIndex) ?? "");
+                    int frameLimit = stageAni == null ? 0 : (st.EndFrame >= 0 ? Math.Min(st.EndFrame, stageAni.Frames.Length) : stageAni.Frames.Length);
+                    for (int f = 0; f < frameLimit; f++)
+                    {
+                        if (stageAni!.Frames[f].TryGetKeyFrameFlag(out int kf) && st.FlagEvents.Any(e => e.Flag == kf))
+                        {
+                            expectedEvents++;
+                        }
+                    }
+                }
+                if (flagSession.KeyFlagEvents != expectedEvents || expectedEvents == 0 || flagSession.Hero.Motion != HeroMotion.Rest)
+                {
+                    flagProblems.Add(label + ":触发了 " + flagSession.KeyFlagEvents + " 次事件,按动画上的标志帧应当是 " + expectedEvents + " 次,或放完没有回到站立");
+                    continue;
+                }
+                flagCycles++;
+                flagTriggers += flagSession.KeyFlagEvents;
+            }
+            foreach (string line in flagProblems)
+            {
+                Console.WriteLine("    " + line);
+            }
+            Report(flagSkills > 0 && flagProblems.Count == 0 && flagCycles == flagSkills,
+                "带关键帧标志事件的技能 " + flagSkills + " 个:放进快捷栏按键放出来,动画播完触发的事件数与动画上的标志帧数一致(共 " + flagTriggers + " 次),放完回到站立走完 " + flagCycles
+                + " 个(问题 " + flagProblems.Count + " 条)");
 
             // 8. 增益类技能(M48,证据 E-141):表里的每个增益在真实数据里都读得通——技能在目录里、是主动技能、指令的扳机是增益键、[static data] 与 [level info] 的列够用、
             // 每一级的持续时间与数值都是正数;真实会话里按各自的指令打一遍:施法动作是角色的 [buff motion](没有攻击框),施法正常结束那一步挂上增益,数值与持续时间等于槽里读出来的,
@@ -1184,6 +1370,32 @@ internal static class SkillCheck
         RoomCombatSession session = DemoCombat.CreateSession(assets, opts.MapPath, opts.HeroWeapon ?? DemoHero.StarterWeapon, 1, false, progress);
         session.CommandsEnabled = true;
         return session;
+    }
+
+    /// <summary>
+    /// 找一个学会了 <paramref name="skillId"/> 的主角(检查用,M65):每次都是新建的一个主角——按成长类型 0 到 5 依次转职、花光点数,返回第一个学会它的;都不行返回 null。
+    /// 子职业技能默认主角(成长类型 0)学不了。
+    /// </summary>
+    private static HeroProgress? CasterWhoKnows(DnfAssets assets, int level, int skillId)
+    {
+        for (int g = 0; g < SkillRules.GrowtypeCount; g++)
+        {
+            HeroProgress? other = HeroProgress.CreateForLocalHero(assets, level);
+            if (other == null)
+            {
+                return null;
+            }
+            if (g > 0 && !other.ChangeGrowtype(g))
+            {
+                continue;
+            }
+            SkillPlanner.SpendAll(other);
+            if (other.Skills.LevelOf(skillId) > 0)
+            {
+                return other;
+            }
+        }
+        return null;
     }
 
     /// <summary>让主角起跳并升到离地至少 <paramref name="minHeight"/> 像素(检查用:只在腾空时放得出来的技能)。返回有没有升到。</summary>

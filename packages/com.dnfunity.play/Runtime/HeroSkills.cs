@@ -56,7 +56,7 @@ namespace Dnf.Play
         public int Level { get; }
         public SkillDef Def { get; }
 
-        /// <summary>满冷却时长(毫秒):.skl 的 [cool time] 按等级插值;没有这个标签为 0(例如后跳)。</summary>
+        /// <summary>满冷却时长(毫秒):.skl 的 [cool time] 按等级插值;带 [cooltime level info] 的技能取 [level info] 那一列当前等级的值(E-163);两个标签都没有为 0(例如后跳)。</summary>
         public int CooldownMs { get; }
 
         /// <summary>.skl 的 [consume MP] 按等级插值;放出来的那一刻从 <see cref="HeroVitals"/> 里扣(证据 E-087)。</summary>
@@ -150,6 +150,59 @@ namespace Dnf.Play
             return StageStrikes[Math.Max(0, Math.Min(stage, StageStrikes.Count - 1))];
         }
 
+        /// <summary>
+        /// 每一段每个关键帧标志事件换成的攻击信息与伤害数(M65,证据 E-163),与 <see cref="SkillStageSpec.FlagEvents"/> 一一对应;
+        /// 事件没有换命中的项为 null。不是配方技能为 null。
+        /// </summary>
+        public IReadOnlyList<IReadOnlyList<HeroStrikeInfo?>> FlagStrikes { get; internal set; }
+
+        private SkillStageSpec StageSpecOf(int stage)
+        {
+            return Recipe == null || Recipe.Stages.Count == 0 ? null : Recipe.Stages[Math.Max(0, Math.Min(stage, Recipe.Stages.Count - 1))];
+        }
+
+        /// <summary>第 <paramref name="stage"/> 段里关键帧标志 <paramref name="flag"/> 对应的事件下标(表里第一项);这一段没有这个标志的事件返回 -1。</summary>
+        public int FlagEventIndex(int stage, int flag)
+        {
+            SkillStageSpec spec = StageSpecOf(stage);
+            if (spec == null)
+            {
+                return -1;
+            }
+            for (int i = 0; i < spec.FlagEvents.Count; i++)
+            {
+                if (spec.FlagEvents[i].Flag == flag)
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        /// <summary>第 <paramref name="stage"/> 段第 <paramref name="index"/> 个关键帧标志事件换了攻击信息或伤害列(只清命中名单的事件为 false)。</summary>
+        public bool FlagEventChangesStrike(int stage, int index)
+        {
+            SkillStageSpec spec = StageSpecOf(stage);
+            return spec != null && (uint)index < (uint)spec.FlagEvents.Count && spec.FlagEvents[index].ChangesStrike;
+        }
+
+        /// <summary>
+        /// 第 <paramref name="stage"/> 段、已触发到第 <paramref name="variant"/> 个换命中的关键帧标志事件(从 1 数是事件下标加 1,0 是还没触发过)之后命中用的攻击信息;
+        /// 这个事件没换命中时与 <see cref="StrikeAt(int)"/> 相同。
+        /// </summary>
+        public HeroStrikeInfo? StrikeAt(int stage, int variant)
+        {
+            if (variant > 0 && FlagStrikes != null && FlagStrikes.Count > 0)
+            {
+                IReadOnlyList<HeroStrikeInfo?> events = FlagStrikes[Math.Max(0, Math.Min(stage, FlagStrikes.Count - 1))];
+                if (variant <= events.Count && events[variant - 1] != null)
+                {
+                    return events[variant - 1];
+                }
+            }
+            return StrikeAt(stage);
+        }
+
         /// <summary>此刻还剩的冷却(毫秒);0 表示能放。</summary>
         public double CooldownLeftMs { get; internal set; }
 
@@ -195,7 +248,10 @@ namespace Dnf.Play
             SkillId = skillId;
             Level = level < 1 ? 1 : level;
             Def = def;
-            CooldownMs = def == null ? 0 : Math.Max(0, def.Interpolate(def.CoolTime, Level));
+            // 冷却:一般技能是 [cool time] 的两个端点按等级插值;带 [cooltime level info] 的技能(没有 [cool time])取 [level info] 那一列当前等级的值当毫秒(E-163,推断)
+            CooldownMs = def == null ? 0
+                : def.CoolTimeColumn >= 0 ? Math.Max(0, def.GetLevel(Level, def.CoolTimeColumn, false))
+                : Math.Max(0, def.Interpolate(def.CoolTime, Level));
             ConsumeMp = def == null ? 0 : Math.Max(0, def.Interpolate(def.ConsumeMp, Level));
         }
     }
@@ -359,6 +415,27 @@ namespace Dnf.Play
                         : new HeroStrikeInfo(0, 0, false));
                 }
                 slot.StageStrikes = strikes;
+                // 关键帧标志事件换的命中(M65,证据 E-163):攻击信息与两个伤害列里没写的沿用这一段原来的
+                var flagStrikes = new List<IReadOnlyList<HeroStrikeInfo?>>();
+                foreach (SkillStageSpec stage in recipe.Stages)
+                {
+                    var perEvent = new List<HeroStrikeInfo?>();
+                    foreach (SkillFlagEvent ev in stage.FlagEvents)
+                    {
+                        int atk = ev.AttackInfoIndex >= 0 ? ev.AttackInfoIndex : stage.AttackInfoIndex;
+                        if (!ev.ChangesStrike || atk < 0)
+                        {
+                            perEvent.Add(null);
+                            continue;
+                        }
+                        int rateColumn = ev.DamageRateColumn >= 0 ? ev.DamageRateColumn : stage.DamageRateColumn;
+                        int fixedColumn = ev.DamageFixedColumn >= 0 ? ev.DamageFixedColumn : stage.DamageFixedColumn;
+                        perEvent.Add(HeroStrikeInfo.Read(data, chr.CustomAttackInfoPath(atk))
+                            .WithSkillDamage(def.GetLevel(slot.Level, rateColumn, false), def.GetLevel(slot.Level, fixedColumn, false)));
+                    }
+                    flagStrikes.Add(perEvent);
+                }
+                slot.FlagStrikes = flagStrikes;
                 if (recipe.Hop != null)
                 {
                     // 蓄力跳跃类技能:重武装窗口的攻击信息取 [etc attack info] 的另一项,伤害数用跳跃段的两列(证据 E-138)
@@ -789,9 +866,29 @@ namespace Dnf.Play
             {
                 hold = HopHoldMs(slot);
             }
+            SkillRisePlan rise = RisePlanOf(slot, spec);
+            if (rise != null)
+            {
+                // 升空段:动画第 0 帧(带攻击框)停到升空时间结束(动画时间 = 墙钟 × 播放倍率,向上取整保证墙钟不短于升空时间),之后接着播剩下的帧
+                hold = (int)Math.Ceiling(rise.DurationMs * (hero.AttackAnimationRate > 0.0 ? hero.AttackAnimationRate : 1.0));
+            }
             return chain
-                ? hero.ChainSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame, rearmWindows: multiHitWindows)
-                : hero.BeginSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame, multiHitWindows);
+                ? hero.ChainSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame, rearmWindows: multiHitWindows, rise: rise)
+                : hero.BeginSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame, multiHitWindows, rise);
+        }
+
+        /// <summary>
+        /// 这一段的脚本升空计划(M65,证据 E-163):高度、升空毫秒、后滑像素都取 [static data] 的下标;这一段不是升空段、读不到技能定义时返回 null。
+        /// </summary>
+        internal static SkillRisePlan RisePlanOf(HeroSkillSlot slot, SkillStageSpec spec)
+        {
+            SkillRiseSpec r = spec.Rise;
+            if (r == null || slot.Def == null)
+            {
+                return null;
+            }
+            SkillDef def = slot.Def;
+            return new SkillRisePlan(def.GetStatic(r.HeightStaticIndex, false), def.GetStatic(r.DurationStaticIndex, false), def.GetStatic(r.BackStaticIndex, false));
         }
 
         /// <summary>
