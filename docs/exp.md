@@ -92,7 +92,7 @@
 |---|---|
 | `Dnf.Game` | `ExpTable`(门槛、区间)、`SpTable`、`Leveling.Gain`(升级循环,返回等级、经验、升了几级、技能点、觉醒点)、`ExpRates`(三张倍率表,M32 起多一张评分加成表)、`RankSystem` 与 `ClearReward`(M32:评分与通关经验,见 §11)、`MobRewardTable`(基础经验表 + 占位)、`KillExp.ForKill`(击杀经验,`X87` 复现 80 位寄存器与 64 位截断)、`CharacterGrowth`/`StatBlock`(成长块) |
 | `Dnf.Play` | `HeroProgress`(等级、经验、成长属性、技能点、觉醒点、`Version`;`CreateForLocalHero` 从用户数据造)、`MobRewards`(找基础经验表)、`RoomCombatSession`(杀怪给经验、升级时换生命魔法上限与面板、播升级音、升级光效跟随主角)、`DungeonSession`(各房间共用一个进度;M32 起首领清空时结算并发通关经验)、`DungeonResult`(评分与通关经验的汇总)、`HudArt`(经验条与满级覆盖层) |
-| 命令行 | `exp-check`(14 项检查,进 `verify-all`;M32 新增 6 项评分与通关经验的检查)、`--level N`(主角从 N 级开始,1 到 85)、`--no-exp`(杀怪不给经验);`combat-check` 打印每次击杀的经验、升级与最后的汇总 |
+| 命令行 | `exp-check`(14 项检查,进 `verify-all`;M32 新增 6 项评分与通关经验的检查)、`--level N`(主角从 N 级开始,1 到 85)、`--growtype N`(0 到 5,开局先转职;M64,子职业技能只有对应的成长类型能学)、`--no-exp`(杀怪不给经验);`combat-check` 打印每次击杀的经验、升级与最后的汇总 |
 | Unity | `-dnflevel N`、`-dnfnoexp`;`DNF_TOWN_DEMO` 日志在 `heroMp` 之后追加 `heroLevel= heroExp= levelUps=` |
 
 取舍:

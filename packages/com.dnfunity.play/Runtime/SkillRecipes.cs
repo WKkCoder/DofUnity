@@ -7,7 +7,8 @@ using System.Collections.Generic;
 // E-139(单段位移攻击类技能,状态 0x1d:起滑的"顺着按"两个数替换基础两个数、学了某个被动技能后命中名单按计时器多次重新武装);
 // E-141(增益类技能,状态 0x11:施法动作只播 [buff motion],状态正常结束时才挂属性附加体,持续时间与数值取自技能数据的哪一列由技能自己的挂附加体代码决定);
 // E-149(腾空悬停后俯冲类技能,状态 0x19:只在跳跃状态里放,动画定在空中攻击动作的最后一帧,悬停一小段后水平与竖直一起冲下去,落地按起跳高度放脚下的冲击对象,再进坐姿);
-// E-154(两段自动接续类技能,状态 0x20:第一段动画播完、不用再按键就接第二段,第二段一开始放一个主角的被动对象,身体只在第一段里打人)。
+// E-154(两段自动接续类技能,状态 0x20:第一段动画播完、不用再按键就接第二段,第二段一开始放一个主角的被动对象,身体只在第一段里打人);
+// E-162(单段身体命中类技能,状态 0x41 与 0x42:进入块一次设好动作、攻击信息、伤害列与特效,没有逐帧逻辑,动画播完状态结束)。
 namespace Dnf.Play
 {
     /// <summary>
@@ -638,6 +639,28 @@ namespace Dnf.Play
                     new SkillObjectSpec(objectId: 20022, stage: 1, frame: 0, damageRateColumn: 2, damageFixedColumn: 3),
                 },
                 autoChain: true),
+
+            // 单段身体命中类技能(状态 0x41,证据 E-162):进入块一次设好全部东西,逐帧块走公共后段(里面没有这个状态的分支),动画播完状态结束。
+            // 动作取 [etc motion] 第 120 项,攻击信息取 [etc attack info] 第 84 项,伤害取 [level info] 的百分比第 0 列(没有固定值列);
+            // 一进状态就把预载表第 0、1 个特效放进第 1、2 两个图层(都跟着主角);不滑行(进入块把两个轴的滑行速度都清零)。
+            // 没做:进入块把主角的一个保护浮点字段(同一个字段在被动对象的创建参数里也有乘法,角色一侧的用途没读通)乘上 [static data] 第 1 个数的千分之一、
+            // 按 [static data] 第 2 个数 / 100 设动画变速与特效缩放、非基础职业的音效与特效助手。
+            new SkillRecipe(111,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 120, attackInfoIndex: 84, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0,
+                        moreEffects: new[] { 1 }),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false),
+
+            // 单段身体命中类技能(状态 0x42,证据 E-162):同上,动作取 [etc motion] 第 121 项,攻击信息第 85 项,伤害取 [level info] 的百分比第 0 列;没有预载特效
+            // (进入块只挂两个写死参数的残影特效,不在预载表里);不滑行。没做:同一个保护浮点字段乘上 [static data] 第 0 个数的千分之一、残影、非基础职业的音效助手。
+            new SkillRecipe(112,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 121, attackInfoIndex: 85, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false),
         },
         new[]
         {

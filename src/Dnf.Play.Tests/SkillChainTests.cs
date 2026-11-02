@@ -108,14 +108,16 @@ public class SkillChainTests
             Assert.True(HeroSkills.IsImplemented(r.SkillId));
             Assert.True(r.Stages.Count >= 1 && r.ChainFromFrame >= 1);
             Assert.Equal(r.MultiHitPassiveSkillId > 0, r.MultiHitCountIndex >= 0);      // 多段命中:被动技能编号与次数下标要么都有、要么都没有
+            // 单段、不滑行、没有对象与特别部分的身体命中类(E-162,状态 0x41、0x42):进入块只读 [level info] 的百分比列,没有固定值列
+            bool bodyHit = r.Stages.Count == 1 && r.Objects.Count == 0 && r.SlideSpeedIndex < 0 && r.Hop == null && r.Dive == null && r.JumpAttack == null && !r.AutoChain;
             Assert.All(r.Stages, st =>
             {
                 // 悬停俯冲类的动画是空中攻击动作、空中攻击强化类的两种动作写在 SkillJumpAttackSpec 里,都没有这一段的 [etc motion] 下标(E-149、E-150)
                 Assert.True((st.MotionIndex >= 0 || r.Dive != null || r.JumpAttack != null) && st.EffectFrame >= 0 && st.EffectIndex >= -1 && st.CastHoldFrames >= 0);
                 if (st.HasOwnStrike)
                 {
-                    // 蓄力跳跃类与悬停俯冲类技能自己的伤害没有固定值列(只取百分比列);自动接续类(E-154)的第一段也只取百分比列
-                    Assert.True(st.DamageRateColumn >= 0 && (st.DamageFixedColumn >= 0 || r.Hop != null || r.Dive != null || r.AutoChain));
+                    // 蓄力跳跃类与悬停俯冲类技能自己的伤害没有固定值列(只取百分比列);自动接续类(E-154)的第一段、身体命中类(E-162)也只取百分比列
+                    Assert.True(st.DamageRateColumn >= 0 && (st.DamageFixedColumn >= 0 || r.Hop != null || r.Dive != null || r.AutoChain || bodyHit));
                 }
                 else
                 {

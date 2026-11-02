@@ -28,6 +28,12 @@ internal static class ExpCheck
             return null;
         }
         HeroProgress? progress = HeroProgress.CreateForLocalHero(assets, opts.HeroLevel);
+        if (progress != null && opts.Growtype.HasValue)
+        {
+            // --growtype:先转职(M64);子职业技能的学习门槛(成长类型与等级)由技能簿按规则判,这里只改成长类型
+            bool changed = progress.ChangeGrowtype(opts.Growtype.Value);
+            Console.WriteLine("  --growtype:成长类型 " + opts.Growtype.Value + " → " + (changed ? "已转" : "没变(已经是或越界)"));
+        }
         if (progress != null && opts.LearnSkills)
         {
             // --learn:开局先按自动机策略把点数花光(M35,证据 E-127);数字只打印在终端

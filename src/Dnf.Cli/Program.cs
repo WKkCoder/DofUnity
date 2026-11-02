@@ -122,6 +122,9 @@ namespace Dnf.Cli
         /// <summary>--level N:主角的起始等级(1 到 85,默认 1);exp-check 用它看某一级的属性与升级所需经验。</summary>
         public int HeroLevel { get; set; } = 1;
 
+        /// <summary>combat-check、dungeon-check、flow-check --growtype N(0 到 5):开局先把本地主角转到这个成长类型(M64;子职业技能只有对应的成长类型能学,配合 --quick 与 --level 用)。</summary>
+        public int? Growtype { get; set; }
+
         /// <summary>dungeon-check --damage-scale N:测试旋钮,主角打出的每一击伤害乘上 N(默认 1;用于全库副本扫描排除"一级主角打不动高等级怪物"的干扰,不是原版规则)。</summary>
         public int DamageScale { get; set; } = 1;
 
@@ -341,7 +344,7 @@ namespace Dnf.Cli
             "  dnf exp-check [--level N]\n" +
             "      经验与升级(证据 E-111):读升级经验表、技能点表、三张经验倍率表、主角 .chr 的成长块与全部副本的经验权重,检查结构(递增、读得到、一级属性与老路径一致),\n" +
             "      再把升级循环从 1 级走到封顶;--level N 另外打印这一级的属性、升级所需经验与同级怪物的击杀经验(数值来自本机的数据,只打印在终端,不要抄进入库的文件)。\n" +
-            "      combat-check、dungeon-check、flow-check、sound-check 默认带主角的等级进度(杀怪给经验、升级、底栏有经验条):--level N 指定起始等级,--no-exp 关掉(--no-damage 时本来就没有)。\n" +
+            "      combat-check、dungeon-check、flow-check、sound-check 默认带主角的等级进度(杀怪给经验、升级、底栏有经验条):--level N 指定起始等级,--growtype N(0 到 5)先转职(子职业技能用),--no-exp 关掉(--no-damage 时本来就没有)。\n" +
             "      dungeon-check、flow-check、sound-check 里主角死了会开复活窗口(证据 E-115:躺平后 10 秒失败计时,攻击键用币复活,计时走完副本失败、流程回城):--coins N 指定复活币的起始库存(默认 5,占位),\n" +
             "      --monster-damage-scale N(测试旋钮,不是原版规则)让怪物打中主角的伤害乘上 N,用来无人值守地检查死亡、复活与失败回城。\n" +
             "  dnf difficulty-check [--dungeon <副本定义>] [--seed N] | --cases <用例文件>\n" +
@@ -652,6 +655,11 @@ namespace Dnf.Cli
                         break;
                     case "--pick":
                         opts.Pick = true;
+                        break;
+                    case "--growtype":
+                        opts.Growtype = int.TryParse(NextValue(args, ref i), out int growtypeValue) && growtypeValue >= 0 && growtypeValue <= 5
+                            ? growtypeValue
+                            : throw new UserError("--growtype 需要 0 到 5 的整数");
                         break;
                     case "--level":
                         opts.HeroLevel = int.TryParse(NextValue(args, ref i), out int levelValue) && levelValue >= 1 && levelValue <= 85
