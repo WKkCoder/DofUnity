@@ -303,6 +303,42 @@ public sealed class CommandInputTests
         Assert.False(heldOnly.Matches(doubleDownAttack, false));
     }
 
+    [Fact]
+    public void ASingleRecentTapCannotSatisfyBothPositionsOfARepeatedKey()
+    {
+        // 点一下下、紧接着按攻击:只有一次按下记录,同一次按下不能既当第二个下又当"早就按着"的第一个下
+        // (M66,E-164:否则每次"下 + 攻击"都成了"下、下、攻击"的防御姿态——攻击键同时是普攻)
+        SkillCommand doubleDownAttack = SkillCommand.Of(CommandKey.Down, CommandKey.Down, CommandKey.Attack);
+        var once = new CommandInput();
+        Tick(once, dirY: 1);
+        Tick(once, 80.0, dirY: 1, attack: true);
+        Assert.False(once.Matches(doubleDownAttack, false));
+
+        var sameStep = new CommandInput();                   // 下和攻击同一步按下
+        Tick(sameStep, dirY: 1, attack: true);
+        Assert.False(sameStep.Matches(doubleDownAttack, false));
+
+        var released = new CommandInput();                   // 点一下、松开、过了窗口再按攻击:也不行
+        Tick(released, dirY: 1);
+        Tick(released, 400.0);
+        Tick(released, attack: true);
+        Assert.False(released.Matches(doubleDownAttack, false));
+
+        // 真正的双击(按、松、按)不受影响,单个下的指令也不受影响
+        var twice = new CommandInput();
+        Tick(twice, dirY: 1);
+        Tick(twice, 80.0);
+        Tick(twice, dirY: 1);
+        Tick(twice, 80.0, dirY: 1, attack: true);
+        Assert.True(twice.Matches(doubleDownAttack, false));
+
+        SkillCommand downAttack = SkillCommand.Of(CommandKey.Down, CommandKey.Attack);
+        var single = new CommandInput();
+        Tick(single, dirY: 1);
+        Tick(single, 80.0, dirY: 1, attack: true);
+        Assert.True(single.Matches(downAttack, false));
+    }
+
     // ------------------------------------------------------------------ 历史
 
     [Fact]

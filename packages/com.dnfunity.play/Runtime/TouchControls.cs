@@ -456,6 +456,7 @@ namespace Dnf.Play
             if (IsPressed(TouchButton.SkillA)) { held |= SkillKeys.A; }
             if (IsPressed(TouchButton.SkillS)) { held |= SkillKeys.S; }
             if (IsPressed(TouchButton.SkillD)) { held |= SkillKeys.D; }
+            if (IsPressed(TouchButton.Attack)) { held |= SkillKeys.Attack; }      // 攻击键当扳机的指令(防御姿态)要按着才维持(M66,E-164)
             var frame = new TouchFrame(dirX, dirY, _buttonEdge[(int)TouchButton.Attack], _buttonEdge[(int)TouchButton.Jump], skills, held);
             _buttonEdge[(int)TouchButton.Attack] = false;
             _buttonEdge[(int)TouchButton.Jump] = false;

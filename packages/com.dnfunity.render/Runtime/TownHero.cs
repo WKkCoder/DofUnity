@@ -448,6 +448,16 @@ namespace Dnf.Render
         private double _diveVx;
         private int _holdFrame = -1;
         private int _strikeFirstFrame;
+
+        // 防御姿态(M66,证据 E-164,客户端状态 0x13):姿态是否开着、进入后的墙钟、最短保持毫秒、后滑的进度与速度、挡下的次数
+        private bool _guard;
+        private double _guardClockMs;
+        private double _guardMinHoldMs;
+        private double _guardRecoilMs = -1.0;
+        private double _guardRecoilSpeed;
+        private double _guardRecoilAccel;
+        private double _guardRecoilSpanMs;
+        private int _guardBlocks;
         private AniFile _sit;
         private string _sitPath;
         private AniTimeline _sitTimeline;
@@ -759,6 +769,24 @@ namespace Dnf.Render
         /// 命中判定在新的一击开始时用它当"已判到的帧"的起点。
         /// </summary>
         public int StrikeFirstFrame => Motion == HeroMotion.Skill ? _strikeFirstFrame : 0;
+
+        /// <summary>
+        /// 正在防御姿态里(M66,证据 E-164;客户端状态 0x13,技能号是 <see cref="SkillId"/>):动画是两帧、每帧停留很久的姿势动作,
+        /// 姿态阶段定在第 0 帧、被挡下一击后的后滑阶段定在第 1 帧;主角不能走动、转身或放别的技能,直到姿态结束。
+        /// </summary>
+        public bool Guarding => Motion == HeroMotion.Skill && _guard;
+
+        /// <summary>防御姿态里此刻正在后滑(挡下一击之后、回到姿态之前,客户端状态 0x13 的阶段 1)。</summary>
+        public bool GuardRecoiling => Guarding && _guardRecoilMs >= 0.0;
+
+        /// <summary>
+        /// 宿主每一步设:触发这个技能的键此刻是不是按着。防御姿态要按着才维持——最短保持时间过了、键又松开了,姿态就结束(回到站立);
+        /// 挡下一击后的后滑不看它(后滑完回到姿态时最短保持是 0,所以松开的键立刻生效)。
+        /// </summary>
+        public bool GuardKeyHeld { get; set; }
+
+        /// <summary>从开始玩起挡下的次数(<see cref="BlockHit"/> 成功一次加 1)。</summary>
+        public int GuardBlocks => _guardBlocks;
 
         /// <summary>有坐姿动作([sit motion]):俯冲落地后才播得出坐姿,否则落地直接回到站立。</summary>
         public bool CanSit => _sit != null;
@@ -1222,6 +1250,91 @@ namespace Dnf.Render
             StartStageRearm(m, rearmWindows);
             StartRise(rise);
             return true;
+        }
+
+        /// <summary>
+        /// 进入防御姿态(M66,证据 E-164;客户端状态 0x13 阶段 0):播 [etc motion] 第 <paramref name="etcIndex"/> 项,动画定在第 0 帧,
+        /// 不滑行。<paramref name="minHoldMs"/> 是最短保持毫秒(.skl [static data] 里的一个数):过了它而且 <see cref="GuardKeyHeld"/> 为假,姿态才结束。
+        /// 只在地面站立、行走、奔跑时能进入(同别的技能,<see cref="CanBeginSkill"/>);读不到动画时返回 false,不改变状态。
+        /// 姿态里挨的一击由 <see cref="BlockHit"/> 处理,没有 <see cref="BlockHit"/> 就和别的出招一样被打断。
+        /// </summary>
+        public bool BeginGuard(int skillId, int etcIndex, int minHoldMs)
+        {
+            if (!CanBeginSkill)
+            {
+                return false;
+            }
+            EtcMotion m = EtcAt(etcIndex);
+            if (m == null)
+            {
+                return false;
+            }
+            StartSkill(skillId, -1, 0, m, 0.0, 0.0);
+            _guard = true;
+            _guardClockMs = 0.0;
+            _guardMinHoldMs = minHoldMs < 0 ? 0 : minHoldMs;
+            _guardRecoilMs = -1.0;
+            _holdFrame = 0;
+            return true;
+        }
+
+        /// <summary>
+        /// 防御姿态挡下了一击(M66,证据 E-164;客户端受击前钩子里挡下时发"状态 0x13、阶段 1"):动画换到第 1 帧、沿朝向的反方向后滑——
+        /// 起滑速度 <paramref name="recoilSpeed"/>(像素/秒,整数)、加速度 −速度 × 1000 / <paramref name="recoilMs"/>(整数除法,恰好在 <paramref name="recoilMs"/> 毫秒减到 0),
+        /// 后滑持续 <paramref name="recoilMs"/> 毫秒(不是正数时取 100,客户端的默认值),然后回到姿态;再挨一击就从头重新后滑(状态重新进入)。
+        /// 不在姿态里返回 false。回到姿态时最短保持清零(进入块只在前一个状态不是自己时才设最短保持)。
+        /// </summary>
+        public bool BlockHit(double recoilSpeed, int recoilMs)
+        {
+            if (!Guarding)
+            {
+                return false;
+            }
+            int span = recoilMs > 0 ? recoilMs : GuardDefaultRecoilMs;
+            int speed = (int)recoilSpeed;
+            _guardRecoilSpeed = speed;
+            _guardRecoilAccel = (double)(-speed * 1000 / span);
+            _guardRecoilSpanMs = span;
+            _guardRecoilMs = 0.0;
+            _guardMinHoldMs = 0.0;
+            _holdFrame = 1;
+            _guardBlocks++;
+            return true;
+        }
+
+        /// <summary>挡下一击后的后滑时长缺省值(毫秒):状态进入块里 [0x659c] 先写的 100,级别表给不出正数时就用它(M66,证据 E-164)。</summary>
+        public const int GuardDefaultRecoilMs = 100;
+
+        /// <summary>
+        /// 防御姿态这一步(M66):后滑阶段沿朝向的反方向滑(<see cref="SlideDistance"/> 的距离,受可走区域与障碍限制),时间到了回到第 0 帧的姿态;
+        /// 姿态阶段什么也不动,最短保持时间过了而且键松开了就结束技能、回到站立。
+        /// </summary>
+        private void AdvanceGuard(double deltaMs)
+        {
+            _motionMs += deltaMs;
+            _guardClockMs += deltaMs;
+            if (_guardRecoilMs >= 0.0)
+            {
+                double from = _guardRecoilMs;
+                _guardRecoilMs += deltaMs;
+                double t0 = Math.Min(from, _guardRecoilSpanMs);
+                double t1 = Math.Min(_guardRecoilMs, _guardRecoilSpanMs);
+                double distance = SlideDistance(_guardRecoilSpeed, _guardRecoilAccel, t0, t1);
+                if (distance != 0.0)
+                {
+                    X = MoveAxis(X, (FacingLeft ? 1.0 : -1.0) * distance, true);
+                }
+                if (_guardRecoilMs >= _guardRecoilSpanMs)
+                {
+                    _guardRecoilMs = -1.0;
+                    _holdFrame = 0;
+                }
+                return;
+            }
+            if (_guardClockMs >= _guardMinHoldMs && !GuardKeyHeld)
+            {
+                FinishSkill();
+            }
         }
 
         /// <summary>开始(或清除)脚本升空:记下出发的水平位置;没有计划就什么也不留。</summary>
@@ -1699,6 +1812,8 @@ namespace Dnf.Render
             _diveVx = 0.0;
             _holdFrame = -1;
             _strikeFirstFrame = 0;
+            _guard = false;
+            _guardRecoilMs = -1.0;
         }
 
         /// <summary>摆成"正在放技能的主体阶段,动画是 [etc motion] 第 <paramref name="etcIndex"/> 项,已播放 <paramref name="motionMs"/> 毫秒(按墙钟)"。读不到动画时摆成站立。</summary>
@@ -1758,6 +1873,11 @@ namespace Dnf.Render
         /// </summary>
         private void AdvanceSkill(double deltaMs)
         {
+            if (_guard)
+            {
+                AdvanceGuard(deltaMs);
+                return;
+            }
             if (_dive != null)
             {
                 AdvanceDive(deltaMs);
@@ -3204,6 +3324,12 @@ namespace Dnf.Render
 
         /// <summary>出招指令里的"增益"键(热键表里"技能2"一格,默认空格;推断,E-140)。</summary>
         CommandBuff = 128,
+
+        /// <summary>
+        /// 攻击键(X)此刻是不是按着(M66,证据 E-164):只放在 <see cref="ISkillHoldSession.SkillsHeld"/> 里当"按住"标志用,不是快捷槽也不是"刚按下"的键。
+        /// 攻击键当扳机的指令(如防御姿态的"下、下、攻击")要一直按着攻击键才维持姿态,所以会话要知道它此刻是不是按着。
+        /// </summary>
+        Attack = 256,
 
         /// <summary>六个快捷槽的键(A S D F G H)。</summary>
         Quick = A | S | D | F | G | H,

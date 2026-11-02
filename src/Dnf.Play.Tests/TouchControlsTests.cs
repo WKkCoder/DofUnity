@@ -217,10 +217,10 @@ public class TouchControlsTests
 
         TouchFrame f = c.Poll();
         Assert.Equal((1, 0, true, true, SkillKeys.A), (f.DirX, f.DirY, f.Attack, f.Jump, f.Skills));
-        Assert.Equal(SkillKeys.A, f.SkillsHeld);
+        Assert.Equal(SkillKeys.A | SkillKeys.Attack, f.SkillsHeld);   // 攻击按钮按着也算"按着"(防御姿态要按着攻击键维持,M66,E-164)
         f = c.Poll();                                              // 按住不连发;摇杆还在
         Assert.Equal((1, 0, false, false, SkillKeys.None), (f.DirX, f.DirY, f.Attack, f.Jump, f.Skills));
-        Assert.Equal(SkillKeys.A, f.SkillsHeld);                   // 技能按钮没有边沿了,但"按着"一直是真的(蓄力类技能每帧查它,证据 E-138)
+        Assert.Equal(SkillKeys.A | SkillKeys.Attack, f.SkillsHeld);   // 技能按钮没有边沿了,但"按着"一直是真的(蓄力类技能每帧查它,证据 E-138)
 
         c.Up(2);
         Assert.False(c.IsPressed(TouchButton.Attack));
@@ -233,9 +233,9 @@ public class TouchControlsTests
         c.Down(5, ss.X, ss.Y);
         c.Down(6, sd.X, sd.Y);
         Assert.Equal(SkillKeys.S | SkillKeys.D, c.Poll().Skills);
-        c.Up(4);                                                   // 抬起 A:按着的集合只剩 S 与 D
+        c.Up(4);                                                   // 抬起 A:按着的集合只剩 S 与 D(攻击按钮刚才又按下了,还按着)
         TouchFrame later = c.Poll();
-        Assert.Equal((SkillKeys.None, SkillKeys.S | SkillKeys.D), (later.Skills, later.SkillsHeld));
+        Assert.Equal((SkillKeys.None, SkillKeys.S | SkillKeys.D | SkillKeys.Attack), (later.Skills, later.SkillsHeld));
     }
 
     [Fact]

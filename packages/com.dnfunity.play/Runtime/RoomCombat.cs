@@ -973,6 +973,12 @@ namespace Dnf.Play
         /// <summary>怪物的霸体吞掉的受击反应次数(M50,E-143):出招中带 [superarmor on attack] 的怪物挨了不无视霸体的一击、没死,没有受击也没有倒地。</summary>
         public int MonsterArmorAbsorbed { get; private set; }
 
+        /// <summary>防御姿态挡下的次数(M66,E-164):姿态里迎面挨到能挡的一击、没被打死——伤害按等级表折算、没有受击反应、主角后滑。</summary>
+        public int GuardBlocks { get; private set; }
+
+        /// <summary>防御姿态挡下的那些击里,折算前的伤害合计减去折算后实际扣掉的合计(少挨的点数),给检查与测试用。</summary>
+        public long GuardDamagePrevented { get; private set; }
+
         public string MapPath => _room.MapPath;
         public TownHero Hero => _room.Hero;
         public TownCamera Camera => _room.Camera;
@@ -2076,6 +2082,7 @@ namespace Dnf.Play
                 }
                 UpdateHopCharge(_room.Hero);
                 _room.Hero.JumpPowerBonus = _buffs.Total(BuffStat.JumpPower);   // 跳跃力增益:摆进主角,起跳初速度公式用(E-141)
+                SyncGuardKey(_room.Hero);                                         // 防御姿态要按着键才维持(M66,E-164)
                 _room.Update(heroDelta, dirX, dirY, attackPressed, jumpPressed);
                 UpdateBuffCast(_room.Hero);
                 SpawnStageEffect(_room.Hero);
@@ -3864,26 +3871,90 @@ namespace Dnf.Play
             {
                 damage = (int)Math.Min(int.MaxValue, (long)damage * MonsterDamageScale);
             }
+            // 防御姿态(M66,E-164):主角在姿态里、迎面、这一击能挡——伤害按这一类攻击的穿过百分比折算(整数截断),不产生受击反应
+            HeroSkillSlot guard = GuardSlotFor(info, attackerFacingLeft, attacker, hero);
+            int rawDamage = damage;
+            if (guard != null)
+            {
+                damage = (int)((long)damage * guard.GuardPassPercent(info.Input.Kind) / 100);
+            }
             bool killed = Vitals.Damage(damage);
+            bool blocked = guard != null && !killed;      // 挡下了还是被打死:死亡走普通的受击死亡
             HeroHits++;
             HeroDamageTaken += damage;
             _heroDown.NoteDamage(damage, Vitals.HpMax);
-            ReactHero(info, attackerFacingLeft, hero, killed);
-            ApplyHeroStatuses(info, attackerFacingLeft, hero, killed);
-            // 声音:攻击信息的命中声,加主角的受击或死亡语音(客户端有"职业 → (受击, 死亡)"的全局表,证据 E-089)
-            _sounds.Add(info.HitWav, SoundCueKind.Effect);
-            _sounds.Add(killed ? SwordmanVoice.Die : SwordmanVoice.Hurt, SoundCueKind.Voice);
+            if (blocked)
+            {
+                GuardBlocks++;
+                GuardDamagePrevented += rawDamage - damage;
+                hero.BlockHit(guard.GuardRecoilSpeed, guard.GuardRecoilMs);      // 后滑;没有受击反应、没有异常状态与受击语音(客户端受击反应模式 2:受击方不命中停顿、不走受击反馈,推断)
+            }
+            else
+            {
+                ReactHero(info, attackerFacingLeft, hero, killed);
+                ApplyHeroStatuses(info, attackerFacingLeft, hero, killed);
+                // 声音:攻击信息的命中声,加主角的受击或死亡语音(客户端有"职业 → (受击, 死亡)"的全局表,证据 E-089)
+                _sounds.Add(info.HitWav, SoundCueKind.Effect);
+                _sounds.Add(killed ? SwordmanVoice.Die : SwordmanVoice.Hurt, SoundCueKind.Voice);
+            }
             int pause = HitStop.StunMs(info.HitValue, info.UseWeaponHitDelayRate, 0);
             if (pause > 0)
             {
                 attacker?.Pause(pause);
-                if (pause > _heroPauseMs)
+                if (!blocked && pause > _heroPauseMs)
                 {
                     _heroPauseMs = pause;
                 }
             }
             AddNumber(damage, DamageNumberFlags.VictimIsHero, hit, hero.Y);
             _superArmorMode = 0;                          // 受击后钩子(onAfterDamage,主角类的覆盖 0x0084a5e0)把这一击的霸体摘掉(E-142)
+        }
+
+        /// <summary>
+        /// 受击前钩子里的防御姿态判定(M66,证据 E-164;客户端状态 0x13 的钩子分支,主角类受击前钩子 0x00cb20a0):主角此刻在防御姿态里
+        /// (<see cref="TownHero.Guarding"/>,后滑阶段也算)、这一击能被挡(客户端的"可格挡"判断是受保护代码里的黑盒,这里按"有受击反应"近似:
+        /// [damage reaction] 不是 none)、攻击方在主角朝向的那一侧(迎面)——返回姿态的技能槽;否则返回 null。
+        /// 攻击方在哪一侧按客户端的受击方向槽(0x00871a00)判:攻击方的 x(整数)比主角的大就在右侧,小就在左侧,相等时取攻击方朝向的反方向;
+        /// 投射物与被动对象没有怪物当攻击方(<paramref name="attacker"/> 为 null),按"朝着主角飞来"取它朝向的反方向那一侧(近似)。
+        /// </summary>
+        private HeroSkillSlot GuardSlotFor(HeroStrikeInfo info, bool attackerFacingLeft, MonsterActor attacker, TownHero hero)
+        {
+            if (!hero.Guarding || info.ReactionNone)
+            {
+                return null;
+            }
+            HeroSkillSlot slot = Skills?.SlotOfSkill(hero.SkillId);
+            if (slot == null || slot.Guard == null)
+            {
+                return null;
+            }
+            bool attackerOnRight = attacker == null ? attackerFacingLeft : AttackerIsOnRight(attacker.X, hero.X, attackerFacingLeft);
+            return attackerOnRight == !hero.FacingLeft ? slot : null;
+        }
+
+        /// <summary>
+        /// 攻击方在主角的右边吗(防御姿态的"迎面"判断,M66,证据 E-164;客户端受击方向槽 <c>0x00871a00</c>):两边的 x 都先取整数再比,攻击方的大就在右边;
+        /// 整数相等时取攻击方朝向的反方向那一边(朝左的攻击方当作在右边,朝右的当作在左边)。
+        /// </summary>
+        public static bool AttackerIsOnRight(double attackerX, double heroX, bool attackerFacingLeft)
+        {
+            int ax = (int)attackerX, hx = (int)heroX;
+            return ax != hx ? ax > hx : attackerFacingLeft;
+        }
+
+        /// <summary>
+        /// 每一步把"触发防御姿态的键此刻是不是按着"告诉主角(M66,E-164):键取技能槽的 <see cref="HeroSkillSlot.HoldKeys"/>(快捷键,或指令扳机——攻击键),
+        /// 读会话的 <see cref="SkillsHeld"/>;不在姿态里就清掉。
+        /// </summary>
+        private void SyncGuardKey(TownHero hero)
+        {
+            if (!hero.Guarding)
+            {
+                hero.GuardKeyHeld = false;
+                return;
+            }
+            HeroSkillSlot slot = Skills?.SlotOfSkill(hero.SkillId);
+            hero.GuardKeyHeld = slot != null && (SkillsHeld & slot.HoldKeys) != SkillKeys.None;
         }
 
         /// <summary>

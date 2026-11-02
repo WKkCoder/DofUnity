@@ -13,6 +13,8 @@ namespace Dnf.Play
     /// 方向保持到下一项改变为止,例如 "0.5:left,2:left+attack,3:none"。
     /// 蓄力类技能要按住技能键:holda、holds、holdd、holdf、holdg、holdh(出招指令的技能键是 holdz)表示从这一项起按住对应的键、直到下一项改变(和方向一样,
     /// 每一项都重写"按着哪些键",所以 none 就是全部松开);例如 "1:f+holdf,1.4:none" 在第 1 秒按下 F 键并按住 0.4 秒(证据 E-138)。
+    /// 攻击键当扳机的指令要按住攻击键(防御姿态,M66,证据 E-164):holdx 表示从这一项起按住攻击键(它不产生"刚按下",按一下还是写 attack),
+    /// 例如 "1:down,1.1:none,1.2:down,1.3:down+attack+holdx,2:down+holdx,3:none" 是"下、下、攻击"打出指令再一直按住到第 3 秒。
     /// 双击方向键奔跑就写成"按、松、按":"0:right,0.1:none,0.2:right"(两次按下相隔 0.2 秒)。
     /// 两种用法:<see cref="Poll"/> 按任意时刻读取按键状态(实时运行);<see cref="Step"/> 以固定的 1/60 秒步长推进一个会话(逐帧确定的模拟,
     /// 与命令行 combat-check 同一份代码,用来对拍两条绘制路径)。
@@ -94,6 +96,7 @@ namespace Dnf.Play
                         case "holdg": key.Held |= SkillKeys.G; break;
                         case "holdh": key.Held |= SkillKeys.H; break;
                         case "holdz": key.Held |= SkillKeys.CommandSkill; script.UsesCommands = true; break;
+                        case "holdx": key.Held |= SkillKeys.Attack; script.UsesCommands = true; break;
                         case "none": break;
                         default: throw new FormatException("时间表里不认识的动作 " + word);
                     }

@@ -105,6 +105,36 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>防御姿态类技能的放法(E-164);不是防御姿态类技能为 null。这类技能没有配方(没有多段动作与攻击信息),身体不打人。</summary>
+        public GuardRecipe Guard { get; internal set; }
+
+        /// <summary>防御姿态进入时的最短保持毫秒:.skl [static data] 的 <see cref="GuardRecipe.MinHoldStaticIndex"/> 项;不是防御姿态类技能或读不到定义为 0。</summary>
+        public int GuardMinHoldMs => Guard == null || Def == null ? 0 : Math.Max(0, Def.GetStatic(Guard.MinHoldStaticIndex, false));
+
+        /// <summary>挡下一击后后滑的起滑速度(像素/秒):.skl [level info] 当前等级的 <see cref="GuardRecipe.RecoilSpeedColumn"/> 列;不是防御姿态类技能为 0。</summary>
+        public int GuardRecoilSpeed => Guard == null || Def == null ? 0 : Def.GetLevel(Level, Guard.RecoilSpeedColumn, false);
+
+        /// <summary>挡下一击后后滑的持续毫秒:.skl [level info] 当前等级的 <see cref="GuardRecipe.RecoilMsColumn"/> 列(不是正数时 <see cref="TownHero.BlockHit"/> 取默认值);不是防御姿态类技能为 0。</summary>
+        public int GuardRecoilMs => Guard == null || Def == null ? 0 : Def.GetLevel(Level, Guard.RecoilMsColumn, false);
+
+        /// <summary>
+        /// 挡下这一类攻击时穿过的伤害百分比(M66,证据 E-164):物理攻击 = 100 − [level info] 的 <see cref="GuardRecipe.PhysicalColumn"/> 列、魔法攻击 = 100 − <see cref="GuardRecipe.MagicalColumn"/> 列
+        /// (客户端把这个数先转成整数再存;列值比 100 大时读到的代码里没有下限钳制,这里取 0——防御不该变成治疗);无视防御的攻击不折算(100)。不是防御姿态类技能为 100。
+        /// </summary>
+        public int GuardPassPercent(AttackKind kind)
+        {
+            if (Guard == null || Def == null)
+            {
+                return 100;
+            }
+            int column = kind == AttackKind.Physic ? Guard.PhysicalColumn : kind == AttackKind.Magic ? Guard.MagicalColumn : -1;
+            if (column < 0)
+            {
+                return 100;
+            }
+            return Math.Max(0, 100 - Def.GetLevel(Level, column, false));
+        }
+
         /// <summary>配方技能每一段命中用的攻击信息与伤害数,与 <see cref="SkillRecipe.Stages"/> 一一对应;不是配方技能为 null。</summary>
         public IReadOnlyList<HeroStrikeInfo> StageStrikes { get; internal set; }
 
@@ -125,11 +155,11 @@ namespace Dnf.Play
 
         /// <summary>
         /// 第 <paramref name="stage"/> 段主角的身体有没有自己的命中:配方技能看这一段的攻击信息下标(波系技能的施法动作没有,伤害全在放出的对象上);
-        /// 别的技能(没有配方)有;增益类技能的施法动作没有攻击框,主角的身体不打人。
+        /// 别的技能(没有配方)有;增益类技能的施法动作没有攻击框,主角的身体不打人;防御姿态类技能同样(姿势动作不设攻击信息,M66)。
         /// </summary>
         public bool StageHasOwnStrike(int stage)
         {
-            if (Buff != null)
+            if (Buff != null || Guard != null)
             {
                 return false;
             }
@@ -209,8 +239,8 @@ namespace Dnf.Play
         public bool Ready => CooldownLeftMs <= 0.0;
 
         /// <summary>
-        /// 算"这个技能的键按着"的键:快捷键,加上指令扳机对应的 <see cref="SkillKeys.CommandSkill"/> 或 <see cref="SkillKeys.CommandBuff"/>
-        /// (蓄力类技能靠指令放出来时,看扳机键是不是还按着,E-140)。
+        /// 算"这个技能的键按着"的键:快捷键,加上指令扳机对应的 <see cref="SkillKeys.CommandSkill"/>、<see cref="SkillKeys.CommandBuff"/> 或 <see cref="SkillKeys.Attack"/>
+        /// (蓄力类技能靠指令放出来时,看扳机键是不是还按着,E-140;防御姿态类技能的扳机是攻击键,E-164)。
         /// </summary>
         public SkillKeys HoldKeys
         {
@@ -227,6 +257,10 @@ namespace Dnf.Play
                     else if (c.Trigger == CommandKey.Buff)
                     {
                         keys |= SkillKeys.CommandBuff;
+                    }
+                    else if (c.Trigger == CommandKey.Attack)
+                    {
+                        keys |= SkillKeys.Attack;
                     }
                 }
                 return keys;
@@ -307,16 +341,16 @@ namespace Dnf.Play
             }
         }
 
-        /// <summary>这个技能编号有没有实现放法(三个手写的、倒地起身,加上默认配方表里的配方技能与增益类技能)。</summary>
+        /// <summary>这个技能编号有没有实现放法(三个手写的、倒地起身,加上默认配方表里的配方技能、增益类技能与防御姿态类技能)。</summary>
         public static bool IsImplemented(int skillId)
         {
             return skillId == SkillIds.HardAttack || skillId == SkillIds.UpperSlash || skillId == SkillIds.BackStep || skillId == SkillIds.QuickStand
-                || SkillRecipes.Default.Find(skillId) != null || SkillRecipes.Default.FindBuff(skillId) != null;
+                || SkillRecipes.Default.Find(skillId) != null || SkillRecipes.Default.FindBuff(skillId) != null || SkillRecipes.Default.FindGuard(skillId) != null;
         }
 
         private static bool IsImplemented(HeroSkillSlot slot)
         {
-            return slot.Recipe != null || slot.Buff != null || IsImplemented(slot.SkillId);
+            return slot.Recipe != null || slot.Buff != null || slot.Guard != null || IsImplemented(slot.SkillId);
         }
 
         /// <summary>
@@ -402,6 +436,7 @@ namespace Dnf.Play
             var slot = new HeroSkillSlot(key, def.Id, level, def);
             SkillRecipe recipe = (recipes ?? SkillRecipes.Default).Find(def.Id);
             slot.Buff = (recipes ?? SkillRecipes.Default).FindBuff(def.Id);        // 增益类技能(E-141):没有配方,放法只有一个施法动作与一个附加体
+            slot.Guard = (recipes ?? SkillRecipes.Default).FindGuard(def.Id);      // 防御姿态类技能(E-164):没有配方,放法只有一个姿势动作,按住攻击键维持
             if (recipe != null)
             {
                 // 配方技能:逐段取攻击信息(角色 [etc attack info] 的下标)与伤害数(.skl [level info] 当前等级的两列),特效取技能预载表的下标(证据 E-129)
@@ -624,11 +659,12 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 这条指令能不能由指令层放出技能:扳机是技能或增益键,或者是跳跃键而且指令不止一个键(只有一个跳跃键的指令会和普通跳跃撞车,留给专门的处理;攻击键当扳机的是普攻与冲刺攻击,不在这里)。
+        /// 这条指令能不能由指令层放出技能:扳机是技能或增益键,或者是跳跃键、攻击键而且指令不止一个键(只有一个跳跃键的指令会和普通跳跃撞车、只有一个攻击键的是普攻,
+        /// 都留给专门的处理;攻击键收尾的多键指令如防御姿态的"下、下、攻击"在 M66 起由指令层放,E-164)。
         /// </summary>
         public static bool CommandCasts(SkillCommand c)
         {
-            return c != null && !c.IsEmpty && (IsPressTrigger(c.Trigger) || (c.Trigger == CommandKey.Jump && c.Length >= 2));
+            return c != null && !c.IsEmpty && (IsPressTrigger(c.Trigger) || ((c.Trigger == CommandKey.Jump || c.Trigger == CommandKey.Attack) && c.Length >= 2));
         }
 
         /// <summary>能靠指令放的槽,指令越长越先试(长指令包含短指令,同长度按快捷槽在前、技能编号小的在前)。</summary>
@@ -737,6 +773,7 @@ namespace Dnf.Play
                     began = slot.Recipe != null
                         ? (slot.Recipe.Dive != null ? BeginDive(slot, hero)
                             : (slot.Recipe.JumpAttack != null ? BeginJumpAttack(slot, hero) : BeginStage(slot, 0, hero, heldX, heldY, false, MultiHitWindows(slot))))
+                        : slot.Guard != null ? hero.BeginGuard(slot.SkillId, slot.Guard.MotionIndex, slot.GuardMinHoldMs)   // 防御姿态类:原地摆姿势、动画定在第 0 帧,按住攻击键维持(M66,E-164)
                         : slot.Buff != null && hero.BeginBuffMotion(slot.SkillId);   // 增益类:原地播 [buff motion],施法正常结束时才挂增益(E-141,由房间会话挂)
                     break;
             }

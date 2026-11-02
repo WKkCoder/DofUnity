@@ -2171,6 +2171,7 @@ namespace Dnf.Client
             if (Input.GetKey(KeyCode.H)) { _heldSkills |= SkillKeys.H; }
             if (Input.GetKeyDown(KeyCode.Z)) { skills |= SkillKeys.CommandSkill; }
             if (Input.GetKey(KeyCode.Z)) { _heldSkills |= SkillKeys.CommandSkill; }
+            if (Input.GetKey(KeyCode.X)) { _heldSkills |= SkillKeys.Attack; }      // 攻击键当扳机的指令(防御姿态)要按着才维持(M66,E-164)
             if (SpaceIsBuffKey)
             {
                 // 空格是出招指令里的"增益"键(M48,E-141);只在战斗里这样,城镇里空格仍是对话,暂停改用 P 键

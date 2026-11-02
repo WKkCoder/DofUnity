@@ -177,7 +177,7 @@ namespace Dnf.Play
                     next = _presses[idx].TimeMs;
                     continue;
                 }
-                if (SkillCommand.IsDirection(key) && HeldAt(key, next))
+                if (SkillCommand.IsDirection(key) && HeldAt(key, next, used))
                 {
                     if (heldUsed == null)
                     {
@@ -198,8 +198,10 @@ namespace Dnf.Play
         /// 方向键在 <paramref name="atMs"/> 那一刻是按着的:最近一次不晚于那一刻的按下之后、到那一刻为止没有松开过(同一步里松开又按别的键,算先松开)。
         /// 记录里这个键的按下都晚于那一刻,就是那时还没按;一条按下记录也没有时(按下太久,记录过期了),此刻还按着、
         /// 或者在那一刻之后才松开,都算那时按着。这样"后按下的键"不会倒过来满足序列里更早的位置,先按住、后来才松开的方向键也不会因为松得早而失效。
+        /// <paramref name="used"/> 里的按下已经被序列后面的位置占用:占用的那一次按下不能再当"早就按着"的来源(M66,E-164)——
+        /// 否则同一个键在序列里出现两次时,点一下就同时满足了两个位置("下、下、攻击"里只点一下下再按攻击也打得出来,而攻击键同时是普攻,会让每次"下 + 攻击"都变成姿态)。
         /// </summary>
-        private bool HeldAt(CommandKey key, double atMs)
+        private bool HeldAt(CommandKey key, double atMs, uint used = 0)
         {
             double pressAt = double.NegativeInfinity;
             bool anyPress = false;
@@ -210,6 +212,10 @@ namespace Dnf.Play
                     continue;
                 }
                 anyPress = true;
+                if ((used & (1u << i)) != 0)
+                {
+                    continue;
+                }
                 if (_presses[i].TimeMs <= atMs)
                 {
                     pressAt = _presses[i].TimeMs;

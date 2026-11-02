@@ -263,6 +263,27 @@ internal sealed class AvatarFixture : IDisposable
     public const int RiseEtcIndex = 10;
     public const string RiseAni = "character/test/animation/rise.ani";
 
+    /// <summary>
+    /// 防御姿态(M66,证据 E-164)的合成数据:技能 <see cref="GuardSkill"/> 的指令是"下、下、攻击",播 [etc motion] 第 <see cref="GuardEtcIndex"/> 项 <see cref="GuardAni"/>
+    /// (两帧、每帧停留 10000 毫秒,每帧都带站立高度的受击框);[static data] 第 0 个数是最短保持毫秒 <see cref="GuardMinHoldMs"/>;[level info] 四列
+    /// (后滑速度、后滑毫秒、物理减伤百分比、魔法减伤百分比):1 级 (<see cref="GuardSpeed1"/>, <see cref="GuardRecoilMs1"/>, <see cref="GuardPhysical1"/>, <see cref="GuardMagical1"/>)、
+    /// 2 级 (<see cref="GuardSpeed2"/>, <see cref="GuardRecoilMs2"/>, <see cref="GuardPhysical2"/>, <see cref="GuardMagical2"/>);耗蓝 <see cref="GuardMp"/>、冷却 <see cref="GuardCool"/> 毫秒。数全是测试用的。
+    /// </summary>
+    public const int GuardSkill = 914;
+    public const int GuardEtcIndex = 11;
+    public const string GuardAni = "character/test/animation/guardpose.ani";
+    public const int GuardMinHoldMs = 200;
+    public const int GuardMp = 5;
+    public const int GuardCool = 1500;
+    public const int GuardSpeed1 = 300;
+    public const int GuardRecoilMs1 = 200;
+    public const int GuardPhysical1 = 50;
+    public const int GuardMagical1 = 30;
+    public const int GuardSpeed2 = 400;
+    public const int GuardRecoilMs2 = 250;
+    public const int GuardPhysical2 = 70;
+    public const int GuardMagical2 = 40;
+
     /// <summary>空中攻击动画最后一帧的攻击框(悬停俯冲把动画定在这一帧):x 从 +100 起宽 40,y 从 −10 起深 20,z 从 0 起高 50;与第 1 帧的框(x 从 +20 起)不重合。</summary>
     public static readonly (ushort Type, int[] Values) DiveHoldBox = ((ushort)15, new[] { 100, -10, 0, 40, 20, 50 });
 
@@ -1505,7 +1526,7 @@ internal sealed class AvatarFixture : IDisposable
                 // 技能动作与攻击信息(两个表的下标不对应:护身动作没有攻击信息,鬼斩在动作表里是第 1 项、在攻击信息表里是第 0 项)
                 .Tag("[etc motion]").Str("Animation/Guard.ani").Str("Animation/HardAttack.ani").Str("Animation/ChainA.ani").Str("Animation/ChainB.ani").Str("Animation/WaveCast.ani")
                 .Str("Animation/HopReady.ani").Str("Animation/Hop.ani").Str("Animation/JumpSkillA.ani").Str("Animation/JumpSkillB.ani")
-                .Str("Animation/Flag.ani").Str("Animation/Rise.ani")
+                .Str("Animation/Flag.ani").Str("Animation/Rise.ani").Str("Animation/GuardPose.ani")
                 .Tag("[etc attack info]").Str("AttackInfo/HardAttack.atk").Str("AttackInfo/ChainA.atk").Str("AttackInfo/ChainB.atk")
                 .Str("AttackInfo/HopFirst.atk").Str("AttackInfo/HopRepeat.atk").Str("AttackInfo/Dive.atk")
                 .Tag("[attack motion]").Str("animation/attack1.ani").Str("Animation/Attack2.ani").Str("animation/attack3.ani").Build()),
@@ -1515,7 +1536,7 @@ internal sealed class AvatarFixture : IDisposable
             ("skill/testskill.lst", NewScript()
                 .Int(181).Str("test/passive.skl").Int(HardAttackSkill).Str("test/hardattack.skl").Int(UpperSlashSkill).Str("test/upperslash.skl")
                 .Int(BackStepSkill).Str("test/backstep.skl").Int(174).Str("test/passive.skl").Int(ChainSkill).Str("test/chain.skl").Int(WaveSkill).Str("test/wave.skl").Int(HopSkill).Str("test/hop.skl").Int(QuickStandSkill).Str("test/quickstand.skl").Int(JumpCommandSkill).Str("test/jumpcommand.skl")
-                .Int(JumpBuffSkill).Str("test/jumpbuff.skl").Int(MagicBuffSkill).Str("test/magicbuff.skl").Int(ProcBuffSkill).Str("test/procbuff.skl").Int(DiveSkill).Str("test/dive.skl").Int(JumpSkill).Str("test/jumpskill.skl").Int(PoseStrikeSkill).Str("test/posestrike.skl").Int(FlagSkill).Str("test/flag.skl").Int(RiseSkill).Str("test/rise.skl").Build()),
+                .Int(JumpBuffSkill).Str("test/jumpbuff.skl").Int(MagicBuffSkill).Str("test/magicbuff.skl").Int(ProcBuffSkill).Str("test/procbuff.skl").Int(DiveSkill).Str("test/dive.skl").Int(JumpSkill).Str("test/jumpskill.skl").Int(PoseStrikeSkill).Str("test/posestrike.skl").Int(FlagSkill).Str("test/flag.skl").Int(RiseSkill).Str("test/rise.skl").Int(GuardSkill).Str("test/guard.skl").Build()),
             // 腾空悬停俯冲类技能:指令单键技能,[static data] 四个数(第 3 个是落地放冲击对象的最小离地高度),[level info] 三列 (俯冲百分比、冲击固定值、冲击百分比)
             ("skill/test/dive.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[command]").Paren("(SKILL)").Tag("[maximum level]").Int(10)
@@ -1528,6 +1549,12 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[type]").Str("[active]").Tag("[maximum level]").Int(10)
                 .Tag("[consume MP]").Int(PoseStrikeMp, PoseStrikeMp).Tag("[cooltime level info]").Int(1)
                 .Tag("[level info]").Int(2, PoseStrikeRate1, PoseStrikeCool1, PoseStrikeRate2, PoseStrikeCool2).Build()),
+            // 防御姿态技能:指令"下、下、攻击",[static data] 一个数(最短保持毫秒),[level info] 四列 (后滑速度、后滑毫秒、物理减伤百分比、魔法减伤百分比)
+            ("skill/test/guard.skl", NewScript()
+                .Tag("[type]").Str("[active]").Tag("[command]").Paren("(DOWN)").Sep(",").Paren("(DOWN)").Sep(",").Paren("(ATTACK)").Tag("[maximum level]").Int(10)
+                .Tag("[consume MP]").Int(GuardMp, GuardMp).Tag("[cool time]").Int(GuardCool, GuardCool)
+                .Tag("[static data]").Int(GuardMinHoldMs)
+                .Tag("[level info]").Int(4, GuardSpeed1, GuardRecoilMs1, GuardPhysical1, GuardMagical1, GuardSpeed2, GuardRecoilMs2, GuardPhysical2, GuardMagical2).Build()),
             // 关键帧标志事件技能:[level info] 两列百分比(第 0 列是第一个窗口、第 1 列是标志 B 之后的窗口)
             ("skill/test/flag.skl", NewScript()
                 .Tag("[type]").Str("[active]").Tag("[maximum level]").Int(10)
@@ -1742,6 +1769,8 @@ internal sealed class AvatarFixture : IDisposable
                 (0, 10000, 0, new[] { ((ushort)15, new[] { 20, -10, 0, 60, 20, 50 }) }),
                 (1, 30, 0, null),
                 (0, 40, 0, null))),
+            // 防御姿态的姿势动作:两帧、每帧停留 10000 毫秒(姿态阶段定第 0 帧、后滑阶段定第 1 帧),每帧带站立高度的受击框,没有攻击框
+            (GuardAni, BuildBoxAni((0, 10000, new[] { HeroHurtBox }), (1, 10000, new[] { HeroHurtBox }))),
             (LevelUpEffect, BuildEffectAni(false)),
             // 通关营地:营火动作脚本(相对路径故意混着大小写)与两层动画、NPC 目录与三个 NPC、带 [NPC] 的地图
             (CampfireAct, NewScript()

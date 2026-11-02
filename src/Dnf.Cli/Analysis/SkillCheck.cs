@@ -1358,6 +1358,120 @@ internal static class SkillCheck
             Report(buffSkills == SkillRecipes.Default.BuffCount && buffSkills > 0 && buffProblems.Count == 0 && buffCycles == buffSkills && buffMotionOk == buffSkills,
                 "增益类技能 " + buffSkills + " 个(逐级查了 " + buffLevelsChecked + " 级的持续时间与数值都为正)在真实数据里读得通;真实会话里按各自的指令各放一遍:施法动作无攻击框 "
                 + buffMotionOk + " 个、施法结束挂上并到点失效 " + buffCycles + " 个(问题 " + buffProblems.Count + " 条)");
+
+            // 9. 防御姿态类技能(M66,证据 E-164):表里的每个在真实数据里都读得通——技能在目录里、是主动技能、指令的扳机是攻击键且不止一个键、[static data] 与 [level info] 的列够用、
+            // 每一级的后滑毫秒为正、两列减伤百分比都在 0 到 100 之间;角色脚本的 [etc motion] 有这一项动作、动画至少两帧、没有攻击框;真实会话里按各自的指令打一遍(攻击键一直按着):
+            // 放出来的就是它自己、动画定在第 0 帧、魔法值按 [consume MP] 扣、冷却开始计;按着不放一直不结束,松开之后(最短保持过了)回到站立。只打印汇总数,数值与列内容不打印。
+            int guardSkills = 0;
+            int guardLevelsChecked = 0;
+            int guardCycles = 0;
+            int guardMotionOk = 0;
+            var guardProblems = new List<string>();
+            foreach (GuardRecipe recipe in SkillRecipes.Default.AllGuards)
+            {
+                guardSkills++;
+                string label = "姿态 #" + guardSkills;
+                SkillDef? def = catalog.Find(recipe.SkillId);
+                if (def == null || !def.IsActive)
+                {
+                    guardProblems.Add(label + ":技能不在目录里或不是主动技能");
+                    continue;
+                }
+                if (def.Command.IsEmpty || def.Command.Trigger != CommandKey.Attack || def.Command.Length < 2)
+                {
+                    guardProblems.Add(label + ":指令的扳机不是攻击键,或只有一个键");
+                }
+                int needColumns = Math.Max(Math.Max(recipe.RecoilSpeedColumn, recipe.RecoilMsColumn), Math.Max(recipe.PhysicalColumn, recipe.MagicalColumn)) + 1;
+                if (def.LevelInfo.Columns < needColumns || !def.LevelInfo.IsConsistent || def.LevelInfo.Levels < def.MaximumLevel)
+                {
+                    guardProblems.Add(label + ":[level info] 列数或行数不够");
+                }
+                if (def.StaticData.Length <= recipe.MinHoldStaticIndex)
+                {
+                    guardProblems.Add(label + ":[static data] 不够长");
+                }
+                // 只查学得到的等级(各成长类型的最高级里最大的那个):[maximum level] 比它大得多,多出来的行是装备加技能等级才会用到,减伤百分比在那里可以越过 100
+                int learnable = def.GrowtypeMaxLevels.Length > 0 ? Math.Min(def.GrowtypeMaxLevels.Max(), def.MaximumLevel) : def.MaximumLevel;
+                for (int lv = 1; lv <= learnable; lv++)
+                {
+                    guardLevelsChecked++;
+                    int recoilMs = def.GetLevel(lv, recipe.RecoilMsColumn, false);
+                    int physical = def.GetLevel(lv, recipe.PhysicalColumn, false);
+                    int magical = def.GetLevel(lv, recipe.MagicalColumn, false);
+                    if (recoilMs <= 0 || physical < 0 || physical > 100 || magical < 0 || magical > 100)
+                    {
+                        guardProblems.Add(label + " " + lv + " 级:后滑毫秒不是正数,或减伤百分比不在 0 到 100 之间");
+                    }
+                }
+
+                RoomCombatSession session = NewSession(assets, opts, caster);
+                HeroSkillSlot? slot = session.Skills.SlotOfSkill(def.Id);
+                if (slot?.Guard == null || caster.Skills.LevelOf(def.Id) <= 0)
+                {
+                    guardProblems.Add(label + ":没有排进槽里(没学会或没有放法)");
+                    continue;
+                }
+                string? motionPath = session.Hero.EtcMotionPath(recipe.MotionIndex);
+                AniFile? motion = motionPath == null ? null : assets.LoadAni(motionPath);
+                if (motion != null && motion.Frames.Length >= 2 && !motion.Frames.Any(fr => fr.Boxes.Any(b => b.Type == AniBoxType.Attack)))
+                {
+                    guardMotionOk++;
+                }
+                else
+                {
+                    guardProblems.Add(label + ":姿势动作读不到、不足两帧,或带攻击框");
+                }
+                int mpBefore = session.Vitals?.Mp ?? 0;
+                session.SkillsHeld = SkillKeys.Attack;
+                foreach (CommandStep step in CommandSteps.Of(def.Command, session.Hero.FacingLeft))
+                {
+                    session.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Keys);
+                }
+                if (!session.Hero.Guarding || session.Hero.SkillId != def.Id || session.Hero.CurrentFrame != 0 || session.CommandCasts != 1)
+                {
+                    guardProblems.Add(label + ":按指令没有放出姿态(或动画没定在第 0 帧)");
+                    continue;
+                }
+                if (session.Vitals != null && session.Vitals.Mp != mpBefore - slot.ConsumeMp)
+                {
+                    guardProblems.Add(label + ":魔法值没按 [consume MP] 扣");
+                }
+                if (slot.CooldownMs > 0 && slot.CooldownLeftMs <= 0)
+                {
+                    guardProblems.Add(label + ":冷却没有开始计");
+                }
+                bool held = true;
+                for (int t = 0; t < 3000 && held; t += 10)
+                {
+                    session.Update(10, 0, 0, false, false, SkillKeys.None);
+                    held = session.Hero.Guarding && session.Hero.CurrentFrame == 0;
+                }
+                if (!held)
+                {
+                    guardProblems.Add(label + ":攻击键按着不放,姿态却中途结束了");
+                    continue;
+                }
+                session.SkillsHeld = SkillKeys.None;
+                int endMs = 0;
+                while (session.Hero.Guarding && endMs < 1000)
+                {
+                    session.Update(10, 0, 0, false, false, SkillKeys.None);
+                    endMs += 10;
+                }
+                if (session.Hero.Guarding || session.Hero.Motion != HeroMotion.Rest)
+                {
+                    guardProblems.Add(label + ":松开攻击键之后姿态没有结束");
+                    continue;
+                }
+                guardCycles++;
+            }
+            foreach (string line in guardProblems)
+            {
+                Console.WriteLine("    " + line);
+            }
+            Report(guardSkills == SkillRecipes.Default.GuardCount && guardSkills > 0 && guardProblems.Count == 0 && guardCycles == guardSkills && guardMotionOk == guardSkills,
+                "防御姿态类技能 " + guardSkills + " 个(逐级查了 " + guardLevelsChecked + " 级的后滑时长为正、减伤百分比在 0 到 100 之间)在真实数据里读得通;真实会话里按各自的指令各放一遍:姿势动作无攻击框 "
+                + guardMotionOk + " 个、按着不放一直不结束且松开后回到站立 " + guardCycles + " 个(问题 " + guardProblems.Count + " 条)");
         }
 
         Console.WriteLine(bad == 0 ? "skill-check 全部通过" : "skill-check 有 " + bad + " 项失败");

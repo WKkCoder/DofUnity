@@ -524,16 +524,59 @@ namespace Dnf.Play
     }
 
     /// <summary>
+    /// 防御姿态类技能的放法(状态 0x13,证据 E-164):按住攻击键维持的姿势——主角原地播 [etc motion] 第 <see cref="MotionIndex"/> 项
+    /// (两帧、每帧停很久:姿态阶段定在第 0 帧,挡下一击后的后滑阶段定在第 1 帧),姿态里迎面挨到能挡的一击就挡下:
+    /// 伤害乘 (100 − .skl [level info] 的第 <see cref="PhysicalColumn"/> 列 / <see cref="MagicalColumn"/> 列) 百分之一(物理/魔法两种攻击类型各取一列,无视防御的一击不折算),
+    /// 不产生受击反应,主角沿朝向的反方向后滑——速度取 [level info] 第 <see cref="RecoilSpeedColumn"/> 列、持续毫秒取第 <see cref="RecoilMsColumn"/> 列;
+    /// 进入时最短保持毫秒取 [static data] 第 <see cref="MinHoldStaticIndex"/> 个数。下标与列号都是客户端状态码里写死的常量,不是数据值。
+    /// 耗蓝与冷却同别的技能,在放出来那一刻算(推断)。
+    /// </summary>
+    public sealed class GuardRecipe
+    {
+        public GuardRecipe(int skillId, int motionIndex, int minHoldStaticIndex, int recoilSpeedColumn, int recoilMsColumn, int physicalColumn, int magicalColumn)
+        {
+            SkillId = skillId;
+            MotionIndex = motionIndex;
+            MinHoldStaticIndex = minHoldStaticIndex;
+            RecoilSpeedColumn = recoilSpeedColumn;
+            RecoilMsColumn = recoilMsColumn;
+            PhysicalColumn = physicalColumn;
+            MagicalColumn = magicalColumn;
+        }
+
+        public int SkillId { get; }
+
+        /// <summary>姿势动作在 [etc motion] 里的下标。</summary>
+        public int MotionIndex { get; }
+
+        /// <summary>最短保持毫秒在 [static data] 里的下标。</summary>
+        public int MinHoldStaticIndex { get; }
+
+        /// <summary>挡下后后滑的起滑速度(像素/秒)在 [level info] 里的列。</summary>
+        public int RecoilSpeedColumn { get; }
+
+        /// <summary>挡下后后滑的持续毫秒在 [level info] 里的列。</summary>
+        public int RecoilMsColumn { get; }
+
+        /// <summary>物理攻击折算用的列:穿过的百分比 = 100 − 这一列的值。</summary>
+        public int PhysicalColumn { get; }
+
+        /// <summary>魔法攻击折算用的列:穿过的百分比 = 100 − 这一列的值。</summary>
+        public int MagicalColumn { get; }
+    }
+
+    /// <summary>
     /// 技能配方表。<see cref="Default"/> 是读码移植出来的技能(证据 E-129);测试可以自己造一张。
     /// 表里的数都是客户端状态码里的常量(下标、列号),不含 PVF 里的数据值,也不含任何文件名——文件名按下标到角色脚本与技能预载表里取。
-    /// 增益类技能(<see cref="BuffRecipe"/>)另放一张表:它们没有多段动作与攻击信息,只有一个施法动作与一个附加体。
+    /// 增益类技能(<see cref="BuffRecipe"/>)与防御姿态类技能(<see cref="GuardRecipe"/>)各放一张表:它们没有多段动作与攻击信息,只有一个动作。
     /// </summary>
     public sealed class SkillRecipes
     {
         private readonly Dictionary<int, SkillRecipe> _byId = new Dictionary<int, SkillRecipe>();
         private readonly Dictionary<int, BuffRecipe> _buffs = new Dictionary<int, BuffRecipe>();
+        private readonly Dictionary<int, GuardRecipe> _guards = new Dictionary<int, GuardRecipe>();
 
-        public SkillRecipes(IEnumerable<SkillRecipe> recipes, IEnumerable<BuffRecipe> buffs = null)
+        public SkillRecipes(IEnumerable<SkillRecipe> recipes, IEnumerable<BuffRecipe> buffs = null, IEnumerable<GuardRecipe> guards = null)
         {
             foreach (SkillRecipe r in recipes ?? throw new ArgumentNullException(nameof(recipes)))
             {
@@ -546,6 +589,25 @@ namespace Dnf.Play
                     _buffs[b.SkillId] = b;
                 }
             }
+            if (guards != null)
+            {
+                foreach (GuardRecipe g in guards)
+                {
+                    _guards[g.SkillId] = g;
+                }
+            }
+        }
+
+        /// <summary>防御姿态类技能的个数。</summary>
+        public int GuardCount => _guards.Count;
+
+        /// <summary>全部防御姿态类技能的放法。</summary>
+        public IEnumerable<GuardRecipe> AllGuards => _guards.Values;
+
+        /// <summary>这个技能的防御姿态放法;不是防御姿态类技能返回 null。</summary>
+        public GuardRecipe FindGuard(int skillId)
+        {
+            return _guards.TryGetValue(skillId, out GuardRecipe g) ? g : null;
         }
 
         /// <summary>配方的个数(不含增益类)。</summary>
@@ -778,6 +840,13 @@ namespace Dnf.Play
             // 主角受击前的钩子里再乘 100 与 [0, 10000) 的随机数比,即概率 = 列值 / 1000)、第 1 列是持续毫秒。效果是被打时有这个概率让这一击不产生受击反应(霸体)。
             new BuffRecipe(180, BuffStat.SuperArmorChance, durationColumn: 1, amountStaticIndex: -1, amountColumn: 0, amountScale: 0.001),
             // 没做:另一个走状态 0x32 的增益(另一套代码)、增益的特效与音效、增益图标。
+        },
+        new[]
+        {
+            // 防御姿态类技能(状态 0x13,证据 E-164):动作取 [etc motion] 第 0 项(两帧,姿态阶段定第 0 帧、后滑阶段定第 1 帧);进入块的最短保持毫秒取 [static data] 第 0 个数;
+            // 受击前钩子挡下一击时,物理攻击穿过的百分比 = 100 − [level info] 第 2 列、魔法攻击 = 100 − 第 3 列,后滑起滑速度取第 0 列、持续毫秒取第 1 列。
+            // 没做:同一个状态码的另一个技能(阶段 1 带标志 1 并放被动对象)、被动技能触发的自动防御、挡下时的音效与特效、受击方向以外的挡下条件(这一击"能不能挡"的受保护判断,按"有受击反应"近似)。
+            new GuardRecipe(1, motionIndex: 0, minHoldStaticIndex: 0, recoilSpeedColumn: 0, recoilMsColumn: 1, physicalColumn: 2, magicalColumn: 3),
         });
     }
 }
