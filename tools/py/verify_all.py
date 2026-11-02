@@ -317,7 +317,7 @@ def check_actrun():
     live = "没有放出过被动对象的副本可选"
     live_ok = False
     for n, r in enumerate(cands[:6], 1):
-        c3, t3, s3 = sh(DNF + ["dungeon-check", "--dungeon", r["dungeon"], "--bot", "--explore", "--seed", "1", "--seconds", "400", "--damage-scale", "5000"], "actrun_live_%d.txt" % n)
+        c3, t3, s3 = sh(DNF + ["dungeon-check", "--dungeon", r["dungeon"], "--bot", "--explore", "--seed", "1", "--seconds", "400", "--damage-scale", "1000000"], "actrun_live_%d.txt" % n)
         total += s3
         m = re.search(r"脚本\(E-130\):进过的房间里出招带 \.act 触发器的怪物 (\d+) 只,脚本放出被动对象 (\d+) 个,打中主角 (\d+) 次", t3)
         live = "试了 %d 个副本" % n

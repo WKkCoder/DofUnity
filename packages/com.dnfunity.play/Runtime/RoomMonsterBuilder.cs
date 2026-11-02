@@ -131,6 +131,7 @@ namespace Dnf.Play
             actor.PhysicalAttack = stats.PhysicalAttack;
             actor.MagicalAttack = stats.MagicalAttack;
             actor.Defense = DefenderPanel.FromMonster(stats, level);                    // 挨打时的防御面板(证据 E-110)
+            actor.SetBaseStats(stats);                                                  // 属性改变附加物([APPENDAGE])从它重算各项(证据 E-161)
             actor.Panel = MonsterPanelInfo.From(def, kind, level, stats.HpMax, data);   // 目标血条窗口的资料(证据 E-106)
             actor.Sounds = new MonsterSounds(def.AppearSound, def.DamageSound, def.DieSound, def.AttackSound, def.AmbientSound);
             return actor;

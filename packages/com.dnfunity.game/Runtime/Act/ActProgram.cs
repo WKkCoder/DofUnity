@@ -483,6 +483,19 @@ namespace Dnf.Game.Act
         /// 每帧的消费者在动作更新里(0x010a5042 起)。
         /// </summary>
         SetPosForce,
+
+        /// <summary>
+        /// [APPENDAGE] 持续毫秒 { [属性标签] [%]|[+]|[-] 数值 }…:给每个目标(主角与怪物这类"活动对象")的每一项属性改变各挂一个附加物(E-161)。
+        /// 客户端执行块在 0x010b56c0 的行为码 0x84(加载块 0x013406f6,[NO BUFF APPENDAGE] 是 0xd4,同一块):同一项已有就先作废旧的再挂新的;
+        /// 持续毫秒不大于 0 是没有时限。
+        /// </summary>
+        Appendage,
+
+        /// <summary>
+        /// [DELETE APPENDAGE] 一个数 { [属性标签] [%]|[+]|[-] 数值 }…:对工作集里每个目标,把"来源是写这条行为的对象、且与某一项相同"的属性改变附加物作废(E-161)。
+        /// 客户端执行块在行为码 0xad(加载块 0x01341cea);开头那个数装载后不参与匹配(推断:全库里它多半与被删的附加物的持续毫秒一致)。
+        /// </summary>
+        DeleteAppendage,
     }
 
     /// <summary>
@@ -815,6 +828,14 @@ namespace Dnf.Game.Act
 
         /// <summary>新 .act 的路径,原样(相对写这条行为的 .act 所在目录,E-151:全库 98% 的写法按这个规则能找到文件)。</summary>
         public string FilePath { get; internal set; }
+
+        // ---- [APPENDAGE] / [DELETE APPENDAGE]
+
+        /// <summary>块里的属性改变项,按文件里的顺序(E-161);没写任何项就是空表。</summary>
+        public IReadOnlyList<StatChange> StatChanges { get; internal set; }
+
+        /// <summary>[APPENDAGE] 的持续毫秒(不大于 0 没有时限);[DELETE APPENDAGE] 开头那个数也放这里,执行时不用。</summary>
+        public int StatDurationMs { get; internal set; }
 
         public override string ToString() => Kind + " " + Tag;
     }

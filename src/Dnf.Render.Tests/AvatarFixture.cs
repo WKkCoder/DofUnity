@@ -436,6 +436,8 @@ internal sealed class AvatarFixture : IDisposable
     /// xself(第 0 招帧 1 用 [ATTACK] 0 1 [ON] 点名自己这一招,打开帧 3 才放 <see cref="ActShotId"/> 的触发器 1)与对照 xselfctl(不开)、
     /// xmiss(第 0 招帧 1 依次写三条落空的开关:没有的招、越界的触发器、[MOVE] 动作族)。
     /// M58(证据 E-152)[SET POS FORCE]:force(出招开始起每帧把主角摆到自己前方 30 像素)与 forceme(出招开始起每帧把自己摆到主角右侧 50 像素)。
+    /// M63(证据 E-161)属性改变附加物:appendme(帧 1 给自己挂无时限的移动速度 -50% 与生命上限 +100%)、appendhero(帧 1 给主角挂 500 毫秒的移动速度与攻击速度 -50%)、
+    /// appenddel(帧 1 给主角挂无时限的移动速度 -50%,帧 3 用 [DELETE APPENDAGE] 删掉同一项)。
     /// </summary>
     public const int ActForeverId = 9206;
 
@@ -710,6 +712,10 @@ internal sealed class AvatarFixture : IDisposable
         // M61(证据 E-157):[SAVE TARGET OBJECT] 与 [LOAD TARGET]:第 0 招存下主角、切到第 1 招再取出来放被动对象(对照那只没存,取到空槽)
         ("xsave", new[] { "ActXSave", "ActXLoad" }),
         ("xsavectl", new[] { "ActXSaveCtl", "ActXLoad" }),
+        // M63(证据 E-161):[APPENDAGE] 与 [DELETE APPENDAGE]
+        ("appendme", new[] { "ActAppendMe" }),
+        ("appendhero", new[] { "ActAppendHero" }),
+        ("appenddel", new[] { "ActAppendDel" }),
     };
 
     /// <summary>
@@ -954,6 +960,22 @@ internal sealed class AvatarFixture : IDisposable
         yield return (BlobActionDir + "/actstatusmiss.act", ActWith(ThrowActAni)
             .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0, "[TARGET]")
             .Behavior(b => b.Tag("[ACTIVE STATUS]").Tag("[stun]").Float(0f).Int(0, 2000))
+            .Build());
+        // M63(证据 E-161):属性改变附加物。appendme:帧 1 给自己挂无时限的 [move speed] -50% 与 [hp max] +100%;appendhero:帧 1 给主角挂 500 毫秒的
+        // [move speed] -50% 与 [attack speed] -50%;appenddel:帧 1 给主角挂无时限的 [move speed] -50%,帧 3 把同一项删掉
+        yield return (BlobActionDir + "/actappendme.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[APPENDAGE]").Int(0).Tag("[move speed]").Tag("[%]").Int(-50).Tag("[hp max]").Tag("[%]").Int(100).Tag("[/APPENDAGE]"))
+            .Build());
+        yield return (BlobActionDir + "/actappendhero.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0, "[TARGET]")
+            .Behavior(b => b.Tag("[APPENDAGE]").Int(500).Tag("[move speed]").Tag("[%]").Int(-50).Tag("[attack speed]").Tag("[%]").Int(-50).Tag("[/APPENDAGE]"))
+            .Build());
+        yield return (BlobActionDir + "/actappenddel.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0, "[TARGET]")
+            .Trigger(r => r.Tag("[FRAME]").Int(3, 3), 1, "[TARGET]")
+            .Behavior(b => b.Tag("[APPENDAGE]").Int(0).Tag("[move speed]").Tag("[%]").Int(-50).Tag("[/APPENDAGE]"))
+            .Behavior(b => b.Tag("[DELETE APPENDAGE]").Int(0).Tag("[move speed]").Tag("[%]").Int(-50).Tag("[/DELETE APPENDAGE]"))
             .Build());
         // M52(证据 E-145):按动作族写的 [TRIGGER]。第 1 招的触发器 0 本来开着(xoff)或关着(xon),由第 0 招去改
         yield return (BlobActionDir + "/actxoff.act", ActWith(ThrowActAni)

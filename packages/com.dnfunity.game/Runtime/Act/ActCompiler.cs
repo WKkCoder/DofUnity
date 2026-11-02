@@ -1052,9 +1052,47 @@ namespace Dnf.Game.Act
                     }
                     return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
                 }
+                case "[APPENDAGE]":
+                    return ParseAppendage(cur, tag, false);
+                case "[DELETE APPENDAGE]":
+                    return ParseAppendage(cur, tag, true);
                 default:
                     return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
             }
+        }
+
+        /// <summary>
+        /// [APPENDAGE] 持续毫秒 { [属性标签] 操作符 数值 }… 与 [DELETE APPENDAGE] 同一种写法(加载块 0x013406f6 与 0x01341cea,E-161):
+        /// 开头一个数(持续毫秒),然后一串项,每项三个记号:属性标签(字典 0x0125aa00;不认得的标签客户端也造一项,类型 −1)、操作符(是 [%] 才按比例,
+        /// 别的都按点数)、数值;一项后面还可能多跟几个数(全库有 12 项,都是防御类的点数写法多带一个数,客户端加载块不读它,这里读掉不用)。
+        /// 缺操作符或数值的写法(全库没有)读到此为止,已读的项照用。
+        /// </summary>
+        private static ActBehavior ParseAppendage(ActCursor cur, string tag, bool delete)
+        {
+            int duration = cur.Int();
+            var changes = new List<StatChange>();
+            while (cur.AtOpen(out string stat) && !IsBehaviorHead(stat))
+            {
+                cur.Skip();
+                if (!cur.AtOpen(out string op) || IsBehaviorHead(op))
+                {
+                    break;
+                }
+                cur.Skip();
+                if (!cur.TryInt(out int value))
+                {
+                    break;
+                }
+                cur.Ints();
+                changes.Add(new StatChange(StatChangeTypes.FromTag(stat), op == "[%]", value));
+            }
+            return new ActBehavior
+            {
+                Kind = delete ? ActBehaviorKind.DeleteAppendage : ActBehaviorKind.Appendage,
+                Tag = tag,
+                StatChanges = changes,
+                StatDurationMs = duration,
+            };
         }
 
         /// <summary>

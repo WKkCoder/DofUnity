@@ -210,18 +210,18 @@ namespace Dnf.Play
         public RoomMonsterSpawn Spawn { get; }
         public bool IsBoss { get; }
         public int Level { get; }
-        public int HpMax { get; }
+        public int HpMax { get; private set; }
         public int Hp { get; private set; }
         public double X { get; private set; }
         public double Y { get; private set; }
         public bool FacingLeft { get; private set; } = true;
         public MonsterPhase Phase { get; private set; }
-        public double SpeedX { get; }
-        public double SpeedY { get; }
+        public double SpeedX { get; private set; }
+        public double SpeedY { get; private set; }
         public int AttackDelayMs { get; }
 
         /// <summary>出招动画的播放倍率(.mob 的 [attack speed] / 1000;没有该项时为 1)。</summary>
-        public double AttackRate { get; }
+        public double AttackRate { get; private set; }
 
         /// <summary>这一次受击硬直的总时长(毫秒);不在受击中时是上一次的值。</summary>
         public double HurtSpanMs => _hurtSpanMs;
@@ -1200,6 +1200,16 @@ namespace Dnf.Play
             {
                 return _saved != null && _saved.TryGetValue(slot, out IActEntity target) ? target : null;
             }
+
+            public void AddStatAppendage(StatChange change, int durationMs, IActEntity source)
+            {
+                _m.AddStatAppendage(change, durationMs, source);
+            }
+
+            public void RemoveStatAppendage(StatChange change, IActEntity source)
+            {
+                _m.RemoveStatAppendage(change, source);
+            }
         }
 
         /// <summary>
@@ -1335,6 +1345,7 @@ namespace Dnf.Play
                 deltaMs = 0;
             }
             _lastWalk = walk;
+            AdvanceStatAppendages(deltaMs);        // 属性改变附加物的时限按墙钟走(M63,E-161)
             if (_lifeLeftMs > 0 && IsAlive)
             {
                 // 召唤物的存活时间按墙钟走(命中停顿里不冻结,推断);到点按脚本杀死处理(E-134)

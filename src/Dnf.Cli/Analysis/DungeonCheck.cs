@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using Dnf.Data;
 using Dnf.Game;
+using Dnf.Game.Act;
 using Dnf.Play;
 using Dnf.Render;
 
@@ -214,6 +215,10 @@ internal static class DungeonCheck
             + " 次,[SET ACTION] 落实 " + session.FamilySetActionApplied + " 次、没落实 " + session.FamilySetActionUnhosted + " 次");
         Console.WriteLine("怪物的自定义动作(E-159):进过的房间里写了 [etc action] 的怪物 " + session.CustomActMonsters + " 只,切进自定义动作 " + session.CustomActionsStarted
             + " 次,自己放完 " + session.CustomActionsFinished + " 次,要切的不存在 " + session.CustomActionsRejected + " 次");
+        Console.WriteLine("属性改变附加物(E-161):怪物挂上 " + session.MonsterStatAppendagesAdded + " 次(顶替 " + session.MonsterStatAppendagesReplaced + "、删除 " + session.MonsterStatAppendagesRemoved
+            + "、到期 " + session.MonsterStatAppendagesExpired + "),主角挂上 " + session.HeroStatAppendagesAdded + " 次(顶替 " + session.HeroStatAppendagesReplaced + "、删除 "
+            + session.HeroStatAppendagesRemoved + "、到期 " + session.HeroStatAppendagesExpired + ");按类型(* = 这一侧没有读它的地方):"
+            + StatTypeTable(session.MonsterStatTypeCounts, session.HeroStatTypeCounts));
         Console.WriteLine("脚本换动作文件(E-151):换上 " + session.ActionFilesApplied + " 次,记成待换 " + session.ActionFilesDeferred + " 次,这一版没有对应动作的族 "
             + session.ActionFilesUnhosted + " 次,序号越界 " + session.ActionFilesRejected + " 次,文件读不到 " + session.ActionFilesMissing + " 次");
         session.CountMonsterAi(out int aiScripted, out int aiBrain, out int aiPlaceholder);
@@ -512,6 +517,32 @@ internal static class DungeonCheck
     private static string Sec(double ms) => (ms / 1000.0).ToString("F2", CultureInfo.InvariantCulture);
 
     /// <summary>标签 → 次数的表,按次数从多到少排成"标签=次数; 标签=次数";空表写"无"。标签只是结构名(没有原版内容),可以整张打出来。</summary>
+    /// <summary>属性改变附加物按类型的汇总:标签 怪物次数/主角次数;有一侧挂了但没有读它的地方的加 *(E-161)。</summary>
+    private static string StatTypeTable(Dictionary<int, int> monster, Dictionary<int, int> hero)
+    {
+        var types = new SortedSet<int>(monster.Keys);
+        types.UnionWith(hero.Keys);
+        if (types.Count == 0)
+        {
+            return "无";
+        }
+        var rows = new List<(int Type, int Monster, int Hero)>();
+        foreach (int t in types)
+        {
+            monster.TryGetValue(t, out int m);
+            hero.TryGetValue(t, out int h);
+            rows.Add((t, m, h));
+        }
+        rows.Sort((a, b) => (b.Monster + b.Hero) != (a.Monster + a.Hero) ? (b.Monster + b.Hero).CompareTo(a.Monster + a.Hero) : a.Type.CompareTo(b.Type));
+        var parts = new List<string>();
+        foreach ((int type, int m, int h) in rows)
+        {
+            bool unread = (m > 0 && !StatChangeEffects.MonsterReads(type)) || (h > 0 && !StatChangeEffects.HeroReads(type));
+            parts.Add(StatChangeTypes.TagOf(type) + " " + m + "/" + h + (unread ? "*" : string.Empty));
+        }
+        return string.Join("; ", parts);
+    }
+
     private static string TagTable(Dictionary<string, int> table)
     {
         if (table.Count == 0)

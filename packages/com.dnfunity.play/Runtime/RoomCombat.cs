@@ -440,7 +440,7 @@ namespace Dnf.Play
     /// 没做:属性点与技能点的花费、装备的其余加成、技能的逐级成长、上挑自己的攻击信息与伤害数、
     /// 复活与结算里的经验显示、技能音效与语音、掉落。出口开关与换房间在 <see cref="DungeonSession"/>。证据 E-069。
     /// </summary>
-    public sealed class RoomCombatSession : ICommandSession, ISoundSource, IItemSession
+    public sealed partial class RoomCombatSession : ICommandSession, ISoundSource, IItemSession
     {
         /// <summary>一小步的最长时间(毫秒):比任何动画帧都短,保证每一帧的判定框至少被检查一次。</summary>
         public const double MaxStepMs = 10;
@@ -1984,6 +1984,8 @@ namespace Dnf.Play
                 }
             }
 
+            StepHeroStatAppendages(deltaMs);        // 主角身上的属性改变附加物(M63,E-161):墙钟倒计时、死亡清空、速度倍率落实
+
             // 命中停顿(证据 E-077):主角被定住时,他自己、他的技能特效的时间都不走;冷却、伤害数字、连击计时是墙钟,照常走。
             // 这一小步里停顿结束的话,剩下的时间照常推进。定住期间按下的键存起来,停顿一结束就生效(假设,原版的输入缓冲没读)。
             double heroDelta = deltaMs;
@@ -3408,7 +3410,8 @@ namespace Dnf.Play
                 }
                 return;
             }
-            _heroEntity = new HeroActEntity(_room.Hero, () => !HeroDead, () => Vitals?.Hp ?? 0, () => Vitals?.HpMax ?? 0, () => Vitals?.Level ?? 1, ApplyActStatus, HeroGrabbable);
+            _heroEntity = new HeroActEntity(_room.Hero, () => !HeroDead, () => Vitals?.Hp ?? 0, () => Vitals?.HpMax ?? 0, () => Vitals?.Level ?? 1, ApplyActStatus, HeroGrabbable,
+                AddHeroStatAppendage, RemoveHeroStatAppendage);
             _actWorld = new ActWorld(this);
             foreach (MonsterActor m in _monsters)
             {

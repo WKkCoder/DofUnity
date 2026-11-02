@@ -739,3 +739,15 @@ DIE 开始(`0x00837612`)、其余状态(1、2、6 到 9)。
 **Unity 里的实现**:`ActBehaviorKind.ActiveStatus`(`ActCompiler.ParseActiveStatus`)→ `ActRunner` 对集合里活着的非被动对象调 `IActEntity.ApplyStatus` → `HeroActEntity` → `RoomCombatSession.ApplyActStatus`(`ActiveStatusSet.Apply` 一次掷骰;掷中失去控制类立刻 `HoldHurt`,之后由 `UpdateHeroStatus` 接管)。本机汇总(非 REA):怪物招式 `.act` 里 87 条读通、整数个数与 `.atk` 状态槽的读法完全一致。测试:`ActRuntimeTests.Status`(7 条)与 `PassiveObjectTests.Status`(3 条)。
 
 **没做**:怪物自己身上的状态;元素种类(分支为空);无敌、霸体、倒地期间 `0x008184e0` 的拒绝条件;被动对象目标的类型位只是推断。
+
+## 28. 防御方字段更正与绝对防御的穿透项(E-160、E-161;静态读码 + 实现 + 合成数值测试)
+
+前面各节把防御者一侧写成"防御力是同一种记录";实读填充函数 `0x0087b870` 的反汇编(普通代码段;函数跳进受保护区,受保护区没有读)以后,更正如下:
+
+- **防御力**:防御者的属性记录(虚槽 `+0x440`,参数 3;12 字节容器数组,容器偏移 ÷ 12 = 服务端 `MonsterStats` 下标)里,**下标 88、89**(装备物理防御的整数基数与浮点倍率)与**下标 92、93**(装备魔法防御)各取乘积、下限夹到 −1500,填进伤害变量块的物理防御格(`+0x93`)与魔法防御格(`+0x9F`),公式读的是这两格。普通防御两对(下标 8、9 与 12、13)被填进另外两个浮点格(`+0xAB`、`+0xAF`),公式不读。
+- **防御百分比**:下标 112、114 填 `+0x97`、`+0xA3`;实现里没有来源,取缺省 0。
+- **穿透项**:下标 96、99(浮点)填 `+0x9B`、`+0xA7`;`[APPENDAGE]` 的 `[physical absolute defense]`、`[magical absolute defense]` 写的就是这两格(点数直接加,比例加 数值 × 0.01)。公式的乘数 = (1 − 防御率) − 穿透 × 0.01 × 缩放;缩放格 `+0x5F` = max(1 − 攻击者下标 161 的值, 0),主角面板没有下标 161,取 1。
+- **Unity 里的实现**:`DefenderPanel.FromMonster` 读装备防御一对与两个绝对防御格(`PhysicalPenetration`、`MagicalPenetration`),`HitDamage.Fill` 把穿透与缩放带进公式;`MonsterActor` 的防御面板在附加物集合变化时按基础数值块重建、清空时放回出生那个对象(`docs/flow.md` §51)。测试:`HitDamageTests`、`PassiveObjectTests.Appendages.cs`。
+- **后果**(汇总,本机,非 REA):怪物基础表每一行装备一列都非零、装备防御远大于普通防御,所以怪物的防御力整体变大,一级空装备主角对等级高很多的怪物每击落到保底 1 点;开伤害扫描的测试旋钮 `--damage-scale` 默认从 5000 重标定为 1000000,新基线 293/346(同旋钮下更正前 294/346)。
+
+**没做**:攻击者下标 161 没有主角面板项;防御百分比不填;怪物打主角仍走另一条 `MonsterDamage.Roll`,没改成同一个填充函数;填充函数在受保护区里的尾段没读。

@@ -100,6 +100,29 @@ public class SummonTests
     }
 
     [Fact]
+    public void TheBuilderHandsItsComputedStatsToTheActorSoAppendagesRecomputeFromThem()
+    {
+        using var arena = new RoomCombatTests.Arena(System.Array.Empty<(int X, int Y)>());
+        MonsterActor m = BuilderOf(arena).Build(4, new RoomMonsterSpawn(1, 0, 0, 100, 50, 0, 1, 0, "[fixed]", "[normal]"), 7);
+        Assert.Equal(7, m.Level);
+        Assert.NotNull(m.BaseStats);                                                 // 造怪时算出来的那一块(M63,E-161)
+        DefenderPanel original = m.Defense;
+        int physical = original.PhysicalDefense;
+        int hpMax = m.HpMax;
+
+        var self = m.ActSelf;
+        m.AddStatAppendage(new StatChange(StatChangeTypes.EquipmentPhysicalDefense, false, 50), 0, self);
+        Assert.Equal(physical + 50, m.Defense.PhysicalDefense);
+        Assert.Equal(m.Level, m.Defense.Level);
+        m.AddStatAppendage(new StatChange(StatChangeTypes.HpMax, false, 40), 0, self);
+        Assert.Equal(System.Math.Max(1, hpMax + 40), m.HpMax);
+        m.RemoveStatAppendage(new StatChange(StatChangeTypes.EquipmentPhysicalDefense, false, 50), self);
+        m.RemoveStatAppendage(new StatChange(StatChangeTypes.HpMax, false, 40), self);
+        Assert.Same(original, m.Defense);
+        Assert.Equal(hpMax, m.HpMax);
+    }
+
+    [Fact]
     public void ASummonLevelIsCappedByTheDifficultyTableRowsAndTheClientCeiling()
     {
         Assert.Equal(7, RoomMonsterBuilder.ClampSummonLevel(7, 0));                 // 没有难度表:只有 200 的上限

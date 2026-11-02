@@ -178,6 +178,24 @@ public sealed partial class ActRuntimeTests
         public void SetSavedTarget(int slot, IActEntity target) => SavedTargets[slot] = target;
 
         public IActEntity GetSavedTarget(int slot) => SavedTargets.TryGetValue(slot, out IActEntity t) ? t : null;
+
+        /// <summary>M63(E-161):[APPENDAGE] 挂上的属性改变附加物请求,按到达顺序。</summary>
+        public List<(StatChange change, int durationMs, IActEntity source)> StatAdds { get; } = new();
+
+        /// <summary>M63(E-161):[DELETE APPENDAGE] 的删除请求,按到达顺序。</summary>
+        public List<(StatChange change, IActEntity source)> StatRemoves { get; } = new();
+
+        public void AddStatAppendage(StatChange change, int durationMs, IActEntity source)
+        {
+            Log.Add("stat+:" + change + ":" + durationMs);
+            StatAdds.Add((change, durationMs, source));
+        }
+
+        public void RemoveStatAppendage(StatChange change, IActEntity source)
+        {
+            Log.Add("stat-:" + change);
+            StatRemoves.Add((change, source));
+        }
     }
 
     private sealed class Host : IActHost

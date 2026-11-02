@@ -138,6 +138,20 @@ namespace Dnf.Game.Act
 
         /// <summary>[LOAD TARGET] 的来源(E-157):槽表第 <paramref name="slot"/> 格存下的对象;没有存过或没有槽表返回 null。</summary>
         IActEntity GetSavedTarget(int slot) => null;
+
+        /// <summary>
+        /// [APPENDAGE](E-161):给这个对象挂一项属性改变附加物,<paramref name="durationMs"/> 不大于 0 是没有时限,<paramref name="source"/> 是行为拥有者。
+        /// 同一项(类型、比例标志、数值都相同)已经挂着就先去掉旧的(不看来源),所以相同的项不叠加。数值怎么落到对象的速度、生命、防御上由对象自己决定;
+        /// 没有属性记录的对象默认什么都不做。
+        /// </summary>
+        void AddStatAppendage(StatChange change, int durationMs, IActEntity source)
+        {
+        }
+
+        /// <summary>[DELETE APPENDAGE](E-161):去掉来源是 <paramref name="source"/>、且与 <paramref name="change"/> 相同的属性改变附加物。</summary>
+        void RemoveStatAppendage(StatChange change, IActEntity source)
+        {
+        }
     }
 
     /// <summary>运行器对世界的请求:随机数、生成被动对象、解析选择器。</summary>
@@ -1217,6 +1231,35 @@ namespace Dnf.Game.Act
                             if (t.Kind != ActEntityKind.Passive && t.IsAlive)
                             {
                                 t.ApplyStatus(b.Status, _owner);
+                            }
+                        }
+                        break;
+                    case ActBehaviorKind.Appendage:
+                        // 客户端行为码 0x84 的块(E-161):对集合里每个"活动对象"(主角与怪物;被动对象没有附加物表)把每一项属性改变各挂成一个附加物,
+                        // 来源是行为拥有者;死了的目标不挂(推断:客户端这一块的目标检查没有逐条读)
+                        foreach (IActEntity t in targets)
+                        {
+                            if (t.Kind == ActEntityKind.Passive || !t.IsAlive)
+                            {
+                                continue;
+                            }
+                            foreach (StatChange change in b.StatChanges)
+                            {
+                                t.AddStatAppendage(change, b.StatDurationMs, _owner);
+                            }
+                        }
+                        break;
+                    case ActBehaviorKind.DeleteAppendage:
+                        // 客户端行为码 0xad 的块(E-161):对每一项、对集合里每个活动对象,作废来源是行为拥有者且与这一项相同的附加物
+                        foreach (IActEntity t in targets)
+                        {
+                            if (t.Kind == ActEntityKind.Passive)
+                            {
+                                continue;
+                            }
+                            foreach (StatChange change in b.StatChanges)
+                            {
+                                t.RemoveStatAppendage(change, _owner);
                             }
                         }
                         break;

@@ -59,6 +59,26 @@ namespace Dnf.Game
         public const int IxEquipMagicalAttack = 0x5A;
         public const int IxEquipMagicalDefense = 0x5C;
 
+        // 下面几格是 .act 的属性改变附加物写到的位置(客户端 0x00984260 的各分支,E-161);下标 = 客户端属性记录里容器偏移 ÷ 12
+
+        /// <summary>硬直抗性(异常状态抗性第 13 项)的浮点倍率:17 个抗性倍率从 0x2F 起,第 13 项在 0x3C。</summary>
+        public const int IxStuckResistanceRate = 0x3C;
+
+        /// <summary>物理绝对防御(浮点,缺省 0):客户端的伤害填充函数把它读进公式的"物理穿透"项。</summary>
+        public const int IxPhysicalAbsoluteDefense = 0x60;
+
+        /// <summary>魔法绝对防御(浮点,缺省 0):读进公式的"魔法穿透"项。</summary>
+        public const int IxMagicalAbsoluteDefense = 0x63;
+
+        /// <summary>[hit recovery] 属性改变写的浮点格(缺省 1.0);眼下没有读它的地方。</summary>
+        public const int IxHitStagger = 0x6E;
+
+        /// <summary>物理攻击"加成"整数格(只有比例写法的属性改变会写它,眼下没有读它的地方)。</summary>
+        public const int IxPhysicalAttackBonus = 0x6F;
+
+        /// <summary>魔法攻击"加成"整数格(同上)。</summary>
+        public const int IxMagicalAttackBonus = 0x71;
+
         /// <summary>整数 / 浮点混存的原始数组。</summary>
         public int[] Raw { get; } = new int[Size];
 

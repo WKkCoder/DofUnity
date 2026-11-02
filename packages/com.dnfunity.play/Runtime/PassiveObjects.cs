@@ -538,11 +538,18 @@ namespace Dnf.Play
         private readonly Func<int> _level;
         private readonly Action<ActiveStatusEntry, IActEntity> _status;
         private readonly Func<bool> _grabbable;
+        private readonly Action<StatChange, int, IActEntity> _statAdd;
+        private readonly Action<StatChange, IActEntity> _statRemove;
 
         /// <param name="grabbable">[IS GRABABLE] 要的"此刻能不能被抓"(会话按冰冻、石化等异常状态给,E-156);没给就只看活着。</param>
+        /// <param name="statAdd">[APPENDAGE] 落到主角的一项属性改变(会话管附加物集合与速度倍率,E-161);没给就什么都不做。</param>
+        /// <param name="statRemove">[DELETE APPENDAGE] 落到主角的一项。</param>
         public HeroActEntity(TownHero hero, Func<bool> alive, Func<int> hp = null, Func<int> hpMax = null, Func<int> level = null,
-            Action<ActiveStatusEntry, IActEntity> status = null, Func<bool> grabbable = null)
+            Action<ActiveStatusEntry, IActEntity> status = null, Func<bool> grabbable = null,
+            Action<StatChange, int, IActEntity> statAdd = null, Action<StatChange, IActEntity> statRemove = null)
         {
+            _statAdd = statAdd;
+            _statRemove = statRemove;
             _hero = hero ?? throw new ArgumentNullException(nameof(hero));
             _alive = alive ?? (() => true);
             _hp = hp ?? (() => 0);
@@ -593,6 +600,18 @@ namespace Dnf.Play
         public void ApplyStatus(ActiveStatusEntry entry, IActEntity source)
         {
             _status?.Invoke(entry, source);
+        }
+
+        /// <summary>[APPENDAGE] 作用到主角(E-161):交给会话,它管主角的附加物集合与速度倍率。</summary>
+        public void AddStatAppendage(StatChange change, int durationMs, IActEntity source)
+        {
+            _statAdd?.Invoke(change, durationMs, source);
+        }
+
+        /// <summary>[DELETE APPENDAGE] 作用到主角(E-161)。</summary>
+        public void RemoveStatAppendage(StatChange change, IActEntity source)
+        {
+            _statRemove?.Invoke(change, source);
         }
 
         public void SetFacing(bool left)

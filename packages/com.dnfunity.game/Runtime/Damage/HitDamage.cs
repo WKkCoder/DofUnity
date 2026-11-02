@@ -166,7 +166,7 @@ namespace Dnf.Game
     }
 
     /// <summary>
-    /// 防御方的面板(证据 E-110)。怪物的数取自 <see cref="MonsterStats"/>(整数 × 紧跟其后的浮点倍率,向零取整,与角色属性记录同一种存法),
+    /// 防御方的面板(证据 E-110、E-160)。怪物的数取自 <see cref="MonsterStats"/>(整数 × 紧跟其后的浮点倍率,向零取整,与角色属性记录同一种存法),
     /// 见 <see cref="FromMonster"/>。
     /// </summary>
     public sealed class DefenderPanel
@@ -183,6 +183,16 @@ namespace Dnf.Game
 
         public int MagicalDefense { get; set; }
 
+        /// <summary>
+        /// 物理一侧的"绝对防御"(属性记录下标 96 的浮点格,<see cref="Dnf.Game.Act.StatChangeTypes.PhysicalAbsoluteDefense"/> 写它;E-161)。
+        /// 客户端填充函数把它填进伤害结构的穿透项 +0x9B,公式里 防御率之后再减 (数值 × 0.01 × 穿透缩放),所以数值为正就是多挡掉这么多个百分点的伤害。
+        /// 缺省 0(没有这一项)。
+        /// </summary>
+        public float PhysicalPenetration { get; set; }
+
+        /// <summary>魔法一侧的绝对防御(下标 99,填进 +0xA7)。</summary>
+        public float MagicalPenetration { get; set; }
+
         /// <summary>第 <paramref name="element"/> 号元素(0 火、1 水、2 暗、3 光)的元素抗性。</summary>
         public int ElementResist(int element)
         {
@@ -197,6 +207,9 @@ namespace Dnf.Game
         /// <summary>
         /// 怪物当作防御方:防御力与元素抗性是 <see cref="MonsterStats"/> 里"整数 + 浮点倍率"的乘积向零取整
         /// (防御力下限 −1500,与客户端读属性记录时的夹取一致)。
+        /// 公式用的物理与魔法防御力取"装备防御"那一对(<see cref="MonsterStats.IxEquipPhysicalDefense"/>、<see cref="MonsterStats.IxEquipMagicalDefense"/>):
+        /// 客户端填充函数(0x0087b870)从防御者的属性记录(虚槽 +0x440,参数 3)读 +0x420/+0x42c 与 +0x450/+0x45c(下标 88/89、92/93)填进
+        /// 伤害结构的 +0x93 与 +0x9F(公式读的就是这两格);普通防御一对(下标 8/9、12/13)填进另外两个浮点格(+0xAB、+0xAF),公式不读(E-160)。
         /// </summary>
         public static DefenderPanel FromMonster(MonsterStats stats, int level)
         {
@@ -207,8 +220,10 @@ namespace Dnf.Game
             var panel = new DefenderPanel
             {
                 Level = level < 1 ? 1 : level,
-                PhysicalDefense = Clamp(Product(stats, MonsterStats.IxPhysicalDefense)),
-                MagicalDefense = Clamp(Product(stats, MonsterStats.IxMagicalDefense)),
+                PhysicalDefense = Clamp(Product(stats, MonsterStats.IxEquipPhysicalDefense)),
+                MagicalDefense = Clamp(Product(stats, MonsterStats.IxEquipMagicalDefense)),
+                PhysicalPenetration = stats.F(MonsterStats.IxPhysicalAbsoluteDefense),
+                MagicalPenetration = stats.F(MonsterStats.IxMagicalAbsoluteDefense),
             };
             for (int i = 0; i < 4; i++)
             {
@@ -233,8 +248,8 @@ namespace Dnf.Game
     /// 命中时的伤害输入填充与伤害计算(证据 E-110):把 <see cref="HitInput"/>(攻击信息)、<see cref="AttackerPanel"/>、<see cref="DefenderPanel"/>
     /// 按客户端命中时的填法填进 <see cref="DamageVariables"/>,再交给原版公式 <see cref="DamageFormula"/>(E-049)。
     /// 填法来自客户端的填充函数(<c>0x0087b870</c>)的逐项阅读;客户端初始化给的默认值不是中性的,这里把没有来源的项填成中性值。
-    /// 没做:召唤物路径、PVP/突击战模块、攻击者身上的各类附加倍率(额外倍率、固定加成、尾部各项)与防御方的减伤率、穿透、百分比防御
-    /// (这些在怪物与默认角色身上取默认值)、防御方是角色时的类型倍率表。
+    /// 没做:召唤物路径、PVP/突击战模块、攻击者身上的各类附加倍率(额外倍率、固定加成、尾部各项)与防御方的减伤率、百分比防御
+    /// (这些在怪物与默认角色身上取默认值)、防御方是角色时的类型倍率表;防御方的绝对防御(穿透项)按 E-161 填。
     /// </summary>
     public static class HitDamage
     {
@@ -307,6 +322,9 @@ namespace Dnf.Game
             // 来自防御方面板的项:防御力;元素项 = 防御方的抗性 − 攻击者的元素攻击(只填攻击带的元素,公式也只读这些)
             p.PhysicalDefense = defender.PhysicalDefense;
             p.MagicalDefense = defender.MagicalDefense;
+            p.PhysicalPenetration = defender.PhysicalPenetration;           // 绝对防御:防御方记录下标 96、99 的浮点格填进穿透项(E-161)
+            p.MagicalPenetration = defender.MagicalPenetration;
+            p.PenetrationScale = 1.0f;                                      // 缩放 = max(1 − 攻击者记录下标 161 的值, 0),攻击者面板没有这一项,取 1
             for (int i = 0; i < 4; i++)
             {
                 if (input.HasElement(i))

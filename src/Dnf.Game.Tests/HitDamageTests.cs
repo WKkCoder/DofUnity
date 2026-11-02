@@ -385,10 +385,10 @@ public sealed class HitDamageTests
     public void ADefenderPanelTakesTheProductOfTheIntegerAndTheMultiplier()
     {
         var stats = new MonsterStats();
-        stats.Raw[MonsterStats.IxPhysicalDefense] = 100;
-        stats.SetF(MonsterStats.IxPhysicalDefense + 1, 1.5f);
-        stats.Raw[MonsterStats.IxMagicalDefense] = 77;
-        stats.SetF(MonsterStats.IxMagicalDefense + 1, 1.0f);
+        stats.Raw[MonsterStats.IxEquipPhysicalDefense] = 100;
+        stats.SetF(MonsterStats.IxEquipPhysicalDefense + 1, 1.5f);
+        stats.Raw[MonsterStats.IxEquipMagicalDefense] = 77;
+        stats.SetF(MonsterStats.IxEquipMagicalDefense + 1, 1.0f);
         stats.Raw[MonsterStats.IxElementResistance + 2] = 40;
         stats.SetF(MonsterStats.IxElementResistance + 4 + 2, 0.5f);
 
@@ -399,11 +399,25 @@ public sealed class HitDamageTests
     }
 
     [Fact]
+    public void ThePlainDefensePairDoesNotFeedTheFormulaDefense()
+    {
+        // 客户端填充函数里公式读的防御力是"装备防御"一对;普通防御一对(下标 8/9、12/13)只进另外的浮点格,不进公式(E-160)
+        var stats = new MonsterStats();
+        stats.Raw[MonsterStats.IxPhysicalDefense] = 5000;
+        stats.Raw[MonsterStats.IxMagicalDefense] = 6000;
+        stats.Raw[MonsterStats.IxEquipPhysicalDefense] = 11;
+        stats.Raw[MonsterStats.IxEquipMagicalDefense] = 22;
+
+        DefenderPanel panel = DefenderPanel.FromMonster(stats, 5);
+        Assert.Equal((11, 22), (panel.PhysicalDefense, panel.MagicalDefense));
+    }
+
+    [Fact]
     public void ADefenderPanelClampsDefenseAndLevel()
     {
         var stats = new MonsterStats();
-        stats.Raw[MonsterStats.IxPhysicalDefense] = -4000;
-        stats.SetF(MonsterStats.IxPhysicalDefense + 1, 1.0f);
+        stats.Raw[MonsterStats.IxEquipPhysicalDefense] = -4000;
+        stats.SetF(MonsterStats.IxEquipPhysicalDefense + 1, 1.0f);
         DefenderPanel panel = DefenderPanel.FromMonster(stats, 0);
         Assert.Equal((1, -1500), (panel.Level, panel.PhysicalDefense));
         Assert.Throws<ArgumentNullException>(() => DefenderPanel.FromMonster(null, 1));
@@ -425,5 +439,47 @@ public sealed class HitDamageTests
     {
         Assert.True(DamageObjectTypes.Is(DamageObjectTypes.Monster, DamageObjectTypes.Active));
         Assert.False(DamageObjectTypes.Is(DamageObjectTypes.Monster, DamageObjectTypes.Character));
+    }
+
+    [Fact]
+    public void AbsoluteDefenseFillsThePenetrationCellsWithAScaleOfOne()
+    {
+        // 防御方的"绝对防御"(属性记录下标 96、99)进穿透项 +0x9B、+0xA7;穿透缩放取 1(攻击者面板没有削弱它的项)(E-161)
+        DefenderPanel defender = Defender();
+        defender.PhysicalPenetration = 50f;
+        defender.MagicalPenetration = 25f;
+        DamageVariables p = HitDamage.Fill(Physical(), Attacker(), defender, false, 1u);
+        Assert.Equal((50f, 25f, 1f), (p.PhysicalPenetration, p.MagicalPenetration, p.PenetrationScale));
+
+        DamageVariables none = HitDamage.Fill(Physical(), Attacker(), Defender(), false, 1u);
+        Assert.Equal((0f, 0f, 1f), (none.PhysicalPenetration, none.MagicalPenetration, none.PenetrationScale));
+    }
+
+    [Fact]
+    public void AbsoluteDefenseTakesPercentagePointsOffTheDamageMultiplier()
+    {
+        // 防御 0:防御率 0;穿透 50 → 50 × 0.01 = 0.5,乘数 (1 − 0) − 0.5 × 1 = 0.5:45 × 0.5 = 22.5 → 22
+        DefenderPanel physical = Defender();
+        physical.PhysicalPenetration = 50f;
+        Assert.Equal(22, Roll(Physical(), Attacker(), physical));
+        // 魔法一侧只看魔法那一格:80 × 0.5 = 40;物理那一格不影响
+        var magical = new HitInput(0f, true, AttackKind.Magic, 100f, 0, Never);
+        DefenderPanel both = Defender();
+        both.MagicalPenetration = 50f;
+        both.PhysicalPenetration = 90f;
+        Assert.Equal(40, Roll(magical, Attacker(), both));
+        // 无视防御的一击不套防御率,也不套这一项
+        Assert.Equal(45, Roll(Physical(ignoreDefense: true), Attacker(), physical));
+    }
+
+    [Fact]
+    public void AMonstersAbsoluteDefenseCellsComeFromItsRecordFloats()
+    {
+        var stats = new MonsterStats();
+        stats.SetF(MonsterStats.IxPhysicalAbsoluteDefense, 12.5f);
+        stats.SetF(MonsterStats.IxMagicalAbsoluteDefense, 7f);
+        DefenderPanel panel = DefenderPanel.FromMonster(stats, 3);
+        Assert.Equal((12.5f, 7f), (panel.PhysicalPenetration, panel.MagicalPenetration));
+        Assert.Equal((0f, 0f), (DefenderPanel.FromMonster(new MonsterStats(), 3).PhysicalPenetration, DefenderPanel.FromMonster(new MonsterStats(), 3).MagicalPenetration));
     }
 }

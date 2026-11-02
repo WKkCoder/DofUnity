@@ -45,6 +45,7 @@ SUMMONS = re.compile(r"召唤\(E-134\):脚本召唤出怪物 (\d+) 只,被拒绝
 SWITCH = re.compile(r"脚本跨招开关\(E-145\):落到存在的招与触发器 (\d+) 次,落空 (\d+) 次,指向未接线的动作族 (\d+) 次")
 BOARD = re.compile(r"被动对象的动作开关板\(E-158\):读别的动作的开关 (\d+) 次\(落空 (\d+)\),写 (\d+) 次\(落空 (\d+)\)")
 CUSTOM = re.compile(r"怪物的自定义动作\(E-159\):进过的房间里写了 \[etc action\] 的怪物 (\d+) 只,切进自定义动作 (\d+) 次,自己放完 (\d+) 次,要切的不存在 (\d+) 次")
+APPEND = re.compile(r"属性改变附加物\(E-161\):怪物挂上 (\d+) 次\(顶替 (\d+)、删除 (\d+)、到期 (\d+)\),主角挂上 (\d+) 次\(顶替 (\d+)、删除 (\d+)、到期 (\d+)\);按类型\(\* = 这一侧没有读它的地方\):(.*)")
 FAMILY = re.compile(r"脚本非出招动作族\(E-146\):进过的房间里装了站立、行走、受击、倒地、过程或最后一幕触发器的怪物 (\d+) 只,运行器启动 (\d+) 次,\[SET ACTION\] 落实 (\d+) 次、没落实 (\d+) 次")
 FILES = re.compile(r"脚本换动作文件\(E-151\):换上 (\d+) 次,记成待换 (\d+) 次,这一版没有对应动作的族 (\d+) 次,序号越界 (\d+) 次,文件读不到 (\d+) 次")
 MIX = re.compile(r"怪物构成\(E-147\):进过的房间里共 (\d+) 只,\.ai 脚本指挥 (\d+) 只,默认 AI 走位大脑 (\d+) 只,默认 AI 占位 (\d+) 只")
@@ -75,7 +76,7 @@ def list_dungeons():
     return sorted(l.split()[0] for l in out.splitlines() if l.strip().endswith(tuple("0123456789")) and ".dgn" in l)
 
 
-def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=5000, smash=False):
+def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=1000000, smash=False):
     cmd = ["dotnet"] + DNF + ["dungeon-check", "--dungeon", path, "--bot", "--seed", str(seed), "--seconds", str(seconds)]
     if explore:
         cmd.insert(len(cmd), "--explore")
@@ -128,6 +129,20 @@ def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=5000
     cu = CUSTOM.search(text)
     if cu:
         rec["custom_monsters"], rec["custom_started"], rec["custom_finished"], rec["custom_rejected"] = (int(cu.group(i)) for i in range(1, 5))
+    ap = APPEND.search(text)
+    if ap:
+        for i, k in enumerate(("ap_m_added", "ap_m_replaced", "ap_m_removed", "ap_m_expired", "ap_h_added", "ap_h_replaced", "ap_h_removed", "ap_h_expired")):
+            rec[k] = int(ap.group(i + 1))
+        types = {}
+        txt = ap.group(9).strip()
+        if txt and txt != "无":
+            for part in txt.split("; "):
+                tag, _, nums = part.rpartition(" ")
+                unread = nums.endswith("*")
+                m_, _, h_ = nums.rstrip("*").partition("/")
+                if tag and m_.isdigit() and h_.isdigit():
+                    types[tag] = (int(m_), int(h_), unread)
+        rec["ap_types"] = types
     fm = FAMILY.search(text)
     if fm:
         rec["family_monsters"], rec["family_runs"], rec["family_set_applied"], rec["family_set_unhosted"] = (int(fm.group(i)) for i in range(1, 5))
@@ -185,7 +200,7 @@ def main(argv):
     ap.add_argument("--no-explore", action="store_true")
     ap.add_argument("--damage", action="store_true", help="主角会被打(默认不会:无伤害模式,只量布局与流程)")
     ap.add_argument("--smash", action="store_true", help="自动机清房之后顺手打翻房间里的可破坏物件(M34)")
-    ap.add_argument("--scale", type=int, default=5000, help="主角每一击伤害的倍数(默认 5000,排除一级主角打不动高等级怪物的干扰;脚本怪物(M36)出场后高等级首领的血量上百万,100 倍在 600 秒里打不完;1 = 不放大)")
+    ap.add_argument("--scale", type=int, default=1000000, help="主角每一击伤害的倍数(默认 1000000,排除一级主角打不动高等级怪物的干扰;脚本怪物(M36)出场后高等级首领的血量上百万,100 倍在 600 秒里打不完;M63 之前默认 5000,更正防御方字段(E-160)后一级主角对高等级怪物每击只剩保底 1 点,旋钮重标定;1 = 不放大)")
     ap.add_argument("--out", default=os.path.join(ROOT, "out/dungeon-sweep"))
     a = ap.parse_args(argv)
 
@@ -265,6 +280,20 @@ def main(argv):
     with_custom = sum(1 for r in results if r.get("custom_started", 0) > 0)
     print("怪物自定义动作(只在本机,E-159):切进过自定义动作的副本 %d 个;有列表的怪物 %d 只,切进 %d 次,自己放完 %d 次,要切的不存在 %d 次"
           % (with_custom, custom_sums["custom_monsters"], custom_sums["custom_started"], custom_sums["custom_finished"], custom_sums["custom_rejected"]))
+    ap_keys = ["ap_m_added", "ap_m_replaced", "ap_m_removed", "ap_m_expired", "ap_h_added", "ap_h_replaced", "ap_h_removed", "ap_h_expired"]
+    ap_sums = {k: sum(r.get(k, 0) for r in results) for k in ap_keys}
+    with_ap = sum(1 for r in results if r.get("ap_m_added", 0) + r.get("ap_h_added", 0) > 0)
+    print("属性改变附加物(只在本机,E-161):挂过的副本 %d 个;怪物挂上 %d 次(顶替 %d、删除 %d、到期 %d),主角挂上 %d 次(顶替 %d、删除 %d、到期 %d)"
+          % ((with_ap,) + tuple(ap_sums[k] for k in ap_keys)))
+    ap_types = {}
+    for r in results:
+        for tag, (m_, h_, unread) in r.get("ap_types", {}).items():
+            row = ap_types.setdefault(tag, [0, 0, False])
+            row[0] += m_
+            row[1] += h_
+            row[2] = row[2] or unread
+    print("  按类型(怪物/主角,* = 这一侧没有读它的地方):" + ("; ".join("%s %d/%d%s" % (t, row[0], row[1], "*" if row[2] else "")
+          for t, row in sorted(ap_types.items(), key=lambda kv: (-(kv[1][0] + kv[1][1]), kv[0]))) or "无"))
     fam_keys = ["family_monsters", "family_runs", "family_set_applied", "family_set_unhosted"]
     fam_sums = {k: sum(r.get(k, 0) for r in results) for k in fam_keys}
     with_family = sum(1 for r in results if r.get("family_runs", 0) > 0)

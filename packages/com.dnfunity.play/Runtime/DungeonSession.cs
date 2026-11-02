@@ -504,6 +504,48 @@ namespace Dnf.Play
 
         public int FamilySetActionUnhosted => Sum(s => s.FamilySetActionUnhosted);
 
+        /// <summary>脚本的 [APPENDAGE]/[DELETE APPENDAGE](属性改变附加物,证据 E-161):怪物身上挂上、顶替、被删、到期的总次数(各房间之和)。</summary>
+        public int MonsterStatAppendagesAdded => Sum(s => s.MonsterStatAppendagesAdded);
+
+        public int MonsterStatAppendagesReplaced => Sum(s => s.MonsterStatAppendagesReplaced);
+
+        public int MonsterStatAppendagesRemoved => Sum(s => s.MonsterStatAppendagesRemoved);
+
+        public int MonsterStatAppendagesExpired => Sum(s => s.MonsterStatAppendagesExpired);
+
+        /// <summary>同上,落在主角身上的(没有生命条的模式与死了的主角不挂,不计)。</summary>
+        public int HeroStatAppendagesAdded => Sum(s => s.HeroStatAppendagesAdded);
+
+        public int HeroStatAppendagesReplaced => Sum(s => s.HeroStatAppendagesReplaced);
+
+        public int HeroStatAppendagesRemoved => Sum(s => s.HeroStatAppendagesRemoved);
+
+        public int HeroStatAppendagesExpired => Sum(s => s.HeroStatAppendagesExpired);
+
+        /// <summary>怪物身上挂过的附加物按类型号分的次数(各房间之和)。</summary>
+        public Dictionary<int, int> MonsterStatTypeCounts => MergeInts(s => s.MonsterStatTypeCounts);
+
+        /// <summary>主角身上挂过的附加物按类型号分的次数(各房间之和)。</summary>
+        public Dictionary<int, int> HeroStatTypeCounts => MergeInts(s => s.HeroStatTypeCounts);
+
+        private Dictionary<int, int> MergeInts(Func<RoomCombatSession, IReadOnlyDictionary<int, int>> f)
+        {
+            var total = new Dictionary<int, int>();
+            foreach (CellState c in _cells)
+            {
+                if (c.Session == null)
+                {
+                    continue;
+                }
+                foreach (KeyValuePair<int, int> kv in f(c.Session))
+                {
+                    total.TryGetValue(kv.Key, out int n);
+                    total[kv.Key] = n + kv.Value;
+                }
+            }
+            return total;
+        }
+
         /// <summary>怪物脚本的 [CHANGE ACTION FILE](证据 E-151):换上、记成待换、没有对应动作的族、序号越界、文件读不到的总次数(各房间之和)。</summary>
         public int ActionFilesApplied => Sum(s => s.ActionFilesApplied);
 

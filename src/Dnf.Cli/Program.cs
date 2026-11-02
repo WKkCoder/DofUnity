@@ -619,9 +619,9 @@ namespace Dnf.Cli
                         opts.NoExp = true;
                         break;
                     case "--damage-scale":
-                        opts.DamageScale = int.TryParse(NextValue(args, ref i), out int scaleValue) && scaleValue >= 1 && scaleValue <= 100000
+                        opts.DamageScale = int.TryParse(NextValue(args, ref i), out int scaleValue) && scaleValue >= 1 && scaleValue <= 10000000
                             ? scaleValue
-                            : throw new UserError("--damage-scale 需要 1 到 100000 的整数");
+                            : throw new UserError("--damage-scale 需要 1 到 10000000 的整数");
                         break;
                     case "--coins":
                         opts.Coins = int.TryParse(NextValue(args, ref i), out int coinsValue) && coinsValue >= 0 && coinsValue <= 99
