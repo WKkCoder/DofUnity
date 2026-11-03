@@ -240,6 +240,15 @@ namespace Dnf.Game.Act
         }
 
         /// <summary>
+        /// [CHANGE ATTACKINFO](E-167):把动作的拥有者 <paramref name="owner"/>(怪物或被动对象;不看目标集合)当前用的攻击信息换成 <paramref name="path"/> 这个 .atk;
+        /// <paramref name="path"/> 是脚本里的原样写法,相对写这条行为的程序 <paramref name="fromProgram"/> 所在的目录,为 null 就是 [DEFAULT](恢复这个程序的默认攻击信息、没有就回到对象原本的)。
+        /// 路径读不到由场景自己决定(客户端:找不到下标就什么都不做);默认什么都不做。
+        /// </summary>
+        void ChangeAttackInfo(IActEntity owner, string path, string fromProgram)
+        {
+        }
+
+        /// <summary>
         /// 舞台的横向总宽(世界坐标,像素;[IS END MAP] 要的,客户端 0x0046ef10 取地图的格数乘格宽;E-166)。
         /// 不知道舞台(没有地图的试验场)是 0,这时 [IS END MAP] 不通过(客户端取不到地图时也不通过)。
         /// </summary>
@@ -1420,6 +1429,10 @@ namespace Dnf.Game.Act
                                 _host.ChangeActionFile(t, b.FileSlot, b.FileIndex, b.FilePath, _program.Path);
                             }
                         }
+                        break;
+                    case ActBehaviorKind.ChangeAttackInfo:
+                        // 客户端 0x010b775e 起的块(行为码 0x67):直接对行为拥有者(执行上下文里的拥有者字段)设攻击信息,不循环目标集合,所以 [DO BEHAVIOR] 的目标写什么都一样(E-167)
+                        _host.ChangeAttackInfo(_owner, b.FilePath, _program.Path);
                         break;
                     case ActBehaviorKind.ActiveStatus:
                         // 客户端 0x010bbec6 起的块:对集合里每个"活动对象"(类型位 0x11,主角与怪物;被动对象没有)调一次挂状态,源头是行为拥有者(E-144)

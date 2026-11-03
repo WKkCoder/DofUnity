@@ -152,6 +152,8 @@ namespace Dnf.Play
         private int _attackIndex;
         private HeroStrikeInfo _strike;
         private HeroStrikeInfo[] _strikes;
+        private HeroStrikeInfo?[] _actDefaultStrikes;          // 各招 .act 自带的 [DEFAULT ATTACKINFO](M69,E-167;没有的项是 null)
+        private HeroStrikeInfo? _strikeOverride;               // 出招脚本 [CHANGE ATTACKINFO] 换上的;下一次出招开始清掉
         private Func<int, bool> _reachTest;
 
         // .ai 脚本驱动(证据 E-128):脚本怪物的出招、走位都由 MonsterScript 的四个脚本决定;没装时走上面的默认 AI 或占位
@@ -689,6 +691,7 @@ namespace Dnf.Play
                 }
                 return;
             }
+            _strikeOverride = null;     // 新的一招从这一招本来的攻击信息开始(.act 默认或 .mob 表;上一招脚本换上的不带过来,推断,E-167)
             if (_actPrograms == null || (uint)_attackIndex >= (uint)_actPrograms.Length || _actPrograms[_attackIndex] == null)
             {
                 return;
@@ -1504,13 +1507,43 @@ namespace Dnf.Play
         public bool HitHeroThisSwing { get; set; }
 
         /// <summary>
-        /// 怪物这次出招用的攻击信息(<see cref="MonsterModel.AttackInfoPaths"/> 里与当前这一招 <see cref="AttackIndex"/> 对应的那一个);没有时是全默认值。
+        /// 怪物这次出招用的攻击信息:出招脚本 [CHANGE ATTACKINFO] 换上的优先(M69,E-167),其次是这一招 .act 自带的 [DEFAULT ATTACKINFO](<see cref="SetActDefaultStrikes"/>),
+        /// 再其次是 <see cref="MonsterModel.AttackInfoPaths"/> 里与当前这一招 <see cref="AttackIndex"/> 对应的那一个;都没有时是全默认值。
         /// 设置它等于设置第 0 招的攻击信息;各招分别的攻击信息用 <see cref="SetStrikes"/> 给。
         /// </summary>
         public HeroStrikeInfo Strike
         {
-            get => _strikes != null && _attackIndex < _strikes.Length ? _strikes[_attackIndex] : _strike;
+            get
+            {
+                if (_strikeOverride.HasValue)
+                {
+                    return _strikeOverride.Value;
+                }
+                if (_actDefaultStrikes != null && (uint)_attackIndex < (uint)_actDefaultStrikes.Length && _actDefaultStrikes[_attackIndex].HasValue)
+                {
+                    return _actDefaultStrikes[_attackIndex].Value;
+                }
+                return _strikes != null && _attackIndex < _strikes.Length ? _strikes[_attackIndex] : _strike;
+            }
             set => _strike = value;
+        }
+
+        /// <summary>
+        /// 各招出招 .act 自带的默认攻击信息(程序一级的 [DEFAULT ATTACKINFO],与 <see cref="MonsterModel.Attacks"/> 同下标,没写的项是 null;M69,E-167)。
+        /// 写了的那一招,默认攻击信息盖过 .mob 表里的(推断:客户端的程序默认在动作开始时套上)。
+        /// </summary>
+        public void SetActDefaultStrikes(HeroStrikeInfo?[] strikes)
+        {
+            _actDefaultStrikes = strikes;
+        }
+
+        /// <summary>
+        /// [CHANGE ATTACKINFO](M69,E-167):出招脚本把当前的攻击信息换成 <paramref name="strike"/>;null 是 [DEFAULT],回到这一招 .act 的默认(没有就是 .mob 表里的)。
+        /// 换上的一直用到下一次出招开始。
+        /// </summary>
+        public void ChangeStrike(HeroStrikeInfo? strike)
+        {
+            _strikeOverride = strike;
         }
 
         /// <summary>各招的攻击信息(与 <see cref="MonsterModel.Attacks"/> 同下标);下标越界的招回退到 <see cref="Strike"/> 里设置的那一个。</summary>

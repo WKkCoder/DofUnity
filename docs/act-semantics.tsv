@@ -18,6 +18,7 @@ func	0x010d25e0	WHICH	按 selector 码重填目标集	高	PARTY/ TARGET 分支
 func	0x01330670	LOAD/CHECKUP	01330670 目标子句加载	中	字符串完整映射
 func	0x01566d7c	虚表	010a59e0 shake + 010a5ec0 碰撞	中	类名 RTTI
 func	trigger_layout	触发器 0x24 布局	+0x14..+0x1d 等	中	+0x00 向量与加载写入
+func	program_default_attackinfo	[DEFAULT ATTACKINFO]	程序一级顶层指令:一份路径(相对这份 .act 所在目录),装载进程序对象的默认攻击信息槽(+0x120);[CHANGE ATTACKINFO] [DEFAULT] 执行时取它;套到拥有者身上的时机与是否盖过 .mob/.obj 的表是推断(按动作开始时套上、盖过表里的;M69a,E-167)	中	整库 55 处、一份文件一条;套上的时机与优先级没读出来
 sel	0x00	ME	拥有者	高	
 sel	0x01	LAST ATTACKER	+0x98	高	
 sel	0x02	LAST ACTIVE ATTACKER	主控链	中	
@@ -127,7 +128,7 @@ cond	0x61	[CHECK PLAYER NUM]	派对 009266c0 人数与 [COUNT] 期望值比较	�
 beh	0x62	[CREATE PASSIVEOBJECT]	在本机拥有者处按 INDEX/LEVEL/POS 与可选标志生成被动对象(vtbl+0xd1)	中	队伍码1重复、01562220 浮点常数、创建器内部;摆放(基点、X 取反、朝向来源、Z)E-130 已读
 beh	0x63	[SUMMON MONSTER]	五个值(编号、等级、三偏移)在目标循环前各求一次;每个活着的目标:等级=等级值(-1 取目标的)加目标等级(被动对象目标不加),至少 1,夹到难度表行数与 200;朝向取目标的,标志 2 取拥有者的,标志 4 固定 1;位置:标志 5 绝对坐标,否则以目标(标志 3 以拥有者)为基准,X 朝向不是 1 时取反;标志码 0 模式 1 [USE TARGET TEAM] 2 [USE MY DIRECTION] 3 [USE MY BASEPOS] 4 [NOT USE OBJECT DIRECTION] 5 [USE MAP POS] 6 [USE OBJECT ZPOS] 7 [TEAM] 9 [SUMMON TIME] 0xb [SUMMON MARK] 0xc [COLLISION GROUP];创建槽 0x350 只写请求包(类型 0x16 子类型 2),服务端造怪(块 0x010b683d,E-134)	中	服务端创建函数、存活时间、标记与碰撞组含义、上限
 beh	0x64	[TELEPORT]	按基准对象(拥有者或目标)的坐标加三轴偏移瞬移,朝左时 X 偏移取反;九个标志码已读通(M40);落点不合法时找最近合法点(半径 200)	中	最近合法点搜索的另两个参数(-1 与 3);USE EFFECT 的特效记录;关联状态的完整列表
-beh	0x67	[CHANGE ATTACKINFO]	DEFAULT(-1)或索引切换action+0xfb表(0x2cc)并刷新+0x200	中	具名attackinfo执行路径、+0x200槽名
+beh	0x67	[CHANGE ATTACKINFO]	只作用在拥有者自己身上(转成碰撞对象类,不走目标集合):参数是路径(相对这份 .act 所在目录,装载时并入动作自己的攻击信息表取序号)或 [DEFAULT](序号 -1);-1 时给拥有者的虚槽 +0x200(设攻击信息)传程序一级默认攻击信息(程序对象 +0x120),否则传表(程序对象 +0x3ec)里的那一项(块 0x010b775e;M69a,E-167)	高	块开头的前置虚调用(虚槽 +0x30,参数 1)语义没读、没建模;[DEFAULT] 在没有程序默认时恢复什么(按对象本来的,推断)
 beh	0x6b	[SET SPEED]	对目标速度控制器(+0x50→+0xc)写 X/Y/Z 浮点速度，X 随朝向取反	高	加载侧 3/4 修饰在执行块无分支
 beh	0x6e	[TRIGGER]	运行时按编号启用/禁用/重置动作上的触发器条目:模式 0 写条目 +0x1c=1,1 写 0,2 调桩 0x296a477(当复位);开关字节就是 [ENABLE],帧 0 复位(0x010a3fe0)不清它,所以跨出招保留;.ai 的 is attack action enable 读它(0x010a34d0,E-134);按动作族写法(E-145):加载块 0x0133b043 给每种写法一个种类码(没写 3、[MOVE] 4、[STAY] 8、[DAMAGE] 9、[SIT] 0xa、[ATTACK] 0xb、[DOWN] 0xc、[CUSTOM] 0xd、[DEFAULT] 0xe、[PROC] 0xf),[ATTACK]/[CUSTOM] 先写动作序号再写触发器序号,命令 [ON] 0、[OFF] 1、[RESET] 2;执行块 0x010b861b 只看行为拥有者(不循环目标集合),按种类码取拥有者那一族动作的触发器池,池空或触发器个数不大于序号就跳过	中	桩 0x296a477 在受保护区(复位按清计数与单次位的推断做);各池号对应哪个容器的细节未全核对;[DAMAGE](9)加载读一个整数、执行读两个,两头对不上,全库无此写法;怪物的 [MOVE]、[STAY]、[SIT]、[DOWN]、[PROC] 写到各族的开关数组(E-146);[DEFAULT]、[CUSTOM] 还没有宿主,只记数
 beh	0x6f	[RESTORE]	种类 0 [HP] 1 [MP],数量(值表达式),第 2 个参数码 7 为 [%];血量百分比 = 数量 × 目标最大生命(槽 0x2a8) ÷ 100(有符号、向零截断),魔法走槽 0x51c;只构造请求对象(0x150/0xe0 字节)经 vtable+0x58 提交,血量由服务端改(块 0x010b8c89,E-134)	中	服务端怎样夹值与死亡;百分比以外的符号码

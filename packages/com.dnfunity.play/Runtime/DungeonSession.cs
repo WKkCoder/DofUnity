@@ -557,6 +557,11 @@ namespace Dnf.Play
 
         public int ActionFilesMissing => Sum(s => s.ActionFilesMissing);
 
+        /// <summary>脚本 [CHANGE ATTACKINFO](证据 E-167):换上或恢复了攻击信息的次数、要换的 .atk 读不到的次数(各房间之和)。</summary>
+        public int AttackInfosChanged => Sum(s => s.AttackInfosChanged);
+
+        public int AttackInfosMissing => Sum(s => s.AttackInfosMissing);
+
         /// <summary>整座副本进过的房间里的怪物按"谁来指挥"分类的个数(脚本、默认 AI 走位大脑、默认 AI 占位;各房间之和,证据 E-147)。</summary>
         public void CountMonsterAi(out int scripted, out int brain, out int placeholder)
         {

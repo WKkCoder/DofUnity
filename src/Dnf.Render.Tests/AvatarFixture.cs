@@ -559,6 +559,24 @@ internal sealed class AvatarFixture : IDisposable
     public const int ActNearId = 9223;
 
     public const int ActFarId = 9224;
+
+    /// <summary>
+    /// M69(证据 E-167)攻击信息的换用([CHANGE ATTACKINFO] 与程序一级的 [DEFAULT ATTACKINFO]):两份合成的 .atk——怪物目录下 <see cref="ChgAtkA"/>(加成 <see cref="ChgBonusA"/>)、
+    /// <see cref="ChgAtkB"/>(加成 <see cref="ChgBonusB"/>),被动对象目录下有同内容的一对;出招 .act 在动作目录里,写的路径是 "../AttackInfo/ChgA.atk" 这样的相对写法。
+    /// 怪物:xatkchg(出招开始换成 A,帧 1 换成 B,帧 3 [DEFAULT] 恢复)、xatkmissing(出招开始换成一份不存在的 .atk)、xatkdef(程序默认是 A;帧 1 换成 B,帧 3 恢复)、
+    /// xatkdefonly(程序默认是 A,没有触发器)、xatkreset(第 0 招出招开始换成 B,帧 1 用 [END] 切到第 1 招)、xatkdefsecond(第 0 招帧 1 用 [END] 切到第 1 招,第 1 招的程序默认是 A)。
+    /// 被动对象:<see cref="ActAtkChgId"/>(.obj 的攻击信息是 <see cref="ShotAtk"/>;出生换成 B;命中销毁自己)、<see cref="ActAtkDefId"/>(.obj 没有攻击信息;程序默认是 A;命中销毁自己)、
+    /// <see cref="ActAtkSeqId"/>(.obj 是 <see cref="ShotAtk"/>;程序默认 A,帧 1 换 B,帧 2 [DEFAULT] 恢复)、
+    /// <see cref="ActAtkSwapId"/>(出生换成 B;帧 1 切自定义动作 0(没有默认),它的帧 1 再切自定义动作 1(程序默认是 A))。数全是测试用的。
+    /// </summary>
+    public const int ActAtkChgId = 9225;
+    public const int ActAtkDefId = 9226;
+    public const int ActAtkSeqId = 9227;
+    public const int ActAtkSwapId = 9228;
+    public const int ChgBonusA = 60;
+    public const int ChgBonusB = 100;
+    public const string ChgAtkA = "monster/blob/attackinfo/chga.atk";
+    public const string ChgAtkB = "monster/blob/attackinfo/chgb.atk";
     public const int HomeMonsterCode = 77;
     public const string ActObjectDir = "passiveobject/blob";
     public const string ActBoomAni = "passiveobject/blob/animation/boom.ani";
@@ -832,6 +850,17 @@ internal sealed class AvatarFixture : IDisposable
         ("xzspeedn", new[] { "ActXZSpeedN" }),
         ("xdrift", new[] { "ActXDrift" }),
         ("xnear", new[] { "ActXNear" }),
+        // M69(证据 E-167):[CHANGE ATTACKINFO] 与程序一级的 [DEFAULT ATTACKINFO]
+        ("xatkchg", new[] { "ActAtkChg" }),
+        ("xatkmissing", new[] { "ActAtkMissing" }),
+        ("xatkdef", new[] { "ActAtkDef" }),
+        ("xatkdefonly", new[] { "ActAtkDefOnly" }),
+        ("xatkreset", new[] { "ActAtkSet", "ActPlain" }),
+        ("xatkdefsecond", new[] { "ActChainEnd", "ActAtkDefOnly" }),
+        ("spawn9225", new[] { "ActSpawn9225" }),
+        ("spawn9226", new[] { "ActSpawn9226" }),
+        ("spawn9227", new[] { "ActSpawn9227" }),
+        ("spawn9228", new[] { "ActSpawn9228" }),
     };
 
     /// <summary>
@@ -1151,6 +1180,38 @@ internal sealed class AvatarFixture : IDisposable
             .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
             .Behavior(b => b.Create(ActNearId, 0, 0, 0).Create(ActFarId, 0, 0, 0))
             .Build());
+        // M69(证据 E-167):攻击信息的换用。路径相对 .act 所在目录
+        // xatkchg:出招开始换成 A,帧 1 换成 B,帧 3 [DEFAULT](这一招没有程序默认:回到 .mob 表里的);出招动画第 2 帧(160 到 240 毫秒)带攻击框,所以打在主角身上的是 B
+        yield return (BlobActionDir + "/actatkchg.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 1)
+            .Trigger(r => r.Tag("[FRAME]").Int(3, 3), 2)
+            .Behavior(b => b.Tag("[CHANGE ATTACKINFO]").Str("../AttackInfo/ChgA.atk"))
+            .Behavior(b => b.Tag("[CHANGE ATTACKINFO]").Str("../AttackInfo/ChgB.atk"))
+            .Behavior(b => b.Tag("[CHANGE ATTACKINFO]").Tag("[DEFAULT]"))
+            .Build());
+        yield return (BlobActionDir + "/actatkmissing.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[CHANGE ATTACKINFO]").Str("../AttackInfo/Missing.atk"))
+            .Build());
+        // xatkdef:程序一级的默认是 A;帧 1 换成 B,帧 3 [DEFAULT] 回到默认(A,不是 .mob 表里的)
+        yield return (BlobActionDir + "/actatkdef.act", ActWith(StrikeActAni)
+            .Tag("[DEFAULT ATTACKINFO]").Str("../AttackInfo/ChgA.atk")
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(3, 3), 1)
+            .Behavior(b => b.Tag("[CHANGE ATTACKINFO]").Str("../AttackInfo/ChgB.atk"))
+            .Behavior(b => b.Tag("[CHANGE ATTACKINFO]").Tag("[DEFAULT]"))
+            .Build());
+        yield return (BlobActionDir + "/actatkdefonly.act", ActWith(StrikeActAni)
+            .Tag("[DEFAULT ATTACKINFO]").Str("../AttackInfo/ChgA.atk")
+            .Build());
+        // xatkreset:第 0 招出招开始换成 B,帧 1 切第 1 招([END]:这一招播完再接)
+        yield return (BlobActionDir + "/actatkset.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 1)
+            .Behavior(b => b.Tag("[CHANGE ATTACKINFO]").Str("../AttackInfo/ChgB.atk"))
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[END]"))
+            .Build());
         // xfire:出招 .act 里挨到火元素的一击才放一个(出招运行器的 [ON DAMAGE] 也带元素)
         yield return (BlobActionDir + "/actxfire.act", ActWith(ThrowActAni)
             .Trigger(r => r.Tag("[ON DAMAGE]").Tag("[IS FIRE DAMAGE]"), 0)
@@ -1352,7 +1413,7 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[TRIGGER]").Tag("[CUSTOM]").Int(0, 0).Tag("[OFF]"))
             .Build());
         yield return (BlobAnimationDir + "/last.ani", BuildBlobAni(false, (0, 400, default), (1, 400, default), (2, 400, default)));
-        foreach (int id in new[] { ActShotId, ActRepeatId, ActGraveId, ActSpawnerId, ActFallId, ActBoardReadId, ActBoardWriteId })
+        foreach (int id in new[] { ActShotId, ActRepeatId, ActGraveId, ActSpawnerId, ActFallId, ActBoardReadId, ActBoardWriteId, ActAtkChgId, ActAtkDefId, ActAtkSeqId, ActAtkSwapId })
         {
             int spawned = id;
             yield return (BlobActionDir + "/actspawn" + id + ".act", ActWith(ThrowActAni)
@@ -1425,6 +1486,58 @@ internal sealed class AvatarFixture : IDisposable
                 .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
                 .Build());
         }
+        // ---- M69(证据 E-167):被动对象的攻击信息换用(.act 在 action 目录,路径相对它)
+        // actatkchg:.obj 的攻击信息是 shot(加成 25);出生换成 B;命中销毁自己
+        yield return (ActObjectDir + "/actatkchg.obj", NewScript()
+            .Tag("[basic action]").Str("action/actatkchg.act")
+            .Tag("[attack info]").Str("attackinfo/shot.atk")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actatkchg.act", ActWith("../animation/shot.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[ON ATTACKSUCCESS]"), 1)
+            .Behavior(b => b.Tag("[CHANGE ATTACKINFO]").Str("../attackinfo/chgb.atk"))
+            .Behavior(b => b.Tag("[DESTROY]"))
+            .Build());
+        // actatkdef:.obj 没有攻击信息;程序一级的默认是 A;命中销毁自己
+        yield return (ActObjectDir + "/actatkdef.obj", NewScript()
+            .Tag("[basic action]").Str("action/actatkdef.act")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actatkdef.act", ActWith("../animation/shot.ani")
+            .Tag("[DEFAULT ATTACKINFO]").Str("../attackinfo/chga.atk")
+            .Trigger(r => r.Tag("[ON ATTACKSUCCESS]"), 0)
+            .Behavior(b => b.Tag("[DESTROY]"))
+            .Build());
+        // actatkseq:.obj 的攻击信息是 shot(25);程序默认 A(盖过 .obj 的);三帧的动画,帧 1 换成 B,帧 2 [DEFAULT] 恢复
+        yield return (ActObjectDir + "/actatkseq.obj", NewScript()
+            .Tag("[basic action]").Str("action/actatkseq.act")
+            .Tag("[attack info]").Str("attackinfo/shot.atk")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actatkseq.act", ActWith("../animation/boom.ani")
+            .Tag("[DEFAULT ATTACKINFO]").Str("../attackinfo/chga.atk")
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(2, 2), 1)
+            .Behavior(b => b.Tag("[CHANGE ATTACKINFO]").Str("../attackinfo/chgb.atk"))
+            .Behavior(b => b.Tag("[CHANGE ATTACKINFO]").Tag("[DEFAULT]"))
+            .Build());
+        // actatkswap:出生换成 B;帧 1 切自定义动作 0(没有默认,换上的跟着走);自定义动作 0 的帧 1 再切自定义动作 1(程序默认是 A,进入时盖掉换上的)
+        yield return (ActObjectDir + "/actatkswap.obj", NewScript()
+            .Tag("[basic action]").Str("action/actatkswap.act")
+            .Tag("[etc action]").Str("action/actatkswap_e0.act").Str("action/actatkswap_e1.act")
+            .Tag("[attack info]").Str("attackinfo/shot.atk")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actatkswap.act", ActWith("../animation/boom.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 1)
+            .Behavior(b => b.Tag("[CHANGE ATTACKINFO]").Str("../attackinfo/chgb.atk"))
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(0).Tag("[NOW]"))
+            .Build());
+        yield return (ActObjectDir + "/action/actatkswap_e0.act", ActWith("../animation/boom.ani")
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(1).Tag("[NOW]"))
+            .Build());
+        yield return (ActObjectDir + "/action/actatkswap_e1.act", ActWith("../animation/idle.ani")
+            .Tag("[DEFAULT ATTACKINFO]").Str("../attackinfo/chga.atk")
+            .Build());
         // ---- M62(证据 E-158):被动对象各动作的触发器开关板
         string boardRead = "[TRIGGER CHECK]";
         yield return (ActObjectDir + "/actbread.obj", NewScript()
@@ -2001,6 +2114,11 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[attack motion]").Str("Animation_Blob/Strike.ani")
                 .Tag("[attack info]").Str("AttackInfo/Striker.atk").Build()),
             (BlobStrikerAtk, NewScript().Tag("[damage bonus]").Int(StrikerDamageBonus).Tag("[damage reaction]").Tag("[damage]").Build()),
+            // M69(证据 E-167):换用攻击信息用的两份 .atk,怪物目录与被动对象目录各一对
+            (ChgAtkA, NewScript().Tag("[damage bonus]").Int(ChgBonusA).Tag("[damage reaction]").Tag("[damage]").Build()),
+            (ChgAtkB, NewScript().Tag("[damage bonus]").Int(ChgBonusB).Tag("[damage reaction]").Tag("[damage]").Build()),
+            (ActObjectDir + "/attackinfo/chga.atk", NewScript().Tag("[damage bonus]").Int(ChgBonusA).Tag("[damage reaction]").Tag("[damage]").Build()),
+            (ActObjectDir + "/attackinfo/chgb.atk", NewScript().Tag("[damage bonus]").Int(ChgBonusB).Tag("[damage reaction]").Tag("[damage]").Build()),
             // 会扔东西的迷你怪物:出招动画 + 一个 [throw attack] 块;被动对象目录、.obj、.ptl、投射物的 .atk 与动画(证据 E-103)
             (BlobThrowerMobPath, NewScript()
                 .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
@@ -2049,6 +2167,10 @@ internal sealed class AvatarFixture : IDisposable
                 .Int(ActDriftId).Str("blob/actdrift.obj")
                 .Int(ActNearId).Str("blob/actnear.obj")
                 .Int(ActFarId).Str("blob/actfar.obj")
+                .Int(ActAtkChgId).Str("blob/actatkchg.obj")
+                .Int(ActAtkDefId).Str("blob/actatkdef.obj")
+                .Int(ActAtkSeqId).Str("blob/actatkseq.obj")
+                .Int(ActAtkSwapId).Str("blob/actatkswap.obj")
                 .Int(CrateObjectId).Str("MapObject/BreakableObject/Crate.obj")
                 .Int(BarrelObjectId).Str("MapObject/BreakableObject/Barrel.obj")
                 .Int(PillarObjectId).Str("MapObject/BreakableObject/Pillar.obj")

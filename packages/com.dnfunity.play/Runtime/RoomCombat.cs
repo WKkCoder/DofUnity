@@ -1350,6 +1350,12 @@ namespace Dnf.Play
         /// <summary>要换的文件读不出来的次数(路径不存在)。</summary>
         public int ActionFilesMissing { get; private set; }
 
+        /// <summary>脚本 [CHANGE ATTACKINFO] 换上或恢复了攻击信息的次数(怪物与被动对象各算一次;M69,E-167)。</summary>
+        public int AttackInfosChanged { get; private set; }
+
+        /// <summary>[CHANGE ATTACKINFO] 要换的 .atk 读不出来的次数(客户端同样什么都不做)。</summary>
+        public int AttackInfosMissing { get; private set; }
+
         private int SumMonsters(Func<MonsterActor, int> counter)
         {
             int n = 0;
@@ -3460,6 +3466,7 @@ namespace Dnf.Play
                 {
                     m.ActTarget = null;
                     m.SetActs(null, null);
+                    m.SetActDefaultStrikes(null);
                     m.SetFamilyActs(null, null);
                 }
                 return;
@@ -3479,10 +3486,16 @@ namespace Dnf.Play
         {
             IReadOnlyList<string> paths = m.Model.AttackActionPaths;
             var programs = new ActProgram[paths.Count];
+            HeroStrikeInfo?[] defaults = null;
             bool any = false;
             for (int i = 0; i < programs.Length; i++)
             {
                 ActProgram p = _acts.Program(paths[i]);
+                HeroStrikeInfo? def = _acts.DefaultStrike(p);     // 这一招 .act 自带的默认攻击信息:没有触发器的程序也算(M69,E-167)
+                if (def.HasValue)
+                {
+                    (defaults ?? (defaults = new HeroStrikeInfo?[programs.Length]))[i] = def;
+                }
                 if (p != null && p.Triggers.Count > 0)
                 {
                     programs[i] = p;
@@ -3492,6 +3505,7 @@ namespace Dnf.Play
             }
             m.ActTarget = _heroEntity;
             m.SetActs(any ? programs : null, any ? _actWorld : null);
+            m.SetActDefaultStrikes(defaults);
             // 非出招动作族(站立、行走、受击、倒地、过程、最后一幕)的 .act 触发器(M53,E-146)
             m.SetFamilyActs(MonsterFamilyActs.Build(_acts, m.Model.FamilyActs), _actWorld);
         }
@@ -3517,6 +3531,40 @@ namespace Dnf.Play
             m.ApplyActionFile(slot, index, action, _actWorld);
         }
 
+        /// <summary>
+        /// 脚本的 [CHANGE ATTACKINFO] 落到行为拥有者上(M69,E-167):怪物或被动对象把当前攻击信息换成 <paramref name="path"/> 指的 .atk(相对写这条脚本的 .act 所在目录,客户端同样),
+        /// <paramref name="path"/> 为 null 是 [DEFAULT](回到默认)。文件读不出来什么都不做、记一次缺失(客户端:攻击信息表里找不到那一项就跳过)。主角没有这类脚本。
+        /// </summary>
+        private void ChangeAttackInfo(IActEntity owner, string path, string fromProgram)
+        {
+            if (_acts == null || owner == null)
+            {
+                return;
+            }
+            HeroStrikeInfo? strike = null;
+            if (path != null)
+            {
+                strike = _acts.Strike(PvfPath.ResolveRelativeTo(fromProgram, path));
+                if (!strike.HasValue)
+                {
+                    AttackInfosMissing++;
+                    return;
+                }
+            }
+            if (owner is PassiveObject o)
+            {
+                o.ChangeStrike(strike);         // 先认被动对象:MonsterActor.From 对被动对象给的是它的所有者怪物
+                AttackInfosChanged++;
+                return;
+            }
+            MonsterActor m = MonsterActor.From(owner);
+            if (m != null)
+            {
+                m.ChangeStrike(strike);
+                AttackInfosChanged++;
+            }
+        }
+
         /// <summary>被动对象各走一步(这一步里新放出来的从下一步起走)。</summary>
         private void UpdatePassives(double deltaMs)
         {
@@ -3530,7 +3578,8 @@ namespace Dnf.Play
         /// <summary>
         /// 被动对象打主角:当前帧的攻击框与主角的受击框相交就算打中(规则与投射物同,E-103);一个对象打中一次之后不再打,
         /// 直到脚本 [ATTACKRECT] [RESET]。命中后唤醒对象自己带 [ON ATTACKSUCCESS] 的触发器(常见写法是接着销毁自己或切动作)。
-        /// 伤害按链条上最早那只怪物的等级与攻击力算,攻击信息取 .obj 的 [attack info]。
+        /// 伤害按链条上最早那只怪物的等级与攻击力算,攻击信息取对象此刻的 <see cref="PassiveObject.Strike"/>
+        /// (脚本换上的 > 动作 .act 的默认 > .obj 的 [attack info],M69,E-167)。
         /// </summary>
         private void ResolvePassiveHits()
         {
@@ -3553,7 +3602,7 @@ namespace Dnf.Play
                     continue;
                 }
                 PassiveHits++;
-                StrikeHero(o.Owner, o.Template.Strike, o.FacingLeft, hero, null, hit);
+                StrikeHero(o.Owner, o.Strike, o.FacingLeft, hero, null, hit);
                 o.NotifyHit(_heroEntity);
                 if (!Vitals.IsAlive)
                 {
@@ -3834,6 +3883,11 @@ namespace Dnf.Play
             public void ChangeActionFile(IActEntity target, ActFileSlot slot, int index, string path, string fromProgram)
             {
                 _session.ChangeActionFile(target, slot, index, path, fromProgram);
+            }
+
+            public void ChangeAttackInfo(IActEntity owner, string path, string fromProgram)
+            {
+                _session.ChangeAttackInfo(owner, path, fromProgram);
             }
 
             public void NoteUnsupportedBehavior(string tag)

@@ -1064,6 +1064,8 @@ namespace Dnf.Game.Act
                     return ParseSetAction(cur, tag);
                 case "[CHANGE ACTION FILE]":
                     return ParseChangeActionFile(cur, tag);
+                case "[CHANGE ATTACKINFO]":
+                    return ParseChangeAttackInfo(cur, tag);
                 case "[DESTROY]":
                 case "[DESTROY BY FORCE]":
                     return new ActBehavior { Kind = ActBehaviorKind.Destroy, Tag = tag, Force = tag == "[DESTROY BY FORCE]" };
@@ -1769,6 +1771,25 @@ namespace Dnf.Game.Act
                 return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
             }
             return new ActBehavior { Kind = ActBehaviorKind.ChangeActionFile, Tag = tag, FileSlot = slot, FileIndex = index, FilePath = path };
+        }
+
+        /// <summary>
+        /// [CHANGE ATTACKINFO]:后面是一个 .atk 路径字符串(全库 80 处),或一个 [DEFAULT] 子标签(全库 1 处,写在下一行;恢复这个 .act 的默认攻击信息);
+        /// 两样都读不到的写法(没写参数、空串)按没做处理(E-167)。
+        /// </summary>
+        private static ActBehavior ParseChangeAttackInfo(ActCursor cur, string tag)
+        {
+            if (cur.AtOpen("[DEFAULT]"))
+            {
+                cur.Skip();
+                return new ActBehavior { Kind = ActBehaviorKind.ChangeAttackInfo, Tag = tag };
+            }
+            string path = cur.TakeString();
+            if (string.IsNullOrEmpty(path))
+            {
+                return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
+            }
+            return new ActBehavior { Kind = ActBehaviorKind.ChangeAttackInfo, Tag = tag, FilePath = path };
         }
 
         private static ActBehavior ParseDirection(ActCursor cur, string tag)

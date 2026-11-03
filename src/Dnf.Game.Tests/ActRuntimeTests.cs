@@ -242,6 +242,12 @@ public sealed partial class ActRuntimeTests
         public void ChangeActionFile(IActEntity target, ActFileSlot slot, int index, string path, string fromProgram)
             => FileChanges.Add((target, slot, index, path, fromProgram));
 
+        /// <summary>M69(E-167):[CHANGE ATTACKINFO] 交给宿主的请求(拥有者、路径或 null 表示 [DEFAULT]、写这条行为的程序路径)。</summary>
+        public List<(IActEntity owner, string path, string from)> AttackChanges { get; } = new();
+
+        public void ChangeAttackInfo(IActEntity owner, string path, string fromProgram)
+            => AttackChanges.Add((owner, path, fromProgram));
+
         public void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into)
         {
             if (Sets.TryGetValue(selector, out List<IActEntity> list))

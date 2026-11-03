@@ -44,6 +44,7 @@ namespace Dnf.Play
         private double _effectMs;
         private PassiveHoming _homing;
         private float _rotation;
+        private HeroStrikeInfo? _strikeOverride;
 
         public PassiveObject(PassiveTemplate template, IActEntity master, MonsterActor owner, IActHost host, double x, double y, double z, bool facingLeft)
         {
@@ -66,6 +67,21 @@ namespace Dnf.Play
         }
 
         public PassiveTemplate Template => _template;
+
+        /// <summary>
+        /// 此刻打中主角用的攻击信息(M69,E-167):动作脚本 [CHANGE ATTACKINFO] 换上的优先,其次是当前动作 .act 自带的 [DEFAULT ATTACKINFO],
+        /// 最后才是 .obj 的 [attack info](没有时全是默认值)。
+        /// </summary>
+        public HeroStrikeInfo Strike => _strikeOverride ?? _action.DefaultStrike ?? _template.Strike;
+
+        /// <summary>
+        /// [CHANGE ATTACKINFO](M69,E-167):换上 <paramref name="strike"/>;null 是 [DEFAULT],清掉脚本换上的、回到当前动作的默认(没有就是 .obj 原本的)。
+        /// 换上的跨动作保留,直到再次改换或进入一个自带默认攻击信息的动作。
+        /// </summary>
+        public void ChangeStrike(HeroStrikeInfo? strike)
+        {
+            _strikeOverride = strike;
+        }
 
         /// <summary>追踪控制器(.obj 带 [homing] 块、[homing use] 非 0 时有);没有就是 null。</summary>
         public PassiveHoming Homing => _homing;
@@ -474,6 +490,10 @@ namespace Dnf.Play
             _actionMs = 0;
             _rectOn = true;
             _hitDone = false;
+            if (next.DefaultStrike.HasValue)
+            {
+                _strikeOverride = null;     // 进入自带默认攻击信息的动作:默认在动作开始时套上,盖掉之前脚本换的(推断,E-167)
+            }
             _motionVersion++;
             _runner = next.HasTriggers ? new ActRunner(next.Program, this, _host, BoardOf(next)) : null;
             _setActionPending = _runner != null;

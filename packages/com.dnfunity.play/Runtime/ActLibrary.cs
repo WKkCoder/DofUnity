@@ -14,15 +14,22 @@ namespace Dnf.Play
     /// </summary>
     public sealed class PassiveAction
     {
-        public PassiveAction(ActProgram program, AniFile ani, string aniPath)
+        public PassiveAction(ActProgram program, AniFile ani, string aniPath, HeroStrikeInfo? defaultStrike = null)
         {
             Program = program ?? ActProgram.Empty;
             Ani = ani != null && ani.Frames.Length > 0 ? ani : null;
             AniPath = aniPath;
             Timeline = Ani == null ? null : new AniTimeline(Ani);
+            DefaultStrike = defaultStrike;
         }
 
         public ActProgram Program { get; }
+
+        /// <summary>
+        /// 这个动作 .act 自带的默认攻击信息(程序一级的 [DEFAULT ATTACKINFO],M69,E-167);没写或读不到是 null。
+        /// 对象进入这个动作时盖过 .obj 的 [attack info](推断:客户端的程序默认在动作开始时套上)。
+        /// </summary>
+        public HeroStrikeInfo? DefaultStrike { get; }
 
         /// <summary>基础动画;读不到或没有帧时为 null(这个动作放不出来)。</summary>
         public AniFile Ani { get; }
@@ -125,6 +132,7 @@ namespace Dnf.Play
         private readonly Dictionary<int, PassiveTemplate> _templates = new Dictionary<int, PassiveTemplate>();
         private readonly HashSet<int> _summonCodes = new HashSet<int>();
         private readonly Dictionary<string, PassiveAction> _swapActions = new Dictionary<string, PassiveAction>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, HeroStrikeInfo?> _strikes = new Dictionary<string, HeroStrikeInfo?>(StringComparer.OrdinalIgnoreCase);
 
         public ActLibrary(DnfAssets assets, GameData data)
         {
@@ -220,9 +228,40 @@ namespace Dnf.Play
             string aniPath = program?.BaseAniPath != null ? PvfPath.ResolveRelativeTo(actPath, program.BaseAniPath) : motionPath;
             if (aniPath == null)
             {
-                return program == null ? null : new PassiveAction(program, null, null);
+                return program == null ? null : new PassiveAction(program, null, null, DefaultStrike(program));
             }
-            return new PassiveAction(program, _assets.LoadAni(aniPath), aniPath);
+            return new PassiveAction(program, _assets.LoadAni(aniPath), aniPath, DefaultStrike(program));
+        }
+
+        /// <summary>
+        /// 一份 .atk 的命中信息(M69,E-167;[CHANGE ATTACKINFO] 与程序默认攻击信息用):<paramref name="path"/> 已是 PVF 规范路径(见 <see cref="PvfPath.ResolveRelativeTo"/>)。
+        /// 路径为空或文件读不到返回 null(也缓存,不重试)——不同于 <see cref="HeroStrikeInfo.Read"/> 读不到给默认值,调用方要分得清"读不到就什么都不做"。
+        /// </summary>
+        public HeroStrikeInfo? Strike(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                return null;
+            }
+            if (_strikes.TryGetValue(path, out HeroStrikeInfo? cached))
+            {
+                return cached;
+            }
+            HeroStrikeInfo? strike = _data.GetAttackInfo(path)?.Data == null ? (HeroStrikeInfo?)null : HeroStrikeInfo.Read(_data, path);
+            _strikes[path] = strike;
+            return strike;
+        }
+
+        /// <summary>
+        /// 程序一级 [DEFAULT ATTACKINFO] 指的攻击信息(路径相对程序自己所在的目录,E-167);程序没写、路径解析不出或文件读不到时为 null。
+        /// </summary>
+        public HeroStrikeInfo? DefaultStrike(ActProgram program)
+        {
+            if (program?.DefaultAttackInfo == null || program.Path == null)
+            {
+                return null;
+            }
+            return Strike(PvfPath.ResolveRelativeTo(program.Path, program.DefaultAttackInfo));
         }
 
         /// <summary>
@@ -266,10 +305,17 @@ namespace Dnf.Play
             {
                 return;
             }
+            DefaultStrike(program);      // 程序自带的默认攻击信息一并读好(M69)
             foreach (ActBehaviorGroup group in program.Behaviors)
             {
                 foreach (ActBehavior b in group.Items)
                 {
+                    if (b.Kind == ActBehaviorKind.ChangeAttackInfo && b.FilePath != null)
+                    {
+                        // 脚本运行中要换上的攻击信息:预先读好,第一次换的那一帧不读盘(M69)
+                        Strike(PvfPath.ResolveRelativeTo(program.Path, b.FilePath));
+                        continue;
+                    }
                     if (b.Kind == ActBehaviorKind.ChangeActionFile && b.FilePath != null)
                     {
                         // 脚本运行中要换进来的动作文件:预先读好(动画一并载入),并顺着它自己的脚本往下读(M57)

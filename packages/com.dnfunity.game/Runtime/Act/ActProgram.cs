@@ -527,6 +527,14 @@ namespace Dnf.Game.Act
         /// </summary>
         SetUseHoming,
 
+        /// <summary>
+        /// [CHANGE ATTACKINFO] "路径" 或 [CHANGE ATTACKINFO] [DEFAULT](客户端行为码 0x67,代码块 0x010b775e;E-167):把行为拥有者(不是目标集合)当前用的攻击信息换成另一个 .atk,
+        /// 路径放在 <see cref="ActBehavior.FilePath"/>(相对写这条行为的 .act 所在目录;全库写路径的 80 处都是 "../" 开头),写 [DEFAULT] 时 <see cref="ActBehavior.FilePath"/> 为 null、
+        /// 恢复这个 .act 的默认攻击信息(<see cref="ActProgram.DefaultAttackInfo"/>)。
+        /// 客户端加载函数把路径换成动作脚本里攻击信息表的下标([DEFAULT] 记 -1),执行块按下标取出攻击信息对象、调拥有者的虚槽 0x200 设上;下标越界什么都不做。
+        /// </summary>
+        ChangeAttackInfo,
+
         /// <summary>[SHAKING] 强度 毫秒:屏幕震动,不分目标,由行为拥有者所在的场景执行(E-133)。</summary>
         Shake,
 
@@ -901,7 +909,10 @@ namespace Dnf.Game.Act
         /// <summary>受击(0、1)、出招、自定义三族的序号;没写序号是 0,其余族没有序号也是 0。</summary>
         public int FileIndex { get; internal set; }
 
-        /// <summary>新 .act 的路径,原样(相对写这条行为的 .act 所在目录,E-151:全库 98% 的写法按这个规则能找到文件)。</summary>
+        /// <summary>
+        /// 新 .act 的路径,原样(相对写这条行为的 .act 所在目录,E-151:全库 98% 的写法按这个规则能找到文件)。
+        /// [CHANGE ATTACKINFO] 也把它的 .atk 路径放在这里(同样相对 .act 所在目录),写 [DEFAULT] 时是 null(E-167)。
+        /// </summary>
         public string FilePath { get; internal set; }
 
         // ---- [APPENDAGE] / [DELETE APPENDAGE]
@@ -950,15 +961,22 @@ namespace Dnf.Game.Act
     /// </summary>
     public sealed class ActProgram
     {
-        private ActProgram(string path, List<ActMotion> motions, List<ActTrigger> triggers, List<ActBehaviorGroup> behaviors)
+        private ActProgram(string path, List<ActMotion> motions, List<ActTrigger> triggers, List<ActBehaviorGroup> behaviors, string defaultAttackInfo = null)
         {
             Path = path;
             Motions = motions;
             Triggers = triggers;
             Behaviors = behaviors;
+            DefaultAttackInfo = defaultAttackInfo;
         }
 
         public string Path { get; }
+
+        /// <summary>
+        /// 程序一级的 [DEFAULT ATTACKINFO] "路径"(原样,相对这个 .act 所在目录;全库写法都是 "../" 开头的 .atk,E-167):这个动作自带的默认攻击信息,
+        /// 同时是 [CHANGE ATTACKINFO] [DEFAULT] 恢复的目标。没写是 null;写了几条取第一条。
+        /// </summary>
+        public string DefaultAttackInfo { get; }
 
         public IReadOnlyList<ActMotion> Motions { get; }
 
@@ -980,9 +998,17 @@ namespace Dnf.Game.Act
             var motions = new List<ActMotion>();
             var triggers = new List<ActTrigger>();
             var behaviors = new List<ActBehaviorGroup>();
+            string defaultAttackInfo = null;
             foreach (ActNode root in script.Roots)
             {
-                if (root.Is("[MOTION]"))
+                if (root.Is("[DEFAULT ATTACKINFO]"))
+                {
+                    if (defaultAttackInfo == null && !string.IsNullOrEmpty(root.TextAt(0)))
+                    {
+                        defaultAttackInfo = root.TextAt(0);
+                    }
+                }
+                else if (root.Is("[MOTION]"))
                 {
                     motions.Add(CompileMotion(root));
                 }
@@ -995,7 +1021,7 @@ namespace Dnf.Game.Act
                     behaviors.Add(ActCompiler.Behavior(root));
                 }
             }
-            return new ActProgram(path, motions, triggers, behaviors);
+            return new ActProgram(path, motions, triggers, behaviors, defaultAttackInfo);
         }
 
         private static ActMotion CompileMotion(ActNode motion)
