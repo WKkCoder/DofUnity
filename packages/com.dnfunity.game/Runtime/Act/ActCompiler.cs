@@ -1066,6 +1066,15 @@ namespace Dnf.Game.Act
                     return ParseChangeActionFile(cur, tag);
                 case "[CHANGE ATTACKINFO]":
                     return ParseChangeAttackInfo(cur, tag);
+                case "[CASTING]":
+                {
+                    // [CASTING] 毫秒 行为组号:两个值表达式(全库 372 处写的都是字面整数;客户端执行块 0x010bd088,E-168);读不全就当没做
+                    ActValue castMs = cur.Value();
+                    ActValue castGroup = castMs == null ? null : cur.Value();
+                    return castMs == null || castGroup == null
+                        ? new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag }
+                        : new ActBehavior { Kind = ActBehaviorKind.Casting, Tag = tag, CastMs = castMs, CastGroup = castGroup };
+                }
                 case "[DESTROY]":
                 case "[DESTROY BY FORCE]":
                     return new ActBehavior { Kind = ActBehaviorKind.Destroy, Tag = tag, Force = tag == "[DESTROY BY FORCE]" };

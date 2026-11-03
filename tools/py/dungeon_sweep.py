@@ -49,6 +49,7 @@ APPEND = re.compile(r"属性改变附加物\(E-161\):怪物挂上 (\d+) 次\(顶
 FAMILY = re.compile(r"脚本非出招动作族\(E-146\):进过的房间里装了站立、行走、受击、倒地、过程或最后一幕触发器的怪物 (\d+) 只,运行器启动 (\d+) 次,\[SET ACTION\] 落实 (\d+) 次、没落实 (\d+) 次")
 FILES = re.compile(r"脚本换动作文件\(E-151\):换上 (\d+) 次,记成待换 (\d+) 次,这一版没有对应动作的族 (\d+) 次,序号越界 (\d+) 次,文件读不到 (\d+) 次")
 ATKINFO = re.compile(r"脚本换攻击信息\(E-167\):换上或恢复 (\d+) 次,文件读不到 (\d+) 次")
+CASTS = re.compile(r"脚本读条\(E-168\):排上 (\d+) 次,到期执行 (\d+) 次")
 MIX = re.compile(r"怪物构成\(E-147\):进过的房间里共 (\d+) 只,\.ai 脚本指挥 (\d+) 只,默认 AI 走位大脑 (\d+) 只,默认 AI 占位 (\d+) 只")
 UNS_BEH = re.compile(r"脚本没做的行为\(E-147,实际执行次数\):(.*)")
 UNS_TRG = re.compile(r"脚本读不懂的触发器标签\(E-147,运行器每次开始算一次\):(.*)")
@@ -153,6 +154,9 @@ def run_one(path, seed, seconds, real_timeout, explore, damage=False, scale=1000
     ai = ATKINFO.search(text)
     if ai:
         rec["atkinfo_changed"], rec["atkinfo_missing"] = (int(ai.group(i)) for i in range(1, 3))
+    cs = CASTS.search(text)
+    if cs:
+        rec["casts_armed"], rec["casts_fired"] = (int(cs.group(i)) for i in range(1, 3))
     mx = MIX.search(text)
     if mx:
         rec["mon_total"], rec["mon_scripted"], rec["mon_brain"], rec["mon_placeholder"] = (int(mx.group(i)) for i in range(1, 5))
@@ -311,6 +315,9 @@ def main(argv):
     with_atk = sum(1 for r in results if r.get("atkinfo_changed", 0) > 0)
     print("换攻击信息(只在本机,E-167):脚本换过攻击信息的副本 %d 个;换上或恢复 %d 次,文件读不到 %d 次"
           % (with_atk, sum(r.get("atkinfo_changed", 0) for r in results), sum(r.get("atkinfo_missing", 0) for r in results)))
+    with_cast = sum(1 for r in results if r.get("casts_armed", 0) > 0)
+    print("读条(只在本机,E-168):脚本排过读条的副本 %d 个;排上 %d 次,到期执行 %d 次"
+          % (with_cast, sum(r.get("casts_armed", 0) for r in results), sum(r.get("casts_fired", 0) for r in results)))
     mix = {}
     for r in results:
         d = r["dungeon"].split("/")[1]

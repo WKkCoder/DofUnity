@@ -222,6 +222,7 @@ internal static class DungeonCheck
         Console.WriteLine("脚本换动作文件(E-151):换上 " + session.ActionFilesApplied + " 次,记成待换 " + session.ActionFilesDeferred + " 次,这一版没有对应动作的族 "
             + session.ActionFilesUnhosted + " 次,序号越界 " + session.ActionFilesRejected + " 次,文件读不到 " + session.ActionFilesMissing + " 次");
         Console.WriteLine("脚本换攻击信息(E-167):换上或恢复 " + session.AttackInfosChanged + " 次,文件读不到 " + session.AttackInfosMissing + " 次");
+        Console.WriteLine("脚本读条(E-168):排上 " + session.CastsArmed + " 次,到期执行 " + session.CastsFired + " 次");
         session.CountMonsterAi(out int aiScripted, out int aiBrain, out int aiPlaceholder);
         Console.WriteLine("怪物构成(E-147):进过的房间里共 " + (aiScripted + aiBrain + aiPlaceholder) + " 只,.ai 脚本指挥 " + aiScripted + " 只,默认 AI 走位大脑 " + aiBrain
             + " 只,默认 AI 占位 " + aiPlaceholder + " 只");

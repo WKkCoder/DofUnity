@@ -1356,6 +1356,12 @@ namespace Dnf.Play
         /// <summary>[CHANGE ATTACKINFO] 要换的 .atk 读不出来的次数(客户端同样什么都不做)。</summary>
         public int AttackInfosMissing { get; private set; }
 
+        /// <summary>脚本 [CASTING] 排上读条的次数(同一时刻只有一条,顶掉也各算一次;M69b,E-168)。</summary>
+        public int CastsArmed { get; private set; }
+
+        /// <summary>读条到期、行为组执行了的次数;排上的读条因动作结束而作废的不在里面。</summary>
+        public int CastsFired { get; private set; }
+
         private int SumMonsters(Func<MonsterActor, int> counter)
         {
             int n = 0;
@@ -3888,6 +3894,16 @@ namespace Dnf.Play
             public void ChangeAttackInfo(IActEntity owner, string path, string fromProgram)
             {
                 _session.ChangeAttackInfo(owner, path, fromProgram);
+            }
+
+            public void CastArmed(IActEntity owner, int milliseconds, int group)
+            {
+                _session.CastsArmed++;
+            }
+
+            public void CastFired(IActEntity owner, int group)
+            {
+                _session.CastsFired++;
             }
 
             public void NoteUnsupportedBehavior(string tag)

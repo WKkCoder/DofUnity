@@ -248,6 +248,16 @@ public sealed partial class ActRuntimeTests
         public void ChangeAttackInfo(IActEntity owner, string path, string fromProgram)
             => AttackChanges.Add((owner, path, fromProgram));
 
+        /// <summary>M69b(E-168):[CASTING] 排上读条时宿主收到的通知(拥有者、读条毫秒、到期要跑的行为组号)。</summary>
+        public List<(IActEntity owner, int ms, int group)> CastsArmed { get; } = new();
+
+        /// <summary>M69b(E-168):读条到期、行为组真的执行时宿主收到的通知(拥有者、行为组号)。</summary>
+        public List<(IActEntity owner, int group)> CastsFired { get; } = new();
+
+        public void CastArmed(IActEntity owner, int milliseconds, int group) => CastsArmed.Add((owner, milliseconds, group));
+
+        public void CastFired(IActEntity owner, int group) => CastsFired.Add((owner, group));
+
         public void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into)
         {
             if (Sets.TryGetValue(selector, out List<IActEntity> list))

@@ -562,6 +562,11 @@ namespace Dnf.Play
 
         public int AttackInfosMissing => Sum(s => s.AttackInfosMissing);
 
+        /// <summary>脚本 [CASTING](证据 E-168):排上读条的次数、读条到期执行了行为组的次数(各房间之和)。</summary>
+        public int CastsArmed => Sum(s => s.CastsArmed);
+
+        public int CastsFired => Sum(s => s.CastsFired);
+
         /// <summary>整座副本进过的房间里的怪物按"谁来指挥"分类的个数(脚本、默认 AI 走位大脑、默认 AI 占位;各房间之和,证据 E-147)。</summary>
         public void CountMonsterAi(out int scripted, out int brain, out int placeholder)
         {

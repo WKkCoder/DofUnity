@@ -577,6 +577,17 @@ internal sealed class AvatarFixture : IDisposable
     public const int ChgBonusB = 100;
     public const string ChgAtkA = "monster/blob/attackinfo/chga.atk";
     public const string ChgAtkB = "monster/blob/attackinfo/chgb.atk";
+
+    /// <summary>
+    /// M69b(证据 E-168)的读条([CASTING])素材:出招动画 <see cref="CastAni"/> 四帧——第 0 帧停 5000 毫秒(占位:真数据里读条的出招常把第一帧的延时设得远大于读条时长,由到期的行为组 [SET FRAME] 跳走),
+    /// 第 1 帧 80、第 2 帧 80(带攻击框,形状同 <see cref="BlobStrikeAni"/>)、第 3 帧 80。
+    /// 怪物:xcast(帧 0 排 400 毫秒读条,到期跳到帧 1)、xcastnone(同一份动画,没有脚本:占位帧停满)、xcastspawn(帧 0 排 300 毫秒读条,到期放一个 <see cref="ActForeverId"/> 再跳到帧 1)、
+    /// xcastlate(出招 .act 用普通的四帧 80 毫秒动画,帧 1 排 2000 毫秒读条——动画早就放完了,读条随出招一起作废)、
+    /// xcastchain(帧 0 排 200 毫秒读条,到期那组再排 200 毫秒读条,再到期放一个 <see cref="ActForeverId"/> 并跳到帧 1)。
+    /// 被动对象:<see cref="ActCastId"/>(出生排 200 毫秒读条,到期放一个 <see cref="ActForeverId"/>)。数全是测试用的。
+    /// </summary>
+    public const int ActCastId = 9229;
+    public const string CastAni = "monster/blob/animation_blob/cast.ani";
     public const int HomeMonsterCode = 77;
     public const string ActObjectDir = "passiveobject/blob";
     public const string ActBoomAni = "passiveobject/blob/animation/boom.ani";
@@ -783,6 +794,7 @@ internal sealed class AvatarFixture : IDisposable
     private const string DownActAni = "../Animation_Blob/Down.ani";
     private const string LastActAni = "../Animation_Blob/Last.ani";
     private const string StrikeActAni = "../Animation_Blob/Strike.ani";
+    private const string CastActAni = "../Animation_Blob/Cast.ani";
     private const string SwapStayActAni = "../Animation_Blob/StayB.ani";
     private const string SwapMoveActAni = "../Animation_Blob/MoveB.ani";
     private const string SwapDamage1ActAni = "../Animation_Blob/Damage1B.ani";
@@ -857,6 +869,12 @@ internal sealed class AvatarFixture : IDisposable
         ("xatkdefonly", new[] { "ActAtkDefOnly" }),
         ("xatkreset", new[] { "ActAtkSet", "ActPlain" }),
         ("xatkdefsecond", new[] { "ActChainEnd", "ActAtkDefOnly" }),
+        // M69b(证据 E-168):[CASTING]
+        ("xcast", new[] { "ActCast" }),
+        ("xcastnone", new[] { "ActCastNone" }),
+        ("xcastspawn", new[] { "ActCastSpawn" }),
+        ("xcastlate", new[] { "ActCastLate" }),
+        ("xcastchain", new[] { "ActCastChain" }),
         ("spawn9225", new[] { "ActSpawn9225" }),
         ("spawn9226", new[] { "ActSpawn9226" }),
         ("spawn9227", new[] { "ActSpawn9227" }),
@@ -1212,6 +1230,34 @@ internal sealed class AvatarFixture : IDisposable
             .Behavior(b => b.Tag("[CHANGE ATTACKINFO]").Str("../AttackInfo/ChgB.atk"))
             .Behavior(b => b.Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[END]"))
             .Build());
+        // M69b(证据 E-168):[CASTING]。出招动画 CastAni 的第 0 帧是 5000 毫秒的占位,读条到期的行为组把它跳走
+        // xcast:帧 0 排 400 毫秒读条,到期跳到帧 1
+        yield return (BlobActionDir + "/actcast.act", ActWith(CastActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(0, 0), 0)
+            .Behavior(b => b.Tag("[CASTING]").Int(400, 1))
+            .Behavior(b => b.Tag("[SET FRAME]").Int(1))
+            .Build());
+        // xcastnone:同一份动画,没有脚本——占位帧停满
+        yield return (BlobActionDir + "/actcastnone.act", ActMotion(CastActAni));
+        // xcastspawn:帧 0 排 300 毫秒读条,到期放一个对象再跳到帧 1
+        yield return (BlobActionDir + "/actcastspawn.act", ActWith(CastActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(0, 0), 0)
+            .Behavior(b => b.Tag("[CASTING]").Int(300, 1))
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0).Tag("[SET FRAME]").Int(1))
+            .Build());
+        // xcastlate:普通的四帧动画(共 320 毫秒),帧 1 排 2000 毫秒读条——出招先放完了,读条随之作废,放不出对象
+        yield return (BlobActionDir + "/actcastlate.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[CASTING]").Int(2000, 1))
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        // xcastchain:连着读两次条(各 200 毫秒),第二次到期才放对象并跳到帧 1
+        yield return (BlobActionDir + "/actcastchain.act", ActWith(CastActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(0, 0), 0)
+            .Behavior(b => b.Tag("[CASTING]").Int(200, 1))
+            .Behavior(b => b.Tag("[CASTING]").Int(200, 2))
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0).Tag("[SET FRAME]").Int(1))
+            .Build());
         // xfire:出招 .act 里挨到火元素的一击才放一个(出招运行器的 [ON DAMAGE] 也带元素)
         yield return (BlobActionDir + "/actxfire.act", ActWith(ThrowActAni)
             .Trigger(r => r.Tag("[ON DAMAGE]").Tag("[IS FIRE DAMAGE]"), 0)
@@ -1537,6 +1583,13 @@ internal sealed class AvatarFixture : IDisposable
             .Build());
         yield return (ActObjectDir + "/action/actatkswap_e1.act", ActWith("../animation/idle.ani")
             .Tag("[DEFAULT ATTACKINFO]").Str("../attackinfo/chga.atk")
+            .Build());
+        // ---- M69b(证据 E-168):被动对象出生排 200 毫秒读条,到期放一个不会消失的对象
+        yield return (ActObjectDir + "/actcast.obj", NewScript().Tag("[basic action]").Str("action/actcast.act").Build());
+        yield return (ActObjectDir + "/action/actcast.act", ActWith("../animation/idle.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[CASTING]").Int(200, 1))
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
             .Build());
         // ---- M62(证据 E-158):被动对象各动作的触发器开关板
         string boardRead = "[TRIGGER CHECK]";
@@ -2171,6 +2224,7 @@ internal sealed class AvatarFixture : IDisposable
                 .Int(ActAtkDefId).Str("blob/actatkdef.obj")
                 .Int(ActAtkSeqId).Str("blob/actatkseq.obj")
                 .Int(ActAtkSwapId).Str("blob/actatkswap.obj")
+                .Int(ActCastId).Str("blob/actcast.obj")
                 .Int(CrateObjectId).Str("MapObject/BreakableObject/Crate.obj")
                 .Int(BarrelObjectId).Str("MapObject/BreakableObject/Barrel.obj")
                 .Int(PillarObjectId).Str("MapObject/BreakableObject/Pillar.obj")
@@ -2298,6 +2352,9 @@ internal sealed class AvatarFixture : IDisposable
                 (8, 500, BlobHurtBox))),
             (BlobAnimationDir + "/attack1.ani", BuildBlobAni(false, (0, 80, BlobHurtBox), (1, 80, BlobHurtBox), (2, 80, BlobHurtBox))),
             (BlobStrikeAni, BuildBlobBoxesAni(false, (0, 80, new[] { BlobHurtBox }), (1, 80, new[] { BlobHurtBox }),
+                (2, 80, new[] { BlobHurtBox, BlobStrikeBox }), (3, 80, new[] { BlobHurtBox }))),
+            // M69b:读条出招动画,第 0 帧停 5000 毫秒(占位),其余各 80 毫秒,第 2 帧带攻击框
+            (CastAni, BuildBlobBoxesAni(false, (0, 5000, new[] { BlobHurtBox }), (1, 80, new[] { BlobHurtBox }),
                 (2, 80, new[] { BlobHurtBox, BlobStrikeBox }), (3, 80, new[] { BlobHurtBox }))),
             // M57:换进来的动画(见 SwapStayAni 的说明)
             (SwapStayAni, BuildBlobAni(true, (0, 100, BlobHurtBox), (1, 100, BlobHurtBox))),

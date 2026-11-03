@@ -249,6 +249,19 @@ namespace Dnf.Game.Act
         }
 
         /// <summary>
+        /// [CASTING](E-168):<paramref name="owner"/> 排上了一条读条,<paramref name="milliseconds"/> 毫秒后执行第 <paramref name="group"/> 个行为组。只为统计(场景数一数),
+        /// 读条本身由运行器自己计时与执行;默认什么都不做。
+        /// </summary>
+        void CastArmed(IActEntity owner, int milliseconds, int group)
+        {
+        }
+
+        /// <summary>[CASTING](E-168):读条到期、行为组 <paramref name="group"/> 已执行(目标集合此刻还在场的)。只为统计;默认什么都不做。</summary>
+        void CastFired(IActEntity owner, int group)
+        {
+        }
+
+        /// <summary>
         /// 舞台的横向总宽(世界坐标,像素;[IS END MAP] 要的,客户端 0x0046ef10 取地图的格数乘格宽;E-166)。
         /// 不知道舞台(没有地图的试验场)是 0,这时 [IS END MAP] 不通过(客户端取不到地图时也不通过)。
         /// </summary>
@@ -310,6 +323,15 @@ namespace Dnf.Game.Act
         private readonly List<IActEntity> _targets = new List<IActEntity>();
         private readonly Dictionary<string, int> _vars = new Dictionary<string, int>(StringComparer.Ordinal);
         private readonly List<Delayed> _delayed = new List<Delayed>();
+
+        /// <summary>
+        /// [CASTING] 的那一条读条(客户端:动作运行器上偏移 0x40c 起的三个字段,E-168):有没有排着、到期时刻(运行器自己的计时,毫秒;
+        /// 客户端读拥有者的对象时钟,会随它停住,运行器只在拥有者走动时才被更新,等价)、到期要执行的行为组号、排它时的目标集合。同一时刻只有一条,后写的顶掉先写的。
+        /// </summary>
+        private bool _castArmed;
+        private long _castDueMs;
+        private int _castGroup;
+        private readonly List<IActEntity> _castTargets = new List<IActEntity>();
 
         /// <summary>[SET POS FORCE] 的强制位移表(客户端:动作上偏移 0x43c 的记录队列,每次执行这条行为先清空;动作重来时也清空,E-152)。</summary>
         private readonly List<ForcedMove> _forced = new List<ForcedMove>();
@@ -446,6 +468,8 @@ namespace Dnf.Game.Act
             _victim = null;
             _attacker = null;
             _delayed.Clear();      // 排队的延迟行为随动作重来作废(推断);变量不清,留到下一次(E-132)
+            _castArmed = false;    // 读条随动作结束作废(客户端:动作结束时重置 +0x40c 并让拥有者停读条,0x010ace2f,E-168)
+            _castTargets.Clear();
             _forced.Clear();       // 强制位移表属于动作,动作重来时清空(E-152)
             foreach (string tag in _unsupportedTriggerTags)
             {
@@ -500,6 +524,7 @@ namespace Dnf.Game.Act
             _lastFrame = frame;
             _frame = frame;
             ApplyForcedMoves();
+            RunCast();
         }
 
         /// <summary>主角被此对象的攻击命中(<paramref name="victim"/>);唤醒带 [ON ATTACKSUCCESS] 的触发器。</summary>
@@ -1256,6 +1281,57 @@ namespace Dnf.Game.Act
             }
         }
 
+        /// <summary>
+        /// 执行 [CASTING] 毫秒 n(客户端 0x010bd088 起的块,行为码 0x7e;E-168):先把读条的目标列表清空、再装进此刻的目标集合(客户端的顺序:参数不合格也已经换了列表),
+        /// 然后毫秒小于 0 或行为组号小于 1 的什么都不排;合格的把到期时刻记成"此刻计时 + 毫秒"、行为组号记下,顶掉之前那一条。
+        /// </summary>
+        private void Cast(ActBehavior b, List<IActEntity> targets)
+        {
+            int ms = b.CastMs.Eval(_rand);
+            int group = b.CastGroup.Eval(_rand);
+            _castTargets.Clear();
+            _castTargets.AddRange(targets);
+            if (ms < 0 || group < 1)
+            {
+                return;
+            }
+            _castArmed = true;
+            _castDueMs = ElapsedMs() + ms;
+            _castGroup = group;
+            _host.CastArmed(_owner, ms, group);
+        }
+
+        /// <summary>运行器自己的计时(毫秒;每次更新累加传进来的间隔)。</summary>
+        private long ElapsedMs() => (long)Math.Round(_time * 1000.0);
+
+        /// <summary>
+        /// 每次更新的末尾:读条到期了就执行它的行为组(客户端 0x010ae2af 起,在整个更新函数的最后;E-168)。
+        /// 先清读条再执行,行为组里再排一条 [CASTING](连着读两次条,全库 13 处)才不会被清掉;目标集合空了(排的时候就是空的)只清不执行;目标里已经不在场的不再作用。
+        /// 客户端(推断:0x010d1370 把"执行第 n 组、目标列表"写进一个网络包,要有本机的控制权、列表非空才写)到点之后到真正执行之间隔一段消息往返,这里同一次更新里直接执行。
+        /// </summary>
+        private void RunCast()
+        {
+            if (!_castArmed || ElapsedMs() < _castDueMs)
+            {
+                return;
+            }
+            _castArmed = false;
+            if (_castTargets.Count == 0)
+            {
+                return;
+            }
+            var targets = new List<IActEntity>(_castTargets);
+            _castTargets.Clear();
+            targets.RemoveAll(t => !t.IsAlive);
+            int group = _castGroup;
+            if (group >= _program.Behaviors.Count)
+            {
+                return;                // 组号越界(全库 13 处):找不到这一组,什么都不执行也不算"到期执行"(推断:接收一边按组号取不到)
+            }
+            _host.CastFired(_owner, group);
+            RunGroup(group, targets);
+        }
+
         private void RunGroup(int k, List<IActEntity> targets)
         {
             if (k < 0 || k >= _program.Behaviors.Count)
@@ -1433,6 +1509,10 @@ namespace Dnf.Game.Act
                     case ActBehaviorKind.ChangeAttackInfo:
                         // 客户端 0x010b775e 起的块(行为码 0x67):直接对行为拥有者(执行上下文里的拥有者字段)设攻击信息,不循环目标集合,所以 [DO BEHAVIOR] 的目标写什么都一样(E-167)
                         _host.ChangeAttackInfo(_owner, b.FilePath, _program.Path);
+                        break;
+                    case ActBehaviorKind.Casting:
+                        // 客户端 0x010bd088 起的块(行为码 0x7e):记在拥有者的运行器上,不分目标地执行一次(E-168)
+                        Cast(b, targets);
                         break;
                     case ActBehaviorKind.ActiveStatus:
                         // 客户端 0x010bbec6 起的块:对集合里每个"活动对象"(类型位 0x11,主角与怪物;被动对象没有)调一次挂状态,源头是行为拥有者(E-144)

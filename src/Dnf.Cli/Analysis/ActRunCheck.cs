@@ -69,10 +69,52 @@ internal static class ActRunCheck
         public readonly SortedDictionary<string, int> ForceDirections = new(StringComparer.Ordinal);
         public readonly SortedDictionary<string, int> ForceAxes = new(StringComparer.Ordinal);
 
+        /// <summary>
+        /// [CASTING](M69b,E-168)按行为条数计:读通的条数、读不通的条数(两个值读不全)、行为组号越界的条数、指向紧跟本组的下一组的条数、指向别的组的条数、
+        /// 值带随机的条数,以及到期要执行的行为组第一条的种类分布(一个值有多个可能的,每个可能都算)。
+        /// </summary>
+        public int CastUses;
+        public int CastBroken;
+        public int CastOutOfRange;
+        public int CastNext;
+        public int CastOther;
+        public int CastRandom;
+        public readonly SortedDictionary<string, int> CastFirstKinds = new(StringComparer.Ordinal);
+
         private static void Bump(SortedDictionary<string, int> map, string key)
         {
             map.TryGetValue(key, out int n);
             map[key] = n + 1;
+        }
+
+        private void CountCast(ActProgram program, ActBehavior b, int own)
+        {
+            CastUses++;
+            CastRandom += b.CastMs.IsConstant && b.CastGroup.IsConstant ? 0 : 1;
+            bool outOfRange = false;
+            bool next = false;
+            bool other = false;
+            foreach (int k in b.CastGroup.Candidates())
+            {
+                if (k < 1 || k >= program.Behaviors.Count)
+                {
+                    outOfRange = true;
+                    continue;
+                }
+                if (k == own + 1)
+                {
+                    next = true;
+                }
+                else
+                {
+                    other = true;
+                }
+                ActBehaviorGroup target = program.Behaviors[k];
+                Bump(CastFirstKinds, target.Items.Count == 0 ? "(空)" : target.Items[0].Kind.ToString());
+            }
+            CastOutOfRange += outOfRange ? 1 : 0;
+            CastNext += next ? 1 : 0;
+            CastOther += other ? 1 : 0;
         }
 
         private void CountForce(ActBehavior b)
@@ -196,9 +238,11 @@ internal static class ActRunCheck
                     ConditionOnly++;
                 }
             }
+            int groupIndex = -1;
             foreach (ActBehaviorGroup g in program.Behaviors)
             {
                 Groups++;
+                groupIndex++;
                 if (g.UnsupportedTags.Count > 0)
                 {
                     GroupsWithUnsupported++;
@@ -242,6 +286,14 @@ internal static class ActRunCheck
                     {
                         ActiveStatusBroken++;
                     }
+                    if (b.Kind == ActBehaviorKind.Casting)
+                    {
+                        CountCast(program, b, groupIndex);
+                    }
+                    else if (b.Kind == ActBehaviorKind.Unsupported && b.Tag == "[CASTING]")
+                    {
+                        CastBroken++;
+                    }
                     if (b.Kind == ActBehaviorKind.SetPosForce)
                     {
                         CountForce(b);
@@ -282,6 +334,8 @@ internal static class ActRunCheck
             Console.WriteLine("  [TRIGGER] 开关读通 " + TriggerSwitchPools.Values.Sum() + " 条(按作用的动作族:" + Join(TriggerSwitchPools, 12) + "),读不通 " + TriggerSwitchBroken + " 条");
             Console.WriteLine("  [SET POS FORCE] 读通 " + ForceBlocks + " 块(动自己 " + ForceMoveMe + ",值带随机 " + ForceRandom + ";基准点:" + Join(ForceOrigins, 6) + ";朝向来源:"
                 + Join(ForceDirections, 6) + ";各轴写了几个值:" + Join(ForceAxes, 12) + "),读不通 " + ForceBroken + " 块");
+            Console.WriteLine("  [CASTING] 读通 " + CastUses + " 条(读不通 " + CastBroken + ";行为组号越界 " + CastOutOfRange + ",指向紧跟的下一组 " + CastNext + "、别的组 " + CastOther + ",值带随机 " + CastRandom
+                + ";到期执行的行为组第一条按种类:" + Join(CastFirstKinds, 12) + ")");
             Console.WriteLine("  读不通的 [CREATE PASSIVEOBJECT] " + CreateBroken + " 条(缺 [INDEX] " + CreateNoIndex + ",缺 [POS] " + CreateNoPos + ")");
             Console.WriteLine("  读不懂的触发器标签(种数 " + UnsupportedTriggerTags.Count + ",按触发器条数):" + Join(UnsupportedTriggerTags, 25));
             Console.WriteLine("  读不懂的行为标签(种数 " + UnsupportedBehaviorTags.Count + ",按行为组个数):" + Join(UnsupportedBehaviorTags, 25));
@@ -295,6 +349,7 @@ internal static class ActRunCheck
             ActiveStatusKinds, ActiveStatusBroken, ActiveStatusSpill, ActiveStatusMissing, ActiveStatusTargets,
             TriggerSwitchPools, TriggerSwitchBroken,
             ForceBlocks, ForceBroken, ForceMoveMe, ForceRandom, ForceOrigins, ForceDirections, ForceAxes,
+            CastUses, CastBroken, CastOutOfRange, CastNext, CastOther, CastRandom, CastFirstKinds,
         };
     }
 
@@ -603,6 +658,8 @@ internal static class ActRunCheck
         public long Ms;
         public int Refused;
         public int Summons;
+        public int CastsArmed;
+        public int CastsFired;
 
         public LiveWorld(ActLibrary library, MonsterActor root)
         {
@@ -649,6 +706,16 @@ internal static class ActRunCheck
         public void SummonMonster(IActEntity master, int index, int level, float x, float y, float z, bool facingLeft, int lifetimeMs)
         {
             Summons++;
+        }
+
+        public void CastArmed(IActEntity owner, int milliseconds, int group)
+        {
+            CastsArmed++;
+        }
+
+        public void CastFired(IActEntity owner, int group)
+        {
+            CastsFired++;
         }
 
         /// <summary>把世界里还活着的被动对象推进 <paramref name="ms"/> 毫秒(怪物的实跑用;对象的运行器一起跑)。</summary>
@@ -1089,6 +1156,145 @@ internal static class ActRunCheck
     /// 直接让脚本的 [SET ACTION] [CUSTOM] n 那条路径把它切进去,按 10 毫秒一步最多跑 60 秒,看抛不抛异常、自己结束还是一直放着。
     /// 不是战斗模拟:没有主角,依赖主角的条件都不成立;从出招里切进来的路径(出招 → 自定义动作)由全库扫描覆盖。
     /// </summary>
+    /// <summary>
+    /// 带 [CASTING] 的招式实跑的统计(E-168):空场地、没有主角与目标,把每只怪物每一条带读条的招式单独放一遍,最多 <see cref="MaxSteps"/> 步(每步 10 毫秒)。
+    /// 只数个数与时长档位,不输出路径与怪物编号。
+    /// </summary>
+    private sealed class LiveCastTally
+    {
+        public const int MaxSteps = 6000;
+
+        public int Monsters;
+        public int NoModel;
+        public int Attacks;
+        public int NotEntered;
+        public int Failed;
+        public int Ended;
+        public int StillRunning;
+        public int Spawned;
+        public long Armed;
+        public long Fired;
+        public int Unfinished;
+        public readonly SortedDictionary<string, int> EndedBy = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        public readonly SortedDictionary<string, int> Errors = new SortedDictionary<string, int>(StringComparer.Ordinal);
+
+        public void Print()
+        {
+            Console.WriteLine("  带 [CASTING] 的招式实跑(空场地、没有主角与目标、每招最多 " + MaxSteps / 100 + " 秒;E-168):怪物 " + Monsters + " 只(模型读不出 " + NoModel + " 只),共 " + Attacks
+                + " 招(没切进去 " + NotEntered + " 招,抛异常 " + Failed + " 招);自己放完 " + Ended + " 招(" + Join(EndedBy, 6) + "),到时间还在放 " + StillRunning + " 招;放出被动对象 " + Spawned + " 个;读条排上 "
+                + Armed + " 次、到期执行 " + Fired + " 次、排上了却没执行的招式 " + Unfinished + " 招(出招先放完,或行为组号越界)"
+                + (Errors.Count > 0 ? ";异常 " + Join(Errors, 6) : string.Empty));
+        }
+
+        public object ToJson() => new { Monsters, NoModel, Attacks, NotEntered, Failed, Ended, StillRunning, Spawned, Armed, Fired, Unfinished, EndedBy, Errors };
+    }
+
+    private static bool HasCastTag(ActProgram program)
+    {
+        foreach (ActBehaviorGroup g in program.Behaviors)
+        {
+            foreach (ActBehavior b in g.Items)
+            {
+                if (b.Tag == "[CASTING]")
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static LiveCastTally RunLiveCasts(DnfAssets assets, GameData data, ActLibrary library)
+    {
+        var tally = new LiveCastTally();
+        var walk = new RectUnionArea(new List<WorldRect>());
+        foreach (int id in data.MonsterIds())
+        {
+            MonsterDef? def = data.GetMonster(id);
+            if (def == null)
+            {
+                continue;
+            }
+            MonsterModel model;
+            try
+            {
+                model = MonsterModel.Read(assets, def.Path);
+            }
+            catch (Exception)
+            {
+                tally.NoModel++;
+                continue;
+            }
+            IReadOnlyList<string> paths = model.AttackActionPaths;
+            var programs = new ActProgram?[paths.Count];
+            var casting = new List<int>();
+            for (int i = 0; i < programs.Length; i++)
+            {
+                ActProgram? p = library.Program(paths[i]);
+                if (p != null && p.Triggers.Count > 0)
+                {
+                    programs[i] = p;
+                    if (HasCastTag(p))
+                    {
+                        casting.Add(i);
+                    }
+                }
+            }
+            if (casting.Count == 0)
+            {
+                continue;
+            }
+            tally.Monsters++;
+            foreach (int a in casting)
+            {
+                var actor = new MonsterActor(0, new RoomMonsterSpawn(1, 0, 300, 100, 0, 0, 1, 0, "[fixed]", "[normal]"), model, 1, 100000000, 222.5, 1500, 0);
+                var world = new LiveWorld(library, actor);
+                actor.SetActs(programs!, world);
+                tally.Attacks++;
+                try
+                {
+                    actor.ActSelf.SetAction(ActActionKind.Attack, a, true, false);
+                    if (actor.Phase != MonsterPhase.Attack)
+                    {
+                        tally.NotEntered++;
+                        continue;
+                    }
+                    int steps = 0;
+                    for (; steps < LiveCastTally.MaxSteps; steps++)
+                    {
+                        actor.Update(10, 0, 0, false, walk);
+                        world.Tick(10);
+                        if (actor.Phase != MonsterPhase.Attack)
+                        {
+                            break;
+                        }
+                    }
+                    if (steps < LiveCastTally.MaxSteps)
+                    {
+                        tally.Ended++;
+                        string bucket = EndedBucket(steps + 1);
+                        tally.EndedBy[bucket] = tally.EndedBy.TryGetValue(bucket, out int b) ? b + 1 : 1;
+                    }
+                    else
+                    {
+                        tally.StillRunning++;
+                    }
+                }
+                catch (Exception e)
+                {
+                    tally.Failed++;
+                    tally.Errors[e.GetType().Name] = tally.Errors.TryGetValue(e.GetType().Name, out int c) ? c + 1 : 1;
+                    continue;
+                }
+                tally.Spawned += world.All.Count;
+                tally.Armed += world.CastsArmed;
+                tally.Fired += world.CastsFired;
+                tally.Unfinished += world.CastsArmed > world.CastsFired ? 1 : 0;
+            }
+        }
+        return tally;
+    }
+
     private sealed class LiveCustomTally
     {
         public const int MaxSteps = 6000;
@@ -2033,6 +2239,8 @@ internal static class ActRunCheck
         customs.Print();
         LiveCustomTally liveCustoms = RunLiveCustoms(assets, data, library);
         liveCustoms.Print();
+        LiveCastTally liveCasts = RunLiveCasts(assets, data, library);
+        liveCasts.Print();
         int templates = 0;
         foreach (int id in reached)
         {
@@ -2081,6 +2289,8 @@ internal static class ActRunCheck
             "怪物自己的 .act 里 [SET ACTION] [CUSTOM] n 的 n 落在 [etc action] 列表里的不低于 95%(" + customs.UsesInRange + "/" + customs.Uses + ")");
         Report(liveCustoms.Entries > 0 && liveCustoms.Failed == 0 && liveCustoms.NotEntered == 0,
             "怪物的自定义动作实跑(E-159):每一项都切得进去、各跑最多 60 秒不抛异常(" + liveCustoms.Entries + " 项,没切进去 " + liveCustoms.NotEntered + " 项,抛异常 " + liveCustoms.Failed + " 项)");
+        Report(liveCasts.Attacks > 0 && liveCasts.Failed == 0 && liveCasts.NotEntered == 0,
+            "带 [CASTING] 的招式实跑(E-168):每一招都切得进去、各跑最多 60 秒不抛异常(" + liveCasts.Attacks + " 招,没切进去 " + liveCasts.NotEntered + " 招,抛异常 " + liveCasts.Failed + " 招)");
         Report(boardAll > 0 && boardHit * 100 >= boardAll * 95,
             "被动对象跨动作的开关读写(E-158)落到自己有触发器的动作上的不低于 95%(" + boardHit + "/" + boardAll + ")");
         int forceAll = monsterTally.ForceBlocks + monsterTally.ForceBroken;
@@ -2106,6 +2316,7 @@ internal static class ActRunCheck
                 homing = homing.ToJson(),
                 monsterCustoms = customs.ToJson(),
                 liveCustoms = liveCustoms.ToJson(),
+                liveCasts = liveCasts.ToJson(),
             };
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(opts.JsonFile))!);
             File.WriteAllText(opts.JsonFile, JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));

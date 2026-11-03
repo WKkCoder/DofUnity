@@ -535,6 +535,16 @@ namespace Dnf.Game.Act
         /// </summary>
         ChangeAttackInfo,
 
+        /// <summary>
+        /// [CASTING] 毫秒 n(客户端行为码 0x7e,代码块 0x010bd088;E-168):读条。拥有者上记下"毫秒后到期、到期时按此刻的目标集合执行第 n 个行为组",
+        /// 到期由运行器每次更新的末尾检查(<see cref="ActRunner.Update"/>);同一时刻只有一条读条,后写的顶掉先写的;动作结束(运行器被丢弃或重新开始)读条作废。
+        /// 毫秒小于 0 或 n 小于 1 的什么都不排。全库 372 处用法的 n 几乎都是紧跟读条的下一个行为组(下一组多是 [SET FRAME]、放被动对象、[SET ACTION]、召唤)——
+        /// 读条所在的那一帧在动画里是个延时远大于读条时长的占位帧,靠到期的 [SET FRAME] 把动画推出去;所以不接这条行为的怪物会在占位帧上白站好几秒。
+        /// 毫秒数 <see cref="ActBehavior.CastMs"/> 与行为组号 <see cref="ActBehavior.CastGroup"/> 都是值表达式。
+        /// 客户端同时让拥有者显示读条槽(虚槽 0x3a8),只是画面,这一版没有。
+        /// </summary>
+        Casting,
+
         /// <summary>[SHAKING] 强度 毫秒:屏幕震动,不分目标,由行为拥有者所在的场景执行(E-133)。</summary>
         Shake,
 
@@ -914,6 +924,14 @@ namespace Dnf.Game.Act
         /// [CHANGE ATTACKINFO] 也把它的 .atk 路径放在这里(同样相对 .act 所在目录),写 [DEFAULT] 时是 null(E-167)。
         /// </summary>
         public string FilePath { get; internal set; }
+
+        // ---- [CASTING]
+
+        /// <summary>读条的时长(毫秒,值表达式,每次执行取一次);小于 0 不排。</summary>
+        public ActValue CastMs { get; internal set; }
+
+        /// <summary>读条到期要执行的行为组号(值表达式,每次执行取一次);小于 1 不排。</summary>
+        public ActValue CastGroup { get; internal set; }
 
         // ---- [APPENDAGE] / [DELETE APPENDAGE]
 
