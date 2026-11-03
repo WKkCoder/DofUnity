@@ -625,8 +625,21 @@ internal static class ActRunCheck
             All.Add(new PassiveObject(template, owner, _root, this, x, y, z, facingLeft));
         }
 
+        /// <summary>主角与怪物的替身(M67 追踪实跑用;别的实跑里是空的)。</summary>
+        public readonly List<IActEntity> Heroes = new List<IActEntity>();
+
+        public readonly List<IActEntity> Monsters = new List<IActEntity>();
+
         public void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into)
         {
+            if (selector == ActSelector.Character)
+            {
+                into.AddRange(Heroes);
+            }
+            else if (selector == ActSelector.Monster)
+            {
+                into.AddRange(Monsters);
+            }
         }
 
         public void Shake(int strength, int durationMs)
@@ -673,6 +686,319 @@ internal static class ActRunCheck
                 {
                     break;
                 }
+            }
+        }
+    }
+
+    /// <summary>站着不动的替身(追踪实跑里的"主角"或"怪物"):活着、没有目标、血量很大。</summary>
+    private sealed class Stand : IActEntity
+    {
+        public Stand(ActEntityKind kind, int objectIndex, float x, float y)
+        {
+            Kind = kind;
+            ObjectIndex = objectIndex;
+            X = x;
+            Y = y;
+        }
+
+        public ActEntityKind Kind { get; }
+        public int ObjectIndex { get; }
+        public float X { get; }
+        public float Y { get; }
+        public float Z => 0;
+        public bool FacingLeft => false;
+        public bool IsAlive => true;
+        public IActEntity? Target => null;
+        public IActEntity? Master => null;
+        public int MotionVersion => 0;
+        public int Hp => 1000000;
+        public int HpMax => 1000000;
+        public int Level => 1;
+
+        public void SetFacing(bool left)
+        {
+        }
+
+        public void SetSpeed(bool hasX, float vx, bool hasY, float vy, bool hasZ, float vz)
+        {
+        }
+
+        public void SetAction(ActActionKind kind, int index, bool now, bool atEnd)
+        {
+        }
+
+        public void Destroy(bool force)
+        {
+        }
+
+        public void AttackRect(ActAttackRectMode mode)
+        {
+        }
+
+        public void SetFrame(int frame)
+        {
+        }
+
+        public void SetDamageBox(ActDamageBoxMode mode)
+        {
+        }
+
+        public void SetFloatingHeight(int height)
+        {
+        }
+
+        public bool Teleport(float x, float y, float z) => false;
+
+        public void SetHp(int hp)
+        {
+        }
+    }
+
+    /// <summary>
+    /// 被动对象追踪(M67,E-165;汇总数,本机,非 REA):全表里带 [homing] 块的 .obj 的分布(启用数、追踪种类、各开关的出现数),
+    /// 以及每个启用了追踪的对象的实跑(主角替身站在前方 400 像素、纵深差 60 处;怪物替身与它同位置;每个对象按 10 毫秒一步最多跑 5 秒):
+    /// 抛不抛异常、位置与速度出不出现非数、控制器检查过没有、定过方向没有、离替身最近的距离比出发时近了没有。不是战斗模拟:替身不动,没有碰撞与受击。
+    /// </summary>
+    private sealed class HomingTally
+    {
+        public int Blocks;
+        public int Used;
+        public int ReachedUsed;
+        public int FollowMe;
+        public int FollowEnemy;
+        public int FollowMonster;
+        public int FollowCharacter;
+        public int Smooth;
+        public int Instant;
+        public int StraightAim;
+        public int SyncMove;
+        public int SyncRotation;
+        public int Timed;
+        public int Kept;
+        public int Directed;
+        public int AccelUp;
+        public int AccelDown;
+        public int Turned;
+        public int NarrowCone;
+        public int Live;
+        public int NoTemplate;
+        public int Failed;
+        public int NonFinite;
+        public int Targeted;
+        public int Checked;
+        public int Steered;
+        public int Approached;
+        public int Ended;
+        public int NeverChecked;
+        public int NeverCheckedStraight;
+        public int NeverCheckedOff;
+        public int NeverCheckedGone;
+        public int NeverCheckedOther;
+        public int NotApproached;
+        public int NotApproachedUnchecked;
+        public int NotApproachedZeroSpeed;
+        public int NotApproachedNarrow;
+        public int NotApproachedDirected;
+        public int NotApproachedOther;
+        public readonly SortedDictionary<string, int> Errors = new SortedDictionary<string, int>(StringComparer.Ordinal);
+
+        public void Print()
+        {
+            Console.WriteLine("被动对象追踪(E-165):带 [homing] 块的 " + Blocks + " 个,启用的(homing use 非 0)" + Used + " 个(怪物出招能放出的 " + ReachedUsed + " 个);块里的追踪种类 ME " + FollowMe
+                + " / ENEMY " + FollowEnemy + " / MONSTER " + FollowMonster + " / CHARACTER " + FollowCharacter);
+            Console.WriteLine("  启用的里:有 [max rotation] 的 " + Smooth + " 个,没有的 " + Instant + " 个;[straight homing] " + StraightAim + " 个,[sync target move] " + SyncMove
+                + " 个,[sync animation rotation] " + SyncRotation + " 个;有 [homing time] 的 " + Timed + " 个,有 [homing keep distance] 的 " + Kept + " 个,[homing direction] 不是 -1 的 " + Directed
+                + " 个;加速度为正 " + AccelUp + " 个、为负 " + AccelDown + " 个;[init rotation] 非 0 的 " + Turned + " 个,[diff rotation] 小于 180 的 " + NarrowCone + " 个");
+            Console.WriteLine("  实跑(替身站在前方,每个对象最多 5 秒):对象 " + Live + " 个(没有模板 " + NoTemplate + " 个,抛异常 " + Failed + " 个,出现非数 " + NonFinite + " 个);出生时取到追踪对象的 " + Targeted
+                + " 个,控制器检查过的 " + Checked + " 个,定过方向(出生之外)的 " + Steered + " 个,离替身最近距离比出发时近了的 " + Approached + " 个,5 秒内自己消失的 " + Ended + " 个"
+                + (Errors.Count > 0 ? ";异常 " + Join(Errors, 6) : string.Empty));
+            Console.WriteLine("  没检查过的 " + NeverChecked + " 个:[straight homing] " + NeverCheckedStraight + " 个、追踪被脚本关着 " + NeverCheckedOff + " 个、第一步前就没了 " + NeverCheckedGone + " 个、别的 " + NeverCheckedOther
+                + " 个;没走近的 " + NotApproached + " 个:其中没检查过的 " + NotApproachedUnchecked + " 个、速度与加速度都不为正 " + NotApproachedZeroSpeed + " 个、追踪锥小于 180 度 " + NotApproachedNarrow + " 个、朝向码不是 -1 " + NotApproachedDirected + " 个、别的 " + NotApproachedOther + " 个");
+        }
+
+        public object ToJson() => new
+        {
+            Blocks, Used, ReachedUsed, FollowMe, FollowEnemy, FollowMonster, FollowCharacter, Smooth, Instant, StraightAim, SyncMove, SyncRotation, Timed, Kept, Directed,
+            AccelUp, AccelDown, Turned, NarrowCone, Live, NoTemplate, Failed, NonFinite, Targeted, Checked, Steered, Approached, Ended, NeverChecked, NeverCheckedStraight, NeverCheckedOff,
+            NeverCheckedGone, NeverCheckedOther, NotApproached, NotApproachedUnchecked, NotApproachedZeroSpeed, NotApproachedNarrow, NotApproachedDirected, NotApproachedOther, Errors,
+        };
+    }
+
+    private static void CountHoming(Dnf.Game.PassiveObjectDef? def, bool reached, HomingTally t)
+    {
+        HomingDef? h = def?.Homing;
+        if (h == null)
+        {
+            return;
+        }
+        t.Blocks++;
+        switch (h.Follow)
+        {
+            case HomingFollow.Me:
+                t.FollowMe++;
+                break;
+            case HomingFollow.Enemy:
+                t.FollowEnemy++;
+                break;
+            case HomingFollow.Monster:
+                t.FollowMonster++;
+                break;
+            case HomingFollow.Character:
+                t.FollowCharacter++;
+                break;
+        }
+        if (!h.Use)
+        {
+            return;
+        }
+        t.Used++;
+        t.ReachedUsed += reached ? 1 : 0;
+        t.Smooth += h.MaxRotation != 0f ? 1 : 0;
+        t.Instant += h.MaxRotation == 0f ? 1 : 0;
+        t.StraightAim += h.Straight ? 1 : 0;
+        t.SyncMove += h.SyncTargetMove ? 1 : 0;
+        t.SyncRotation += h.SyncAnimationRotation ? 1 : 0;
+        t.Timed += h.TimeMs > 0 ? 1 : 0;
+        t.Kept += h.KeepDistance != 0 ? 1 : 0;
+        t.Directed += h.Direction != -1 ? 1 : 0;
+        t.AccelUp += h.Acceleration > 0 ? 1 : 0;
+        t.AccelDown += h.Acceleration < 0 ? 1 : 0;
+        t.Turned += h.InitRotation != 0f ? 1 : 0;
+        t.NarrowCone += h.DiffRotation < HomingDef.DefaultDiffRotation ? 1 : 0;
+    }
+
+    private static bool Finite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);
+
+    private static MonsterActor? MakeRoot(DnfAssets assets, GameData data)
+    {
+        foreach (int mid in data.MonsterIds())
+        {
+            MonsterDef? def = data.GetMonster(mid);
+            if (def == null)
+            {
+                continue;
+            }
+            try
+            {
+                MonsterModel model = MonsterModel.Read(assets, def.Path);
+                return new MonsterActor(0, new RoomMonsterSpawn(1, 0, 0, 0, 0, 0, 1, 0, "[fixed]", "[normal]"), model, 1, 100, 222.5, 1500, 0);
+            }
+            catch (Exception)
+            {
+                // 读不了的怪物跳过,换下一个
+            }
+        }
+        return null;
+    }
+
+    private static void RunLiveHoming(HomingTally tally, DnfAssets assets, GameData data, ActLibrary library, IEnumerable<int> ids)
+    {
+        MonsterActor? root = MakeRoot(assets, data);
+        if (root == null)
+        {
+            return;
+        }
+        foreach (int id in ids)
+        {
+            HomingDef? h = data.GetPassiveObject(id)?.Homing;
+            if (h == null || !h.Use)
+            {
+                continue;
+            }
+            PassiveTemplate? template = library.Passive(id);
+            if (template == null)
+            {
+                tally.NoTemplate++;
+                continue;
+            }
+            var stand = new Stand(ActEntityKind.Character, 0, 700, 160);
+            var world = new LiveWorld(library, root);
+            world.Heroes.Add(stand);
+            world.Monsters.Add(new Stand(ActEntityKind.Monster, h.FollowParam, 700, 160));
+            try
+            {
+                var o = new PassiveObject(template, root.ActSelf, root, world, 300, 100, 0, false);
+                world.All.Add(o);
+                bool targeted = o.Homing != null && o.Homing.Target != null;
+                double start = Math.Sqrt((stand.X - o.X) * (stand.X - o.X) + (stand.Y - o.Y) * (stand.Y - o.Y));
+                double best = start;
+                bool nonFinite = false;
+                bool ended = false;
+                for (int t = 0; t < 5000; t += 10)
+                {
+                    for (int i = 0; i < world.All.Count; i++)
+                    {
+                        PassiveObject p = world.All[i];
+                        if (!p.Finished)
+                        {
+                            p.Update(10);
+                        }
+                    }
+                    world.Ms += 10;
+                    nonFinite |= !Finite(o.X) || !Finite(o.Y) || !Finite(o.Z) || !Finite(o.VelocityX) || !Finite(o.VelocityY);
+                    best = Math.Min(best, Math.Sqrt((stand.X - o.X) * (stand.X - o.X) + (stand.Y - o.Y) * (stand.Y - o.Y)));
+                    if (o.Finished)
+                    {
+                        ended = true;
+                        break;
+                    }
+                }
+                tally.Live++;
+                tally.Targeted += targeted ? 1 : 0;
+                tally.NonFinite += nonFinite ? 1 : 0;
+                tally.Checked += o.Homing != null && o.Homing.Checks > 0 ? 1 : 0;
+                tally.Steered += o.Homing != null && o.Homing.Steers > 1 ? 1 : 0;
+                tally.Approached += best < start - 1.0 ? 1 : 0;
+                tally.Ended += ended ? 1 : 0;
+                if (o.Homing == null || o.Homing.Checks == 0)
+                {
+                    tally.NeverChecked++;
+                    if (h.Straight)
+                    {
+                        tally.NeverCheckedStraight++;
+                    }
+                    else if (o.Homing != null && !o.Homing.On)
+                    {
+                        tally.NeverCheckedOff++;
+                    }
+                    else if (ended)
+                    {
+                        tally.NeverCheckedGone++;
+                    }
+                    else
+                    {
+                        tally.NeverCheckedOther++;
+                    }
+                }
+                if (!(best < start - 1.0))
+                {
+                    tally.NotApproached++;
+                    if (o.Homing == null || o.Homing.Checks == 0)
+                    {
+                        tally.NotApproachedUnchecked++;
+                    }
+                    else if (h.Speed <= 0 && h.Acceleration <= 0)
+                    {
+                        tally.NotApproachedZeroSpeed++;
+                    }
+                    else if (h.DiffRotation < HomingDef.DefaultDiffRotation)
+                    {
+                        tally.NotApproachedNarrow++;
+                    }
+                    else if (h.Direction != -1)
+                    {
+                        tally.NotApproachedDirected++;
+                    }
+                    else
+                    {
+                        tally.NotApproachedOther++;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                tally.Failed++;
+                tally.Errors[e.GetType().Name] = tally.Errors.TryGetValue(e.GetType().Name, out int n) ? n + 1 : 1;
             }
         }
     }
@@ -1625,6 +1951,14 @@ internal static class ActRunCheck
         LiveBoardTally liveBoards = RunLiveBoards(assets, data, library, boardsAll.Ids);
         Console.WriteLine();
         liveBoards.Print();
+        var homing = new HomingTally();
+        foreach (int id in allIds)
+        {
+            CountHoming(data.GetPassiveObject(id), reached.Contains(id), homing);
+        }
+        RunLiveHoming(homing, assets, data, library, allIds);
+        Console.WriteLine();
+        homing.Print();
         CustomTally customs = CountCustoms(data, library, Program);
         Console.WriteLine();
         customs.Print();
@@ -1671,6 +2005,8 @@ internal static class ActRunCheck
         int boardHit = (boardsAll.ReadByOutcome.TryGetValue("有答案", out int boardReadHit) ? boardReadHit : 0)
             + (boardsAll.WriteByOutcome.TryGetValue("有答案", out int boardWriteHit) ? boardWriteHit : 0);
         Report(liveBoards.Objects > 0 && liveBoards.Failed == 0, "被动对象的开关板实跑(E-158):有跨动作开关读写的对象各跑 10 秒都不抛异常(" + liveBoards.Objects + " 个跑完,抛异常 " + liveBoards.Failed + " 个)");
+        Report(homing.Used > 0 && homing.Failed == 0 && homing.NonFinite == 0 && homing.Live + homing.NoTemplate == homing.Used,
+            "被动对象追踪实跑(E-165):启用了追踪的对象各跑最多 5 秒都不抛异常、没有非数(" + homing.Live + " 个跑完,没有模板 " + homing.NoTemplate + " 个,抛异常 " + homing.Failed + " 个,非数 " + homing.NonFinite + " 个)");
         Report(customs.Monsters > 0 && customs.ActsMissing == 0, "怪物的 [etc action] 各项 .act 都读得到(" + customs.Entries + " 项,读不到 " + customs.ActsMissing + " 项)");
         Report(customs.Uses > 0 && customs.UsesInRange * 100 >= customs.Uses * 95,
             "怪物自己的 .act 里 [SET ACTION] [CUSTOM] n 的 n 落在 [etc action] 列表里的不低于 95%(" + customs.UsesInRange + "/" + customs.Uses + ")");
@@ -1698,6 +2034,7 @@ internal static class ActRunCheck
                 boardsReached = boardsReached.ToJson(),
                 boardsAll = boardsAll.ToJson(),
                 liveBoards = liveBoards.ToJson(),
+                homing = homing.ToJson(),
                 monsterCustoms = customs.ToJson(),
                 liveCustoms = liveCustoms.ToJson(),
             };

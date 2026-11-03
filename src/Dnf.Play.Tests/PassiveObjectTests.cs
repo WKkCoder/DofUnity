@@ -47,8 +47,21 @@ public partial class PassiveObjectTests
         {
         }
 
+        /// <summary>宿主按选择器解析出来的"主角们"与"怪物们"(缺省都是空的:没有对象找得到追踪目标)。</summary>
+        public List<IActEntity> Characters { get; } = new();
+
+        public List<IActEntity> Monsters { get; } = new();
+
         public void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into)
         {
+            if (selector == ActSelector.Character)
+            {
+                into.AddRange(Characters);
+            }
+            else if (selector == ActSelector.Monster)
+            {
+                into.AddRange(Monsters);
+            }
         }
     }
 

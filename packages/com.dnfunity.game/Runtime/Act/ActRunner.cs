@@ -66,6 +66,13 @@ namespace Dnf.Game.Act
         void SetFloatingHeight(int height);
 
         /// <summary>
+        /// [SET USE HOMING] n:开关对象身上的追踪(E-165)。只有出生时按 [homing] 块配好了追踪的被动对象有反应,别的对象什么都不做。
+        /// </summary>
+        void SetUseHoming(bool on)
+        {
+        }
+
+        /// <summary>
         /// [TELEPORT]:把对象摆到世界坐标 (x, y, z)(E-133)。落点合不合法由对象自己查(落点不合法就在附近找一个,找不到就不动),
         /// 返回是否真的摆过去了。
         /// </summary>
@@ -1178,6 +1185,12 @@ namespace Dnf.Game.Act
                             {
                                 t.SetFloatingHeight(b.Height);
                             }
+                        }
+                        break;
+                    case ActBehaviorKind.SetUseHoming:
+                        foreach (IActEntity t in targets)
+                        {
+                            t.SetUseHoming(b.UseHoming);
                         }
                         break;
                     case ActBehaviorKind.Shake:

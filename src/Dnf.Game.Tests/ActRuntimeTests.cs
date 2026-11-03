@@ -103,6 +103,8 @@ public sealed partial class ActRuntimeTests
 
         public void SetFloatingHeight(int height) => Log.Add("float:" + height);
 
+        public void SetUseHoming(bool on) => Log.Add("homing:" + on);
+
         public bool Teleport(float x, float y, float z)
         {
             Log.Add("teleport:" + F(x) + "," + F(y) + "," + F(z));

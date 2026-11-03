@@ -455,6 +455,12 @@ namespace Dnf.Game.Act
         /// <summary>[CHANGE FLOATING HEIGHT] n:浮空高度,0 以下结束浮空(E-133)。</summary>
         SetFloatingHeight,
 
+        /// <summary>
+        /// [SET USE HOMING] n:开关目标对象身上的追踪(客户端行为码 0xdf,代码块 0x010bf5f5;E-165):值非 0 就开、0 就关。
+        /// 只对带 [homing] 块的被动对象有意义(出生时就按块配置好了),别的对象什么都不做。
+        /// </summary>
+        SetUseHoming,
+
         /// <summary>[SHAKING] 强度 毫秒:屏幕震动,不分目标,由行为拥有者所在的场景执行(E-133)。</summary>
         Shake,
 
@@ -744,6 +750,9 @@ namespace Dnf.Game.Act
 
         // ---- [CHANGE FLOATING HEIGHT]
         public int Height { get; internal set; }
+
+        /// <summary>[SET USE HOMING] 的开关(值非 0)。</summary>
+        public bool UseHoming { get; internal set; }
 
         // ---- [SHAKING]
         public int ShakeStrength { get; internal set; }

@@ -998,6 +998,9 @@ namespace Dnf.Game.Act
                 }
                 case "[CHANGE FLOATING HEIGHT]":
                     return new ActBehavior { Kind = ActBehaviorKind.SetFloatingHeight, Tag = tag, Height = cur.Int() };
+                case "[SET USE HOMING]":
+                    // 一个整数(全库 50 处都是整数写法;客户端执行块 0x010bf5f5 起,E-165)
+                    return new ActBehavior { Kind = ActBehaviorKind.SetUseHoming, Tag = tag, UseHoming = cur.Int() != 0 };
                 case "[SHAKING]":
                 {
                     int strength = cur.Int();

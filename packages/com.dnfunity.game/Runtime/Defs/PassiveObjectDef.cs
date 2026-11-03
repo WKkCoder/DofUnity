@@ -104,5 +104,22 @@ namespace Dnf.Game
                 return string.IsNullOrEmpty(s) ? null : PvfPath.ResolveRelativeTo(Path, s);
             }
         }
+
+        private HomingDef _homing;
+        private bool _homingRead;
+
+        /// <summary>[homing] ... [/homing] 块的追踪配置(M67,E-165);没有这个块是 null。第一次取时读,之后复用。</summary>
+        public HomingDef Homing
+        {
+            get
+            {
+                if (!_homingRead)
+                {
+                    _homing = HomingDef.Read(Tags);
+                    _homingRead = true;
+                }
+                return _homing;
+            }
+        }
     }
 }

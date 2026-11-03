@@ -15,7 +15,7 @@ namespace Dnf.Play
     /// 当前帧的攻击框与主角的受击框相交就算打中。所有者是怪物(<see cref="Owner"/>,算伤害用它的等级与攻击力),
     /// 也可以是另一个被动对象放出来的(<see cref="Master"/> 指向直接的创建者,<see cref="Owner"/> 始终是链条上最早的那只怪物)。
     /// </summary>
-    public sealed class PassiveObject : IActEntity
+    public sealed class PassiveObject : IActEntity, IHomingBody
     {
         /// <summary>没有任何消失条件(时限、动画播完)的对象最长的寿命(毫秒):不让漏写条件的对象永远留在房间里(推断)。</summary>
         public const int MaxLifeMs = 12000;
@@ -42,6 +42,8 @@ namespace Dnf.Play
         private AniFile _effectAni;
         private bool _effectLeft;
         private double _effectMs;
+        private PassiveHoming _homing;
+        private float _rotation;
 
         public PassiveObject(PassiveTemplate template, IActEntity master, MonsterActor owner, IActHost host, double x, double y, double z, bool facingLeft)
         {
@@ -54,9 +56,22 @@ namespace Dnf.Play
             Z = z;
             FacingLeft = facingLeft;
             SwitchAction(template.Basic);
+            // 追踪(M67,E-165):.obj 的 [homing] 块写了 [homing use] 非 0 的,出生就开追踪、定初始方向、取目标(客户端对象初始化 0x00805cd0)
+            HomingDef homing = template.Def?.Homing;
+            if (homing != null && homing.Use)
+            {
+                _homing = new PassiveHoming(homing);
+                _homing.Start(this, facingLeft, _ageMs, ResolveHomingTarget(homing));
+            }
         }
 
         public PassiveTemplate Template => _template;
+
+        /// <summary>追踪控制器(.obj 带 [homing] 块、[homing use] 非 0 时有);没有就是 null。</summary>
+        public PassiveHoming Homing => _homing;
+
+        /// <summary>[sync animation rotation] 的对象的画面旋转(弧度);没有就是 0。渲染这一版还不画旋转的被动对象。</summary>
+        public float RotationRadians => _rotation;
 
         /// <summary>链条上最早的那只怪物:攻击信息打中主角时取它的等级与攻击力。</summary>
         public MonsterActor Owner { get; }
@@ -365,6 +380,85 @@ namespace Dnf.Play
             }
         }
 
+        // ------------------------------------------------------------------ 追踪(E-165)
+
+        /// <summary>[SET USE HOMING]:开关追踪(没有追踪控制器的对象什么都不做)。</summary>
+        void IActEntity.SetUseHoming(bool on)
+        {
+            _homing?.SetOn(on);
+        }
+
+        void IHomingBody.SetPlanarVelocity(double vx, double vy)
+        {
+            _vx = vx;
+            _vy = vy;
+        }
+
+        void IHomingBody.SetVerticalVelocity(double vz)
+        {
+            _vz = vz;
+            _falling = vz != 0;
+        }
+
+        void IHomingBody.MoveTo(double x, double y)
+        {
+            X = x;
+            Y = y;
+        }
+
+        void IHomingBody.SetHomingFacing(bool left)
+        {
+            FacingLeft = left;
+        }
+
+        void IHomingBody.SetRotation(float radians)
+        {
+            _rotation = radians;
+        }
+
+        /// <summary>
+        /// 出生时取追踪对象(客户端 0x00801150):[ME] 是直接的创建者(没有就是自己);[ENEMY] 是创建者盯着的目标,没有就取主角;
+        /// [MONSTER] 编号是场上第一只活着的这个编号的怪物;[CHARACTER] 是主角(这一版只有一个)。取不到返回 null(这样的对象不追)。
+        /// </summary>
+        private IActEntity ResolveHomingTarget(HomingDef homing)
+        {
+            switch (homing.Follow)
+            {
+                case HomingFollow.Me:
+                    return Master ?? this;
+                case HomingFollow.Enemy:
+                {
+                    IActEntity enemy = ((IActEntity)this).Target;
+                    return enemy != null && enemy.IsAlive ? enemy : FirstResolved(ActSelector.Character, -1);
+                }
+                case HomingFollow.Monster:
+                    return FirstResolved(ActSelector.Monster, homing.FollowParam);
+                case HomingFollow.Character:
+                    return FirstResolved(ActSelector.Character, -1);
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>让宿主按选择器解析一批对象,取第一个活着的(不是自己的);<paramref name="monsterCode"/> 不小于 0 时只认这个编号的怪物。</summary>
+        private IActEntity FirstResolved(ActSelector selector, int monsterCode)
+        {
+            var found = new List<IActEntity>();
+            _host.Resolve(Owner.ActSelf, selector, 0, found);
+            foreach (IActEntity e in found)
+            {
+                if (e == null || !e.IsAlive || ReferenceEquals(e, this))
+                {
+                    continue;
+                }
+                if (monsterCode < 0 || (e.Kind == ActEntityKind.Monster && e.ObjectIndex == monsterCode))
+                {
+                    return e;
+                }
+            }
+            return null;
+        }
+
         // ------------------------------------------------------------------ 推进
 
         private void SwitchAction(PassiveAction next)
@@ -405,6 +499,7 @@ namespace Dnf.Play
                 return;
             }
             Move(deltaMs / 1000.0);
+            _homing?.Step(this, deltaMs, _ageMs);       // 先按旧速度走一步,再转向(客户端控制器更新的顺序,E-165)
             CheckLife();
         }
 

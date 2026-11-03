@@ -157,5 +157,5 @@ beh	0xc4	[SET TEAM]	valueOf整数调setTeam(0x228)	高	team枚举
 beh	0xd0	[ADD CATEGORY]	查表后0x288添加,0x019db264写+0x4f94与锚点坐标	中	0x288与0x1a语义
 beh	0xd4	[NO BUFF APPENDAGE]	与 [APPENDAGE] 同一加载块里按行为码 0xd4 分支;与 [APPENDAGE] 的差别没读,M63 没做	低	差别、数据里的用法
 beh	0xd7	[CHANGE FLOATING HEIGHT]	设置或关闭目标浮空高度(像素);升降初速 = 差值符号 × sqrt(2×|重力|×|差值|),关闭时 Z 速度清零(M40)	高	槽 0x274 的保持逻辑;008331b0 模式码与 +1000 修正的精确含义
-beh	0xdf	[SET USE HOMING]	param!=0则owner+0x50开homming再进黑盒022c34cf	中	+0x50与黑盒语义
+beh	0xdf	[SET USE HOMING]	读一个整数,对目标集合里每个目标:非0开、0关被动对象的追踪开关(执行块 0x010bf5f5..0x010bf649;开关写入函数 0x022c34cf 在受保护区,黑盒,按只改开关建模);追踪本身(块读取、方向角、检查与转向)见 E-165(M67)	中	黑盒的额外效果(重新开启时计时是否复位)
 beh	0xec	[CHANGE AI]	切换 AI 宿主上的 .ai 脚本与 modeId	中	对象索引非 0x111/0x211 时行为未验证

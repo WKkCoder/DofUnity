@@ -523,6 +523,27 @@ internal sealed class AvatarFixture : IDisposable
 
     /// <summary><see cref="ActBoardInitId"/>:自定义动作 0 的触发器 0 初值是关([ENABLE] [OFF]);基础动作出生时读它的开关(读 [OFF] 通过、读 [ON] 不通过)。</summary>
     public const int ActBoardInitId = 9210;
+
+    /// <summary>
+    /// M67(证据 E-165)被动对象追踪([homing] 块,全是合成的数):<see cref="ActHomeInstantId"/> 出生就追 [ENEMY]、速度 200、检查间隔 100 毫秒、没有 [max rotation](检查时一步指过去);
+    /// <see cref="ActHomeSmoothId"/> 同上但 [max rotation] 90(每秒最多转 90 度);<see cref="ActHomeStraightId"/> 速度 100、[straight homing](只在第一次检查时直线瞄一下);
+    /// <see cref="ActHomeMeId"/> 追 [ME](直接创建者);<see cref="ActHomeMonsterId"/> 追 [MONSTER] <see cref="HomeMonsterCode"/>;<see cref="ActHomeIdleId"/> 的 [homing use] 是 0(不追);
+    /// <see cref="ActHomeOffId"/> 出生起 [SET USE HOMING] 0;<see cref="ActHomeOnId"/> 的 [homing use] 是 0、出生起 [SET USE HOMING] 1(没有出生时取的目标,仍然不追);
+    /// <see cref="ActHomeTurnId"/> [init rotation] 90 并带 [sync animation rotation];<see cref="ActHomeCharId"/> 追 [CHARACTER];
+    /// <see cref="ActHomeCarryId"/> 带 [max rotation] 90 与 [sync target move](目标走多少对象也跟着平移多少)。
+    /// </summary>
+    public const int ActHomeInstantId = 9211;
+    public const int ActHomeSmoothId = 9212;
+    public const int ActHomeStraightId = 9213;
+    public const int ActHomeMeId = 9214;
+    public const int ActHomeMonsterId = 9215;
+    public const int ActHomeIdleId = 9216;
+    public const int ActHomeOffId = 9217;
+    public const int ActHomeOnId = 9218;
+    public const int ActHomeTurnId = 9219;
+    public const int ActHomeCharId = 9220;
+    public const int ActHomeCarryId = 9221;
+    public const int HomeMonsterCode = 77;
     public const string ActObjectDir = "passiveobject/blob";
     public const string ActBoomAni = "passiveobject/blob/animation/boom.ani";
     public const string ActIdleAni = "passiveobject/blob/animation/idle.ani";
@@ -701,6 +722,12 @@ internal sealed class AvatarFixture : IDisposable
     private Script NewScript()
     {
         return new Script(this);
+    }
+
+    /// <summary>M67(证据 E-165)合成的带追踪的被动对象 .obj:基础动作 <paramref name="basicAction"/>,再接 [homing] ... [/homing] 块,块里的各项由 <paramref name="block"/> 写。</summary>
+    private byte[] HomingObj(string basicAction, Func<Script, Script> block)
+    {
+        return block(NewScript().Tag("[basic action]").Str(basicAction).Tag("[homing]")).Tag("[/homing]").Build();
     }
 
     /// <summary>只有一个 [MOTION]、里面一个 [BASE ANI] 的 .act(脚本怪物的待机、行走等动作最常见的写法)。</summary>
@@ -1346,6 +1373,40 @@ internal sealed class AvatarFixture : IDisposable
             .Build());
         yield return (ActObjectDir + "/actforever.obj", NewScript().Tag("[basic action]").Str("action/actidle.act").Build());
         yield return (ActObjectDir + "/action/actidle.act", ActMotion("../animation/idle.ani"));
+        // ---- M67(证据 E-165):被动对象追踪
+        yield return (ActObjectDir + "/acthomei.obj", HomingObj("action/actidle.act", s => s
+            .Tag("[homing use]").Int(1).Tag("[homing follow]").Str("[ENEMY]").Tag("[homing velocity]").Int(200, 0).Tag("[homing check gap]").Int(100)));
+        yield return (ActObjectDir + "/acthomes.obj", HomingObj("action/actidle.act", s => s
+            .Tag("[homing use]").Int(1).Tag("[homing follow]").Str("[ENEMY]").Tag("[homing velocity]").Int(200, 0).Tag("[homing check gap]").Int(100)
+            .Tag("[max rotation]").Float(90f)));
+        yield return (ActObjectDir + "/acthomet.obj", HomingObj("action/actidle.act", s => s
+            .Tag("[homing use]").Int(1).Tag("[homing follow]").Str("[ENEMY]").Tag("[homing velocity]").Int(100, 0).Tag("[straight homing]")));
+        yield return (ActObjectDir + "/acthomem.obj", HomingObj("action/actidle.act", s => s
+            .Tag("[homing use]").Int(1).Tag("[homing follow]").Str("[ME]").Tag("[homing velocity]").Int(200, 0).Tag("[homing check gap]").Int(100)));
+        yield return (ActObjectDir + "/acthomen.obj", HomingObj("action/actidle.act", s => s
+            .Tag("[homing use]").Int(1).Tag("[homing follow]").Str("[MONSTER]").Int(HomeMonsterCode).Tag("[homing velocity]").Int(200, 0).Tag("[homing check gap]").Int(100)));
+        yield return (ActObjectDir + "/acthomez.obj", HomingObj("action/actidle.act", s => s
+            .Tag("[homing use]").Int(0).Tag("[homing follow]").Str("[ENEMY]").Tag("[homing velocity]").Int(200, 0).Tag("[homing check gap]").Int(100)));
+        yield return (ActObjectDir + "/acthomeo.obj", HomingObj("action/acthomeoff.act", s => s
+            .Tag("[homing use]").Int(1).Tag("[homing follow]").Str("[ENEMY]").Tag("[homing velocity]").Int(200, 0).Tag("[homing check gap]").Int(100)));
+        yield return (ActObjectDir + "/acthomep.obj", HomingObj("action/acthomeon.act", s => s
+            .Tag("[homing use]").Int(0).Tag("[homing follow]").Str("[ENEMY]").Tag("[homing velocity]").Int(200, 0).Tag("[homing check gap]").Int(100)));
+        yield return (ActObjectDir + "/acthomer.obj", HomingObj("action/actidle.act", s => s
+            .Tag("[homing use]").Int(1).Tag("[homing follow]").Str("[ENEMY]").Tag("[homing velocity]").Int(200, 0).Tag("[homing check gap]").Int(100)
+            .Tag("[max rotation]").Float(90f).Tag("[init rotation]").Float(90f).Tag("[sync animation rotation]").Int(1)));
+        yield return (ActObjectDir + "/acthomec.obj", HomingObj("action/actidle.act", s => s
+            .Tag("[homing use]").Int(1).Tag("[homing follow]").Str("[CHARACTER]").Int(0).Tag("[homing velocity]").Int(200, 0).Tag("[homing check gap]").Int(100)));
+        yield return (ActObjectDir + "/acthomek.obj", HomingObj("action/actidle.act", s => s
+            .Tag("[homing use]").Int(1).Tag("[homing follow]").Str("[ENEMY]").Tag("[homing velocity]").Int(200, 0).Tag("[homing check gap]").Int(100)
+            .Tag("[max rotation]").Float(90f).Tag("[sync target move]")));
+        yield return (ActObjectDir + "/action/acthomeoff.act", ActWith("../animation/idle.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[SET USE HOMING]").Int(0))
+            .Build());
+        yield return (ActObjectDir + "/action/acthomeon.act", ActWith("../animation/idle.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[SET USE HOMING]").Int(1))
+            .Build());
         yield return (ActBoomAni, BuildBlobBoxesAni(false, (0, 100, new (ushort Type, int[] Values)[0]), (1, 100, new (ushort Type, int[] Values)[0]),
             (2, 100, new (ushort Type, int[] Values)[0])));
         yield return (ActIdleAni, BuildBlobBoxesAni(true, (0, 100, new (ushort Type, int[] Values)[0])));
@@ -1853,6 +1914,17 @@ internal sealed class AvatarFixture : IDisposable
                 .Int(ActBoardWriteId).Str("blob/actbwrite.obj")
                 .Int(ActBoardLoopId).Str("blob/actbloop.obj")
                 .Int(ActBoardInitId).Str("blob/actbinit.obj")
+                .Int(ActHomeInstantId).Str("blob/acthomei.obj")
+                .Int(ActHomeSmoothId).Str("blob/acthomes.obj")
+                .Int(ActHomeStraightId).Str("blob/acthomet.obj")
+                .Int(ActHomeMeId).Str("blob/acthomem.obj")
+                .Int(ActHomeMonsterId).Str("blob/acthomen.obj")
+                .Int(ActHomeIdleId).Str("blob/acthomez.obj")
+                .Int(ActHomeOffId).Str("blob/acthomeo.obj")
+                .Int(ActHomeOnId).Str("blob/acthomep.obj")
+                .Int(ActHomeTurnId).Str("blob/acthomer.obj")
+                .Int(ActHomeCharId).Str("blob/acthomec.obj")
+                .Int(ActHomeCarryId).Str("blob/acthomek.obj")
                 .Int(CrateObjectId).Str("MapObject/BreakableObject/Crate.obj")
                 .Int(BarrelObjectId).Str("MapObject/BreakableObject/Barrel.obj")
                 .Int(PillarObjectId).Str("MapObject/BreakableObject/Pillar.obj")
