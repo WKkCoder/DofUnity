@@ -47,7 +47,7 @@ public sealed partial class ActRuntimeTests
 
     private static ScriptLine[] Speed(int x) => new[] { L("[SET SPEED]"), L("[X AXIS]", x), L("[/SET SPEED]") };
 
-    private sealed class Entity : IActEntity
+    private class Entity : IActEntity
     {
         public ActEntityKind Kind { get; set; } = ActEntityKind.Monster;
         public int ObjectIndex { get; set; }
@@ -204,6 +204,11 @@ public sealed partial class ActRuntimeTests
     {
         public Queue<int> Randoms { get; } = new();
         public long NowMs { get; set; }
+
+        /// <summary>M68(E-166):舞台的宽与高([IS END MAP]、[IS END MAP VERTICALLY] 用);缺省 0 = 不知道,与接口默认一致。</summary>
+        public int MapWidth { get; set; }
+
+        public int MapHeight { get; set; }
         public List<(IActEntity owner, int index, int level, float x, float y, float z, bool left)> Spawns { get; } = new();
         public Dictionary<ActSelector, List<IActEntity>> Sets { get; } = new();
 

@@ -46,7 +46,7 @@ cond	0x00	DO BEHAVIOR	运行器内联 fire+010d1850	高	—
 cond	0x01	[FRAME]	仅 runner 010d1320；checkTriggerEvent 无分支	高	—
 cond	0x02	[XSPEED]	逐对象比较 X 轴 float 速度与符号码阈值	中	加载侧读参未核
 cond	0x03	[YSPEED]	逐对象比较 Y 轴 float 速度	中	加载侧未核
-cond	0x04	[ZSPEED]	逐对象比较 Z 轴 float；与 stuck 子检查共用 0x16 循环	中	rec+0xb 布局
+cond	0x04	[ZSPEED]	逐对象:转成碰撞对象类,取速度向量(虚槽 +0x50,与 [IS END MAP] 同一个访问器)的第 2 轴(高度轴,浮点)与参数(转浮点)用 0x009773c0 比;符号码 0 等于 1 大于 2 小于 3 不小于 4 不大于 5 不等于(块 0x010d3b80;E-166)	高	主角速度未暴露(恒 0);怪物只含脚本设的速度
 cond	0x05	[ZPOS]	逐对象：getZPos 与符号码+整数	高	参数<=2 时跳过块
 cond	0x06	[CHARGED TIME]	逐对象比较 +0x559c 与符号码	中	字段命名
 cond	0x07	ON DAMAGE	仅 8c30 不 abort	高	评估侧 r?
@@ -68,13 +68,13 @@ cond	0x18	[IS RIGHT]	目标 X > 拥有者 X	高	—
 cond	0x19	[IS INDEX]	逐对象：怪物/角色/被动索引 OR 匹配任一 param 则保留（见卡）	高	0x1a 多 param 精确语义；AI 是否仅 920c
 cond	0x1a	[IS NOT INDEX]	与 0x19 同块；索引「非命中」保留逻辑（见 cond_0x1a）	中	与 0x19 对称的布尔式需脚本用例验证
 cond	0x1b	[CHECK PARTY SLOT]	派对槽 API 副作用，不改 targets	低	00926500 语义
-cond	0x1c	[IS TEAM]	多子标签 OR：同队/敌队/007dd440/field_0x191==100	高	007dd440
+cond	0x1c	[IS TEAM]	子标签 [MY TEAM] 0/[ENEMY TEAM] 1/[CHARCTER TEAM] 2/[MONSTER TEAM] 3 任一命中就留(块 0x010d6b50;队号读字段 +0x644,码 2 是 0x007dd440 即无符号不大于 11,码 3 是等于 100;空码表一个也不留;E-166)	高	被动对象的队号来源(推断取创建者的)
 cond	0x1d	[HP]	逐对象：920c/98fc 取 HP；可 %Max；符号码比较	高	f:1 脚本路径
 cond	0x1e	[MP]	同 HP 结构，getMp/MpMax；样本极少	高	是否仅 98fc
 cond	0x1f	WHICH	010d25e0;r2 补选择器	高	—
 cond	0x20	(无标签)	评估与运行器均 noop/忽略	中	谁写入类型 32
 cond	0x21	[DISTANCE]	逐对象：拥有者对目标整数距离 vs 符号码+阈值	中	拥有者 vtbl+0x8 距离定义
-cond	0x22	[IS BACKPOS]/[IS FRONTPOS]	params[0] 与 owner +0x110 背/正面	中	+0x110 命名
+cond	0x22	[IS BACKPOS]/[IS FRONTPOS]	问拥有者虚槽 +0x110(0x004065a0):朝右且 X 小于拥有者 X、或朝左且 X 大于拥有者 X 算"是"(整数坐标);[IS FRONTPOS] 留是、[IS BACKPOS] 留否(块 0x010d4f0b;E-166)	中	命名与几何看起来相反,照代码做
 cond	0x23	[CHECK GHOST]	扫描 ghost 类但评估恒 pass	低	设计意图
 cond	0x24	[CHECK BUFF]	敌方 buff 0xb6/0x10 + 默认动画则整触发失败	中	buff 含义
 cond	0x25	[CHECK SPECIFIC BUFF]	rec+0xb 指定 buff 与层数	中	加载映射
@@ -84,25 +84,26 @@ cond	0x28	[IF]	整体：左右表达式列表求值整数比较；不改集合	�
 cond	0x29	[IS AI TARGET]	AI +0x7b0 设目标，非过滤	低	全库 0 次
 cond	0x2b	DIRECT DO BEHAVIOR	同 0x00	高	直接差异在行为层
 cond	0x2c	[GET TARGET]	按 mode 随机/距离/等级/生命/最近命中整理工作集并留前 maxN;工作集一开始为空则整个触发器不通过(0x010d7ccb 到 0x010d3ed3);[HP][HIGH] 的比较函数 0x010d1160 恒真,不排序(原版笔误)	高	[MP] 键;随机洗牌序列与客户端不逐个对应
-cond	0x2d	[IS GRABABLE]	逐对象:转成生物类(被动对象剔除)后取虚槽 0x380;参数为 1 留能抓的,别的值留不能抓的	高	主角侧只近似为活着且没有冰冻、石化
+cond	0x2d	[IS GRABABLE]	逐对象:转成碰撞对象类后取虚槽 0x380(被动对象走基类实现 0x00d26320,恒返回假;生物类 0x0081ecb0);参数为 1 留能抓的,别的值留不能抓的(被动对象因此参数为 1 时剔除、别的值时留下;E-166 更正 E-156)	高	主角侧只近似为活着且没有冰冻、石化
 cond	0x2e	[TRIGGER CHECK]	读指定触发器池第 N 条的开关;种类 3(没写族)为整体真假,否则逐对象过滤;[ON]/[OFF] 对应 P=0/1;不认 [DEFAULT];被动对象(另一个类 0x019d920c)只答 [CUSTOM](虚槽 0x450)、[DEFAULT](字段 +0x130)、[PROC](虚槽 0x14c),别的族对象被剔除(E-158)	中	怪物的 [CUSTOM] 池(M62-b 起)有宿主、[DEFAULT] 池没有宿主(被动对象 M62 起都有);是否还检查触发次数没确认
-cond	0x38	[IS END MAP]	拥有者近地图右缘且 X 轴速度>0	中	左端 x≤150 特例；函数 0x0046ef10
-cond	0x39	[IS END MAP VERTICALLY]	拥有者近地图上缘且 Y 轴速度>0	中	函数 0x0062d080
+cond	0x30-0x34	[IS FIRE DAMAGE]/[IS WATER DAMAGE]/[IS DARK DAMAGE]/[IS LIGHT DAMAGE]/[IS NONE DAMAGE]	元素条件(事件运行器 0x010a8c30):没有"这一击"的信息(非 [ON DAMAGE] 唤醒)就通过;火、水、暗、光看命中信息元素标志的位 0 到 3,[IS NONE DAMAGE] 要一个元素也没有(E-166)	中	非伤害唤醒恒通过;主角一侧的元素强化没有接
+cond	0x38	[IS END MAP]	整体条件:X 整数不大于 150 且 X 速度不大于 0,或 X 大于舞台宽减 150 且速度不小于 0;取不到舞台就失败(块 0x010d75c0,宽函数 0x0046ef10;E-166)	高	舞台宽的单位(按像素)
+cond	0x39	[IS END MAP VERTICALLY]	整体条件:Y 整数不大于 200 且 Y 速度不大于 0,或 Y 大于舞台高减 50 且速度不小于 0(块 0x010d769d,高函数 0x0062d080;E-166)	高	舞台高的单位(按像素)
 cond	0x3a	[IS DAMAGEBOX ENABLE]	目标伤害盒开关与参数 0/1 一致	中	全库仅 1 例
 cond	0x3b	[IS VISIBLE]	目标可见性字节等于参数	高	+0x1d4 语义
 cond	0x3c	AXIS INDEX	仅 5ec0 轴掩码	高	—
 cond	0x3d	SAVE TARGET OBJECT	每帧运行器 0x010ad580 里直接处理;010d1f40 只存选择结果的第一个对象,空选择不写;槽表在拥有者对象上	高	—
-cond	0x3e	[CHECK DISTANCE]	整体真假:拥有者要是生物类(被动对象失败),vtbl+0x64 非零,008791a0 在场上角色类对象里找敌对、活着、横向与纵深差不大于 x、y 的;不改目标集	中	拥有者 vtbl+0x64 与候选 vtbl+0x670 的语义(按成立、按假)
+cond	0x3e	[CHECK DISTANCE]	整体真假:拥有者转成碰撞对象类(怪物与被动对象都转得过去;E-166 更正 E-156),vtbl+0x64 非零,008791a0 在场上角色类对象里找敌对、活着、横向与纵深差不大于 x、y 的;不改目标集	中	拥有者 vtbl+0x64 与候选 vtbl+0x670 的语义(按成立、按假)
 cond	0x3f	(无标签)	owner+0x14c gate	低	加载标签
 cond	0x40	[CHECK AREA]	查询区域命中则删目标（param1/2）	低	函数 0x008791a0；param0/3 未用
-cond	0x41	[FRONTSIDE]	目标正面朝向动作拥有者（X 轴+getDirection 0左/1右）	高	+0x36c 槽名
-cond	0x42	[BACKSIDE]	目标背对拥有者（0x41 朝向规则取反）	高	—
-cond	0x43	[FACE TO FACE]	拥有者与目标互相面向	中	完整真值表需对照汇编
-cond	0x44	[WITHIN SIGHT]	拥有者朝向目标一侧（仅 X/dir，无距离）	中	—
-cond	0x45	[OUT OF SIGHT]	拥有者背对目标（0x44 互补）	中	catalog 未统计
+cond	0x41	[FRONTSIDE]	逐对象:槽 0x36c 为 1 后比整数 X:拥有者 X 不小于对象 X 时要对象朝右,否则朝左(0 左 1 右;块 0x010d517d;被动对象走同样的第二分支;E-166 更正:比的是整数)	高	槽 0x36c 的语义(按活着)
+cond	0x42	[BACKSIDE]	与 FRONTSIDE 相反:拥有者 X 不小于对象 X 时要对象朝左,否则朝右(块 0x010d5384;被动对象分支取朝向时用了空指针,原版会出错,按生物同一张表做;E-166)	高	被动对象分支
+cond	0x43	[FACE TO FACE]	拥有者 X 不小于对象 X 时要拥有者朝左且对象朝右,否则要拥有者朝右且对象朝左(块 0x010d59b8;E-166)	高	被动对象分支同 BACKSIDE
+cond	0x44	[WITHIN SIGHT]	只看拥有者朝向:拥有者 X 不小于对象 X 时要拥有者朝左,否则朝右(块 0x010d55a5;E-166)	高	被动对象分支同 BACKSIDE
+cond	0x45	[OUT OF SIGHT]	与 WITHIN SIGHT 恰好相反(块 0x010d57b1;整库 0 处;E-166)	高	—
 cond	0x46	[IS OURTEAMATTACKED]	场景中有人被该目标攻击且与我方相关	低	函数 0x00872c60
-cond	0x47	[IS TARGETACTIVESTATUS]	目标指定 active status 为真	中	+0x540
-cond	0x48	[RANDOM CHECK]	本机控制时 rand%denom≤threshold 保留	高	单参时分母 100
+cond	0x47	[IS TARGETACTIVESTATUS]	逐对象:拥有者转成碰撞对象类、对象转成生物类(被动对象剔除),问虚槽 +0x540(生物类 0x00818640)是否带着第 n 号异常状态(块 0x010d6791;E-166)	高	怪物与被动对象还没有异常状态系统(恒假)
+cond	0x48	[RANDOM CHECK]	拥有者为空、或拥有者的方法 0x007f9eb0(大意是本机说了算,推断;单机按真)为假时整个条件直接通过;否则逐对象掷一次随机数(0x00e50e60)对分母(参数 1,缺或 0 当 100)取余,不大于分子(参数 0)就留(块 0x010d68a2;E-166)	高	权限函数为假的那一支没建模
 cond	0x49	[IS TARGET STATE]	getState 相等保留；param=-1 时 @019d9acc+0x36b0 分支	中	加载多整数 vs 执行只读 param[0]
 cond	0x4a	[IS NOT TARGET STATE]	getState 不等保留；其余同 0x49	中	同上
 cond	0x4b	[IS IN POS]	逐对象：X/Y/Z 整型全等	高	—

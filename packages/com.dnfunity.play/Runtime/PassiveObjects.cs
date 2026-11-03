@@ -133,6 +133,13 @@ namespace Dnf.Play
 
         int IActEntity.MotionVersion => _motionVersion;
 
+        /// <summary>当前速度(世界坐标/秒;[ZSPEED]、[IS END MAP] 用,E-166)。</summary>
+        float IActEntity.SpeedX => (float)_vx;
+
+        float IActEntity.SpeedY => (float)_vy;
+
+        float IActEntity.SpeedZ => (float)_vz;
+
         // 被动对象没有生命(这一版不做可打碎的被动对象):不满足任何 [HP] 条件
         int IActEntity.Hp => 0;
 
@@ -635,14 +642,18 @@ namespace Dnf.Play
         private readonly Func<bool> _grabbable;
         private readonly Action<StatChange, int, IActEntity> _statAdd;
         private readonly Action<StatChange, IActEntity> _statRemove;
+        private readonly Func<int, bool> _hasStatus;
 
         /// <param name="grabbable">[IS GRABABLE] 要的"此刻能不能被抓"(会话按冰冻、石化等异常状态给,E-156);没给就只看活着。</param>
         /// <param name="statAdd">[APPENDAGE] 落到主角的一项属性改变(会话管附加物集合与速度倍率,E-161);没给就什么都不做。</param>
         /// <param name="statRemove">[DELETE APPENDAGE] 落到主角的一项。</param>
+        /// <param name="hasStatus">[IS TARGETACTIVESTATUS] 要的"身上此刻带着异常状态 n"(会话问主角的异常状态集合,E-166);没给就一律没有。</param>
         public HeroActEntity(TownHero hero, Func<bool> alive, Func<int> hp = null, Func<int> hpMax = null, Func<int> level = null,
             Action<ActiveStatusEntry, IActEntity> status = null, Func<bool> grabbable = null,
-            Action<StatChange, int, IActEntity> statAdd = null, Action<StatChange, IActEntity> statRemove = null)
+            Action<StatChange, int, IActEntity> statAdd = null, Action<StatChange, IActEntity> statRemove = null,
+            Func<int, bool> hasStatus = null)
         {
+            _hasStatus = hasStatus;
             _statAdd = statAdd;
             _statRemove = statRemove;
             _hero = hero ?? throw new ArgumentNullException(nameof(hero));
@@ -653,6 +664,9 @@ namespace Dnf.Play
             _status = status;
             _grabbable = grabbable;
         }
+
+        /// <summary>主角身上此刻带着异常状态 <paramref name="status"/> 吗([IS TARGETACTIVESTATUS],E-166);没接状态系统一律没有。</summary>
+        public bool HasActiveStatus(int status) => _hasStatus != null && _hasStatus(status);
 
         /// <summary>主角此刻能不能被抓(E-156):活着,且没有被冰冻或石化(客户端基类 0x0081ecb0 的两项状态检查;其余检查没读出来,推断)。</summary>
         public bool IsGrabbable => IsAlive && (_grabbable == null || _grabbable());

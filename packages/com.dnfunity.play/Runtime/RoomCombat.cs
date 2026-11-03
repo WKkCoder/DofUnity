@@ -2927,7 +2927,8 @@ namespace Dnf.Play
             _monsterHp?.SetTarget(monster, _hudClockMs);    // 先选中再结算:血条先取这一击之前的生命,这一击才会掉出一段闪光(证据 E-106)
             // 受击决策的第 1、2、4 步(E-079、E-143):[damage reaction] 是 none,或出招中的怪物带着霸体而这一击不无视它 → 只扣血、没有受击或倒地
             bool armor = monster.IsSuperArmored && !info.IgnoreSuperArmor && !info.ReactionNone;
-            bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, facingLeft, StunInput(info), DownInput(info), info.ReactionNone || armor);
+            bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, facingLeft, StunInput(info), DownInput(info), info.ReactionNone || armor,
+                info.Input.ElementMask);
             if (armor && !killed)
             {
                 MonsterArmorAbsorbed++;
@@ -3464,7 +3465,7 @@ namespace Dnf.Play
                 return;
             }
             _heroEntity = new HeroActEntity(_room.Hero, () => !HeroDead, () => Vitals?.Hp ?? 0, () => Vitals?.HpMax ?? 0, () => Vitals?.Level ?? 1, ApplyActStatus, HeroGrabbable,
-                AddHeroStatAppendage, RemoveHeroStatAppendage);
+                AddHeroStatAppendage, RemoveHeroStatAppendage, HeroHasStatus);
             _actWorld = new ActWorld(this);
             foreach (MonsterActor m in _monsters)
             {
@@ -3806,6 +3807,10 @@ namespace Dnf.Play
 
             public long NowMs => (long)_session._actClockMs;
 
+            public int MapWidth => _session._room.Map?.Width ?? 0;
+
+            public int MapHeight => _session._room.Map?.HeightPixels ?? 0;
+
             public void SpawnPassive(IActEntity owner, int index, int level, float x, float y, float z, bool facingLeft)
             {
                 _session.SpawnPassive(owner, index, x, y, z, facingLeft);
@@ -4067,6 +4072,12 @@ namespace Dnf.Play
             {
                 _statusHeld = hero.HoldHurt(_heroStatus.LockRemainingMs, attackerFacingLeft) || _statusHeld;
             }
+        }
+
+        /// <summary>[IS TARGETACTIVESTATUS] 问主角:身上此刻带着异常状态 <paramref name="status"/> 吗(状态号与 <see cref="ActiveStatusKind"/> 的数值一致,E-166)。</summary>
+        private bool HeroHasStatus(int status)
+        {
+            return _heroStatus != null && (uint)status <= byte.MaxValue && _heroStatus.Has((ActiveStatusKind)status);
         }
 
         /// <summary>

@@ -128,7 +128,8 @@ namespace Dnf.Game.Act
         bool? GetActionTrigger(ActTriggerPool pool, int slot, int trigger) => null;
 
         /// <summary>
-        /// [IS GRABABLE] 要的"此刻能不能被抓"(客户端对生物类对象调虚槽 0x380;基类实现 0x0081ecb0 要求没有冰冻(异常状态 1)与石化(异常状态 7)等,
+        /// [IS GRABABLE] 要的"此刻能不能被抓"(客户端对碰撞对象调虚槽 0x380;被动对象走碰撞对象基类的实现,恒返回假 0x00d26320,不看这个属性;
+        /// 生物类的基类实现 0x0081ecb0 要求没有冰冻(异常状态 1)与石化(异常状态 7)等,
         /// 主角各职业的外层实现(0x00ca7e00、0x00ce5110)在个别技能状态里再返回不能抓;E-156)。
         /// 抓取等级、免疫计数等其余几项没读出来,默认只看活着(推断);有异常状态的对象(主角)覆盖它。
         /// </summary>
@@ -159,6 +160,30 @@ namespace Dnf.Game.Act
         void RemoveStatAppendage(StatChange change, IActEntity source)
         {
         }
+
+        /// <summary>
+        /// 队伍号([IS TEAM] 要的,客户端对象的 +0x644 槽,虚槽 0x22c 读;E-166)。主角队是 0 到 11(单机的主角 0),怪物队是 100。
+        /// 默认按种类给:主角 0、怪物 100、被动对象取创建者的队(没有创建者当怪物队,推断);对象自己有别的队(被 [SET TEAM] 改过等)时覆盖它。
+        /// </summary>
+        int Team => Kind == ActEntityKind.Character ? 0 : Kind == ActEntityKind.Monster ? 100 : Master != null ? Master.Team : 100;
+
+        /// <summary>
+        /// 当前速度的 X 分量(世界坐标/秒,[ZSPEED] 与 [IS END MAP] 要的;客户端取对象速度向量的第 0 轴,E-166)。
+        /// 速度由脚本设([SET SPEED])时就是设的值;不知道速度的对象默认 0。
+        /// </summary>
+        float SpeedX => 0f;
+
+        /// <summary>当前速度的 Y(纵深)分量,见 <see cref="SpeedX"/>。</summary>
+        float SpeedY => 0f;
+
+        /// <summary>当前速度的 Z(高度)分量,见 <see cref="SpeedX"/>。</summary>
+        float SpeedZ => 0f;
+
+        /// <summary>
+        /// [IS TARGETACTIVESTATUS] 要的:身上此刻带着异常状态 <paramref name="status"/>(与 .atk 的 [active status] 同一套编号)吗(客户端问对象的虚槽 0x540;E-166)。
+        /// 没有状态系统的对象(这一版的怪物、被动对象)默认 false;主角覆盖它,问自己的异常状态集合。
+        /// </summary>
+        bool HasActiveStatus(int status) => false;
     }
 
     /// <summary>运行器对世界的请求:随机数、生成被动对象、解析选择器。</summary>
@@ -213,6 +238,15 @@ namespace Dnf.Game.Act
         void ChangeActionFile(IActEntity target, ActFileSlot slot, int index, string path, string fromProgram)
         {
         }
+
+        /// <summary>
+        /// 舞台的横向总宽(世界坐标,像素;[IS END MAP] 要的,客户端 0x0046ef10 取地图的格数乘格宽;E-166)。
+        /// 不知道舞台(没有地图的试验场)是 0,这时 [IS END MAP] 不通过(客户端取不到地图时也不通过)。
+        /// </summary>
+        int MapWidth => 0;
+
+        /// <summary>舞台的纵深总高(世界坐标,像素;[IS END MAP VERTICALLY] 要的,客户端 0x0062d080;E-166)。不知道是 0,见 <see cref="MapWidth"/>。</summary>
+        int MapHeight => 0;
     }
 
     /// <summary>
@@ -278,6 +312,9 @@ namespace Dnf.Game.Act
         private bool _aborted;
         private IActEntity _victim;
         private IActEntity _attacker;
+
+        /// <summary>正在处理的这一击的元素标志(位 0 火、1 水、2 暗、3 光);不在 [ON DAMAGE] 的唤醒里是 -1(没有"这一击",元素条件一律通过,E-166)。</summary>
+        private int _damageElements = -1;
 
         /// <summary>
         /// <paramref name="sharedEnabled"/>:触发器开关的持久副本(长度要等于触发器个数,用 <see cref="NewEnabledState"/> 建)。
@@ -463,11 +500,29 @@ namespace Dnf.Game.Act
             Dispatch(ActRecordKind.OnAttackSuccess);
         }
 
-        /// <summary>此对象受到了 <paramref name="attacker"/> 的攻击;唤醒带 [ON DAMAGE] 的触发器。</summary>
+        /// <summary>此对象受到了 <paramref name="attacker"/> 的攻击;唤醒带 [ON DAMAGE] 的触发器。不带这一击的元素,元素条件([IS FIRE DAMAGE] 等)一律通过。</summary>
         public void OnDamage(IActEntity attacker)
         {
             _attacker = attacker;
             Dispatch(ActRecordKind.OnDamage);
+        }
+
+        /// <summary>
+        /// 同上,另外带上这一击的元素标志(<paramref name="elementMask"/>:位 0 火、1 水、2 暗、3 光,没有元素是 0),
+        /// 唤醒期间元素条件([IS FIRE DAMAGE]、[IS WATER DAMAGE]、[IS DARK DAMAGE]、[IS LIGHT DAMAGE]、[IS NONE DAMAGE])按它判定(E-166)。
+        /// </summary>
+        public void OnDamage(IActEntity attacker, int elementMask)
+        {
+            _attacker = attacker;
+            _damageElements = elementMask & 0xF;
+            try
+            {
+                Dispatch(ActRecordKind.OnDamage);
+            }
+            finally
+            {
+                _damageElements = -1;
+            }
         }
 
         /// <summary>此对象的动作被切换了;唤醒带 [ON SET ACTION] 的触发器。</summary>
@@ -559,10 +614,32 @@ namespace Dnf.Game.Act
                     case ActRecordKind.IsLeft:
                     case ActRecordKind.IsRight:
                     case ActRecordKind.FrontSide:
+                    case ActRecordKind.BackSide:
+                    case ActRecordKind.FaceToFace:
+                    case ActRecordKind.WithinSight:
+                    case ActRecordKind.OutOfSight:
+                    case ActRecordKind.FrontPos:
+                    case ActRecordKind.IsTeam:
+                    case ActRecordKind.ZSpeed:
+                    case ActRecordKind.IsTargetActiveStatus:
+                    case ActRecordKind.RandomCheck:
                     case ActRecordKind.IsInPos:
                     case ActRecordKind.IsChild:
                     case ActRecordKind.IsGrabbable:
                         FilterSet(rec);
+                        break;
+                    case ActRecordKind.IsEndMap:
+                    case ActRecordKind.IsEndMapVertically:
+                        if (!AtMapEnd(rec.Kind == ActRecordKind.IsEndMapVertically))
+                        {
+                            return;
+                        }
+                        break;
+                    case ActRecordKind.ElementDamage:
+                        if (!ElementDamagePasses(rec.Number))
+                        {
+                            return;
+                        }
                         break;
                     case ActRecordKind.IsDirectionLeft:
                         if (!_owner.FacingLeft)
@@ -706,9 +783,41 @@ namespace Dnf.Game.Act
                 case ActRecordKind.Hp:
                     return KeepHp(rec, e);
                 case ActRecordKind.FrontSide:
-                    // 目标正面朝向拥有者(客户端 0x010d5186 起的块,只比 X 坐标与朝向,E-132):目标在拥有者左边或同位置就要朝右,在右边就要朝左;
-                    // 客户端还要求目标的 +0x36c 槽返回 1(语义不明,按"活着"处理,推断)
-                    return e.IsAlive && (e.X <= _owner.X ? !e.FacingLeft : e.FacingLeft);
+                    // 目标正面朝向拥有者(客户端 0x010d517d 起的块,只比 X 坐标与朝向,E-132):目标在拥有者左边或同位置就要朝右,在右边就要朝左;
+                    // 客户端还要求目标的 +0x36c 槽返回 1(语义不明,按"活着"处理,推断);X 坐标按整数比(客户端取的是整数坐标,E-166 更正)
+                    return e.IsAlive && (OwnerAtOrRightOf(e) ? !e.FacingLeft : e.FacingLeft);
+                case ActRecordKind.BackSide:
+                    // 目标背朝拥有者(0x010d5384 起,E-166):拥有者在目标右边或同位置,目标要朝左;在左边,目标要朝右
+                    return e.IsAlive && (OwnerAtOrRightOf(e) ? e.FacingLeft : !e.FacingLeft);
+                case ActRecordKind.FaceToFace:
+                    // 面对面(0x010d59b8 起,E-166):拥有者在目标右边或同位置,拥有者朝左而目标朝右;在左边,拥有者朝右而目标朝左
+                    return e.IsAlive && (OwnerAtOrRightOf(e) ? _owner.FacingLeft && !e.FacingLeft : !_owner.FacingLeft && e.FacingLeft);
+                case ActRecordKind.WithinSight:
+                    // 目标在拥有者视线前方(0x010d55a5 起,E-166):只看拥有者的朝向——目标在左边或同位置要朝左,在右边要朝右
+                    return e.IsAlive && (OwnerAtOrRightOf(e) ? _owner.FacingLeft : !_owner.FacingLeft);
+                case ActRecordKind.OutOfSight:
+                    // 目标在拥有者视线后方(0x010d57b1 起,E-166):与 WithinSight 刚好相反
+                    return e.IsAlive && (OwnerAtOrRightOf(e) ? !_owner.FacingLeft : _owner.FacingLeft);
+                case ActRecordKind.FrontPos:
+                {
+                    // 0x010d4f0b 起的块(E-166):问拥有者的虚槽 0x110(朝右时目标 X 比自己小、朝左时比自己大算"是"),FRONTPOS 留"是",BACKPOS 留"否"
+                    int ox = (int)_owner.X;
+                    int tx = (int)e.X;
+                    bool yes = _owner.FacingLeft ? tx > ox : tx < ox;
+                    return yes != rec.Flag;
+                }
+                case ActRecordKind.IsTeam:
+                    return TeamMatches(rec.Ints, e);
+                case ActRecordKind.ZSpeed:
+                    return ActCompares.TestFloat(e.SpeedZ, rec.Sign, rec.Number);
+                case ActRecordKind.IsTargetActiveStatus:
+                    return e.HasActiveStatus(rec.Number);
+                case ActRecordKind.RandomCheck:
+                {
+                    // 0x010d68a2 起的块(E-166):每个对象各掷一次,[0, 分母) 的随机数不大于分子才留下;分母没写(或 0)按 100
+                    int denominator = rec.Denominator == 0 ? 100 : Math.Abs(rec.Denominator);
+                    return _rand(denominator) <= rec.Number;
+                }
                 case ActRecordKind.IsInPos:
                     return (int)e.X == rec.Ints[0] && (int)e.Y == rec.Ints[1] && (int)e.Z == rec.Ints[2];
                 case ActRecordKind.IsChild:
@@ -718,9 +827,9 @@ namespace Dnf.Game.Act
                     return rec.Number != 0 ? child : !child;
                 }
                 case ActRecordKind.IsGrabbable:
-                    // 客户端 0x010d7bd0 起的块(E-156):对象要转得成生物类(被动对象转不过去,剔除),再取虚槽 0x380 的"能否被抓";
-                    // 参数为 1 留下能抓的,别的值留下不能抓的
-                    return e.Kind != ActEntityKind.Passive && e.IsGrabbable == (rec.Number == 1);
+                    // 客户端 0x010d7bd0 起的块(E-156,E-166 更正):先把对象转成碰撞对象类(0x019d91e8,被动对象也转得过去),再取虚槽 0x380 的"能否被抓";
+                    // 被动对象用的是碰撞对象基类的实现,恒返回假(0x00d26320)——参数为 1 留下能抓的,所以被动对象被剔除;别的值留下不能抓的,被动对象留下
+                    return (e.Kind != ActEntityKind.Passive && e.IsGrabbable) == (rec.Number == 1);
                 case ActRecordKind.TriggerCheck:
                 {
                     // 非自身的写法逐对象过滤(客户端 0x010d85bb 起):取不到那一族动作的触发器池或序号不小于个数就剔除;
@@ -731,6 +840,84 @@ namespace Dnf.Game.Act
                 default:
                     return true;
             }
+        }
+
+        /// <summary>拥有者在目标右边或同位置(整数 X 坐标比,客户端条件块都先问这个,E-166)。</summary>
+        private bool OwnerAtOrRightOf(IActEntity e) => (int)_owner.X >= (int)e.X;
+
+        /// <summary>
+        /// [IS TEAM] 的逐码判断(客户端 0x010d6b50 起的块,E-166):命中任何一项就留下。
+        /// 0 与拥有者同队,1 与拥有者不同队,2 主角队(队号 0 到 11,函数 0x007dd440),3 怪物队(队号 100)。
+        /// </summary>
+        private bool TeamMatches(int[] codes, IActEntity e)
+        {
+            for (int i = 0; i < codes.Length; i++)
+            {
+                switch (codes[i])
+                {
+                    case 0:
+                        if (e.Team == _owner.Team)
+                        {
+                            return true;
+                        }
+                        break;
+                    case 1:
+                        if (e.Team != _owner.Team)
+                        {
+                            return true;
+                        }
+                        break;
+                    case 2:
+                        if ((uint)e.Team <= 11u)
+                        {
+                            return true;
+                        }
+                        break;
+                    case 3:
+                        if (e.Team == 100)
+                        {
+                            return true;
+                        }
+                        break;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// [IS END MAP] / [IS END MAP VERTICALLY]:拥有者到了舞台的端头(客户端 0x010d75c0 与 0x010d769d 起的块,E-166)。
+        /// 横向:X ≤ 150 且速度向左(或不动),或 X &gt; 宽 − 150 且速度向右(或不动);纵深:Y ≤ 200 且速度向后(或不动),或 Y &gt; 高 − 50 且速度向前(或不动)。
+        /// 取不到舞台尺寸(<see cref="IActHost.MapWidth"/> 等不大于 0)不通过。
+        /// </summary>
+        private bool AtMapEnd(bool vertical)
+        {
+            int extent = vertical ? _host.MapHeight : _host.MapWidth;
+            if (extent <= 0)
+            {
+                return false;
+            }
+            int position = (int)(vertical ? _owner.Y : _owner.X);
+            float speed = vertical ? _owner.SpeedY : _owner.SpeedX;
+            int near = vertical ? 200 : 150;
+            int far = vertical ? 50 : 150;
+            if (position <= near && speed <= 0f)
+            {
+                return true;
+            }
+            return position > extent - far && speed >= 0f;
+        }
+
+        /// <summary>
+        /// 元素条件(客户端事件运行器 0x010a8c30,条件码 0x30 到 0x34,E-166)。没有"这一击"(不在 [ON DAMAGE] 的唤醒里)一律通过;
+        /// 元素号 0 到 3 看对应的元素位,4([IS NONE DAMAGE])要这一击一个元素也没有。
+        /// </summary>
+        private bool ElementDamagePasses(int element)
+        {
+            if (_damageElements < 0)
+            {
+                return true;
+            }
+            return element == 4 ? _damageElements == 0 : (_damageElements & (1 << element)) != 0;
         }
 
         private void Reselect(ActRecord rec)
@@ -844,16 +1031,13 @@ namespace Dnf.Game.Act
 
         /// <summary>
         /// [CHECK DISTANCE] x 范围 y 范围(客户端条件码 0x3e,块在 0x010d44f4,E-156):整体真假,不改工作集。
-        /// 拥有者要转得成生物类(被动对象转不过去,条件不通过);它的虚槽 0x64 要返回非零(语义没读出来,按成立,推断);
+        /// 拥有者要转得成碰撞对象类(0x019d91e8;怪物与被动对象都转得过去,E-166 更正 E-156 里"被动对象转不过去"的误读);
+        /// 它的虚槽 0x64(读字段 +0xb8,推断是场上对象表的指针——0x008791a0 就遍历它;各类共用一个实现 0x004062e0)要返回非零(按成立:对象在场上);
         /// 再调 0x008791a0(拥有者, x, y):场上角色类对象(类型码 0x11)里,有一个与拥有者敌对(0x00872c60)、不在 0xc8–0xcc 号状态(死亡一类,按"活着")、
         /// 横向差的绝对值不大于 x 且纵深差的绝对值不大于 y 的,就通过;位置按整数比较。判定函数的返回值在条件块里是真正被用的(之前读成"丢掉返回值"是反编译的错觉)。
         /// </summary>
         private bool CheckDistance(ActRecord rec)
         {
-            if (_owner.Kind == ActEntityKind.Passive)
-            {
-                return false;
-            }
             _scratch.Clear();
             _host.Resolve(_owner, ActSelector.AllEnemy, -1, _scratch);
             int ox = (int)_owner.X;

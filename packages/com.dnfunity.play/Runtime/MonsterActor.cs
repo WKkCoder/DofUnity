@@ -1121,6 +1121,13 @@ namespace Dnf.Play
 
             public int Level => _m.Level;
 
+            /// <summary>当前速度:脚本设的速度([SET SPEED],像素/秒;[ZSPEED]、[IS END MAP] 用,E-166);行走等其余运动不在里面。</summary>
+            public float SpeedX => (float)_m.ActSpeedX;
+
+            public float SpeedY => (float)_m.ActSpeedY;
+
+            public float SpeedZ => (float)_m.ActSpeedZ;
+
             public void SetHp(int hp)
             {
                 _m.ActSetHp(hp);
@@ -2129,8 +2136,11 @@ namespace Dnf.Play
         /// 这时 <paramref name="pushPixels"/> 是 [push aside](水平初速的来源,像素/秒的量纲,不再是总位移)。
         /// 死亡的那一击:怪物有倒地动作而且给了倒地输入时,走倒地流程(请求用这一击自己的推力与抬升,E-079 第 3 步),躺下的那一刻转入死亡、
         /// 白闪淡出后消失(E-082、E-084);否则直接死亡(在空中被打死时带着当前速度落地)。
+        /// <paramref name="elementMask"/> 是这一击的元素标志(位 0 火、1 水、2 暗、3 光,<see cref="HitInput.ElementMask"/>),
+        /// 唤醒 [ON DAMAGE] 触发器时给元素条件([IS FIRE DAMAGE] 等)判定用(E-166)。
         /// </summary>
-        public bool ApplyHit(int damage, bool knockDown, double pushPixels, bool pushToLeft, HitStunInput stun, KnockdownInput down, bool noReaction = false)
+        public bool ApplyHit(int damage, bool knockDown, double pushPixels, bool pushToLeft, HitStunInput stun, KnockdownInput down, bool noReaction = false,
+            int elementMask = 0)
         {
             if (!IsAlive || Phase == MonsterPhase.Gone)
             {
@@ -2139,9 +2149,9 @@ namespace Dnf.Play
             ApplyPendingHurt();                                // 每一次挨打都是重新进入受击、倒地几族:记成待换的文件此刻换上(M57)
             if (Phase == MonsterPhase.Attack && _actRunner != null)
             {
-                _actRunner.OnDamage(ActTarget);                // 出招时挨了打:唤醒带 [ON DAMAGE] 的触发器(E-130;挨打者当作攻击者就是主角)
+                _actRunner.OnDamage(ActTarget, elementMask);   // 出招时挨了打:唤醒带 [ON DAMAGE] 的触发器(E-130;挨打者当作攻击者就是主角;元素条件看这一击的元素,E-166)
             }
-            FamilyOnDamage();                                  // 当前动作(非出招族)与过程动作也收到(E-146)
+            FamilyOnDamage(elementMask);                       // 当前动作(非出招族)与过程动作也收到(E-146)
             _brain?.NotifyDamaged();                           // 挨了打:马上找目标、不等发现迟滞(E-114)
             Hp = Math.Max(0, Hp - Math.Max(0, damage));
             int oldPushDir = _pushDir;

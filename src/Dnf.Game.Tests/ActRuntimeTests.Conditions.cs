@@ -139,12 +139,14 @@ public sealed partial class ActRuntimeTests
     }
 
     [Fact]
-    public void CheckDistanceNeverPassesForAPassiveObjectOwner()
+    public void CheckDistanceWorksForAPassiveObjectOwnerToo()
     {
-        // 客户端先把拥有者转成生物类,被动对象转不过去,条件直接不通过(0x010d44fd 之后的空指针出口)
+        // 客户端把拥有者转成的是碰撞对象类(0x010d44fd,描述符 0x019d91e8),被动对象与怪物一样转得过去(E-166 更正 E-156:之前误读成"生物类")
         var owner = new Entity { Kind = ActEntityKind.Passive, X = 0, Y = 0 };
+        ActProgram p = CondProgram(L("[CHECK DISTANCE]", 100, 100));
 
-        Assert.False(Fires(CondProgram(L("[CHECK DISTANCE]", 900, 900)), owner, EnemyHost(HeroAt(1, 1))));
+        Assert.True(Fires(p, owner, EnemyHost(HeroAt(50, 50))));
+        Assert.False(Fires(p, owner, EnemyHost(HeroAt(101, 50))));      // 范围照样生效
     }
 
     [Fact]
@@ -186,13 +188,15 @@ public sealed partial class ActRuntimeTests
     }
 
     [Fact]
-    public void IsGrabbableZeroKeepsOnlyUngrabbableCreaturesAndStillDropsPassiveObjects()
+    public void IsGrabbableZeroKeepsUngrabbableCreaturesAndPassiveObjectsAlike()
     {
+        // 被动对象走碰撞对象基类的虚槽 0x380,恒返回假(0x00d26320),不看对象自己的"能不能抓"属性:参数不是 1 时留下(E-166 更正 E-156)
         var yes = new Entity { Kind = ActEntityKind.Character, X = 1 };
         var no = new Entity { Kind = ActEntityKind.Character, X = 2, Grabbable = false };
-        var passive = new Entity { Kind = ActEntityKind.Passive, X = 3, Grabbable = false };
+        var passive = new Entity { Kind = ActEntityKind.Passive, X = 3 };
+        var passiveYes = new Entity { Kind = ActEntityKind.Passive, X = 4, Grabbable = true };
 
-        Assert.Equal(new[] { At(no) }, RunGetTarget(GetTargetProgram(L("[IS GRABABLE]", 0)), new Entity(), yes, no, passive));
+        Assert.Equal(new[] { At(no), At(passive), At(passiveYes) }, RunGetTarget(GetTargetProgram(L("[IS GRABABLE]", 0)), new Entity(), yes, no, passive, passiveYes));
     }
 
     [Fact]

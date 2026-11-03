@@ -34,6 +34,21 @@ namespace Dnf.Game.Act
             }
         }
 
+        /// <summary>浮点比较:[ZSPEED] 用(客户端比较函数 0x009773c0,比较符码 0 等于、1 大于、2 小于、3 大于等于、4 小于等于、5 不等于;E-166)。</summary>
+        public static bool TestFloat(float left, ActCompare op, float right)
+        {
+            switch (op)
+            {
+                case ActCompare.Equal: return left == right;
+                case ActCompare.Greater: return left > right;
+                case ActCompare.Less: return left < right;
+                case ActCompare.GreaterEqual: return left >= right;
+                case ActCompare.LessEqual: return left <= right;
+                case ActCompare.NotEqual: return left != right;
+                default: return false;
+            }
+        }
+
         public static bool TryParse(string tag, out ActCompare op)
         {
             switch (tag)
@@ -269,6 +284,11 @@ namespace Dnf.Game.Act
         IsRight,
         IsDirectionLeft,
         IsDirectionRight,
+
+        /// <summary>
+        /// [RANDOM CHECK] 分子 [分母]:逐对象过滤,每个对象各掷一次(客户端条件码 0x48,块在 0x010d68a2;E-166)。
+        /// 掷 [0, 分母) 的随机整数,不大于分子才留下;分母没写(或写 0)按 100。分子放在 <see cref="ActRecord.Number"/>,分母放在 <see cref="ActRecord.Denominator"/>。
+        /// </summary>
         RandomCheck,
         TriggerCheck,
         GetTarget,
@@ -305,6 +325,52 @@ namespace Dnf.Game.Act
         /// 选择器没写(或写了认不得的标签,含 [CHECKUP OBJECT])是工作集;结果为空不动槽。不是条件,不会让触发器不通过。
         /// </summary>
         SaveTarget,
+
+        /// <summary>
+        /// [BACKSIDE]:逐对象过滤,留下"背朝拥有者"的活目标(客户端条件码 0x42,块在 0x010d5384;E-166)。
+        /// 与 <see cref="FrontSide"/> 的正反两面相反:拥有者在目标右边或同位置,目标要朝左;在左边,目标要朝右。
+        /// </summary>
+        BackSide,
+
+        /// <summary>[FACE TO FACE]:逐对象过滤,留下"拥有者与目标面对面"的活目标(条件码 0x43,块在 0x010d59b8;E-166)。双方朝向都要对着对方,只比 X 坐标与朝向。</summary>
+        FaceToFace,
+
+        /// <summary>[WITHIN SIGHT]:逐对象过滤,留下"在拥有者视线前方"的活目标(条件码 0x44,块在 0x010d55a5;E-166)。只看拥有者的朝向与 X 坐标,不看距离。</summary>
+        WithinSight,
+
+        /// <summary>[OUT OF SIGHT]:逐对象过滤,留下"在拥有者视线后方"的活目标(条件码 0x45,块在 0x010d57b1;E-166)。全库目前没有用到,按客户端补齐。</summary>
+        OutOfSight,
+
+        /// <summary>
+        /// [IS TEAM] 子标签 … [/IS TEAM]:逐对象过滤(条件码 0x1c,块在 0x010d6b50;E-166)。<see cref="ActRecord.Ints"/> 是子标签码表,命中任何一项就留下:
+        /// 0 [MY TEAM] 与拥有者同队,1 [ENEMY TEAM] 与拥有者不同队,2 [CHARCTER TEAM] 主角队(队号 0 到 11),3 [MONSTER TEAM] 怪物队(队号 100)。
+        /// </summary>
+        IsTeam,
+
+        /// <summary>[ZSPEED] 比较符 n:逐对象过滤,目标当前 Z 方向速度(浮点)与 n 比较(条件码 0x04,块在 0x010d3b80,比较函数 0x009773c0;E-166)。</summary>
+        ZSpeed,
+
+        /// <summary>[IS END MAP]:整体真假,看拥有者(条件码 0x38,块在 0x010d75c0;E-166)。靠近舞台左端(X ≤ 150)且没有向右的速度,或靠近右端(X &gt; 宽 − 150)且没有向左的速度时通过。</summary>
+        IsEndMap,
+
+        /// <summary>[IS END MAP VERTICALLY]:整体真假,看拥有者(条件码 0x39,块在 0x010d769d;E-166)。纵深方向:Y ≤ 200 且没有向后的速度,或 Y &gt; 高 − 50 且没有向前的速度时通过。</summary>
+        IsEndMapVertically,
+
+        /// <summary>[IS TARGETACTIVESTATUS] n:逐对象过滤,留下身上带着异常状态 n 的(条件码 0x47,块在 0x010d6791,问对象的虚槽 0x540;E-166)。</summary>
+        IsTargetActiveStatus,
+
+        /// <summary>
+        /// [IS FIRE/WATER/DARK/LIGHT/NONE DAMAGE]:整体真假,看正在处理的这一击的元素(条件码 0x30 到 0x34,事件运行器 0x010a8c30 里 0x010a92c9 起的几块;E-166)。
+        /// <see cref="ActRecord.Number"/> 是元素号:0 火、1 水、2 暗、3 光、4 无。不在 [ON DAMAGE] 的唤醒里(没有"这一击")一律通过。
+        /// </summary>
+        ElementDamage,
+
+        /// <summary>
+        /// [IS FRONTPOS] / [IS BACKPOS]:逐对象过滤(条件码 0x22,块在 0x010d4f0b,参数 0 是 FRONTPOS、1 是 BACKPOS;E-166)。
+        /// 客户端问拥有者的虚槽 0x110"这个 X 在不在我的……":朝右时 X 比自己小、朝左时 X 比自己大算"是";FRONTPOS 留下"是"的,BACKPOS 留下"否"的。
+        /// 名字与这个读法的几何意义看起来相反,按读到的码实现(见 E-166 的未定项)。<see cref="ActRecord.Flag"/> 为真表示 BACKPOS。
+        /// </summary>
+        FrontPos,
     }
 
     /// <summary>

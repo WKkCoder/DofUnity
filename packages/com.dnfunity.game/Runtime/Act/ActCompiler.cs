@@ -436,6 +436,60 @@ namespace Dnf.Game.Act
                     case "[FRONTSIDE]":
                         records.Add(new ActRecord { Kind = ActRecordKind.FrontSide, Tag = tag });
                         break;
+                    case "[BACKSIDE]":
+                        records.Add(new ActRecord { Kind = ActRecordKind.BackSide, Tag = tag });
+                        break;
+                    case "[FACE TO FACE]":
+                        records.Add(new ActRecord { Kind = ActRecordKind.FaceToFace, Tag = tag });
+                        break;
+                    case "[WITHIN SIGHT]":
+                        records.Add(new ActRecord { Kind = ActRecordKind.WithinSight, Tag = tag });
+                        break;
+                    case "[OUT OF SIGHT]":
+                        records.Add(new ActRecord { Kind = ActRecordKind.OutOfSight, Tag = tag });
+                        break;
+                    case "[IS TEAM]":
+                        records.Add(ParseIsTeam(cur, tag));
+                        break;
+                    case "[ZSPEED]":
+                        AddCompare(cur, records, unsupported, tag, ActRecordKind.ZSpeed);
+                        break;
+                    case "[IS END MAP]":
+                        records.Add(new ActRecord { Kind = ActRecordKind.IsEndMap, Tag = tag });
+                        break;
+                    case "[IS END MAP VERTICALLY]":
+                        records.Add(new ActRecord { Kind = ActRecordKind.IsEndMapVertically, Tag = tag });
+                        break;
+                    case "[IS TARGETACTIVESTATUS]":
+                        if (cur.AtNumber)
+                        {
+                            records.Add(new ActRecord { Kind = ActRecordKind.IsTargetActiveStatus, Tag = tag, Number = cur.Int() });
+                            break;
+                        }
+                        AddUnsupported(records, unsupported, tag);
+                        cur.SkipToHead(IsTriggerHead);
+                        break;
+                    case "[IS FIRE DAMAGE]":
+                    case "[IS WATER DAMAGE]":
+                    case "[IS DARK DAMAGE]":
+                    case "[IS LIGHT DAMAGE]":
+                    case "[IS NONE DAMAGE]":
+                        records.Add(new ActRecord { Kind = ActRecordKind.ElementDamage, Tag = tag, Number = ElementOfTag(tag) });
+                        break;
+                    case "[IS FRONTPOS]":
+                    case "[IS BACKPOS]":
+                        records.Add(new ActRecord { Kind = ActRecordKind.FrontPos, Tag = tag, Flag = tag == "[IS BACKPOS]" });
+                        break;
+                    case "[RANDOM CHECK]":
+                    {
+                        // 分子 [分母](全库 24 处两个整数、2 处一个整数,E-166);没写的数记 0,运行时分母 0 按 100
+                        int[] odds = cur.Ints();
+                        records.Add(new ActRecord
+                        {
+                            Kind = ActRecordKind.RandomCheck, Tag = tag, Number = odds.Length > 0 ? odds[0] : 0, Denominator = odds.Length > 1 ? odds[1] : 0,
+                        });
+                        break;
+                    }
                     case "[IS IN POS]":
                     {
                         int[] pos = cur.Ints();
@@ -568,6 +622,64 @@ namespace Dnf.Game.Act
         }
 
         private static bool IsTriggerHead(string tag) => TriggerHeads.Contains(tag);
+
+        /// <summary>元素条件标签对应的元素号:0 火、1 水、2 暗、3 光、4 无(条件码 0x30 到 0x34 的次序,E-166)。</summary>
+        private static int ElementOfTag(string tag)
+        {
+            switch (tag)
+            {
+                case "[IS FIRE DAMAGE]":
+                    return 0;
+                case "[IS WATER DAMAGE]":
+                    return 1;
+                case "[IS DARK DAMAGE]":
+                    return 2;
+                case "[IS LIGHT DAMAGE]":
+                    return 3;
+                default:
+                    return 4;
+            }
+        }
+
+        /// <summary>
+        /// [IS TEAM] 子标签… [/IS TEAM](客户端条件码 0x1c,加载块在循环里吃子标签,碰上不认得的标签就停;E-166)。
+        /// 子标签四种:[MY TEAM] 记 0、[ENEMY TEAM] 记 1、[CHARCTER TEAM](原样的笔误写法)记 2、[MONSTER TEAM] 记 3。
+        /// 一个子标签也没有时码表为空,运行时一个对象也留不下(客户端的逐码循环一次也不进)。
+        /// </summary>
+        private static ActRecord ParseIsTeam(ActCursor cur, string tag)
+        {
+            var codes = new List<int>();
+            while (cur.AtOpen(out string sub))
+            {
+                int code;
+                switch (sub)
+                {
+                    case "[MY TEAM]":
+                        code = 0;
+                        break;
+                    case "[ENEMY TEAM]":
+                        code = 1;
+                        break;
+                    case "[CHARCTER TEAM]":
+                        code = 2;
+                        break;
+                    case "[MONSTER TEAM]":
+                        code = 3;
+                        break;
+                    default:
+                        code = -1;
+                        break;
+                }
+                if (code < 0)
+                {
+                    break;
+                }
+                cur.Skip();
+                codes.Add(code);
+            }
+            cur.TakeClose(tag);
+            return new ActRecord { Kind = ActRecordKind.IsTeam, Tag = tag, Ints = codes.ToArray() };
+        }
 
         private static void AddUnsupported(List<ActRecord> records, List<string> unsupported, string tag)
         {

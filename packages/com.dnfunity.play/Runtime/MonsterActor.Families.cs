@@ -295,14 +295,14 @@ namespace Dnf.Play
         }
 
         /// <summary>挨了打:唤醒当前动作与过程动作里带 [ON DAMAGE] 的触发器(出招的运行器由调用方处理;客户端分发给这两个对象,E-146)。</summary>
-        private void FamilyOnDamage()
+        private void FamilyOnDamage(int elementMask)
         {
             if (_fam == null)
             {
                 return;
             }
-            _famActive?.Runner?.OnDamage(ActTarget);
-            Host(MonsterActFamily.Proc)?.Runner?.OnDamage(ActTarget);
+            _famActive?.Runner?.OnDamage(ActTarget, elementMask);
+            Host(MonsterActFamily.Proc)?.Runner?.OnDamage(ActTarget, elementMask);
         }
 
         /// <summary>打中了主角:唤醒当前动作与过程动作里带 [ON ATTACKSUCCESS] 的触发器。</summary>

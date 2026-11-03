@@ -1643,6 +1643,67 @@ internal static class ActRunCheck
         return string.Join(",", parts) + (items.Count > limit ? ",…共 " + items.Count + " 种" : string.Empty);
     }
 
+    /// <summary>把一个怪物的一份 .act 里读不懂的触发器标签与行为标签记到"这个标签波及哪些怪物"表里(按怪物去重)。</summary>
+    private static void NoteMonsterTags(ActProgram program, int monster, Dictionary<string, HashSet<int>> triggerTags, Dictionary<string, HashSet<int>> behaviorTags)
+    {
+        foreach (ActTrigger t in program.Triggers)
+        {
+            if (t.Supported)
+            {
+                continue;
+            }
+            var tags = new SortedSet<string>(t.UnsupportedTags, StringComparer.Ordinal);
+            foreach (ActRecord r in t.Records)
+            {
+                if (r.Kind == ActRecordKind.Unsupported && r.Tag != null)
+                {
+                    tags.Add(r.Tag);
+                }
+            }
+            foreach (string tag in tags)
+            {
+                MarkMonster(triggerTags, tag, monster);
+            }
+        }
+        foreach (ActBehaviorGroup g in program.Behaviors)
+        {
+            foreach (string tag in new SortedSet<string>(g.UnsupportedTags, StringComparer.Ordinal))
+            {
+                MarkMonster(behaviorTags, tag, monster);
+            }
+        }
+    }
+
+    private static void MarkMonster(Dictionary<string, HashSet<int>> map, string tag, int monster)
+    {
+        if (!map.TryGetValue(tag, out HashSet<int>? set))
+        {
+            set = new HashSet<int>();
+            map[tag] = set;
+        }
+        set.Add(monster);
+    }
+
+    private static string JoinSets(Dictionary<string, HashSet<int>> map, int limit)
+    {
+        if (map.Count == 0)
+        {
+            return "无";
+        }
+        var items = new List<KeyValuePair<string, int>>();
+        foreach (KeyValuePair<string, HashSet<int>> kv in map)
+        {
+            items.Add(new KeyValuePair<string, int>(kv.Key, kv.Value.Count));
+        }
+        items.Sort((a, b) => b.Value != a.Value ? b.Value.CompareTo(a.Value) : string.CompareOrdinal(a.Key, b.Key));
+        var parts = new List<string>();
+        for (int i = 0; i < items.Count && i < limit; i++)
+        {
+            parts.Add(items[i].Key + " " + items[i].Value);
+        }
+        return string.Join(",", parts) + (items.Count > limit ? ",…共 " + items.Count + " 种" : string.Empty);
+    }
+
     public static int Run(DnfLocation loc, Options opts)
     {
         using DnfAssets assets = DnfAssets.Open(loc.DnfDir);
@@ -1674,6 +1735,8 @@ internal static class ActRunCheck
         var attackActs = new Dictionary<string, ActProgram>(StringComparer.OrdinalIgnoreCase);
         var spawnRoots = new SortedSet<int>();
         var crossSwitch = new CrossSwitchTally();
+        var monsterTriggerTags = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+        var monsterBehaviorTags = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
         foreach (int id in data.MonsterIds())
         {
             MonsterDef? def = data.GetMonster(id);
@@ -1708,6 +1771,7 @@ internal static class ActRunCheck
                 slots[slotIndex] = program;
                 anyFile = true;
                 attackActs[path] = program;
+                NoteMonsterTags(program, id, monsterTriggerTags, monsterBehaviorTags);
                 foreach (ActTrigger t in program.Triggers)
                 {
                     anyTriggers = true;
@@ -1801,6 +1865,7 @@ internal static class ActRunCheck
                         if (program != null)
                         {
                             otherPrograms[k][path] = program;
+                            NoteMonsterTags(program, id, monsterTriggerTags, monsterBehaviorTags);
                             bool hasTriggers = program.Triggers.Count > 0;
                             any |= hasTriggers;
                         }
@@ -1819,6 +1884,10 @@ internal static class ActRunCheck
             Console.WriteLine("其余动作 · " + otherKinds[k].Title + ":带触发器的怪物 " + otherMonsters[k] + " 个");
             otherTallies[k].Print("  这类 .act");
         }
+        Console.WriteLine();
+        Console.WriteLine("读不懂的标签波及的怪物数(出招与其余动作合计,同一怪物只算一次):");
+        Console.WriteLine("  触发器标签:" + JoinSets(monsterTriggerTags, 30));
+        Console.WriteLine("  行为标签:" + JoinSets(monsterBehaviorTags, 45));
         Console.WriteLine();
         familySwitch.Print();
         fileSwap.Print();

@@ -500,6 +500,14 @@ internal sealed class AvatarFixture : IDisposable
     /// M58(证据 E-152)[SET POS FORCE]:force(出招开始起每帧把主角摆到自己前方 30 像素)与 forceme(出招开始起每帧把自己摆到主角右侧 50 像素)。
     /// M63(证据 E-161)属性改变附加物:appendme(帧 1 给自己挂无时限的移动速度 -50% 与生命上限 +100%)、appendhero(帧 1 给主角挂 500 毫秒的移动速度与攻击速度 -50%)、
     /// appenddel(帧 1 给主角挂无时限的移动速度 -50%,帧 3 用 [DELETE APPENDAGE] 删掉同一项)。
+    /// M68(证据 E-166)条件批一:xendout 与 xendin(出招开始把 X 速度设成向左或向右,帧 1 在 [IS END MAP] 成立时放 <see cref="ActForeverId"/>)、
+    /// xendv(帧 1 看 [IS END MAP VERTICALLY])、xstatus 与 xstatusmiss(帧 1 对主角挂眩晕,概率 100 或 0;帧 3 目标带着眩晕才放 <see cref="ActForeverId"/>)、
+    /// xfire(出招 .act 里的 [ON DAMAGE] 带火元素条件才放 <see cref="ActForeverId"/>)、xzspeed 与对照 xzspeedn(帧 1 在自己的 Z 速度大于 0 时放 <see cref="ActForeverId"/>;前者出招起 Z 速度 300);
+    /// 过程动作 f_procfire、f_procwater、f_procnone:挨打且这一击是火、水、无元素才放 <see cref="ActForeverId"/>;
+    /// 站立动作 f_stayfire:挨打且这一击是火才放 <see cref="ActForeverId"/>;
+    /// xnear(出招帧 1 放出 <see cref="ActNearId"/> 与 <see cref="ActFarId"/> 两个被动对象,它们出生时各看一次 [CHECK DISTANCE]);
+    /// xdrift(出招开始起 X、Y、Z 三个轴的速度各设一个,Y 为正;帧 1 看 [IS END MAP VERTICALLY] 成立才放 <see cref="ActForeverId"/>);
+    /// 被动对象 <see cref="ActDriftId"/> 出生起 X、Y、Z 三个轴的速度各设一个。
     /// </summary>
     public const int ActForeverId = 9206;
 
@@ -543,6 +551,14 @@ internal sealed class AvatarFixture : IDisposable
     public const int ActHomeTurnId = 9219;
     public const int ActHomeCharId = 9220;
     public const int ActHomeCarryId = 9221;
+
+    /// <summary>M68(证据 E-166):出生起三个轴各设一个速度(X 200、Y 50、Z 300;X 朝向相关),用来看被动对象把脚本速度报给 [ZSPEED]、[IS END MAP];限时 1000 毫秒。</summary>
+    public const int ActDriftId = 9222;
+
+    /// <summary>M68(证据 E-166 更正 E-156):被动对象出生时看一次 [CHECK DISTANCE];<see cref="ActNearId"/> 的范围 900×900(看得到主角),<see cref="ActFarId"/> 的范围 0×0(看不到);看到了才放一个 <see cref="ActForeverId"/>。</summary>
+    public const int ActNearId = 9223;
+
+    public const int ActFarId = 9224;
     public const int HomeMonsterCode = 77;
     public const string ActObjectDir = "passiveobject/blob";
     public const string ActBoomAni = "passiveobject/blob/animation/boom.ani";
@@ -805,6 +821,17 @@ internal sealed class AvatarFixture : IDisposable
         ("appendme", new[] { "ActAppendMe" }),
         ("appendhero", new[] { "ActAppendHero" }),
         ("appenddel", new[] { "ActAppendDel" }),
+        // M68(证据 E-166):[IS END MAP]、[IS END MAP VERTICALLY]、[IS TARGETACTIVESTATUS]
+        ("xendout", new[] { "ActXEndOut" }),
+        ("xendin", new[] { "ActXEndIn" }),
+        ("xendv", new[] { "ActXEndV" }),
+        ("xstatus", new[] { "ActXStatus" }),
+        ("xstatusmiss", new[] { "ActXStatusMiss" }),
+        ("xfire", new[] { "ActXFire" }),
+        ("xzspeed", new[] { "ActXZSpeed" }),
+        ("xzspeedn", new[] { "ActXZSpeedN" }),
+        ("xdrift", new[] { "ActXDrift" }),
+        ("xnear", new[] { "ActXNear" }),
     };
 
     /// <summary>
@@ -821,6 +848,11 @@ internal sealed class AvatarFixture : IDisposable
         ("f_dmg", new[] { "ActPlain" }, new[] { "[damage action 1]", "FDamage", "[down action]", "FDown" }),
         ("f_procboot", new[] { "ActPlain" }, new[] { "[proc action]", "FProcBoot" }),
         ("f_procdmg", new[] { "ActPlain" }, new[] { "[proc action]", "FProcDmg" }),
+        // M68(证据 E-166):[ON DAMAGE] 加元素条件(火、水、无)
+        ("f_procfire", new[] { "ActPlain" }, new[] { "[proc action]", "FProcFire" }),
+        ("f_procwater", new[] { "ActPlain" }, new[] { "[proc action]", "FProcWater" }),
+        ("f_procnone", new[] { "ActPlain" }, new[] { "[proc action]", "FProcNone" }),
+        ("f_stayfire", new[] { "ActPlain" }, new[] { "[waiting action]", "FStayFire" }),
         ("f_procsw", new[] { "ActPlain" }, new[] { "[proc action]", "FProcSw", "[waiting action]", "FStaySw" }),
         ("f_stayset", new[] { "ActPlain", "ActPlain" }, new[] { "[waiting action]", "FStaySet" }),
         ("f_stayunh", new[] { "ActPlain" }, new[] { "[waiting action]", "FStayUnh" }),
@@ -1066,6 +1098,64 @@ internal sealed class AvatarFixture : IDisposable
             .Behavior(b => b.Tag("[APPENDAGE]").Int(0).Tag("[move speed]").Tag("[%]").Int(-50).Tag("[/APPENDAGE]"))
             .Behavior(b => b.Tag("[DELETE APPENDAGE]").Int(0).Tag("[move speed]").Tag("[%]").Int(-50).Tag("[/DELETE APPENDAGE]"))
             .Build());
+        // M68(证据 E-166):舞台端头条件。出招一开始 X 速度设成 100(朝左取反,即向左)或 -100(向右),帧 1 在 [IS END MAP] 成立时放一个 ActForeverId;
+        // xendv 不设速度,帧 1 看 [IS END MAP VERTICALLY];xstatus 帧 1 对攻击目标挂眩晕(概率 100)、帧 3 在目标带着异常状态 3(眩晕)时放一个(xstatusmiss 概率 0)
+        yield return (BlobActionDir + "/actxendout.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1).Tag("[IS END MAP]"), 1)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 100))
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/actxendin.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1).Tag("[IS END MAP]"), 1)
+            .Behavior(b => b.SetSpeed("[X AXIS]", -100))
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/actxendv.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1).Tag("[IS END MAP VERTICALLY]"), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/actxstatus.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0, "[TARGET]")
+            .Trigger(r => r.Tag("[FRAME]").Int(3, 3).Tag("[WHICH]").Tag("[TARGET]").Tag("[IS TARGETACTIVESTATUS]").Int(3), 1, "[CHECKUP OBJECT]")
+            .Behavior(b => b.Tag("[ACTIVE STATUS]").Tag("[stun]").Float(100f).Int(0, 2000))
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/actxstatusmiss.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0, "[TARGET]")
+            .Trigger(r => r.Tag("[FRAME]").Int(3, 3).Tag("[WHICH]").Tag("[TARGET]").Tag("[IS TARGETACTIVESTATUS]").Int(3), 1, "[CHECKUP OBJECT]")
+            .Behavior(b => b.Tag("[ACTIVE STATUS]").Tag("[stun]").Float(0f).Int(0, 2000))
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        // xzspeed:出招开始起 Z 速度 300,帧 1 在自己的高度速度大于 0 时放一个;xzspeedn 同样的条件但没有起速度(对照)
+        yield return (BlobActionDir + "/actxzspeed.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1).Tag("[WHICH]").Tag("[ME]").Tag("[ZSPEED]").Tag("[>]").Int(0), 1, "[CHECKUP OBJECT]")
+            .Behavior(b => b.SetSpeed("[Z AXIS]", 300))
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        yield return (BlobActionDir + "/actxzspeedn.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1).Tag("[WHICH]").Tag("[ME]").Tag("[ZSPEED]").Tag("[>]").Int(0), 0, "[CHECKUP OBJECT]")
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        // xdrift:出招开始起 X、Y、Z 三个轴的速度各设一个(Y 为正),帧 1 看 [IS END MAP VERTICALLY] 成立才放一个
+        yield return (BlobActionDir + "/actxdrift.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1).Tag("[IS END MAP VERTICALLY]"), 1)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 100).SetSpeed("[Y AXIS]", 50).SetSpeed("[Z AXIS]", 300))
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        // xnear:出招帧 1 放出 ActNearId 与 ActFarId 两个被动对象
+        yield return (BlobActionDir + "/actxnear.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Create(ActNearId, 0, 0, 0).Create(ActFarId, 0, 0, 0))
+            .Build());
+        // xfire:出招 .act 里挨到火元素的一击才放一个(出招运行器的 [ON DAMAGE] 也带元素)
+        yield return (BlobActionDir + "/actxfire.act", ActWith(ThrowActAni)
+            .Trigger(r => r.Tag("[ON DAMAGE]").Tag("[IS FIRE DAMAGE]"), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
         // M52(证据 E-145):按动作族写的 [TRIGGER]。第 1 招的触发器 0 本来开着(xoff)或关着(xon),由第 0 招去改
         yield return (BlobActionDir + "/actxoff.act", ActWith(ThrowActAni)
             .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
@@ -1149,6 +1239,19 @@ internal sealed class AvatarFixture : IDisposable
             .Build());
         yield return (BlobActionDir + "/fprocdmg.act", NewScript()
             .Trigger(r => r.Tag("[ON DAMAGE]"), 0)
+            .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+            .Build());
+        // M68(证据 E-166):挨打且这一击是火、是水、没有元素时才放一个
+        foreach ((string file, string element) in new[] { ("fprocfire", "[IS FIRE DAMAGE]"), ("fprocwater", "[IS WATER DAMAGE]"), ("fprocnone", "[IS NONE DAMAGE]") })
+        {
+            yield return (BlobActionDir + "/" + file + ".act", NewScript()
+                .Trigger(r => r.Tag("[ON DAMAGE]").Tag(element), 0)
+                .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+                .Build());
+        }
+        // 站立动作(当前动作)里挨到火元素的一击才放一个
+        yield return (BlobActionDir + "/fstayfire.act", ActWith(StayActAni)
+            .Trigger(r => r.Tag("[ON DAMAGE]").Tag("[IS FIRE DAMAGE]"), 0)
             .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
             .Build());
         // 过程的触发器 0 出生时关着,站立动作一开始就把它打开(跨族 [TRIGGER] [PROC])
@@ -1304,6 +1407,24 @@ internal sealed class AvatarFixture : IDisposable
             .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
             .Behavior(b => b.SetSpeed("[Z AXIS]", 300))
             .Build());
+        yield return (ActObjectDir + "/actdrift.obj", NewScript()
+            .Tag("[basic action]").Str("action/actdrift.act")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actdrift.act", ActWith("../animation/idle.ani")
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 200).SetSpeed("[Y AXIS]", 50).SetSpeed("[Z AXIS]", 300))
+            .Build());
+        // M68(证据 E-166):被动对象出生时用 [CHECK DISTANCE] 找主角,看得到才放一个常驻对象
+        foreach ((string file, int range) in new[] { ("actnear", 900), ("actfar", 0) })
+        {
+            yield return (ActObjectDir + "/" + file + ".obj", NewScript()
+                .Tag("[basic action]").Str("action/" + file + ".act")
+                .Tag("[object destroy condition]").Str(shotDestroy, "[time limite]").Int(1000).Build());
+            yield return (ActObjectDir + "/action/" + file + ".act", ActWith("../animation/idle.ani")
+                .Trigger(r => r.Tag("[ON SET ACTION]").Tag("[CHECK DISTANCE]").Int(range, range), 0)
+                .Behavior(b => b.Create(ActForeverId, 0, 0, 0))
+                .Build());
+        }
         // ---- M62(证据 E-158):被动对象各动作的触发器开关板
         string boardRead = "[TRIGGER CHECK]";
         yield return (ActObjectDir + "/actbread.obj", NewScript()
@@ -1925,6 +2046,9 @@ internal sealed class AvatarFixture : IDisposable
                 .Int(ActHomeTurnId).Str("blob/acthomer.obj")
                 .Int(ActHomeCharId).Str("blob/acthomec.obj")
                 .Int(ActHomeCarryId).Str("blob/acthomek.obj")
+                .Int(ActDriftId).Str("blob/actdrift.obj")
+                .Int(ActNearId).Str("blob/actnear.obj")
+                .Int(ActFarId).Str("blob/actfar.obj")
                 .Int(CrateObjectId).Str("MapObject/BreakableObject/Crate.obj")
                 .Int(BarrelObjectId).Str("MapObject/BreakableObject/Barrel.obj")
                 .Int(PillarObjectId).Str("MapObject/BreakableObject/Pillar.obj")
