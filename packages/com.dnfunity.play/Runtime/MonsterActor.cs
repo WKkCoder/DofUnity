@@ -268,6 +268,62 @@ namespace Dnf.Play
         public bool SuperArmorOnAttack { get; set; }
 
         /// <summary>
+        /// "朝向跟着目标走"的总开关(客户端怪物字段 +0x4f7c,E-169):出生时取 .mob 的 [change direction by target](没写是开),出招脚本的 [CHANGE DIRECTION BY TARGET] 中途会改。
+        /// 关着的时候怪物应用状态不采用 AI 给的朝向(客户端 0x00836945 与 0x00836ff9),所以 AI 的转向——出招前转向主角、站立面对主角、走路转向行进方向——全都不做;
+        /// 脚本自己的 [SET DIRECTION]、倒地飞行的朝向不受它管。由 <see cref="RoomMonsterBuilder"/> 从定义里接过来。
+        /// </summary>
+        public bool FacesTarget { get; set; } = true;
+
+        /// <summary>
+        /// 出招里逐帧面朝目标(客户端字段 +0x4fb8 非 0,E-169):出生时取 .mob 的 [is direction to move](非 0),脚本的 [IS DIRECTION TO MOVE] 中途会改。
+        /// 客户端的自动转向函数 0x00d1cb00 在出招状态里每次调用都把怪物转向目标(横向位置比较,目标在右边就朝右、一样就朝左),要 <see cref="FacesTarget"/> 也开着;
+        /// 调用的时机在保护区里读不到(推断:逐帧)。
+        /// </summary>
+        public bool AttackFacing { get; set; }
+
+        /// <summary>
+        /// AI 的指定目标(客户端 AI 对象 +0x39c,E-169):脚本的 [CHANGE MY TARGET] 设的,永久,优先于缺省目标(<see cref="ActTarget"/>);没有是 null。
+        /// 指定目标不在场了(死了)就当没有,回到缺省目标。
+        /// </summary>
+        public IActEntity DesignatedTarget { get; private set; }
+
+        /// <summary>
+        /// 怪物此刻的 AI 目标(客户端 AI 对象的取目标函数 0x00839410:指定目标优先、否则缺省目标):脚本的 [MOVE TO TARGET]、[SET DIRECTION] [TO TARGET]、[TARGET] 选择器取它。
+        /// </summary>
+        public IActEntity AiTarget => DesignatedTarget != null && DesignatedTarget.IsAlive ? DesignatedTarget : ActTarget;
+
+        /// <summary>
+        /// 脚本换 AI 目标(E-169):<paramref name="designated"/> 为真([CHANGE MY TARGET])直接设成指定目标;为假([SET SAVED TARGET])是客户端的"软"设置——
+        /// 现有目标(指定的或缺省的)有效时不替换,只有目标丢了(没有或已不在场)才换成缺省目标(推断:客户端 0x008e22f0 看现有目标是不是在场的活动对象)。
+        /// </summary>
+        internal void SetAiTarget(IActEntity target, bool designated)
+        {
+            if (target == null)
+            {
+                return;
+            }
+            if (designated)
+            {
+                DesignatedTarget = target;
+                return;
+            }
+            IActEntity current = AiTarget;
+            if (current == null || !current.IsAlive)
+            {
+                ActTarget = target;
+            }
+        }
+
+        /// <summary>AI 的转向:总开关 <see cref="FacesTarget"/> 开着才转(E-169);倒地飞行、脚本的 [SET DIRECTION] 不走这里。</summary>
+        private void TurnTo(bool left)
+        {
+            if (FacesTarget)
+            {
+                FacingLeft = left;
+            }
+        }
+
+        /// <summary>
         /// 现在带着霸体(档位 1):有 <see cref="SuperArmorOnAttack"/> 而且正在出招(客户端进入出招状态 STATE_ATTACK = 8 时打开、离开时关闭),
         /// 或者强悍、凶猛类别的怪物处在靠近模式里(<see cref="MonsterBrain.ApproachSuperArmor"/>,E-148);已经死了没有。
         /// </summary>
@@ -638,6 +694,28 @@ namespace Dnf.Play
             }
             FamilyOnAttackSuccess(victim);
             _brain?.NotifyHitHero();                           // 绕背冲刺或靠近途中打中了主角:转追击(E-148)
+        }
+
+        /// <summary>
+        /// 出招里逐帧面朝目标(E-169;客户端自动转向函数 0x00d1cb00 的出招分支):<see cref="AttackFacing"/> 与 <see cref="FacesTarget"/> 都开着、
+        /// 是正常的出招(不是自定义动作)时,每一步按横向位置比较转向——目标在右边(自己的 X 小于目标的 X)就朝右,一样大就朝左。
+        /// 目标取 AI 目标(<see cref="AiTarget"/>:脚本指定的优先),没有就用主角的位置。
+        /// </summary>
+        private void TrackTargetWhileAttacking(double heroX, bool heroPresent)
+        {
+            if (!AttackFacing || !FacesTarget || _customIndex >= 0)
+            {
+                return;
+            }
+            IActEntity aim = AiTarget;
+            if (aim != null && aim.IsAlive)
+            {
+                FacingLeft = !(X < aim.X);
+            }
+            else if (heroPresent)
+            {
+                FacingLeft = !(X < heroX);
+            }
         }
 
         /// <summary>
@@ -1112,7 +1190,7 @@ namespace Dnf.Play
 
             public bool IsAlive => (_m.IsAlive && _m.Phase != MonsterPhase.Gone) || _m.LastActRunning;
 
-            public IActEntity Target => _m.ActTarget;
+            public IActEntity Target => _m.AiTarget;
 
             public IActEntity Master => _m.ActMaster;
 
@@ -1139,6 +1217,21 @@ namespace Dnf.Play
             public void SetFacing(bool left)
             {
                 _m.FacingLeft = left;
+            }
+
+            public void SetFacingFollowsTarget(bool on)
+            {
+                _m.FacesTarget = on;
+            }
+
+            public void SetAttackFacing(bool on)
+            {
+                _m.AttackFacing = on;
+            }
+
+            public void SetAiTarget(IActEntity target, bool designated)
+            {
+                _m.SetAiTarget(target, designated);
             }
 
             public void SetSpeed(bool hasX, float vx, bool hasY, float vy, bool hasZ, float vz)
@@ -1417,6 +1510,7 @@ namespace Dnf.Play
                         EnterPhase(MonsterPhase.Attack);          // 记录的剩余次数还在 2 以上:这一招从头再来一遍(证据 E-103)
                         break;
                     }
+                    TrackTargetWhileAttacking(heroX, heroPresent);
                     if (_actRunner != null)
                     {
                         TickActs(deltaMs, walk);
@@ -1703,7 +1797,7 @@ namespace Dnf.Play
             }
             if (Math.Abs(dx) > 1.0)
             {
-                FacingLeft = dx < 0;
+                TurnTo(dx < 0);
             }
             bool geometric = heroBoxes != null && heroBoxes.Count > 0 && StrikeBoxes().Count > 0;
             bool near;
@@ -1803,7 +1897,7 @@ namespace Dnf.Play
                 {
                     if (Math.Abs(dx) > 1.0)
                     {
-                        FacingLeft = dx < 0;
+                        TurnTo(dx < 0);
                     }
                     script.AttackStarted(attack);
                     _attackIndex = attack;
@@ -1848,7 +1942,7 @@ namespace Dnf.Play
                 {
                     if (stepX != 0)
                     {
-                        FacingLeft = stepX < 0;
+                        TurnTo(stepX < 0);
                     }
                     TryMove(stepX, stepY, walk);
                 }
@@ -1867,7 +1961,7 @@ namespace Dnf.Play
             }
             if (Math.Abs(dx) > 1.0)
             {
-                FacingLeft = dx < 0;                              // 站着(含走到了目的地)面朝主角
+                TurnTo(dx < 0);                                   // 站着(含走到了目的地)面朝主角
             }
         }
 
@@ -1940,7 +2034,7 @@ namespace Dnf.Play
             {
                 if (!_brain.Moving && _brain.IsEngaged && Math.Abs(dx) > 1.0)
                 {
-                    FacingLeft = dx < 0;
+                    TurnTo(dx < 0);
                 }
                 if (Phase == MonsterPhase.Wait || (Phase == MonsterPhase.Walk && _chooser != null))
                 {
@@ -1991,7 +2085,7 @@ namespace Dnf.Play
             }
             if (_brain.StepX != 0)
             {
-                FacingLeft = _brain.StepX < 0;
+                TurnTo(_brain.StepX < 0);
             }
             double seconds = deltaMs / 1000.0;
             TryMove(_brain.StepX * SpeedX * seconds, _brain.StepY * SpeedY * seconds, walk);

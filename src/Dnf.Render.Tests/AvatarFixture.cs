@@ -446,6 +446,12 @@ internal sealed class AvatarFixture : IDisposable
     public const string CustomLoopAni = "monster/blob/animation_blob/customloop.ani";
     public const string CustomStrikeAni = "monster/blob/animation_blob/customstrike.ani";
 
+    /// <summary>
+    /// M70b(证据 E-170)循环动画的出招:<see cref="CustomLoopAni"/>(两帧各 100 毫秒,一遍 200 毫秒)与带攻击框的这一个
+    /// (四帧各 80 毫秒,一遍 320 毫秒,第 0 帧即每遍开头的 80 毫秒带 <see cref="BlobStrikeBox"/>),都带循环属性。
+    /// </summary>
+    public const string LoopStrikeAni = "monster/blob/animation_blob/loopstrike.ani";
+
     /// <summary>出招 B 的攻击框(类型 15):x 从 −200 起宽 40(出招方向的反面),y 从 −10 起深 20,z 从 0 起高 50。</summary>
     public static readonly (ushort Type, int[] Values) BlobAwayBox = ((ushort)15, new[] { -200, -10, 0, 40, 20, 50 });
 
@@ -587,6 +593,9 @@ internal sealed class AvatarFixture : IDisposable
     /// 被动对象:<see cref="ActCastId"/>(出生排 200 毫秒读条,到期放一个 <see cref="ActForeverId"/>)。数全是测试用的。
     /// </summary>
     public const int ActCastId = 9229;
+
+    /// <summary>M70(证据 E-169):xmoveto 怪物 [MOVE TO TARGET] 的速度(每秒像素)。</summary>
+    public const int MoveToSpeed = 400;
     public const string CastAni = "monster/blob/animation_blob/cast.ani";
     public const int HomeMonsterCode = 77;
     public const string ActObjectDir = "passiveobject/blob";
@@ -795,6 +804,7 @@ internal sealed class AvatarFixture : IDisposable
     private const string LastActAni = "../Animation_Blob/Last.ani";
     private const string StrikeActAni = "../Animation_Blob/Strike.ani";
     private const string CastActAni = "../Animation_Blob/Cast.ani";
+    private const string LoopStrikeActAni = "../Animation_Blob/LoopStrike.ani";
     private const string SwapStayActAni = "../Animation_Blob/StayB.ani";
     private const string SwapMoveActAni = "../Animation_Blob/MoveB.ani";
     private const string SwapDamage1ActAni = "../Animation_Blob/Damage1B.ani";
@@ -875,6 +885,17 @@ internal sealed class AvatarFixture : IDisposable
         ("xcastspawn", new[] { "ActCastSpawn" }),
         ("xcastlate", new[] { "ActCastLate" }),
         ("xcastchain", new[] { "ActCastChain" }),
+        // M70(证据 E-169):[MOVE TO TARGET]、[IS DIRECTION TO MOVE]、[CHANGE DIRECTION BY TARGET]
+        ("xmoveto", new[] { "ActMoveTo" }),
+        ("xtrack", new[] { "ActTrack" }),
+        ("xface0", new[] { "ActFace0" }),
+        ("xtrackoff", new[] { "ActTrackOff" }),
+        // M70b(证据 E-170):出招动画带循环属性
+        ("xloopend", new[] { "ActLoopEnd" }),
+        ("xloopnoend", new[] { "ActLoopNoEnd" }),
+        ("xloopplain", new[] { "ActLoopPlain" }),
+        ("xloopqueue", new[] { "ActLoopQueue", "ActPlain" }),
+        ("xloophit", new[] { "ActLoopHit" }),
         ("spawn9225", new[] { "ActSpawn9225" }),
         ("spawn9226", new[] { "ActSpawn9226" }),
         ("spawn9227", new[] { "ActSpawn9227" }),
@@ -925,6 +946,8 @@ internal sealed class AvatarFixture : IDisposable
         ("f_custend", new[] { "ActCustEnd", "ActPlain" }, new[] { "[etc action]", "CustA" }),
         ("f_custbad", new[] { "ActCustBad", "ActPlain" }, new[] { "[etc action]", "CustA||CustB" }),
         ("f_custnone", new[] { "ActCustNow", "ActPlain" }, new string[0]),
+        // M70b(证据 E-170):循环动画的出招用 [END] 排好切自定义动作 0(A:一进来放一个永不消失的对象)
+        ("f_loopqcust", new[] { "ActLoopQueueCust" }, new[] { "[etc action]", "CustA" }),
         ("f_custplain", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustAPlain" }),
         ("f_custnoani", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustNoAni" }),
         ("f_custstay", new[] { "ActPlain" }, new[] { "[waiting action]", "FStayCust", "[etc action]", "CustA" }),
@@ -1257,6 +1280,57 @@ internal sealed class AvatarFixture : IDisposable
             .Behavior(b => b.Tag("[CASTING]").Int(200, 1))
             .Behavior(b => b.Tag("[CASTING]").Int(200, 2))
             .Behavior(b => b.Create(ActForeverId, 0, 0, 0).Tag("[SET FRAME]").Int(1))
+            .Build());
+        // M70(证据 E-169):出招里朝目标的移动与转向。出招动画用普通的四帧 80 毫秒动画
+        // xmoveto:出招一开始就朝目标冲,速度 MoveToSpeed
+        yield return (BlobActionDir + "/actmoveto.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[MOVE TO TARGET]").Int(MoveToSpeed))
+            .Build());
+        // xtrack:出招一开始打开"出招里逐帧面朝目标"
+        yield return (BlobActionDir + "/acttrack.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[IS DIRECTION TO MOVE]").Int(1))
+            .Build());
+        // xface0:出招一开始关掉"朝向跟着目标走"总开关
+        yield return (BlobActionDir + "/actface0.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[CHANGE DIRECTION BY TARGET]").Int(0))
+            .Build());
+        // xtrackoff:总开关关、逐帧面朝开(总开关管着,追不起来)
+        yield return (BlobActionDir + "/acttrackoff.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[CHANGE DIRECTION BY TARGET]").Int(0).Tag("[IS DIRECTION TO MOVE]").Int(1))
+            .Build());
+        // M70b(证据 E-170):出招动画带循环属性(CustomLoop.ani 一遍 200 毫秒)
+        yield return (LoopStrikeAni, BuildBlobBoxesAni(true, (0, 80, new[] { BlobHurtBox, BlobStrikeBox }), (1, 80, new[] { BlobHurtBox }),
+            (2, 80, new[] { BlobHurtBox }), (3, 80, new[] { BlobHurtBox })));
+        // xloopend:到 500 毫秒回待机——循环出招自己不播完,要等脚本收尾
+        yield return (BlobActionDir + "/actloopend.act", ActWith(CustomLoopActAni)
+            .Trigger(r => r.Tag("[CHECK TIME]").Int(500), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[STAND]"))
+            .Build());
+        // xloopnoend:同样的动画,有程序但里面没有收尾的 [SET ACTION]——不能一直挂着,仍是播一遍就结束
+        yield return (BlobActionDir + "/actloopnoend.act", ActWith(CustomLoopActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[ATTACKRECT]").Tag("[ON]"))
+            .Build());
+        // xloopplain:同样的动画,没有程序
+        yield return (BlobActionDir + "/actloopplain.act", ActMotion(CustomLoopActAni));
+        // xloopqueue:一开始就用 [END] 排好切第 1 招——循环出招这一遍播完就接
+        yield return (BlobActionDir + "/actloopqueue.act", ActWith(CustomLoopActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[END]"))
+            .Build());
+        // f_loopqcust:同上,排的是自定义动作 0
+        yield return (BlobActionDir + "/actloopqueuecust.act", ActWith(CustomLoopActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(0).Tag("[END]"))
+            .Build());
+        // xloophit:带攻击框的循环出招,到 1000 毫秒回待机
+        yield return (BlobActionDir + "/actloophit.act", ActWith(LoopStrikeActAni)
+            .Trigger(r => r.Tag("[CHECK TIME]").Int(1000), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[STAND]"))
             .Build());
         // xfire:出招 .act 里挨到火元素的一击才放一个(出招运行器的 [ON DAMAGE] 也带元素)
         yield return (BlobActionDir + "/actxfire.act", ActWith(ThrowActAni)
@@ -2299,8 +2373,11 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[down motion]").Str("Animation_Blob/Down.ani")
                 .Tag("[attack motion]").Str("Animation_Blob/Attack1.ani").Str("Animation_Blob/Strike.ani")
                 .Tag("[attack info]").Str("AttackInfo/Missing.atk").Str("AttackInfo/Striker.atk").Build()),
+            // 第二个目录项(编号 2)顺带带上两个朝向标签的出生值:造怪时要原样接到怪物身上(M70,证据 E-169)
             ("monster/blob/big.mob", NewScript()
-                .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani").Build()),
+                .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
+                .Tag("[change direction by target]").Int(0)
+                .Tag("[is direction to move]").Int(1).Build()),
             // 脚本怪物:全部动作都是 .act(证据 E-128)
             (BlobScriptedMobPath, NewScript()
                 .Tag("[waiting action]").Str("Action/Stay.act")

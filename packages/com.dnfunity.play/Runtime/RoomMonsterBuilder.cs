@@ -115,6 +115,8 @@ namespace Dnf.Play
             // 地面攻击框够不着,自动机清不掉这些房间(全库扫描里 5 个副本会因此卡住);要先读清楚原版的命中高度规则与跳击再接
             actor.Strike = attackStrikes.Length > 0 ? attackStrikes[0] : new HeroStrikeInfo(0, 0, false);
             actor.SuperArmorOnAttack = def.SuperArmorOnAttack;              // [superarmor on attack]:出招期间带档位 1 的霸体(E-143)
+            actor.FacesTarget = def.ChangeDirectionByTarget;                // [change direction by target]:出生时"朝向跟着目标走"的开关,没写是开(E-169)
+            actor.AttackFacing = def.AttackFacing;                          // [is direction to move]:出招里逐帧面朝目标(E-169)
             actor.SetStrikes(attackStrikes);
             actor.SetAttackKinds(AttackKindRecord.Parse(def.Tags), unchecked((uint)seed * 2654435761u + (uint)actor.Index * 40503u + 12345u));
             // 默认 AI 的走位:游荡、发现主角、按节拍朝主角走(证据 E-114);没有 [melee combat]/[range combat]/[stay] 类别的怪物仍走占位

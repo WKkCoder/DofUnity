@@ -537,4 +537,43 @@ public class MonsterBrainTests
         arena.Steps(40);
         Assert.True(m.X > 85, "已经压在障碍里的怪物不受它挡,照样走:x = " + m.X);       // 出了障碍的范围(x ≥ 100)再想走回去才会被挡
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TheTurnSwitchGovernsABrainMonstersFacingWhileWalking(bool facesTarget)
+    {
+        // 主角站在 (300, 100);怪物在 (100, 100) 朝左:走向主角的路上面朝主角(右)只在总开关开着时发生(M70,E-169)
+        using var arena = new RoomCombatTests.Arena(new[] { (100, 100) }, monsterSpeed: 100);
+        MonsterActor m = Monster(arena);
+        m.FacesTarget = facesTarget;
+        m.SetDefaultAi(NewBrain(Fixed(99), sight: 300));
+        arena.Steps(160);                                               // 走了约 90 像素
+        Assert.Equal(MonsterMoveMode.HostileMelee, m.Brain.Mode);
+        Assert.Equal(MonsterPhase.Walk, m.Phase);
+        Assert.True(m.X > 100 + 50, "walks to the right: " + m.X);
+        Assert.Equal(facesTarget, !m.FacingLeft);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TheTurnSwitchGovernsAStandingEngagedBrainMonstersFacing(bool facesTarget)
+    {
+        // 盯着目标又站着的模式(追击里 80% 的掷骰在随机数 99 下不起步):站着时面朝主角,只在总开关开着时发生(M70,E-169)。
+        // 走向主角(右)的路上被判卡住:反向模式往左退 501 毫秒,然后转追击站定
+        using var arena = new RoomCombatTests.Arena(new[] { (100, 100) }, monsterSpeed: 100);
+        MonsterActor m = Monster(arena);
+        m.FacesTarget = facesTarget;
+        m.SetDefaultAi(NewBrain(Fixed(99), sight: 400));
+        arena.Steps(160);
+        Assert.Equal(MonsterMoveMode.HostileMelee, m.Brain.Mode);
+        m.Brain.NotifyStuck();
+        arena.Steps(100);                                               // 反向走完(501 毫秒),转了追击
+        Assert.Equal(MonsterMoveMode.Chase, m.Brain.Mode);
+        Assert.True(m.Brain.IsEngaged);
+        Assert.False(m.Brain.Moving);
+        Assert.True(m.X < 190, "backed off to the left: " + m.X);
+        Assert.Equal(facesTarget, !m.FacingLeft);
+    }
 }

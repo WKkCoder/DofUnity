@@ -174,12 +174,19 @@ namespace Dnf.Play
             EnterPhase(MonsterPhase.Wait);
         }
 
-        /// <summary>这一遍出招阶段要放多久(毫秒):自定义动作看它自己的动画(没有动画立刻结束;循环动画没有切招排队时不自己结束),出招是当前动画一遍。</summary>
+        /// <summary>
+        /// 这一遍出招阶段要放多久(毫秒):自定义动作看它自己的动画(没有动画立刻结束;循环动画没有切招排队时不自己结束),出招是当前动画一遍;
+        /// 出招的动画带循环属性、脚本里有收尾的 [SET ACTION]、又没有切招排队时,出招也不自己结束,等脚本收尾(推断,E-170;
+        /// 没有脚本或脚本里没有收尾写法的循环出招仍按一遍算,不让怪物一直挂在出招里)。
+        /// </summary>
         private double AttackSpanMs()
         {
             if (_customIndex < 0)
             {
-                return Duration(CurrentAni);
+                AniFile attackAni = CurrentAni;
+                bool scriptEnds = attackAni != null && _actRunner != null && _deferredAttack < 0 && _deferredCustom < 0
+                    && _actRunner.Program.CanEndAction && Timeline(attackAni).Loops;
+                return scriptEnds ? double.PositiveInfinity : Duration(attackAni);
             }
             AniFile ani = _customs[_customIndex].Ani;
             if (ani == null)

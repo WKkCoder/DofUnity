@@ -3380,6 +3380,10 @@ namespace Dnf.Play
                     continue;
                 }
                 int frame = m.CurrentFrame;
+                if (frame < m.AttackEvalFrame)
+                {
+                    m.AttackEvalFrame = -1;          // 循环动画绕回了开头:新的一遍从头判(M70b,E-170;脚本的跳帧在自己那一步已经改过判到哪一帧)
+                }
                 for (int f = m.AttackEvalFrame + 1; f <= frame && !m.HitHeroThisSwing; f++)
                 {
                     List<Aabb> strike = m.AttackBoxesAt(f);

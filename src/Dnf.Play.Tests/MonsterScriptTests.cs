@@ -510,4 +510,60 @@ public sealed class MonsterScriptTests
         bot3.Next(all.Session, out _, out _);
         Assert.Contains("打怪 #0", bot3.Intent ?? string.Empty);
     }
+
+    // ------------------------------------------------------------------ 朝向跟着目标走的总开关(M70,E-169):脚本驱动的三处转向
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TheTurnSwitchGovernsAScriptedMonstersFacingBeforeAnAttack(bool facesTarget)
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterScript script = Make(Always(0), cooltimes: new[] { 0 });
+        script.ThinkTermMs = 100;
+        MonsterActor m = Scripted(assets, script, x: 340);
+        m.FacesTarget = facesTarget;
+        Assert.True(m.FacingLeft);                           // 出生朝左
+        Run(m, 300, 380, 100);                               // 主角在右边 40 像素:出招
+        Assert.True(m.SwingNumber >= 1);
+        Assert.Equal(facesTarget, !m.FacingLeft);            // 开着就转向主角(右),关着不转
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TheTurnSwitchGovernsAStandingScriptedMonstersFacing(bool facesTarget)
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterScript script = Make(destination: Always(3), cooltimes: new[] { 100000 });
+        script.ThinkTermMs = 100;
+        script.DestinationTermMs = 100;
+        MonsterActor m = Scripted(assets, script, x: 300);
+        m.FacesTarget = facesTarget;
+        Run(m, 1500, 600, 100);                              // 主角在右边 300 像素,站着不动
+        Assert.True(m.IsAware);
+        Assert.Equal((MonsterPhase.Wait, 300.0), (m.Phase, m.X));
+        Assert.Equal(facesTarget, !m.FacingLeft);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TheTurnSwitchGovernsAWalkingScriptedMonstersFacing(bool facesTarget)
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterScript script = Make(destination: Always(0), cooltimes: new[] { 100000 });
+        script.ThinkTermMs = 100;
+        script.DestinationTermMs = 100;
+        MonsterActor m = Scripted(assets, script, x: 300, y: 100);
+        m.FacesTarget = facesTarget;
+        Run(m, 100, 600, 100);
+        Run(m, 500, 600, 100);
+        Assert.Equal(MonsterPhase.Walk, m.Phase);
+        Assert.True(m.X > 300 + 50, "walks to the right: " + m.X);
+        Assert.Equal(facesTarget, !m.FacingLeft);
+    }
 }

@@ -1124,6 +1124,32 @@ namespace Dnf.Game.Act
                 case "[SET USE HOMING]":
                     // 一个整数(全库 50 处都是整数写法;客户端执行块 0x010bf5f5 起,E-165)
                     return new ActBehavior { Kind = ActBehaviorKind.SetUseHoming, Tag = tag, UseHoming = cur.Int() != 0 };
+                case "[CHANGE DIRECTION BY TARGET]":
+                case "[IS DIRECTION TO MOVE]":
+                {
+                    // 一个整数,非 0 就是开(全库 47 处与 15 处都是整数写法;客户端执行块 0x010c6159 与 0x010c61c2,E-169);读不到值当没做
+                    return cur.TryInt(out int on)
+                        ? new ActBehavior
+                        {
+                            Kind = tag == "[IS DIRECTION TO MOVE]" ? ActBehaviorKind.SetFacingInAttack : ActBehaviorKind.SetFacingByTarget,
+                            Tag = tag,
+                            FlagOn = on != 0,
+                        }
+                        : new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
+                }
+                case "[SET SAVED TARGET]":
+                    // 一个整数(槽号;全库 17 处;客户端执行块 0x010c73c2,E-169)
+                    return cur.TryInt(out int slot)
+                        ? new ActBehavior { Kind = ActBehaviorKind.UseSavedTarget, Tag = tag, TargetSlot = slot }
+                        : new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
+                case "[CHANGE MY TARGET]":
+                    // 没有参数(全库 23 处后面直接是别的标签;客户端执行块 0x010be590,E-169)
+                    return new ActBehavior { Kind = ActBehaviorKind.ChangeMyTarget, Tag = tag };
+                case "[MOVE TO TARGET]":
+                    // 一个整数(速度;全库 22 处;客户端执行块 0x010c744a,E-169)
+                    return cur.TryInt(out int moveSpeed)
+                        ? new ActBehavior { Kind = ActBehaviorKind.MoveToTarget, Tag = tag, MoveSpeed = moveSpeed }
+                        : new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
                 case "[SHAKING]":
                 {
                     int strength = cur.Int();

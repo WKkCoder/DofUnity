@@ -184,6 +184,30 @@ namespace Dnf.Game.Act
         /// 没有状态系统的对象(这一版的怪物、被动对象)默认 false;主角覆盖它,问自己的异常状态集合。
         /// </summary>
         bool HasActiveStatus(int status) => false;
+
+        /// <summary>
+        /// [CHANGE DIRECTION BY TARGET] n(行为码 0xab,E-169):拥有者(怪物)上"朝向跟着目标走"的总开关。关着的时候怪物应用状态不采用 AI 给的朝向、
+        /// 也不逐帧自动转向(脚本自己的 [SET DIRECTION] 照样有效)。不是怪物的对象(主角、被动对象)什么都不做,客户端对非怪物同样落空。
+        /// </summary>
+        void SetFacingFollowsTarget(bool on)
+        {
+        }
+
+        /// <summary>
+        /// [IS DIRECTION TO MOVE] n(行为码 0xc5,E-169):拥有者(怪物)出招状态里逐帧面朝 AI 目标的开关(客户端自动转向函数 0x00d1cb00 的出招分支看它)。
+        /// 不是怪物的对象什么都不做。
+        /// </summary>
+        void SetAttackFacing(bool on)
+        {
+        }
+
+        /// <summary>
+        /// 换这个对象(行为拥有者,怪物)的 AI 目标(E-169)。<paramref name="designated"/> 为假是 [SET SAVED TARGET]:设缺省目标,AI 现有目标有效时不换(客户端软设置);
+        /// 为真是 [CHANGE MY TARGET]:设指定目标(永久,优先于缺省目标)。之后 <see cref="Target"/> 返回新目标。没有 AI 的对象什么都不做。
+        /// </summary>
+        void SetAiTarget(IActEntity target, bool designated)
+        {
+        }
     }
 
     /// <summary>运行器对世界的请求:随机数、生成被动对象、解析选择器。</summary>
@@ -262,6 +286,18 @@ namespace Dnf.Game.Act
         }
 
         /// <summary>
+        /// [MOVE TO TARGET](E-169):<paramref name="mover"/> 按速度 <paramref name="speed"/> 朝 AI 目标冲了出去,计时 <paramref name="durationMs"/> 毫秒。只为统计;默认什么都不做。
+        /// </summary>
+        void MoveToTargetStarted(IActEntity mover, int speed, int durationMs)
+        {
+        }
+
+        /// <summary>[MOVE TO TARGET](E-169):计时到了,<paramref name="mover"/> 的平面速度被清零(别的行为已经改过它的速度就不动)。只为统计;默认什么都不做。</summary>
+        void MoveToTargetStopped(IActEntity mover)
+        {
+        }
+
+        /// <summary>
         /// 舞台的横向总宽(世界坐标,像素;[IS END MAP] 要的,客户端 0x0046ef10 取地图的格数乘格宽;E-166)。
         /// 不知道舞台(没有地图的试验场)是 0,这时 [IS END MAP] 不通过(客户端取不到地图时也不通过)。
         /// </summary>
@@ -332,6 +368,22 @@ namespace Dnf.Game.Act
         private long _castDueMs;
         private int _castGroup;
         private readonly List<IActEntity> _castTargets = new List<IActEntity>();
+
+        /// <summary>一个被 [MOVE TO TARGET] 推出去的对象:登记的是当时设下的速度,收尾时速度没被别的行为改过才清零。</summary>
+        private sealed class MovedEntity
+        {
+            public IActEntity Entity;
+            public float Vx;
+            public float Vy;
+        }
+
+        /// <summary>
+        /// [MOVE TO TARGET] 的收尾计时(客户端:运行器上偏移 0x494 的一个计时对象,每次执行先重置再按"距离 ÷ 速度"的毫秒数启动,所以只有一个,后来的顶掉先前的,E-169)。
+        /// 有没有排着、到期时刻(运行器自己的计时,毫秒)、这一次推出去的对象。
+        /// </summary>
+        private bool _moveArmed;
+        private long _moveDueMs;
+        private readonly List<MovedEntity> _moved = new List<MovedEntity>();
 
         /// <summary>[SET POS FORCE] 的强制位移表(客户端:动作上偏移 0x43c 的记录队列,每次执行这条行为先清空;动作重来时也清空,E-152)。</summary>
         private readonly List<ForcedMove> _forced = new List<ForcedMove>();
@@ -470,6 +522,8 @@ namespace Dnf.Game.Act
             _delayed.Clear();      // 排队的延迟行为随动作重来作废(推断);变量不清,留到下一次(E-132)
             _castArmed = false;    // 读条随动作结束作废(客户端:动作结束时重置 +0x40c 并让拥有者停读条,0x010ace2f,E-168)
             _castTargets.Clear();
+            _moveArmed = false;    // 朝目标冲的计时随动作重来作废(与读条同一个理由,推断)
+            _moved.Clear();
             _forced.Clear();       // 强制位移表属于动作,动作重来时清空(E-152)
             foreach (string tag in _unsupportedTriggerTags)
             {
@@ -524,6 +578,7 @@ namespace Dnf.Game.Act
             _lastFrame = frame;
             _frame = frame;
             ApplyForcedMoves();
+            RunMoveStop();
             RunCast();
         }
 
@@ -1332,6 +1387,77 @@ namespace Dnf.Game.Act
             RunGroup(group, targets);
         }
 
+        /// <summary>
+        /// 执行 [MOVE TO TARGET] n(客户端 0x010c744a 起的块,行为码 0xf6;E-169)。目标是拥有者 AI 此刻的目标(没有、已不在场就什么都不做);
+        /// 对集合里每个在场的对象:角度取整数度(<see cref="ActGeometry.Heading"/> 的模式 1,纵深不还原),速度向量 = (cos 角 × n, sin 角 × n) 各向零截断
+        /// (角度先乘 π/180 进双精度、正余弦落回单精度再乘 n;客户端的写法),Z 方向客户端写 0,这一版不动 Z(怪物在半空时不冻在空中);
+        /// 计时毫秒 = 距离(模式 0,纵深还原)÷ n × 1000(单精度,向零截断),每个对象都重启一次,最后一个的毫秒数留下。
+        /// n 不大于 0 的什么都不做(客户端对 0 会除出无穷、负数的含义没读;全库 22 处都是正数写法)。
+        /// 速度向量不翻转纵深:Y 为正是往画面下方(与目标的纵深差同号),所以是朝目标去;但距离里纵深被还原过而速度没有,
+        /// 目标与自己纵深有差时会冲过头(客户端的写法,照搬)。
+        /// </summary>
+        private void MoveToTarget(ActBehavior b, List<IActEntity> targets)
+        {
+            IActEntity aim = _owner.Target;
+            if (aim == null || !aim.IsAlive || b.MoveSpeed <= 0)
+            {
+                return;
+            }
+            float speed = b.MoveSpeed;
+            int aimX = (int)aim.X;
+            int aimY = (int)aim.Y;
+            bool first = true;
+            foreach (IActEntity t in targets)
+            {
+                if (!t.IsAlive)
+                {
+                    continue;
+                }
+                if (first)
+                {
+                    _moved.Clear();        // 客户端只有一个计时:这一次真的推了对象才顶掉上一次的登记
+                    first = false;
+                }
+                int fromX = (int)t.X;
+                int fromY = (int)t.Y;
+                int angle = ActGeometry.Heading(fromX, fromY, aimX, aimY, false);
+                int distance = ActGeometry.Distance(fromX, fromY, aimX, aimY, true);
+                ActGeometry.Velocity(angle, speed, out int stepX, out int stepY);
+                float vx = stepX;
+                float vy = stepY;
+                t.SetSpeed(true, vx, true, vy, false, 0f);
+                int ms = (int)((float)distance / speed * 1000f);
+                _moveArmed = true;
+                _moveDueMs = ElapsedMs() + ms;
+                _moved.Add(new MovedEntity { Entity = t, Vx = vx, Vy = vy });
+                _host.MoveToTargetStarted(t, b.MoveSpeed, ms);
+            }
+        }
+
+        /// <summary>
+        /// 每次更新里(读条到期之前):[MOVE TO TARGET] 的计时到了,把这次推出去、速度还停在当初设下的值上的对象的平面速度清零。
+        /// 到点后谁来收尾读不到(客户端读计时的代码在保护区里;推断:冲刺到"距离 ÷ 速度"的时间就停,否则躲开的目标会让怪物一路冲出舞台);
+        /// 速度已被别的行为改过的对象不碰,免得抹掉后来的位移。
+        /// </summary>
+        private void RunMoveStop()
+        {
+            if (!_moveArmed || ElapsedMs() < _moveDueMs)
+            {
+                return;
+            }
+            _moveArmed = false;
+            foreach (MovedEntity m in _moved)
+            {
+                IActEntity t = m.Entity;
+                if (t.IsAlive && t.SpeedX == m.Vx && t.SpeedY == m.Vy)
+                {
+                    t.SetSpeed(true, 0f, true, 0f, false, 0f);
+                    _host.MoveToTargetStopped(t);
+                }
+            }
+            _moved.Clear();
+        }
+
         private void RunGroup(int k, List<IActEntity> targets)
         {
             if (k < 0 || k >= _program.Behaviors.Count)
@@ -1513,6 +1639,34 @@ namespace Dnf.Game.Act
                     case ActBehaviorKind.Casting:
                         // 客户端 0x010bd088 起的块(行为码 0x7e):记在拥有者的运行器上,不分目标地执行一次(E-168)
                         Cast(b, targets);
+                        break;
+                    case ActBehaviorKind.SetFacingByTarget:
+                        // 客户端 0x010c6159 起的块:对行为拥有者(必须是怪物)写一个字节,不循环目标集合(E-169)
+                        _owner.SetFacingFollowsTarget(b.FlagOn);
+                        break;
+                    case ActBehaviorKind.SetFacingInAttack:
+                        // 客户端 0x010c61c2 起的块:同上,写另一个开关(E-169)
+                        _owner.SetAttackFacing(b.FlagOn);
+                        break;
+                    case ActBehaviorKind.UseSavedTarget:
+                    {
+                        // 客户端 0x010c73c2 起的块:槽是空的就什么都不做;否则让拥有者的 AI 软设置缺省目标(E-169)
+                        IActEntity saved = _owner.GetSavedTarget(b.TargetSlot);
+                        if (saved != null)
+                        {
+                            _owner.SetAiTarget(saved, false);
+                        }
+                        break;
+                    }
+                    case ActBehaviorKind.ChangeMyTarget:
+                        // 客户端 0x010be590 起的块:集合里每个对象依次设成拥有者 AI 的指定目标,最后一个胜出(E-169)
+                        foreach (IActEntity t in targets)
+                        {
+                            _owner.SetAiTarget(t, true);
+                        }
+                        break;
+                    case ActBehaviorKind.MoveToTarget:
+                        MoveToTarget(b, targets);
                         break;
                     case ActBehaviorKind.ActiveStatus:
                         // 客户端 0x010bbec6 起的块:对集合里每个"活动对象"(类型位 0x11,主角与怪物;被动对象没有)调一次挂状态,源头是行为拥有者(E-144)

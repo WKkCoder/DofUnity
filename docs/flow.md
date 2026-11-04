@@ -1607,3 +1607,28 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --room --map 
 
 **没做**:到期到执行之间的网络往返;拥有者对象时钟的暂停与缩放;读条条的画法;`[ABS CASTING]`、`[CASTING EX]`;受击流程里作废读条的确切时机;没有基线录像对拍。
 
+## 59 怪物出招里朝目标的移动与转向、循环动画出招的收尾(M70、M70b,证据 E-169、E-170)
+
+**读到了什么**(静态读码:Capstone 反汇编与 `disasm_va.py` 读 `DNF.exe` 普通代码段;受保护区的调用当黑盒;只读,不入库;几何函数另用本机 Unicorn 模拟器逐位对拍):
+
+- **`[CHANGE DIRECTION BY TARGET] n`**(行为码 0xab,块 `0x010c6159`):写怪物字段 `+0x4f7c`——“朝向跟着目标走”的总开关;出生值取 `.mob` 的同名标签(没写是开,`0x008a0a2e`);关着时怪物应用状态不采用 AI 给的朝向(`0x00836945`、`0x00836ff9`)。
+- **`[IS DIRECTION TO MOVE] n`**(0xc5,块 `0x010c61c2`):写字段 `+0x4fb8`(出生值取 `.mob` 同名标签,`0x008a1182`);自动转向函数 `0x00d1cb00` 在出招状态里每次调用都把怪物转向目标(横向位置比较,一样大就朝左);站立状态里 1、0、2 的区别没做。
+- **`[SET SAVED TARGET] 槽号`**(0xf5,块 `0x010c73c2`)把存档槽里的对象软设成缺省目标;**`[CHANGE MY TARGET]`**(0xda,块 `0x010be590`)把目标集合里的对象设成指定目标(AI 对象 `+0x39c`,缺省 `+0x378`,取目标函数 `0x00839410` 指定优先)。
+- **`[MOVE TO TARGET] n`**(0xf6,块 `0x010c744a`):角度取 `0x007fa2c0` 模式 1(纵深不还原),速度向量 = 整数度转单精度乘 π/180 进双精度,CRT 余弦 `0x013db30f`、正弦 `0x013d848b` 落回单精度各乘 n、向零截断;计时 = `0x007fb7c0` 模式 0(纵深还原)的距离 ÷ n × 1000(单精度、向零截断);Z 方向客户端写 0。
+- **几何金标准**(本机模拟器测量,非 REA):Unicorn 跑客户端的角度、距离函数与 CRT 正余弦,`src/Dnf.Game.Tests/Golden/act_geometry_golden.txt`(角度 800 行、距离 800 行、三角函数 360 行)与 C# 逐位一致;生成脚本 `tools/py/geometry_oracle.py`。纵深差在速度里不还原、在距离里还原,目标与自己纵深有差时冲过头,照搬。
+
+**数据**(汇总数,本机脚本扫描,非 REA):整库用到次数 `[CHANGE DIRECTION BY TARGET]` 47、`[IS DIRECTION TO MOVE]` 15、`[SET SAVED TARGET]` 17、`[CHANGE MY TARGET]` 23、`[MOVE TO TARGET]` 22;整库 2,070 个 `.mob` 里写 `[change direction by target]` 的 44 个、写 `[is direction to move]` 的 62 个;怪物出招去重后读通 67 处、读不通 0 处。
+循环动画的出招:整库出招槽 8161 个,动画带循环属性的 403 个(249 只怪物),其中带程序 337 个、有能离开出招的 `[SET ACTION]` 的 298 个;写了 `[SET ACTION] [STAND]` 的占比,循环的 154/337、不循环的 191/5069。
+
+**代码**:
+
+- Game:`ActGeometry`;五个新行为的编译与执行(`ActRunner.MoveToTarget` 每个对象重启一次计时、最后一个的毫秒数留下,`RunMoveStop` 在触发器之后检查到点、只清还停在当初速度上的对象,动作重来作废计时);`ActProgram.CanEndAction`;`MonsterDef.ChangeDirectionByTarget/AttackFacing`。
+- Play:`MonsterActor.FacesTarget/AttackFacing/DesignatedTarget/AiTarget`,AI 的六处转向全部走 `TurnTo`(总开关关着不转);出招里逐帧面朝目标(自定义动作不追);出招阶段时长 `AttackSpanMs` 对“循环动画 + 程序能收尾 + 没排着切招”的出招返回无限(脚本收尾),动画绕回开头时攻击框判定从头重来(一次出招仍最多打中一次);`RoomMonsterBuilder` 接出生值。
+- 命令行:`act-run-check` 新增五个标签的静态审计、`[MOVE TO TARGET]` 招式实跑检查、循环出招普查与实跑检查。
+
+**运行时的样子**:冲刺类的怪物招式现在真的冲向目标并在到点停下(此前循环动画的出招播一遍就被截断,到点收尾 0 次,现在 30 次);关了总开关的怪物不再自己转头;脚本能把出招里的目标换成别的对象;动画循环的出招(含首领的招)由脚本收尾,放得更久、更接近脚本本来的节奏。
+
+**验证**:M70 与 M70b 合计新增 113 条测试,全套 4223 条;102 处变异检查 100 处让单测变红、2 处是等价变异;`act-run-check` 全部通过(静态审计 67/67,`[MOVE TO TARGET]` 实跑 37 招冲出去 33 招,循环出招实跑 298 招自己结束 269 招);全库副本扫描 303/346 不变,开伤害扫描 292 → 291/346(两个首领房间的招放得更久、主角被打死到复活次数上限,一个副本因出招朝向规则变通关,本机 A/B 实验);`verify-all` 26 项,EditMode 57 通过(10 条 GPU 对拍跳过),macOS 链路 69 次运行退出码 0。
+
+**没做**:`[IS DIRECTION TO MOVE]` 的站立语义;`[JUMP TO TARGET]`;冲刺到点由谁来停的原版读法(受保护区,按推断);Z 方向(客户端写 0,这里不动);客户端出招状态的结束条件(循环出招的规则按统计与实跑推断);没有基线录像对拍。
+

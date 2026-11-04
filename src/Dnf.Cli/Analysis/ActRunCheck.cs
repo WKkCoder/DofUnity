@@ -81,6 +81,26 @@ internal static class ActRunCheck
         public int CastRandom;
         public readonly SortedDictionary<string, int> CastFirstKinds = new(StringComparer.Ordinal);
 
+        /// <summary>
+        /// 朝目标的移动与转向(M70,E-169)按行为条数计:[MOVE TO TARGET]、[CHANGE DIRECTION BY TARGET]、[IS DIRECTION TO MOVE]、[SET SAVED TARGET]、[CHANGE MY TARGET] 各读通几条、
+        /// 读不通几条(写法缺值)。
+        /// </summary>
+        public readonly SortedDictionary<string, int> TargetMotionUses = new(StringComparer.Ordinal);
+        public readonly SortedDictionary<string, int> TargetMotionBroken = new(StringComparer.Ordinal);
+
+        private static string? TargetMotionTag(ActBehaviorKind kind) => kind switch
+        {
+            ActBehaviorKind.MoveToTarget => "[MOVE TO TARGET]",
+            ActBehaviorKind.SetFacingByTarget => "[CHANGE DIRECTION BY TARGET]",
+            ActBehaviorKind.SetFacingInAttack => "[IS DIRECTION TO MOVE]",
+            ActBehaviorKind.UseSavedTarget => "[SET SAVED TARGET]",
+            ActBehaviorKind.ChangeMyTarget => "[CHANGE MY TARGET]",
+            _ => null,
+        };
+
+        private static bool IsTargetMotionTag(string tag) => tag == "[MOVE TO TARGET]" || tag == "[CHANGE DIRECTION BY TARGET]" || tag == "[IS DIRECTION TO MOVE]"
+            || tag == "[SET SAVED TARGET]" || tag == "[CHANGE MY TARGET]";
+
         private static void Bump(SortedDictionary<string, int> map, string key)
         {
             map.TryGetValue(key, out int n);
@@ -294,6 +314,15 @@ internal static class ActRunCheck
                     {
                         CastBroken++;
                     }
+                    string? motionTag = TargetMotionTag(b.Kind);
+                    if (motionTag != null)
+                    {
+                        Bump(TargetMotionUses, motionTag);
+                    }
+                    else if (b.Kind == ActBehaviorKind.Unsupported && b.Tag != null && IsTargetMotionTag(b.Tag))
+                    {
+                        Bump(TargetMotionBroken, b.Tag);
+                    }
                     if (b.Kind == ActBehaviorKind.SetPosForce)
                     {
                         CountForce(b);
@@ -336,6 +365,8 @@ internal static class ActRunCheck
                 + Join(ForceDirections, 6) + ";各轴写了几个值:" + Join(ForceAxes, 12) + "),读不通 " + ForceBroken + " 块");
             Console.WriteLine("  [CASTING] 读通 " + CastUses + " 条(读不通 " + CastBroken + ";行为组号越界 " + CastOutOfRange + ",指向紧跟的下一组 " + CastNext + "、别的组 " + CastOther + ",值带随机 " + CastRandom
                 + ";到期执行的行为组第一条按种类:" + Join(CastFirstKinds, 12) + ")");
+            Console.WriteLine("  朝目标的移动与转向(E-169)读通 " + TargetMotionUses.Values.Sum() + " 条(" + Join(TargetMotionUses, 8) + "),读不通 " + TargetMotionBroken.Values.Sum() + " 条("
+                + Join(TargetMotionBroken, 8) + ")");
             Console.WriteLine("  读不通的 [CREATE PASSIVEOBJECT] " + CreateBroken + " 条(缺 [INDEX] " + CreateNoIndex + ",缺 [POS] " + CreateNoPos + ")");
             Console.WriteLine("  读不懂的触发器标签(种数 " + UnsupportedTriggerTags.Count + ",按触发器条数):" + Join(UnsupportedTriggerTags, 25));
             Console.WriteLine("  读不懂的行为标签(种数 " + UnsupportedBehaviorTags.Count + ",按行为组个数):" + Join(UnsupportedBehaviorTags, 25));
@@ -350,6 +381,7 @@ internal static class ActRunCheck
             TriggerSwitchPools, TriggerSwitchBroken,
             ForceBlocks, ForceBroken, ForceMoveMe, ForceRandom, ForceOrigins, ForceDirections, ForceAxes,
             CastUses, CastBroken, CastOutOfRange, CastNext, CastOther, CastRandom, CastFirstKinds,
+            TargetMotionUses, TargetMotionBroken,
         };
     }
 
@@ -660,6 +692,8 @@ internal static class ActRunCheck
         public int Summons;
         public int CastsArmed;
         public int CastsFired;
+        public int MovesStarted;
+        public int MovesStopped;
 
         public LiveWorld(ActLibrary library, MonsterActor root)
         {
@@ -689,11 +723,11 @@ internal static class ActRunCheck
 
         public void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into)
         {
-            if (selector == ActSelector.Character)
+            if (selector == ActSelector.Character || selector == ActSelector.AllEnemy || selector == ActSelector.AllCharacterTeam)
             {
                 into.AddRange(Heroes);
             }
-            else if (selector == ActSelector.Monster)
+            else if (selector == ActSelector.Monster || selector == ActSelector.AllMonsterTeam || selector == ActSelector.AllOurTeam)
             {
                 into.AddRange(Monsters);
             }
@@ -716,6 +750,16 @@ internal static class ActRunCheck
         public void CastFired(IActEntity owner, int group)
         {
             CastsFired++;
+        }
+
+        public void MoveToTargetStarted(IActEntity mover, int speed, int durationMs)
+        {
+            MovesStarted++;
+        }
+
+        public void MoveToTargetStopped(IActEntity mover)
+        {
+            MovesStopped++;
         }
 
         /// <summary>把世界里还活着的被动对象推进 <paramref name="ms"/> 毫秒(怪物的实跑用;对象的运行器一起跑)。</summary>
@@ -1290,6 +1334,400 @@ internal static class ActRunCheck
                 tally.Armed += world.CastsArmed;
                 tally.Fired += world.CastsFired;
                 tally.Unfinished += world.CastsArmed > world.CastsFired ? 1 : 0;
+            }
+        }
+        return tally;
+    }
+
+    /// <summary>
+    /// 带 [MOVE TO TARGET] 的招式实跑的统计(E-169):空场地、目标替身站在怪物右边 400 像素的同一条纵深线上,把每只怪物每一条带这个行为的招式单独放一遍,最多 <see cref="MaxSteps"/> 步(每步 10 毫秒)。
+    /// 数冲出去与收尾的次数、招式结束时离目标比出发时近了的招式数、位置动过的招式数;只数个数,不输出路径与怪物编号。
+    /// </summary>
+    private sealed class LiveMoveTally
+    {
+        public const int MaxSteps = 6000;
+
+        public int Monsters;
+        public int NoModel;
+        public int Attacks;
+        public int NotEntered;
+        public int Failed;
+        public int Ended;
+        public int StillRunning;
+        public int Pushed;
+        public int Closer;
+        public int Farther;
+        public int Moved;
+        public long Started;
+        public long Stopped;
+        public int Unfinished;
+        public readonly SortedDictionary<string, int> Errors = new SortedDictionary<string, int>(StringComparer.Ordinal);
+
+        public void Print()
+        {
+            Console.WriteLine("  带 [MOVE TO TARGET] 的招式实跑(空场地、目标替身在右边 400 像素、每招最多 " + MaxSteps / 100 + " 秒;E-169):怪物 " + Monsters + " 只(模型读不出 " + NoModel + " 只),共 " + Attacks
+                + " 招(没切进去 " + NotEntered + " 招,抛异常 " + Failed + " 招);自己放完 " + Ended + " 招,到时间还在放 " + StillRunning + " 招;真的冲出去的 " + Pushed + " 招;冲出 "
+                + Started + " 次、到点收尾 " + Stopped + " 次、冲了却没收尾的招式 " + Unfinished + " 招(出招先放完,或速度被别的行为改过);结束时离目标比出发时近了 " + Closer + " 招、远了 " + Farther
+                + " 招,位置动过 " + Moved + " 招" + (Errors.Count > 0 ? ";异常 " + Join(Errors, 6) : string.Empty));
+        }
+
+        public object ToJson() => new { Monsters, NoModel, Attacks, NotEntered, Failed, Ended, StillRunning, Pushed, Closer, Farther, Moved, Started, Stopped, Unfinished, Errors };
+    }
+
+    private static bool HasMoveTag(ActProgram program)
+    {
+        foreach (ActBehaviorGroup g in program.Behaviors)
+        {
+            foreach (ActBehavior b in g.Items)
+            {
+                if (b.Kind == ActBehaviorKind.MoveToTarget)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static LiveMoveTally RunLiveMoves(DnfAssets assets, GameData data, ActLibrary library)
+    {
+        var tally = new LiveMoveTally();
+        var walk = new RectUnionArea(new List<WorldRect>());
+        var target = new Stand(ActEntityKind.Character, 0, 700f, 100f);
+        foreach (int id in data.MonsterIds())
+        {
+            MonsterDef? def = data.GetMonster(id);
+            if (def == null)
+            {
+                continue;
+            }
+            MonsterModel model;
+            try
+            {
+                model = MonsterModel.Read(assets, def.Path);
+            }
+            catch (Exception)
+            {
+                tally.NoModel++;
+                continue;
+            }
+            IReadOnlyList<string> paths = model.AttackActionPaths;
+            var programs = new ActProgram?[paths.Count];
+            var moving = new List<int>();
+            for (int i = 0; i < programs.Length; i++)
+            {
+                ActProgram? p = library.Program(paths[i]);
+                if (p != null && p.Triggers.Count > 0)
+                {
+                    programs[i] = p;
+                    if (HasMoveTag(p))
+                    {
+                        moving.Add(i);
+                    }
+                }
+            }
+            if (moving.Count == 0)
+            {
+                continue;
+            }
+            tally.Monsters++;
+            foreach (int a in moving)
+            {
+                var actor = new MonsterActor(0, new RoomMonsterSpawn(1, 0, 0, 300, 100, 0, 1, 0, "[fixed]", "[normal]"), model, 1, 100000000, 222.5, 1500, 0);
+                var world = new LiveWorld(library, actor);
+                actor.ActTarget = target;
+                world.Heroes.Add(target);
+                actor.SetActs(programs!, world);
+                tally.Attacks++;
+                try
+                {
+                    double startX = actor.X;
+                    double startY = actor.Y;
+                    actor.ActSelf.SetAction(ActActionKind.Attack, a, true, false);
+                    if (actor.Phase != MonsterPhase.Attack)
+                    {
+                        tally.NotEntered++;
+                        continue;
+                    }
+                    int steps = 0;
+                    for (; steps < LiveMoveTally.MaxSteps; steps++)
+                    {
+                        actor.Update(10, target.X, target.Y, true, walk);
+                        world.Tick(10);
+                        if (actor.Phase != MonsterPhase.Attack)
+                        {
+                            break;
+                        }
+                    }
+                    if (steps < LiveMoveTally.MaxSteps)
+                    {
+                        tally.Ended++;
+                    }
+                    else
+                    {
+                        tally.StillRunning++;
+                    }
+                    double before = Math.Abs(target.X - startX) + Math.Abs(target.Y - startY);
+                    double after = Math.Abs(target.X - actor.X) + Math.Abs(target.Y - actor.Y);
+                    tally.Closer += after < before - 1.0 ? 1 : 0;
+                    tally.Farther += after > before + 1.0 ? 1 : 0;
+                    tally.Moved += Math.Abs(actor.X - startX) + Math.Abs(actor.Y - startY) > 1.0 ? 1 : 0;
+                }
+                catch (Exception e)
+                {
+                    tally.Failed++;
+                    tally.Errors[e.GetType().Name] = tally.Errors.TryGetValue(e.GetType().Name, out int c) ? c + 1 : 1;
+                    continue;
+                }
+                tally.Pushed += world.MovesStarted > 0 ? 1 : 0;
+                tally.Started += world.MovesStarted;
+                tally.Stopped += world.MovesStopped;
+                tally.Unfinished += world.MovesStarted > world.MovesStopped ? 1 : 0;
+            }
+        }
+        return tally;
+    }
+
+    /// <summary>程序里有没有 [SET ACTION] [STAND](怪物出招最常见的收尾写法)。</summary>
+    private static bool HasStandEnd(ActProgram program)
+    {
+        foreach (ActBehaviorGroup group in program.Behaviors)
+        {
+            foreach (ActBehavior b in group.Items)
+            {
+                if (b.Kind == ActBehaviorKind.SetAction && b.Action == ActActionKind.Stand)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// <summary>行为组里有没有能离开出招的 [SET ACTION](站立、缺省、出招、自定义四族,与 <see cref="ActProgram.CanEndAction"/> 同一个口径)。</summary>
+    private static bool GroupEndsAction(ActBehaviorGroup group)
+    {
+        foreach (ActBehavior b in group.Items)
+        {
+            if (b.Kind == ActBehaviorKind.SetAction
+                && (b.Action == ActActionKind.Stand || b.Action == ActActionKind.Default || b.Action == ActActionKind.Attack || b.Action == ActActionKind.Custom))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 程序里"会执行能离开出招的行为组"的那些触发器,各条记录的原标签(去重;[DO BEHAVIOR] 本身不算):
+    /// 回答"这一招靠什么条件收尾"。只数标签,不输出路径。
+    /// </summary>
+    private static HashSet<string> EndingTags(ActProgram program)
+    {
+        var tags = new HashSet<string>(StringComparer.Ordinal);
+        foreach (ActTrigger t in program.Triggers)
+        {
+            bool ends = false;
+            foreach (ActRecord r in t.Records)
+            {
+                if ((r.Kind == ActRecordKind.DoBehavior || r.Kind == ActRecordKind.DirectDoBehavior || r.Kind == ActRecordKind.DelayDoBehavior) && r.Behavior != null)
+                {
+                    foreach (int k in r.Behavior.Candidates())
+                    {
+                        if (k >= 0 && k < program.Behaviors.Count && GroupEndsAction(program.Behaviors[k]))
+                        {
+                            ends = true;
+                        }
+                    }
+                }
+            }
+            if (!ends)
+            {
+                continue;
+            }
+            foreach (ActRecord r in t.Records)
+            {
+                if (r.Kind != ActRecordKind.DoBehavior && r.Kind != ActRecordKind.DirectDoBehavior && r.Kind != ActRecordKind.DelayDoBehavior)
+                {
+                    tags.Add(r.Tag ?? r.Kind.ToString());
+                }
+            }
+        }
+        return tags;
+    }
+
+    /// <summary>
+    /// 循环动画的怪物出招(M70b,E-170)的普查与实跑。普查数出招槽的构成:动画带循环属性的有多少、其中带程序的、程序里能把出招收尾的
+    /// (<see cref="ActProgram.CanEndAction"/>)、写了 [SET ACTION] [STAND] 的,与不循环的出招对比;实跑把"带循环动画、程序能收尾"的招式
+    /// (出招时长按脚本收尾、不再播一遍就截断的那一类)单独放在空场地里(目标替身站在怪物右边 400 像素的同一条纵深线上)最多
+    /// <see cref="MaxSteps"/> 步,数自己结束的与到时间还在放的(挂住的风险);只数个数,不输出路径与怪物编号。
+    /// </summary>
+    private sealed class LoopTally
+    {
+        public const int MaxSteps = 6000;
+
+        public int Monsters;
+        public int NoModel;
+        public int Slots;
+        public int LoopSlots;
+        public int Programs;
+        public int LoopPrograms;
+        public int LoopCanEnd;
+        public int LoopStandEnd;
+        public int LoopNoEnd;
+        public int LoopNoProgram;
+        public int PlainPrograms;
+        public int PlainStandEnd;
+        public int Live;
+        public int NotEntered;
+        public int Failed;
+        public int Ended;
+        public int StillRunning;
+        public readonly SortedDictionary<string, int> EndedBy = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        public readonly SortedDictionary<string, int> StillTags = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        public readonly SortedDictionary<string, int> Errors = new SortedDictionary<string, int>(StringComparer.Ordinal);
+
+        public void Print()
+        {
+            Console.WriteLine("  循环动画的怪物出招(E-170)普查:出招槽 " + Slots + " 个(带程序 " + Programs + " 个);动画带循环属性的 " + LoopSlots + " 个("
+                + Monsters + " 只怪物),其中带程序 " + LoopPrograms + " 个、没有程序 " + LoopNoProgram + " 个;带程序的里能由脚本收尾(有能离开出招的 [SET ACTION])的 "
+                + LoopCanEnd + " 个、没有收尾路径的 " + LoopNoEnd + " 个;写了 [SET ACTION] [STAND] 的:循环 " + LoopStandEnd + "/" + LoopPrograms
+                + "、不循环 " + PlainStandEnd + "/" + PlainPrograms + "(模型读不出 " + NoModel + " 只)");
+            Console.WriteLine("  循环出招实跑(空场地、目标替身在右边 400 像素、每招最多 " + MaxSteps / 100 + " 秒;E-170):带循环动画而且脚本能收尾的 " + Live
+                + " 招(没切进去 " + NotEntered + " 招,抛异常 " + Failed + " 招);自己结束 " + Ended + " 招(" + Join(EndedBy, 4) + "),到时间还在放 " + StillRunning + " 招"
+                + (Errors.Count > 0 ? ";异常 " + Join(Errors, 6) : string.Empty));
+            if (StillTags.Count > 0)
+            {
+                Console.WriteLine("    到时间还在放的招,收尾触发器里出现的条件标签(按招数,一招里同一标签只算一次):" + Join(StillTags, 12));
+            }
+        }
+
+        public object ToJson() => new
+        {
+            Monsters, NoModel, Slots, LoopSlots, Programs, LoopPrograms, LoopCanEnd, LoopStandEnd, LoopNoEnd, LoopNoProgram, PlainPrograms, PlainStandEnd,
+            Live, NotEntered, Failed, Ended, StillRunning, EndedBy, StillTags, Errors,
+        };
+    }
+
+    private static LoopTally RunLoopCensus(DnfAssets assets, GameData data, ActLibrary library)
+    {
+        var tally = new LoopTally();
+        var walk = new RectUnionArea(new List<WorldRect>());
+        var target = new Stand(ActEntityKind.Character, 0, 700f, 100f);
+        foreach (int id in data.MonsterIds())
+        {
+            MonsterDef? def = data.GetMonster(id);
+            if (def == null)
+            {
+                continue;
+            }
+            MonsterModel model;
+            try
+            {
+                model = MonsterModel.Read(assets, def.Path);
+            }
+            catch (Exception)
+            {
+                tally.NoModel++;
+                continue;
+            }
+            IReadOnlyList<string> paths = model.AttackActionPaths;
+            var programs = new ActProgram?[paths.Count];
+            for (int i = 0; i < programs.Length; i++)
+            {
+                ActProgram? p = library.Program(paths[i]);
+                if (p != null && p.Triggers.Count > 0)
+                {
+                    programs[i] = p;
+                }
+            }
+            var live = new List<int>();
+            bool anyLoop = false;
+            for (int i = 0; i < model.Attacks.Count; i++)
+            {
+                AniFile? ani = model.Attacks[i];
+                if (ani == null)
+                {
+                    continue;
+                }
+                tally.Slots++;
+                ActProgram? program = i < programs.Length ? programs[i] : null;
+                tally.Programs += program != null ? 1 : 0;
+                if (!ani.Loops)
+                {
+                    if (program != null)
+                    {
+                        tally.PlainPrograms++;
+                        tally.PlainStandEnd += HasStandEnd(program) ? 1 : 0;
+                    }
+                    continue;
+                }
+                anyLoop = true;
+                tally.LoopSlots++;
+                if (program == null)
+                {
+                    tally.LoopNoProgram++;
+                    continue;
+                }
+                tally.LoopPrograms++;
+                tally.LoopStandEnd += HasStandEnd(program) ? 1 : 0;
+                if (program.CanEndAction)
+                {
+                    tally.LoopCanEnd++;
+                    live.Add(i);
+                }
+                else
+                {
+                    tally.LoopNoEnd++;
+                }
+            }
+            tally.Monsters += anyLoop ? 1 : 0;
+            foreach (int a in live)
+            {
+                var actor = new MonsterActor(0, new RoomMonsterSpawn(1, 0, 0, 300, 100, 0, 1, 0, "[fixed]", "[normal]"), model, 1, 100000000, 222.5, 1500, 0);
+                var world = new LiveWorld(library, actor);
+                actor.ActTarget = target;
+                world.Heroes.Add(target);
+                actor.SetActs(programs!, world);
+                tally.Live++;
+                try
+                {
+                    actor.ActSelf.SetAction(ActActionKind.Attack, a, true, false);
+                    if (actor.Phase != MonsterPhase.Attack)
+                    {
+                        tally.NotEntered++;
+                        continue;
+                    }
+                    int steps = 0;
+                    for (; steps < LoopTally.MaxSteps; steps++)
+                    {
+                        actor.Update(10, target.X, target.Y, true, walk);
+                        world.Tick(10);
+                        if (actor.Phase != MonsterPhase.Attack)
+                        {
+                            break;
+                        }
+                    }
+                    if (steps < LoopTally.MaxSteps)
+                    {
+                        tally.Ended++;
+                        string bucket = EndedBucket(steps + 1);
+                        tally.EndedBy[bucket] = tally.EndedBy.TryGetValue(bucket, out int b) ? b + 1 : 1;
+                    }
+                    else
+                    {
+                        tally.StillRunning++;
+                        foreach (string tag in EndingTags(programs[a]!))
+                        {
+                            tally.StillTags[tag] = tally.StillTags.TryGetValue(tag, out int t) ? t + 1 : 1;
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    tally.Failed++;
+                    tally.Errors[e.GetType().Name] = tally.Errors.TryGetValue(e.GetType().Name, out int c) ? c + 1 : 1;
+                }
             }
         }
         return tally;
@@ -2241,6 +2679,10 @@ internal static class ActRunCheck
         liveCustoms.Print();
         LiveCastTally liveCasts = RunLiveCasts(assets, data, library);
         liveCasts.Print();
+        LiveMoveTally liveMoves = RunLiveMoves(assets, data, library);
+        liveMoves.Print();
+        LoopTally loops = RunLoopCensus(assets, data, library);
+        loops.Print();
         int templates = 0;
         foreach (int id in reached)
         {
@@ -2291,11 +2733,21 @@ internal static class ActRunCheck
             "怪物的自定义动作实跑(E-159):每一项都切得进去、各跑最多 60 秒不抛异常(" + liveCustoms.Entries + " 项,没切进去 " + liveCustoms.NotEntered + " 项,抛异常 " + liveCustoms.Failed + " 项)");
         Report(liveCasts.Attacks > 0 && liveCasts.Failed == 0 && liveCasts.NotEntered == 0,
             "带 [CASTING] 的招式实跑(E-168):每一招都切得进去、各跑最多 60 秒不抛异常(" + liveCasts.Attacks + " 招,没切进去 " + liveCasts.NotEntered + " 招,抛异常 " + liveCasts.Failed + " 招)");
+        Report(liveMoves.Attacks > 0 && liveMoves.Failed == 0 && liveMoves.NotEntered == 0 && liveMoves.Pushed > 0,
+            "带 [MOVE TO TARGET] 的招式实跑(E-169):每一招都切得进去、各跑最多 60 秒不抛异常、真的冲得出去(" + liveMoves.Attacks + " 招,没切进去 " + liveMoves.NotEntered + " 招,抛异常 "
+            + liveMoves.Failed + " 招,冲出去 " + liveMoves.Pushed + " 招)");
+        Report(loops.Live > 0 && loops.Failed == 0 && loops.NotEntered == 0 && loops.StillRunning * 20 <= loops.Live * 3,
+            "循环动画出招实跑(E-170):带循环动画而且脚本能收尾的招每一招都切得进去、各跑最多 60 秒不抛异常,到时间还在放的不超过 15%(" + loops.Live
+            + " 招,没切进去 " + loops.NotEntered + " 招,抛异常 " + loops.Failed + " 招,到时间还在放 " + loops.StillRunning + " 招)");
         Report(boardAll > 0 && boardHit * 100 >= boardAll * 95,
             "被动对象跨动作的开关读写(E-158)落到自己有触发器的动作上的不低于 95%(" + boardHit + "/" + boardAll + ")");
         int forceAll = monsterTally.ForceBlocks + monsterTally.ForceBroken;
         Report(forceAll > 0 && monsterTally.ForceBlocks * 100 >= forceAll * 95,
             "怪物出招里的 [SET POS FORCE] 读通的不低于 95%(" + monsterTally.ForceBlocks + "/" + forceAll + ")");
+        int motionOk = monsterTally.TargetMotionUses.Values.Sum();
+        int motionAll = motionOk + monsterTally.TargetMotionBroken.Values.Sum();
+        Report(motionAll > 0 && motionOk * 100 >= motionAll * 95,
+            "怪物出招里朝目标的移动与转向(E-169)读通的不低于 95%(" + motionOk + "/" + motionAll + ")");
 
         if (opts.JsonFile != null)
         {
@@ -2317,6 +2769,8 @@ internal static class ActRunCheck
                 monsterCustoms = customs.ToJson(),
                 liveCustoms = liveCustoms.ToJson(),
                 liveCasts = liveCasts.ToJson(),
+                liveMoves = liveMoves.ToJson(),
+                loopCensus = loops.ToJson(),
             };
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(opts.JsonFile))!);
             File.WriteAllText(opts.JsonFile, JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));

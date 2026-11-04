@@ -254,6 +254,28 @@ namespace Dnf.Game
             }
         }
 
+        /// <summary>
+        /// [change direction by target](E-169):怪物"朝向跟着目标走"总开关的出生值(客户端出生时把定义里的这个字节抄进怪物字段 +0x4f7c,代码 0x008a0a2e;
+        /// 出招脚本的 [CHANGE DIRECTION BY TARGET] 会在中途改它)。第一个整数非 0 才是开;没写这个标签就是开(全库 2,070 个 .mob 里只有 44 个写了,本机脚本扫描汇总,非 REA)。
+        /// </summary>
+        public bool ChangeDirectionByTarget
+        {
+            get
+            {
+                int[] v = Tags.Ints("[change direction by target]");
+                return v.Length == 0 || v[0] != 0;
+            }
+        }
+
+        /// <summary>
+        /// [is direction to move](E-169):出招状态里逐帧面朝目标的出生值(客户端定义里的一个整数,出生时抄进怪物字段 +0x4fb8,代码 0x008a1182);写 0、1 或 2,没写是 0。
+        /// 出招状态里只看是不是 0;站立状态里 1 与 0、2 的区别(面朝行进方向还是面朝目标)只对带水平速度的站立有意义,这一版没做。全库 62 个 .mob 写了它(本机脚本扫描汇总,非 REA)。
+        /// </summary>
+        public int DirectionToMove => Tags.IntOr("[is direction to move]", 0);
+
+        /// <summary>出招里逐帧面朝目标的出生值:<see cref="DirectionToMove"/> 非 0(出招状态里只看是不是 0,E-169)。</summary>
+        public bool AttackFacing => DirectionToMove != 0;
+
         /// <summary>[warlike]:服务端缺省 50(好战程度,名字取自标签,数值含义属推断)。</summary>
         public int Warlike => Tags.IntOr("[warlike]", 50);
 

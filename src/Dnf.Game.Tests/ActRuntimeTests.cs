@@ -258,6 +258,16 @@ public sealed partial class ActRuntimeTests
 
         public void CastFired(IActEntity owner, int group) => CastsFired.Add((owner, group));
 
+        /// <summary>M70(E-169):[MOVE TO TARGET] 冲出去时宿主收到的通知(冲的对象、速度 n、计时毫秒)。</summary>
+        public List<(IActEntity mover, int speed, int ms)> MovesStarted { get; } = new();
+
+        /// <summary>M70(E-169):[MOVE TO TARGET] 计时到了、平面速度被清零的对象。</summary>
+        public List<IActEntity> MovesStopped { get; } = new();
+
+        public void MoveToTargetStarted(IActEntity mover, int speed, int durationMs) => MovesStarted.Add((mover, speed, durationMs));
+
+        public void MoveToTargetStopped(IActEntity mover) => MovesStopped.Add(mover);
+
         public void Resolve(IActEntity owner, ActSelector selector, int partyIndex, List<IActEntity> into)
         {
             if (Sets.TryGetValue(selector, out List<IActEntity> list))

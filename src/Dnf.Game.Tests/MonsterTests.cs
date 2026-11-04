@@ -219,6 +219,31 @@ public sealed class MonsterTests
         Assert.False(Def(11, Line("[superarmor on attack]")).SuperArmorOnAttack);
     }
 
+    [Fact]
+    public void TheTargetFacingTagsReadTheirBirthValues()
+    {
+        // [change direction by target] 缺省开(没写标签就是朝向跟着目标走),写 0 才关;[is direction to move] 缺省 0(E-169)
+        MonsterDef plain = Def(12, Line("[vision]", 100));
+        Assert.True(plain.ChangeDirectionByTarget);
+        Assert.Equal(0, plain.DirectionToMove);
+
+        Assert.False(Def(13, Line("[change direction by target]", 0)).ChangeDirectionByTarget);
+        Assert.True(Def(14, Line("[change direction by target]", 1)).ChangeDirectionByTarget);
+        Assert.True(Def(15, Line("[change direction by target]", 7)).ChangeDirectionByTarget);          // 非 0 都算
+        Assert.True(Def(16, Line("[change direction by target]")).ChangeDirectionByTarget);              // 没有数:与没写一样
+
+        Assert.Equal(1, Def(17, Line("[is direction to move]", 1)).DirectionToMove);
+        Assert.Equal(2, Def(18, Line("[is direction to move]", 2)).DirectionToMove);
+        Assert.Equal(0, Def(19, Line("[is direction to move]", 0)).DirectionToMove);
+        Assert.Equal(0, Def(20, Line("[is direction to move]")).DirectionToMove);                        // 没有数:取缺省 0
+
+        // 出招里逐帧面朝只看"是不是 0"(1 与 2 都开)
+        Assert.False(plain.AttackFacing);
+        Assert.False(Def(21, Line("[is direction to move]", 0)).AttackFacing);
+        Assert.True(Def(22, Line("[is direction to move]", 1)).AttackFacing);
+        Assert.True(Def(23, Line("[is direction to move]", 2)).AttackFacing);
+    }
+
     // ---------------- 基础属性表 ----------------
 
     [Fact]

@@ -545,6 +545,39 @@ namespace Dnf.Game.Act
         /// </summary>
         Casting,
 
+        /// <summary>
+        /// [CHANGE DIRECTION BY TARGET] n(客户端行为码 0xab,块 0x010c6159;E-169):行为拥有者(必须是怪物;不循环目标集合)上"朝向跟着目标走"的总开关,值非 0 开、0 关。
+        /// 怪物出生时取 .mob 的 [change direction by target](没写是开)。关着的时候怪物应用任何状态都不采用状态请求里带的朝向(客户端 0x00836945 与 0x00836ff9 两处:
+        /// 开关不为零才设朝向),AI 的转向(出招前转向目标、站立面对目标、走路转向行进方向)都落空;脚本自己的 [SET DIRECTION] 照样有效。
+        /// </summary>
+        SetFacingByTarget,
+
+        /// <summary>
+        /// [IS DIRECTION TO MOVE] n(客户端行为码 0xc5,块 0x010c61c2;E-169):行为拥有者(必须是怪物;不循环目标集合)上的另一个朝向开关,值非 0 记 1、0 记 0
+        /// (.mob 的 [is direction to move] 可写 0、1、2)。客户端每帧的自动转向函数 0x00d1cb00 在出招状态里只有这个值非 0 才让怪物逐帧面朝目标;
+        /// 站立状态里它区分"面朝目标"(0 与 2)和"面朝行进方向"(1),只对带水平速度的站立有意义(这一版没做)。
+        /// </summary>
+        SetFacingInAttack,
+
+        /// <summary>
+        /// [SET SAVED TARGET] n(客户端行为码 0xf5,块 0x010c73c2;E-169):拥有者(必须是怪物)把槽 n 里存的对象(<c>[SAVE TARGET OBJECT]</c> 存的)设成 AI 的缺省目标,
+        /// 槽是空的什么都不做。客户端的设置函数 0x008e22f0 带"软"标志:AI 现有目标有效时不替换(推断:有效 = 在场、是活动对象),只有目标丢了才换成这个。
+        /// </summary>
+        UseSavedTarget,
+
+        /// <summary>
+        /// [CHANGE MY TARGET](客户端行为码 0xda,块 0x010be590;E-169;没有参数):把目标集合里每个对象依次设成拥有者(必须是怪物)AI 的指定目标
+        /// (函数 0x008e23e0,时限 -1 即永久;指定目标优先于缺省目标),所以最后一个对象胜出。
+        /// </summary>
+        ChangeMyTarget,
+
+        /// <summary>
+        /// [MOVE TO TARGET] n(客户端行为码 0xf6,块 0x010c744a;E-169):集合里每个对象按速度 n 朝拥有者 AI 的当前目标直线冲过去:
+        /// 速度向量取整数度方向角(模式 1,纵深不还原)的余弦与正弦乘 n 后向零截断,Z 方向客户端写 0(这一版不动 Z);同时启动运行器上的一个计时(偏移 0x494),
+        /// 毫秒数 = 距离(模式 0,纵深还原)÷ n × 1000。计时到点谁来收尾读不到(调用在保护区里),这一版到点把还停在这个速度上的对象的平面速度清零。
+        /// </summary>
+        MoveToTarget,
+
         /// <summary>[SHAKING] 强度 毫秒:屏幕震动,不分目标,由行为拥有者所在的场景执行(E-133)。</summary>
         Shake,
 
@@ -838,6 +871,15 @@ namespace Dnf.Game.Act
         /// <summary>[SET USE HOMING] 的开关(值非 0)。</summary>
         public bool UseHoming { get; internal set; }
 
+        /// <summary>[CHANGE DIRECTION BY TARGET] 与 [IS DIRECTION TO MOVE] 的开关(值非 0,E-169)。</summary>
+        public bool FlagOn { get; internal set; }
+
+        /// <summary>[SET SAVED TARGET] 读的槽号(E-169)。</summary>
+        public int TargetSlot { get; internal set; }
+
+        /// <summary>[MOVE TO TARGET] 的速度 n(整数;全库 22 处都是整数写法,E-169)。</summary>
+        public int MoveSpeed { get; internal set; }
+
         // ---- [SHAKING]
         public int ShakeStrength { get; internal set; }
 
@@ -986,9 +1028,28 @@ namespace Dnf.Game.Act
             Triggers = triggers;
             Behaviors = behaviors;
             DefaultAttackInfo = defaultAttackInfo;
+            foreach (ActBehaviorGroup g in behaviors)
+            {
+                foreach (ActBehavior b in g.Items)
+                {
+                    if (b.Kind == ActBehaviorKind.SetAction
+                        && (b.Action == ActActionKind.Stand || b.Action == ActActionKind.Default
+                            || b.Action == ActActionKind.Attack || b.Action == ActActionKind.Custom))
+                    {
+                        CanEndAction = true;
+                    }
+                }
+            }
         }
 
         public string Path { get; }
+
+        /// <summary>
+        /// 脚本里有没有能结束或换掉当前动作的 [SET ACTION]:回待机([STAND]/[DEFAULT])或换招([ATTACK] n/[CUSTOM] n),立刻的与 [END] 的都算。
+        /// 循环动画的动作自己不会播完(推断,E-170:循环出招的脚本里几乎没有"等动画播完再换"的写法,不循环的里面有三成多),要靠这样的写法收尾;
+        /// 没有这样的写法时,宿主不能让动作一直挂着。
+        /// </summary>
+        public bool CanEndAction { get; }
 
         /// <summary>
         /// 程序一级的 [DEFAULT ATTACKINFO] "路径"(原样,相对这个 .act 所在目录;全库写法都是 "../" 开头的 .atk,E-167):这个动作自带的默认攻击信息,
