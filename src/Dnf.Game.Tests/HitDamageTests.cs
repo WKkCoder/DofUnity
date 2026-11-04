@@ -482,4 +482,34 @@ public sealed class HitDamageTests
         Assert.Equal((12.5f, 7f), (panel.PhysicalPenetration, panel.MagicalPenetration));
         Assert.Equal((0f, 0f), (DefenderPanel.FromMonster(new MonsterStats(), 3).PhysicalPenetration, DefenderPanel.FromMonster(new MonsterStats(), 3).MagicalPenetration));
     }
+
+    [Fact]
+    public void DefaultConditionalFlagsStayFalseFalseTrueForMonsterAndCharacterDefenders()
+    {
+        var input = new HitInput(0f, true, AttackKind.Physic, 0f, 0, Never, false, 0, 80f, 100f, 70f);
+        DamageVariables pChar = HitDamage.Fill(input, Attacker(), DefenderPanel.FromCharacter(1, 0, 0), false, 1);
+        DamageVariables pMon = HitDamage.Fill(input, Attacker(), Defender(), false, 1);
+        Assert.Equal((false, false, true), (pChar.ConditionalFlag(0), pChar.ConditionalFlag(1), pChar.ConditionalFlag(2)));
+        Assert.Equal((false, false, true), (pMon.ConditionalFlag(0), pMon.ConditionalFlag(1), pMon.ConditionalFlag(2)));
+    }
+
+    [Fact]
+    public void HumanRatePercentIsStoredButDoesNotChangeRollUntilArmorCategoryWiring()
+    {
+        HitInput low = new HitInput(0f, true, AttackKind.Physic, 0f, 0, Never, false, 0, 50f);
+        HitInput high = new HitInput(0f, true, AttackKind.Physic, 0f, 0, Never, false, 0, 100f);
+        AttackerPanel atk = Attacker();
+        DefenderPanel def = DefenderPanel.FromCharacter(1, 0, 0);
+        Assert.Equal(Roll(low, atk, def, false, 1), Roll(high, atk, def, false, 2));
+    }
+
+    [Fact]
+    public void ConditionalFlagsFollowArmorCategoryIdsNotObjectType()
+    {
+        var input = new HitInput(0f, true, AttackKind.Physic, 0f, 0, Never, false, 0, 50f, 60f, 70f);
+        var humanArmor = new[] { ConditionalDamageRateFlags.HumanArmorCategoryId };
+        DamageVariables p = HitDamage.Fill(input, Attacker(), DefenderPanel.FromCharacter(1, 0, 0, humanArmor), false, 1);
+        Assert.Equal((true, false, false), (p.ConditionalFlag(0), p.ConditionalFlag(1), p.ConditionalFlag(2)));
+        Assert.Equal(50f, p.ConditionalPercent(0));
+    }
 }

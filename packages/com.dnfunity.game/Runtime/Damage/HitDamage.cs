@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Dnf.Game
 {
@@ -144,6 +145,22 @@ namespace Dnf.Game
         /// <summary>魔法暴击属性(百分点)。</summary>
         public float MagicalCritical { get; set; }
 
+        /// <summary>
+        /// 怪物当攻击者(**未验证,勿接线 Play 层**):攻击力进附加基础值项的形状是推断;
+        /// 0x0087b870 对攻击者 ESI 读虚槽 +0x204/+0x338/+0x34/+0x48,怪物类槽实现未在普通段读通(可能进受保护区)。
+        /// </summary>
+        public static AttackerPanel FromMonster(int level, int physicalBonusBase, int magicalBonusBase)
+        {
+            int lv = level < 1 ? 1 : level;
+            return new AttackerPanel
+            {
+                ObjectType = DamageObjectTypes.Monster,
+                Level = lv,
+                PhysicalBonusBase = Math.Max(0, physicalBonusBase),
+                MagicalBonusBase = Math.Max(0, magicalBonusBase),
+            };
+        }
+
         /// <summary>第 <paramref name="element"/> 号元素(0 火、1 水、2 暗、3 光)的元素攻击;防御方的抗性要减去它。</summary>
         public int ElementAttack(int element)
         {
@@ -242,6 +259,25 @@ namespace Dnf.Game
         {
             return value < -1500 ? -1500 : value;
         }
+
+        /// <summary>
+        /// 防御者当前挂着的类别 id(与客户端对象 +0x27c..+0x280 向量及 +0x278 容器一致;Play 层由 M71 类别 bitset 填入,见 DESIGN.md)。
+        /// </summary>
+        public IReadOnlyList<int> CategoryIds { get; set; } = Array.Empty<int>();
+
+        /// <summary>角色当防御方:种类 0x111,防御力由调用方四舍五入后传入。</summary>
+        public static DefenderPanel FromCharacter(int level, int physicalDefense, int magicalDefense, IReadOnlyList<int> categoryIds = null)
+        {
+            return new DefenderPanel
+            {
+                ObjectType = DamageObjectTypes.Character,
+                Level = level < 1 ? 1 : level,
+                PhysicalDefense = physicalDefense,
+                MagicalDefense = magicalDefense,
+                CategoryIds = categoryIds ?? Array.Empty<int>(),
+            };
+        }
+
     }
 
     /// <summary>
@@ -298,14 +334,7 @@ namespace Dnf.Game
             p.IgnoreDefense = input.IgnoreDefense;
             p.FlatBonus = input.AbsoluteDamage;
             p.CriticalRate = input.CriticalHit;
-            p.SetConditionalPercent(0, input.HumanRate);
-            p.SetConditionalPercent(1, input.FortRate);
-            p.SetConditionalPercent(2, input.MonsterRate);
-            // 三个开关:防御方身上带 0x14、0x15 号状态记号时前两个为真,三个记号都不带时第三个为真(客户端按防御方的记号表判断,
-            // 记号的含义没读通);没有特殊状态的普通怪物只有第三个为真,按 [monster damage rate] 缩放
-            p.SetConditionalFlag(0, false);
-            p.SetConditionalFlag(1, false);
-            p.SetConditionalFlag(2, true);
+            ConditionalDamageRateFlags.Apply(p, input, defender.CategoryIds);
 
             // 来自攻击者面板的项
             p.PhysicalAttack = attacker.PhysicalAttack;

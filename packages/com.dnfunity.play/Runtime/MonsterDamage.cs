@@ -11,6 +11,7 @@ namespace Dnf.Play
     /// 基础伤害 = 怪物的攻击力(物理或魔法,看攻击信息的 [attack type])× (100 + [damage bonus]) / 100;公式里的"攻击力"项填 0
     /// (怪物的攻击力已经折进基础伤害);攻击者等级 = 怪物等级(防御率的分母用它,E-049);防御方的防御力取自主角的 [initial value];
     /// 攻击者按怪物(0x211)、防御方按角色(0x111);暴击率加成压成 −3 把基础的 3% 抵消、攻击者的暴击属性填 0(怪物不暴击是假设)。
+    /// Game 层 <see cref="AttackerPanel.FromMonster"/> 与 <see cref="HitDamage.Fill"/> 路径未接线(M91,待读码/模拟器后再换)。
     /// </summary>
     public static class MonsterDamage
     {
@@ -83,7 +84,6 @@ namespace Dnf.Play
 
         /// <summary>
         /// 读伤害公式用的全局常量:Etc/EtcParameter.etc 的 [damage fomula constant](26 个浮点,E-049)。读不到文件、或没有这一节时返回 null。
-        /// 召唤物那三节(creatureCommon.cre)怪物打主角用不到,不读。
         /// </summary>
         public static DamageConstants LoadConstants(DnfAssets assets)
         {
