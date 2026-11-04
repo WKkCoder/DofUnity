@@ -388,6 +388,12 @@ namespace Dnf.Game.Act
 
         /// <summary>[IS OURTEAMATTACKED]:逐对象过滤(条件码 0x46,块 0x010d5d94;E-173)。</summary>
         IsOurTeamAttacked,
+
+        /// <summary>[IS VISIBLE] n:逐对象过滤(条件码 0x3b,块 0x010d787f;E-222)。</summary>
+        IsVisible,
+
+        /// <summary>[IS DAMAGEBOX ENABLE] n:逐对象过滤(条件码 0x3a,块 0x010d7761;E-223)。</summary>
+        IsDamageBoxEnable,
     }
 
     /// <summary>
@@ -642,6 +648,9 @@ namespace Dnf.Game.Act
 
         /// <summary>[REMOVE CATEGORY] 类别标签:给每个活着的目标去掉类别(行为码 0x7a,块 0x010bbd8e;E-171)。</summary>
         RemoveCategory,
+
+        /// <summary>[SET TEAM] 值:对每个活着的碰撞体目标调 setTeam(0x010cb440,虚槽 0x228;E-221)。</summary>
+        SetTeam,
     }
 
     /// <summary>
@@ -1008,6 +1017,9 @@ namespace Dnf.Game.Act
 
         /// <summary>[ADD CATEGORY] / [REMOVE CATEGORY] 查表后的类别编号(<see cref="ActObjectCategories.InvalidId"/> 表示不认识,运行时不做)。</summary>
         public int CategoryId { get; internal set; } = ActObjectCategories.InvalidId;
+
+        /// <summary>[SET TEAM] 的队伍号(值表达式,E-221)。</summary>
+        public ActValue TeamValue { get; internal set; }
 
         public override string ToString() => Kind + " " + Tag;
     }

@@ -226,6 +226,21 @@ public sealed partial class ActRuntimeTests
                 Log.Add("cat-:" + categoryId);
             }
         }
+
+        /// <summary>M74(E-221):[SET TEAM] 写入覆盖队号。</summary>
+        public int? OverrideActTeam { get; set; }
+
+        public void SetActTeam(int teamId)
+        {
+            OverrideActTeam = teamId;
+            Log.Add("team:" + teamId);
+        }
+
+        /// <summary>M74(E-222):[IS VISIBLE] 可见性字节。</summary>
+        public int ActVisibilityByte { get; set; }
+
+        /// <summary>M74(E-223):[IS DAMAGEBOX ENABLE] 伤害盒开关(被动对象 cast 失败,不参与)。</summary>
+        public bool IsActDamageBoxEnabled { get; set; } = true;
     }
 
     private sealed class Host : IActHost

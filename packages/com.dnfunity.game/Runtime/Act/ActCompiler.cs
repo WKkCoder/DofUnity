@@ -607,6 +607,24 @@ namespace Dnf.Game.Act
                     case "[IS OURTEAMATTACKED]":
                         records.Add(new ActRecord { Kind = ActRecordKind.IsOurTeamAttacked, Tag = tag });
                         break;
+                    case "[IS VISIBLE]":
+                        if (cur.TryInt(out int vis))
+                        {
+                            records.Add(new ActRecord { Kind = ActRecordKind.IsVisible, Tag = tag, Number = vis });
+                            break;
+                        }
+                        AddUnsupported(records, unsupported, tag);
+                        cur.SkipToHead(IsTriggerHead);
+                        break;
+                    case "[IS DAMAGEBOX ENABLE]":
+                        if (cur.TryInt(out int dmgBox))
+                        {
+                            records.Add(new ActRecord { Kind = ActRecordKind.IsDamageBoxEnable, Tag = tag, Number = dmgBox });
+                            break;
+                        }
+                        AddUnsupported(records, unsupported, tag);
+                        cur.SkipToHead(IsTriggerHead);
+                        break;
                     case "[IS LEFT]":
                         records.Add(new ActRecord { Kind = ActRecordKind.IsLeft, Tag = tag });
                         break;
@@ -1125,6 +1143,8 @@ namespace Dnf.Game.Act
                 case "[ADD CATEGORY]":
                 case "[REMOVE CATEGORY]":
                     return ParseCategoryChange(cur, tag);
+                case "[SET TEAM]":
+                    return ParseSetTeam(cur, tag);
                 case "[CASTING]":
                 {
                     // [CASTING] 毫秒 行为组号:两个值表达式(全库 372 处写的都是字面整数;客户端执行块 0x010bd088,E-168);读不全就当没做
@@ -1910,6 +1930,14 @@ namespace Dnf.Game.Act
                 Tag = tag,
                 CategoryId = id,
             };
+        }
+
+        private static ActBehavior ParseSetTeam(ActCursor cur, string tag)
+        {
+            ActValue team = cur.Value();
+            return team == null
+                ? new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag }
+                : new ActBehavior { Kind = ActBehaviorKind.SetTeam, Tag = tag, TeamValue = team };
         }
 
         private static ActBehavior ParseDirection(ActCursor cur, string tag)

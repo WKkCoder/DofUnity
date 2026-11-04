@@ -699,7 +699,7 @@ namespace Dnf.Play
         /// <summary>主角 +0x36b0(0x10d92c7);没接回调时 -1,走 getState 与 -1 比较(E-172)。</summary>
         public int ActTargetStateFocus => _targetStateFocus != null ? _targetStateFocus() : -1;
 
-        /// <summary>已废弃(E-172 第四轮):客户端不替 param -1 换怪物侧 hint。</summary>
+        /// <summary>已废弃(E-172):客户端不替 param -1 换怪物侧 hint。</summary>
         public int ActTargetStateHint => -1;
 
         /// <summary>主角此刻能不能被抓(E-156):活着,且没有被冰冻或石化(客户端基类 0x0081ecb0 的两项状态检查;其余检查没读出来,推断)。</summary>

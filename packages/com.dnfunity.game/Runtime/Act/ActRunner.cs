@@ -161,11 +161,25 @@ namespace Dnf.Game.Act
         {
         }
 
+        /// <summary>非 null 时 <see cref="Team"/> 用此值而非种类默认([SET TEAM],E-221)。</summary>
+        int? OverrideActTeam => null;
+
         /// <summary>
         /// 队伍号([IS TEAM] 要的,客户端对象的 +0x644 槽,虚槽 0x22c 读;E-166)。主角队是 0 到 11(单机的主角 0),怪物队是 100。
         /// 默认按种类给:主角 0、怪物 100、被动对象取创建者的队(没有创建者当怪物队,推断);对象自己有别的队(被 [SET TEAM] 改过等)时覆盖它。
         /// </summary>
-        int Team => Kind == ActEntityKind.Character ? 0 : Kind == ActEntityKind.Monster ? 100 : Master != null ? Master.Team : 100;
+        int Team
+        {
+            get
+            {
+                int? o = OverrideActTeam;
+                if (o.HasValue)
+                {
+                    return o.Value;
+                }
+                return Kind == ActEntityKind.Character ? 0 : Kind == ActEntityKind.Monster ? 100 : Master != null ? Master.Team : 100;
+            }
+        }
 
         /// <summary>
         /// 当前速度的 X 分量(世界坐标/秒,[ZSPEED] 与 [IS END MAP] 要的;客户端取对象速度向量的第 0 轴,E-166)。
@@ -197,8 +211,19 @@ namespace Dnf.Game.Act
         /// <summary>0x010d9230 cast @019d98fc:目标须为 ActiveObject(怪物/角色),被动对象剔除。</summary>
         bool ActTargetStateSubjectEligible => Kind != ActEntityKind.Passive;
 
-        /// <summary>已废弃(E-172 第四轮):客户端 0x107b2e0 不替 -1 换怪物 hint。</summary>
+        /// <summary>已废弃(E-172):客户端 0x107b2e0 不替 -1 换怪物 hint。</summary>
         int ActTargetStateHint => -1;
+
+        /// <summary>[SET TEAM](0x010cb440,E-221):cast @019d91e8 后调 setTeam(虚槽 0x228)。</summary>
+        void SetActTeam(int teamId)
+        {
+        }
+
+        /// <summary>[IS VISIBLE](0x010d787f,E-222):vtbl+0x1d4 低 8 位与参数比较。</summary>
+        int ActVisibilityByte => 0;
+
+        /// <summary>[IS DAMAGEBOX ENABLE](0x010d7761,E-223):怪物 cast @019d991c 后 +0x36c 布尔与参数 0/1 比较。</summary>
+        bool IsActDamageBoxEnabled => true;
 
         /// <summary>[IS CATEGORY] / ADD / REMOVE:是否带着脚本类别编号(客户端对象上的类别 bitset,与 <see cref="ActObjectCategories"/> 一致;E-171)。</summary>
         bool HasActCategory(int categoryId) => false;
@@ -756,6 +781,8 @@ namespace Dnf.Game.Act
                     case ActRecordKind.IsTargetState:
                     case ActRecordKind.IsNotTargetState:
                     case ActRecordKind.IsOurTeamAttacked:
+                    case ActRecordKind.IsVisible:
+                    case ActRecordKind.IsDamageBoxEnable:
                         FilterSet(rec);
                         break;
                     case ActRecordKind.RealDungeonCheckup:
@@ -994,6 +1021,14 @@ namespace Dnf.Game.Act
                     return KeepTargetState(rec, e);
                 case ActRecordKind.IsOurTeamAttacked:
                     return KeepOurTeamAttacked(e);
+                case ActRecordKind.IsVisible:
+                    return (e.ActVisibilityByte & 0xFF) == rec.Number;
+                case ActRecordKind.IsDamageBoxEnable:
+                    if (e.Kind == ActEntityKind.Passive)
+                    {
+                        return false;
+                    }
+                    return e.IsActDamageBoxEnabled == (rec.Number != 0);
                 default:
                     return true;
             }
@@ -1792,6 +1827,19 @@ namespace Dnf.Game.Act
                                     {
                                         t.RemoveActCategory(b.CategoryId);
                                     }
+                                }
+                            }
+                        }
+                        break;
+                    case ActBehaviorKind.SetTeam:
+                        if (b.TeamValue != null)
+                        {
+                            int team = b.TeamValue.Eval(_rand);
+                            foreach (IActEntity t in targets)
+                            {
+                                if (t.IsAlive && t.Kind != ActEntityKind.Passive)
+                                {
+                                    t.SetActTeam(team);
                                 }
                             }
                         }
