@@ -379,6 +379,12 @@ internal sealed class AvatarFixture : IDisposable
     public const string MonsterListPath = "monster/monster.lst";
     public const string BlobMobPath = "monster/blob/blob.mob";
 
+    /// <summary>带 [category] 的迷你怪物,供 <see cref="Dnf.Play.RoomMonsterBuilder"/> 播种类别测试(M71,E-171)。</summary>
+    public const string CategorySeedMobPath = "monster/blob/category.mob";
+
+    /// <summary><see cref="CategorySeedMobPath"/> 在 monster.lst 里的编号。</summary>
+    public const int CategorySeedMobCode = 8801;
+
     /// <summary>
     /// 倒地动画每一帧都有受击框、有两个长停留帧的迷你怪物(与原版地精的倒地动画同形:两帧短、两帧长停留、一帧躺着;证据 E-083),
     /// 用来测空中还能不能被打到、颠一下换帧。其余动作与 <see cref="BlobMobPath"/> 相同。
@@ -2223,7 +2229,8 @@ internal sealed class AvatarFixture : IDisposable
             (WeaponLayerC + "/attack1.ani", BuildBoxAni((0, 100, null), (1, 100, null), (0, 100, new[] { ((ushort)15, new[] { 10, 30, 0, 10, 10, 10 }) }), (1, 100, null))),
             // 迷你怪物:目录(编号 3 指向不存在的脚本)、.mob(待机、行走、两种受击、倒地、一个攻击加一条空的攻击信息)与动画
             (MonsterListPath, NewScript()
-                .Int(1).Str("blob/blob.mob").Int(2).Str("Blob\\Big.mob").Int(3).Str("blob/missing.mob").Build()),
+                .Int(1).Str("blob/blob.mob").Int(2).Str("Blob\\Big.mob").Int(3).Str("blob/missing.mob")
+                .Int(CategorySeedMobCode).Str("blob/category.mob").Build()),
             (BlobMobPath, NewScript()
                 .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
                 .Tag("[move motion]").Str("Animation_Blob/Move.ani")
@@ -2232,6 +2239,15 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[down motion]").Str("Animation_Blob/Down.ani")
                 .Tag("[attack motion]").Str("Animation_Blob/Attack1.ani")
                 .Tag("[attack info]").Str("AttackInfo/Attack1.atk").Str("").Build()),
+            (CategorySeedMobPath, NewScript()
+                .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
+                .Tag("[move motion]").Str("Animation_Blob/Move.ani")
+                .Tag("[damage motion 1]").Str("Animation_Blob/Damage1.ani")
+                .Tag("[damage motion 2]").Str("Animation_Blob/Damage2.ani")
+                .Tag("[down motion]").Str("Animation_Blob/Down.ani")
+                .Tag("[attack motion]").Str("Animation_Blob/Attack1.ani")
+                .Tag("[attack info]").Str("AttackInfo/Attack1.atk").Str("")
+                .Tag("[category]").Str("[goblin]").Tag("[/category]").Build()),
             (BlobStrikerMobPath, NewScript()
                 .Tag("[waiting motion]").Str("Animation_Blob/Stay.ani")
                 .Tag("[move motion]").Str("Animation_Blob/Move.ani")

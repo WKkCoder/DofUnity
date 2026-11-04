@@ -371,6 +371,23 @@ namespace Dnf.Game.Act
         /// 名字与这个读法的几何意义看起来相反,按读到的码实现(见 E-166 的未定项)。<see cref="ActRecord.Flag"/> 为真表示 BACKPOS。
         /// </summary>
         FrontPos,
+
+        /// <summary>
+        /// [IS CATEGORY] 子标签 … [/IS CATEGORY]:逐对象过滤(条件码 0x15,块 0x010d6d01;E-171)。<see cref="ActRecord.Ints"/> 是类别编号表,命中任一编号就留下。
+        /// </summary>
+        IsCategory,
+
+        /// <summary>[IS TARGET STATE] n …:逐对象过滤(条件码 0x49,块 0x010d91bd;E-172)。只读 <see cref="ActRecord.Ints"/>[0];与 getState 相等才留;n 为 -1 时用拥有者的目标状态提示(怪物 <see cref="IActEntity.ActTargetStateHint"/>)。</summary>
+        IsTargetState,
+
+        /// <summary>[IS NOT TARGET STATE]:与 <see cref="IsTargetState"/> 相同,但要求 getState 不相等(条件码 0x4a;E-172)。</summary>
+        IsNotTargetState,
+
+        /// <summary>[REALDUNGEON CHECKUP] mode key compare:整体真假(条件码 0x5a,块 0x010d3e22;E-173)。</summary>
+        RealDungeonCheckup,
+
+        /// <summary>[IS OURTEAMATTACKED]:逐对象过滤(条件码 0x46,块 0x010d5d94;E-173)。</summary>
+        IsOurTeamAttacked,
     }
 
     /// <summary>
@@ -619,6 +636,12 @@ namespace Dnf.Game.Act
         /// 客户端执行块在行为码 0xad(加载块 0x01341cea);开头那个数装载后不参与匹配(推断:全库里它多半与被删的附加物的持续毫秒一致)。
         /// </summary>
         DeleteAppendage,
+
+        /// <summary>[ADD CATEGORY] 类别标签:给每个活着的目标挂上类别(行为码 0xd0,块 0x010bbc21;E-171)。<see cref="ActBehavior.CategoryId"/> 为查表结果。</summary>
+        AddCategory,
+
+        /// <summary>[REMOVE CATEGORY] 类别标签:给每个活着的目标去掉类别(行为码 0x7a,块 0x010bbd8e;E-171)。</summary>
+        RemoveCategory,
     }
 
     /// <summary>
@@ -982,6 +1005,9 @@ namespace Dnf.Game.Act
 
         /// <summary>[APPENDAGE] 的持续毫秒(不大于 0 没有时限);[DELETE APPENDAGE] 开头那个数也放这里,执行时不用。</summary>
         public int StatDurationMs { get; internal set; }
+
+        /// <summary>[ADD CATEGORY] / [REMOVE CATEGORY] 查表后的类别编号(<see cref="ActObjectCategories.InvalidId"/> 表示不认识,运行时不做)。</summary>
+        public int CategoryId { get; internal set; } = ActObjectCategories.InvalidId;
 
         public override string ToString() => Kind + " " + Tag;
     }

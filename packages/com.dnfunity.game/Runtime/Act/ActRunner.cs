@@ -185,6 +185,34 @@ namespace Dnf.Game.Act
         /// </summary>
         bool HasActiveStatus(int status) => false;
 
+        /// <summary>OperatingValue 状态号(getState 虚槽 +0xb8;E-172):0 站/走、3 受击、8 出招等;被动对象这一版恒 0。</summary>
+        int ActAiState => 0;
+
+        /// <summary>Character +0x36b0(0x10d92ae cast @019d9acc,E-172):param=-1 且该字段非 -1 时无条件保留该目标。</summary>
+        int ActTargetStateFocus => -1;
+
+        /// <summary>0x010d9203 cast @019d91e8:动作 +0x94 须为 CollisionObject,否则整元素剔除。</summary>
+        bool ActTargetStateOwnerEligible => Kind != ActEntityKind.Passive;
+
+        /// <summary>0x010d9230 cast @019d98fc:目标须为 ActiveObject(怪物/角色),被动对象剔除。</summary>
+        bool ActTargetStateSubjectEligible => Kind != ActEntityKind.Passive;
+
+        /// <summary>已废弃(E-172 第四轮):客户端 0x107b2e0 不替 -1 换怪物 hint。</summary>
+        int ActTargetStateHint => -1;
+
+        /// <summary>[IS CATEGORY] / ADD / REMOVE:是否带着脚本类别编号(客户端对象上的类别 bitset,与 <see cref="ActObjectCategories"/> 一致;E-171)。</summary>
+        bool HasActCategory(int categoryId) => false;
+
+        /// <summary>[ADD CATEGORY]:挂上类别;编号无效时不做(客户端查表返回 0x2c 时跳过)。</summary>
+        void AddActCategory(int categoryId)
+        {
+        }
+
+        /// <summary>[REMOVE CATEGORY]:去掉类别;没有时不做。</summary>
+        void RemoveActCategory(int categoryId)
+        {
+        }
+
         /// <summary>
         /// [CHANGE DIRECTION BY TARGET] n(行为码 0xab,E-169):拥有者(怪物)上"朝向跟着目标走"的总开关。关着的时候怪物应用状态不采用 AI 给的朝向、
         /// 也不逐帧自动转向(脚本自己的 [SET DIRECTION] 照样有效)。不是怪物的对象(主角、被动对象)什么都不做,客户端对非怪物同样落空。
@@ -297,6 +325,9 @@ namespace Dnf.Game.Act
         {
         }
 
+        /// <summary>条件 0x10d92a2 主角对象(0x19d9acc);无则 null(E-172)。</summary>
+        IActEntity ResolvePlayableCharacter(IActEntity owner) => null;
+
         /// <summary>
         /// 舞台的横向总宽(世界坐标,像素;[IS END MAP] 要的,客户端 0x0046ef10 取地图的格数乘格宽;E-166)。
         /// 不知道舞台(没有地图的试验场)是 0,这时 [IS END MAP] 不通过(客户端取不到地图时也不通过)。
@@ -305,6 +336,12 @@ namespace Dnf.Game.Act
 
         /// <summary>舞台的纵深总高(世界坐标,像素;[IS END MAP VERTICALLY] 要的,客户端 0x0062d080;E-166)。不知道是 0,见 <see cref="MapWidth"/>。</summary>
         int MapHeight => 0;
+
+        /// <summary>[REALDUNGEON CHECKUP](E-173):表 0..2 按 key 取值;缺键返回 0(0x007ddb70 等)。</summary>
+        int RealDungeonLookup(int table, int key) => 0;
+
+        /// <summary>[IS OURTEAMATTACKED](E-173):对象管理器里是否存在满足 0x010d5dc1–0x010d5e0c 的受击对象(由 Play 层登记,测时用合成表)。</summary>
+        bool MatchesOurTeamAttacked(IActEntity owner, IActEntity candidate) => false;
     }
 
     /// <summary>
@@ -315,7 +352,7 @@ namespace Dnf.Game.Act
     /// [FRAME] 与事件触发器还受"单次位"约束:执行完一次后置位,直到动画回到第 0 帧才复位(行为里动画帧变了则不置位)。
     /// 读不懂的记录让整个触发器不触发。
     /// </summary>
-    public sealed class ActRunner
+    public sealed partial class ActRunner
     {
         /// <summary>排队等待的 [DELAY DO BEHAVIOR]:到期的毫秒时钟、行为组号、排队那一刻定下的目标。</summary>
         private sealed class Delayed
@@ -715,7 +752,17 @@ namespace Dnf.Game.Act
                     case ActRecordKind.IsInPos:
                     case ActRecordKind.IsChild:
                     case ActRecordKind.IsGrabbable:
+                    case ActRecordKind.IsCategory:
+                    case ActRecordKind.IsTargetState:
+                    case ActRecordKind.IsNotTargetState:
+                    case ActRecordKind.IsOurTeamAttacked:
                         FilterSet(rec);
+                        break;
+                    case ActRecordKind.RealDungeonCheckup:
+                        if (!RealDungeonCheckupPasses(rec))
+                        {
+                            return;
+                        }
                         break;
                     case ActRecordKind.IsEndMap:
                     case ActRecordKind.IsEndMapVertically:
@@ -926,6 +973,27 @@ namespace Dnf.Game.Act
                     bool? on = e.GetActionTrigger(rec.TriggerPool, rec.TriggerSlot, rec.Number);
                     return on.HasValue && on.Value == rec.Flag;
                 }
+                case ActRecordKind.IsCategory:
+                {
+                    // 0x010d6d01 起(E-171):参数表里任一类别编号命中就留
+                    if (rec.Ints == null || rec.Ints.Length == 0)
+                    {
+                        return false;
+                    }
+                    for (int i = 0; i < rec.Ints.Length; i++)
+                    {
+                        if (e.HasActCategory(rec.Ints[i]))
+                        {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                case ActRecordKind.IsTargetState:
+                case ActRecordKind.IsNotTargetState:
+                    return KeepTargetState(rec, e);
+                case ActRecordKind.IsOurTeamAttacked:
+                    return KeepOurTeamAttacked(e);
                 default:
                     return true;
             }
@@ -1704,6 +1772,27 @@ namespace Dnf.Game.Act
                             foreach (StatChange change in b.StatChanges)
                             {
                                 t.RemoveStatAppendage(change, _owner);
+                            }
+                        }
+                        break;
+                    case ActBehaviorKind.AddCategory:
+                    case ActBehaviorKind.RemoveCategory:
+                        if (ActObjectCategories.IsValidId(b.CategoryId))
+                        {
+                            bool add = b.Kind == ActBehaviorKind.AddCategory;
+                            foreach (IActEntity t in targets)
+                            {
+                                if (t.IsAlive)
+                                {
+                                    if (add)
+                                    {
+                                        t.AddActCategory(b.CategoryId);
+                                    }
+                                    else
+                                    {
+                                        t.RemoveActCategory(b.CategoryId);
+                                    }
+                                }
                             }
                         }
                         break;

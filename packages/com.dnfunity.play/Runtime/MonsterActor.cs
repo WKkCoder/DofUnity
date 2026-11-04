@@ -1313,6 +1313,16 @@ namespace Dnf.Play
             {
                 _m.RemoveStatAppendage(change, source);
             }
+
+            public bool HasActCategory(int categoryId) => _m.HasActCategory(categoryId);
+
+            public void AddActCategory(int categoryId) => _m.AddActCategory(categoryId);
+
+            public void RemoveActCategory(int categoryId) => _m.RemoveActCategory(categoryId);
+
+            public int ActAiState => _m.AiState;
+
+            public int ActTargetStateHint => _m.TargetAiState;
         }
 
         /// <summary>

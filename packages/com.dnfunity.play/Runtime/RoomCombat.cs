@@ -3482,7 +3482,7 @@ namespace Dnf.Play
                 return;
             }
             _heroEntity = new HeroActEntity(_room.Hero, () => !HeroDead, () => Vitals?.Hp ?? 0, () => Vitals?.HpMax ?? 0, () => Vitals?.Level ?? 1, ApplyActStatus, HeroGrabbable,
-                AddHeroStatAppendage, RemoveHeroStatAppendage, HeroHasStatus);
+                AddHeroStatAppendage, RemoveHeroStatAppendage, HeroHasStatus, () => HeroAiState(_room.Hero));
             _actWorld = new ActWorld(this);
             foreach (MonsterActor m in _monsters)
             {
@@ -3919,6 +3919,8 @@ namespace Dnf.Play
             {
                 Tally(_session._unsupportedTriggers, tag);
             }
+
+            public IActEntity ResolvePlayableCharacter(IActEntity owner) => _session._heroEntity;
         }
 
         /// <summary>

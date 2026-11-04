@@ -136,6 +136,12 @@ public sealed partial class ActRuntimeTests
 
         public int Level { get; set; }
 
+        public int ActAiState { get; set; }
+
+        public int ActTargetStateFocus { get; set; } = -1;
+
+        public int ActTargetStateHint { get; set; } = -1;
+
         public void SetHp(int hp)
         {
             Log.Add("sethp:" + hp);
@@ -198,6 +204,28 @@ public sealed partial class ActRuntimeTests
             Log.Add("stat-:" + change);
             StatRemoves.Add((change, source));
         }
+
+        /// <summary>M71(E-171):脚本运行时类别 bitset。</summary>
+        public HashSet<int> ActCategories { get; } = new();
+
+        public bool HasActCategory(int categoryId) => ActCategories.Contains(categoryId);
+
+        public void AddActCategory(int categoryId)
+        {
+            if ((uint)categoryId < (uint)ActObjectCategories.InvalidId)
+            {
+                ActCategories.Add(categoryId);
+                Log.Add("cat+:" + categoryId);
+            }
+        }
+
+        public void RemoveActCategory(int categoryId)
+        {
+            if (ActCategories.Remove(categoryId))
+            {
+                Log.Add("cat-:" + categoryId);
+            }
+        }
     }
 
     private sealed class Host : IActHost
@@ -223,6 +251,11 @@ public sealed partial class ActRuntimeTests
 
         /// <summary>M61:为真时宿主的选择结果里连死了的对象也给(测运行器自己的"活着"过滤),缺省与真实宿主一样只给活着的。</summary>
         public bool ListDeadToo { get; set; }
+
+        /// <summary>M72:0x10d92a2 主角对象;null 表示取不到主角。</summary>
+        public IActEntity PlayableCharacter { get; set; }
+
+        public IActEntity ResolvePlayableCharacter(IActEntity owner) => PlayableCharacter;
 
         public List<(int strength, int ms)> Shakes { get; } = new();
 
@@ -274,6 +307,44 @@ public sealed partial class ActRuntimeTests
             {
                 into.AddRange(ListDeadToo ? list : list.Where(e => e.IsAlive));
             }
+        }
+
+        /// <summary>M73(E-173):[REALDUNGEON CHECKUP] 三张键值表。</summary>
+        public Dictionary<(int Table, int Key), int> RealDungeon { get; } = new();
+
+        public int RealDungeonLookup(int table, int key) => RealDungeon.TryGetValue((table, key), out int v) ? v : 0;
+
+        /// <summary>M73(E-173):[IS OURTEAMATTACKED] 合成受击登记(受害对象、攻击者、攻击者 getState)。</summary>
+        public List<(IActEntity victim, IActEntity attacker, int attackerState)> OurTeamAttackMarks { get; } = new();
+
+        public bool MatchesOurTeamAttacked(IActEntity owner, IActEntity candidate)
+        {
+            for (int i = 0; i < OurTeamAttackMarks.Count; i++)
+            {
+                (IActEntity victim, IActEntity attacker, int attackerState) mark = OurTeamAttackMarks[i];
+                if (!ReferenceEquals(mark.victim, candidate))
+                {
+                    continue;
+                }
+                if (ReferenceEquals(mark.attacker, owner))
+                {
+                    continue;
+                }
+                if (mark.attacker.Team == owner.Team)
+                {
+                    continue;
+                }
+                if (mark.attackerState != 3)
+                {
+                    continue;
+                }
+                if (mark.attacker.Target != candidate)
+                {
+                    continue;
+                }
+                return true;
+            }
+            return false;
         }
     }
 

@@ -663,6 +663,7 @@ namespace Dnf.Play
         private readonly Action<StatChange, int, IActEntity> _statAdd;
         private readonly Action<StatChange, IActEntity> _statRemove;
         private readonly Func<int, bool> _hasStatus;
+        private readonly Func<int> _aiState;
 
         /// <param name="grabbable">[IS GRABABLE] 要的"此刻能不能被抓"(会话按冰冻、石化等异常状态给,E-156);没给就只看活着。</param>
         /// <param name="statAdd">[APPENDAGE] 落到主角的一项属性改变(会话管附加物集合与速度倍率,E-161);没给就什么都不做。</param>
@@ -671,8 +672,10 @@ namespace Dnf.Play
         public HeroActEntity(TownHero hero, Func<bool> alive, Func<int> hp = null, Func<int> hpMax = null, Func<int> level = null,
             Action<ActiveStatusEntry, IActEntity> status = null, Func<bool> grabbable = null,
             Action<StatChange, int, IActEntity> statAdd = null, Action<StatChange, IActEntity> statRemove = null,
-            Func<int, bool> hasStatus = null)
+            Func<int, bool> hasStatus = null, Func<int> aiState = null, Func<int> targetStateFocus = null)
         {
+            _targetStateFocus = targetStateFocus;
+            _aiState = aiState;
             _hasStatus = hasStatus;
             _statAdd = statAdd;
             _statRemove = statRemove;
@@ -687,6 +690,17 @@ namespace Dnf.Play
 
         /// <summary>主角身上此刻带着异常状态 <paramref name="status"/> 吗([IS TARGETACTIVESTATUS],E-166);没接状态系统一律没有。</summary>
         public bool HasActiveStatus(int status) => _hasStatus != null && _hasStatus(status);
+
+        /// <summary>OperatingValue 状态号([IS TARGET STATE] 的 getState,E-172);没给就 0。</summary>
+        public int ActAiState => _aiState != null ? _aiState() : 0;
+
+        private readonly Func<int> _targetStateFocus;
+
+        /// <summary>主角 +0x36b0(0x10d92c7);没接回调时 -1,走 getState 与 -1 比较(E-172)。</summary>
+        public int ActTargetStateFocus => _targetStateFocus != null ? _targetStateFocus() : -1;
+
+        /// <summary>已废弃(E-172 第四轮):客户端不替 param -1 换怪物侧 hint。</summary>
+        public int ActTargetStateHint => -1;
 
         /// <summary>主角此刻能不能被抓(E-156):活着,且没有被冰冻或石化(客户端基类 0x0081ecb0 的两项状态检查;其余检查没读出来,推断)。</summary>
         public bool IsGrabbable => IsAlive && (_grabbable == null || _grabbable());

@@ -451,6 +451,18 @@ namespace Dnf.Game.Act
                     case "[IS TEAM]":
                         records.Add(ParseIsTeam(cur, tag));
                         break;
+                    case "[IS TARGET STATE]":
+                    case "[IS NOT TARGET STATE]":
+                    {
+                        int[] states = cur.Ints();
+                        records.Add(new ActRecord
+                        {
+                            Kind = tag == "[IS TARGET STATE]" ? ActRecordKind.IsTargetState : ActRecordKind.IsNotTargetState,
+                            Tag = tag,
+                            Ints = states,
+                        });
+                        break;
+                    }
                     case "[ZSPEED]":
                         AddCompare(cur, records, unsupported, tag, ActRecordKind.ZSpeed);
                         break;
@@ -576,6 +588,24 @@ namespace Dnf.Game.Act
                     }
                     case "[IS OBJECT TYPE]":
                         records.Add(ParseObjectTypes(cur, tag));
+                        break;
+                    case "[IS CATEGORY]":
+                        records.Add(ParseIsCategory(cur, tag));
+                        break;
+                    case "[REALDUNGEON CHECKUP]":
+                    {
+                        int[] rd = cur.Ints();
+                        if (rd.Length >= 3)
+                        {
+                            records.Add(new ActRecord { Kind = ActRecordKind.RealDungeonCheckup, Tag = tag, Ints = rd });
+                            break;
+                        }
+                        AddUnsupported(records, unsupported, tag);
+                        cur.SkipToHead(IsTriggerHead);
+                        break;
+                    }
+                    case "[IS OURTEAMATTACKED]":
+                        records.Add(new ActRecord { Kind = ActRecordKind.IsOurTeamAttacked, Tag = tag });
                         break;
                     case "[IS LEFT]":
                         records.Add(new ActRecord { Kind = ActRecordKind.IsLeft, Tag = tag });
@@ -987,6 +1017,32 @@ namespace Dnf.Game.Act
             return new ActRecord { Kind = ActRecordKind.IsObjectType, Tag = tag, Ints = kinds.ToArray() };
         }
 
+        /// <summary>[IS CATEGORY] 块里每个子标签是一个类别名(如 [dragon]),OR 匹配(E-171)。</summary>
+        private static ActRecord ParseIsCategory(ActCursor cur, string tag)
+        {
+            var ids = new List<int>();
+            while (!cur.End && !cur.TakeClose(tag))
+            {
+                if (cur.AtOpen(out string child))
+                {
+                    cur.Skip();
+                    int id = ActObjectCategories.Resolve(child);
+                    if (ActObjectCategories.IsValidId(id))
+                    {
+                        ids.Add(id);
+                    }
+                    continue;
+                }
+                if (cur.AtNumber)
+                {
+                    ids.Add(cur.Int());
+                    continue;
+                }
+                cur.Skip();
+            }
+            return new ActRecord { Kind = ActRecordKind.IsCategory, Tag = tag, Ints = ids.ToArray() };
+        }
+
         // ------------------------------------------------------------------ 行为
 
         /// <summary>行为组里开始一条新行为的标签:docs/act-tags.tsv 的 behavior 一节(加载函数里行为字典的全部键)。</summary>
@@ -1066,6 +1122,9 @@ namespace Dnf.Game.Act
                     return ParseChangeActionFile(cur, tag);
                 case "[CHANGE ATTACKINFO]":
                     return ParseChangeAttackInfo(cur, tag);
+                case "[ADD CATEGORY]":
+                case "[REMOVE CATEGORY]":
+                    return ParseCategoryChange(cur, tag);
                 case "[CASTING]":
                 {
                     // [CASTING] 毫秒 行为组号:两个值表达式(全库 372 处写的都是字面整数;客户端执行块 0x010bd088,E-168);读不全就当没做
@@ -1825,6 +1884,32 @@ namespace Dnf.Game.Act
                 return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
             }
             return new ActBehavior { Kind = ActBehaviorKind.ChangeAttackInfo, Tag = tag, FilePath = path };
+        }
+
+        /// <summary>ADD/REMOVE:块里第一个子标签是类别名(如 [FIXTURE],E-171)。</summary>
+        private static ActBehavior ParseCategoryChange(ActCursor cur, string tag)
+        {
+            string name = null;
+            if (cur.AtOpen(out string child))
+            {
+                cur.Skip();
+                name = child;
+            }
+            else
+            {
+                name = cur.TakeString();
+            }
+            if (string.IsNullOrEmpty(name))
+            {
+                return new ActBehavior { Kind = ActBehaviorKind.Unsupported, Tag = tag };
+            }
+            int id = ActObjectCategories.Resolve(name);
+            return new ActBehavior
+            {
+                Kind = tag == "[ADD CATEGORY]" ? ActBehaviorKind.AddCategory : ActBehaviorKind.RemoveCategory,
+                Tag = tag,
+                CategoryId = id,
+            };
         }
 
         private static ActBehavior ParseDirection(ActCursor cur, string tag)

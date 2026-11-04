@@ -125,6 +125,7 @@ namespace Dnf.Play
             // .ai 脚本驱动(证据 E-128):带 [ai pattern] 的怪物出招、走位交给四个 .ai 脚本;读不到脚本的仍走上面的默认 AI 与占位
             uint aiState = unchecked((uint)seed * 3266489917u + (uint)actor.Index * 668265263u + 2246822519u);
             actor.SetScript(MonsterScript.Create(data, def, model, difficulty, () => ClientRandom.Next(ref aiState)));
+            actor.SeedActCategories(def.CategoryNames);                         // .mob [category] → 运行时 bitset(E-171)
             if (_heroWidth != null && _heroWidth.Length >= 2)
             {
                 actor.TargetWidth = _heroWidth[0];

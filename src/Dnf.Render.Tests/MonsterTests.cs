@@ -18,10 +18,11 @@ public class MonsterTests
         using var fx = new AvatarFixture();
         using DnfAssets assets = DnfAssets.Open(fx.Root);
         MonsterCatalog catalog = MonsterCatalog.Read(assets);
-        Assert.Equal(3, catalog.Count);
+        Assert.Equal(4, catalog.Count);
         Assert.Equal("monster/blob/blob.mob", catalog.PathOf(1));
         Assert.Equal("monster/blob/big.mob", catalog.PathOf(2));         // 脚本里是 "Blob\Big.mob":反斜杠换成斜杠、转小写
         Assert.Equal("monster/blob/missing.mob", catalog.PathOf(3));
+        Assert.Equal("monster/blob/category.mob", catalog.PathOf(AvatarFixture.CategorySeedMobCode));
         Assert.Null(catalog.PathOf(99));
     }
 
