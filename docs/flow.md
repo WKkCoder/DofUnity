@@ -1632,3 +1632,68 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --room --map 
 
 **没做**:`[IS DIRECTION TO MOVE]` 的站立语义;`[JUMP TO TARGET]`;冲刺到点由谁来停的原版读法(受保护区,按推断);Z 方向(客户端写 0,这里不动);客户端出招状态的结束条件(循环出招的规则按统计与实跑推断);没有基线录像对拍。
 
+## 60 脚本类别:`[ADD CATEGORY]`、`[REMOVE CATEGORY]`、`[IS CATEGORY]`(M71,证据 E-171)
+
+**读到了什么**(静态读码:Capstone 反汇编读 `DNF.exe` 普通代码段;只读,不入库):
+
+- 类别名表:初始化函数 `0x0129c140` 填 44 个名字(下标 0 到 43),按名查编号 `0x01293f10`;无效编号 `0x2c`,锚点类别 `0x1a`,`0x14`、`0x15`、`0x16` 是三个护甲类名;第 31、32 项是空串。
+- `[ADD CATEGORY]`(行为码 `0xd0`,块 `0x010bbc21`)、`[REMOVE CATEGORY]`(块 `0x010bbd8e`):名字查不到编号就整项跳过,后面的行为照常;加入锚点类别时额外写锚点标志(字段 `+0x4f94`)与当前坐标(`0x019db264`)。
+- `[IS CATEGORY]`(条件码 `0x15`,块 `0x010d6d01`):逐对象过滤,参数表里任一类别命中就留下,参数表为空没有对象能留下。
+
+**代码**:Game:`ActObjectCategories`(名表、`Resolve`、`IsValidId`、`InvalidId`、`AnchorCategoryId`)、`ActRecordKind.IsCategory`、`ActBehaviorKind.AddCategory/RemoveCategory`(对目标集合里每个活着的对象改类别)、`IActEntity.HasActCategory/AddActCategory/RemoveActCategory`(默认空实现);Play:`MonsterActor` 的类别集合与锚点标志、`SeedActCategories`(`RoomMonsterBuilder` 在出生时把 `.mob` 的 `[category]` 播进同一个集合,有集成测试守着)。主角与被动对象没有类别集合,`[IS CATEGORY]` 对它们不匹配。
+
+**验证**:M71 到 M73 合计新增 54 条测试,合成测试含无效名后续行为照常、参数表为空剔除、死亡对象、`.mob` 出生类别的集成测试;24 处变异检查(含出生播种被跳过的 Play 层变异)全部让单测变红;`act-run-check` 通过。
+
+**没做**:锚点标志的消费者(客户端里谁读 `+0x4f94`);主角与被动对象的类别集合(伤害条件开关要用,见 E-212)。
+
+## 61 `[IS TARGET STATE]`、`[IS NOT TARGET STATE]`(M72,证据 E-172)
+
+**读到了什么**(静态读码):参数读取函数 `0x0107b2e0` 对越界或空表返回 -1;块 `0x010d91bd`(条件码 `0x49`、`0x4a`)按“拥有者转碰撞对象类(`0x019d91e8`)、被检查对象转活动对象类(`0x019d98fc`)”逐对象过滤,转换失败的元素被剔除(例如拥有者是被动对象时整组留不下);再用状态读取虚槽 `+0x00b8` 与参数比较;参数为 -1 且对象是主角类(`0x019d9acc`)时读字段 `+0x36b0`,不等于 -1 就无条件保留;块里没有存活判断。
+
+**代码**:`ActRunner.TargetState`(`ReadActIntParam`、`KeepTargetState`)、`IActEntity.ActAiState/ActTargetStateFocus/ActTargetStateOwnerEligible/ActTargetStateSubjectEligible`、`IActHost.ResolvePlayableCharacter`;怪物的状态值取 AI 的当前操作值,主角由会话的 `HeroAiState` 给;`+0x36b0` 含义没读通,Play 层默认 -1(分支不触发)。
+
+**验证**:合成测试覆盖空参数表、越界、-1 分支、被动对象拥有者、反向条件;变异检查全部让单测变红。
+
+**没做**:`+0x36b0` 的含义(普通代码段 26 处位移引用,写入点 `0x0081fafe`、`0x0082aeea` 等);主角状态值与客户端取法逐项对拍。
+
+## 62 `[REALDUNGEON CHECKUP]`、`[IS OURTEAMATTACKED]`(M73,证据 E-173)
+
+**读到了什么**(静态读码):`[REALDUNGEON CHECKUP] mode key third`(条件码 `0x5a`,块 `0x010d3e22`)整体真假,三张表按 key 取值、缺键为 0,判定规则见 E-173;`[IS OURTEAMATTACKED]`(条件码 `0x46`,块 `0x010d5d31` 起)逐对象过滤:存活、状态 3、攻击者是拥有者当前目标、异队(`0x00872c60`)。
+
+**代码**:`ActRunner.RealDungeonCheckupPasses`(纯函数,可直接单测)、`KeepOurTeamAttacked`,宿主接口 `IActHost.RealDungeonLookup/MatchesOurTeamAttacked`(默认 0 与假)。Play 层的副本单例与受击登记链没接,所以这两个标签在实机里仍按“条件不成立”走,与此前未支持时一致。
+
+**验证**:合成宿主测试(键值表、三个 mode、third 为 0 与非 0、受击登记)与变异检查;全库副本扫描 303/346、开伤害扫描 291/346 与基线持平(证明没有改变现有行为)。
+
+**没做**:Play 层接线;三张副本表(`0x007ddad0`、`0x007ddb20`)的语义;受击登记链(客户端经 `+0x390` 登记,没读通)。
+
+## 63 被动技能威力列倍率与空中攻击强化取列(M81、M82、M83,证据 E-181 到 E-183)
+
+**读到了什么**(静态读码;受保护乘子由本机 Unicorn 读得,非 REA):`0x00684510` 遍历主角的被动加成表 `+0x5938`,每项带主动技能号与 static 整数下标;被动已学、`0x0090dd10` 判定当前原生状态在被动的可执行状态表内时,把 static 整数乘 0.01 累加进倍率;表项 `+0x15` 非 0 则处理完该项就终止整表。表项来自 Squirrel 接口 `sq_AddPassiveSkillAttackBonusRate` 的运行期登记,不是技能文件的静态字段。
+
+**代码**:Game:`SkillPassivePowerRate`(`Link`、`Accumulate`、`PassiveAppliesInNativeState`、`ProtectedRateScale`);Play:`HeroSkillSlot.StrikeAtWithPassiveNativeState`、配方的 `PassivePowerLinks`(默认空,所以现有伤害数不变)、`HeroJumpStrikeResolve.Apply`(空中攻击强化取技能列的逻辑从 `RoomCombat` 内联代码收进纯函数,有单测);`tools/py/passive_power_oracle.py` 读乘子;金标准 `passive_power_golden.txt`。
+
+**验证**:M81 到 M83 合计新增 16 条测试,12 处变异检查全部让单测变红;`SkillM83GuardNativeStateTests` 钉住防御姿态类技能的原生状态号;全库扫描持平。
+
+**没做**:哪些技能脚本登记加成(要跑技能脚本,下一步);被动对角色属性面板的加成路径(E-182,没找到);`0x009129d0` 的模拟器对拍;状态类的后续批次(普查表里 33 个起手未登记、17 个分派未读通,E-183)。
+
+## 64 条件伤害率三开关按防御者类别取值(M91,证据 E-211、E-212)
+
+**读到了什么**(静态读码):伤害填充函数 `0x0087b870` 在防御者对象上运行(虚槽 `+0x388`);开关 0、1 看防御者类别容器(`+0x278`)里有没有类别 `0x14`、`0x15`,开关 2 看类别编号向量(`+0x27c` 到 `+0x280`)里有没有 `0x14` 到 `0x16`;三个编号是类别名表里的三个护甲类名(E-171)。
+
+**代码**:`ConditionalDamageRateFlags`(`Apply`、`ComputeFlags`、`ApplyDefault`)、`DefenderPanel.CategoryIds`、`HitDamage.Fill` 接线;类别表为空时得 (假、假、真),与旧结果一致。怪物打主角的一侧仍是 E-086 的折基础值路径,`AttackerPanel.FromMonster` 只是未验证的形状、没有接线。金标准 `hit_damage_conditional_flags_golden.txt` 是手算的。
+
+**验证**:新增 6 条测试、12 处变异检查全部让单测变红;全库扫描 303/346、开伤害扫描 291/346 持平。
+
+**没做**:把怪物类别集(M71)与主角的类别编号接到 `DefenderPanel.CategoryIds`(主角的类别编号来源没读);怪物类上攻击者属性读取虚槽(`+0x204`、`+0x338`、`+0x34`、`+0x48`)的实现。
+
+## 65 P7 网络协议的静态研究(网关与游戏服,证据 E-191 到 E-210)
+
+**做了什么**(只读静态研究,没有联网探测、没有抓包、没有读任何密钥):读服务器上网关程序(Rust 的 axum)与游戏进程(带符号的 ELF32)的二进制,另用本机模拟器验证校验函数与算法槽的向量。
+
+- 网关(E-191 到 E-198):顶层三条路径,认证是嵌套子路由;加密是 AES-256-GCM,帧是 12 字节随机数、密文、16 字节标签,64 位十六进制配置直接作 32 字节密钥;请求与响应都加密;令牌是 RSA 私钥签名;口令入库没看到哈希;限流有 429 但数值不明。
+- 游戏服(E-201 到 E-210):连接建立后服务端先发 NOTI CHANNELINFO;线帧 15 字节前缀(NOTI 与 CMD 的字节序不同,收发校验范围不对称);14 个算法槽按包号 % 14 选;最小登录序列 LOGIN、GET_USERINFO、SELECT_CHARACTER、START_GAME;LOGIN 的令牌由游戏服用 RSA 公钥解密校验,与网关的私钥签名配对,客户端不需要做 RSA。
+
+**独立复核**:一位只读审计员(不看研究者的笔记)按地址逐条复核:密钥格式、GCM 帧形、RSA 签名类型、游戏服的令牌 RSA 验证侧、14 个算法槽地址、帧头与校验范围的不对称都与读码一致;网关一侧的令牌编码、口令入库形式、请求字段到处理器的精确绑定没有补证,只部分采信;游戏进程运行副本与研究副本的 4 字节差异审计员没法复核。
+
+**没做**:Unity 一侧的网络模块还没写;缺的信息(网关子路径与字段名、口令哈希、令牌明文、限流数值、14 个算法槽的真实密钥生成与剩余向量、START_GAME 线上字段)都需要用户批准的只读探测;所有向量里,网关一侧是自洽生成的参考值,游戏服一侧只有槽 0、1、2、8、13 与校验函数有本机模拟器向量。
+
