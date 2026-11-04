@@ -1665,7 +1665,17 @@ namespace Dnf.Play
         /// <summary>
         /// 怪物挨打时的防御面板(<see cref="DefenderPanel.FromMonster"/>:防御力与元素抗性,证据 E-110);没给就按零防御、零抗性、怪物自己的等级算。
         /// </summary>
-        public DefenderPanel Defense { get; set; }
+        public DefenderPanel Defense
+        {
+            get => _defensePanel;
+            set
+            {
+                _defensePanel = value;
+                SyncDefenseCategoryIds();
+            }
+        }
+
+        private DefenderPanel _defensePanel;
 
         /// <summary>
         /// 最近一次打中这只怪物的攻击者记号(0 表示还没人打过;主角是 <see cref="RoomCombatSession.HeroAttackerId"/>)。

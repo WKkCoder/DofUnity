@@ -3338,7 +3338,8 @@ namespace Dnf.Play
             {
                 throw new ArgumentNullException(nameof(monster));
             }
-            DefenderPanel defender = monster.Defense ?? new DefenderPanel { Level = monster.Level };
+            monster.SyncDefenseCategoryIds();
+            DefenderPanel defender = monster.Defense ?? new DefenderPanel { Level = monster.Level, CategoryIds = monster.GetActCategoryIds() };
             bool bonusHit = HitDamage.BonusHitApplies(defender.Level, monster.LastAttackerId == HeroAttackerId);
             int magicalBonus = (int)_buffs.Total(BuffStat.MagicalAttack);
             if (magicalBonus == 0)

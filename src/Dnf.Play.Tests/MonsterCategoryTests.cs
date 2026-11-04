@@ -52,6 +52,8 @@ public sealed class MonsterCategoryTests
         Assert.NotNull(m);
         int goblin = ActObjectCategories.Resolve("goblin");
         Assert.True(m.ActSelf.HasActCategory(goblin));
+        Assert.NotNull(m.Defense);
+        Assert.True(m.Defense.CategoryIds.Count >= 1);
     }
 
     [Fact]

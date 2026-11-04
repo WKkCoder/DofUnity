@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Dnf.Game.Act;
@@ -27,14 +28,33 @@ namespace Dnf.Play
             foreach (string name in categoryNames)
             {
                 int id = ActObjectCategories.Resolve(name);
-                if ((uint)id < (uint)ActObjectCategories.InvalidId)
+                if ((uint)id >= (uint)ActObjectCategories.InvalidId || !_actCategories.Add(id))
                 {
-                    AddActCategory(id);
+                    continue;
+                }
+                if (id == ActObjectCategories.AnchorCategoryId)
+                {
+                    CategoryAnchorActive = true;
+                    CategoryAnchorX = (float)X;
+                    CategoryAnchorY = (float)Y;
                 }
             }
         }
 
         internal bool HasActCategory(int categoryId) => _actCategories.Contains(categoryId);
+
+        /// <summary>当前挂着的类别编号(升序,与客户端 +0x27c 向量一致;E-212)。</summary>
+        internal IReadOnlyList<int> GetActCategoryIds()
+        {
+            if (_actCategories.Count == 0)
+            {
+                return Array.Empty<int>();
+            }
+            var list = new int[_actCategories.Count];
+            _actCategories.CopyTo(list);
+            Array.Sort(list);
+            return list;
+        }
 
         internal void AddActCategory(int categoryId)
         {
@@ -42,13 +62,17 @@ namespace Dnf.Play
             {
                 return;
             }
-            _actCategories.Add(categoryId);
+            if (!_actCategories.Add(categoryId))
+            {
+                return;
+            }
             if (categoryId == ActObjectCategories.AnchorCategoryId)
             {
                 CategoryAnchorActive = true;
                 CategoryAnchorX = (float)X;
                 CategoryAnchorY = (float)Y;
             }
+            SyncDefenseCategoryIds();
         }
 
         internal void RemoveActCategory(int categoryId)
@@ -61,6 +85,17 @@ namespace Dnf.Play
             {
                 CategoryAnchorActive = false;
             }
+            SyncDefenseCategoryIds();
+        }
+
+        /// <summary>把运行时类别集写进 <see cref="Defense"/> 面板(E-212)。</summary>
+        internal void SyncDefenseCategoryIds()
+        {
+            if (Defense == null)
+            {
+                return;
+            }
+            Defense.CategoryIds = GetActCategoryIds();
         }
     }
 }
