@@ -423,6 +423,7 @@ namespace Dnf.Play
                 return new HeroSkills(slots);
             }
             recipes = recipes ?? SkillRecipes.Default;
+            IReadOnlyList<SkillPassivePowerRate.Link> registeredLinks = Dnf.Game.SkillPassivePowerRegistry.CollectForBook(data, job, book);
             SkillEffectTable effects = job == 0 ? SkillEffectTable.Load(data, SkillEffectTable.SwordmanJob) : SkillEffectTable.Empty;
             for (int position = 0; position < SkillBook.QuickSlots; position++)
             {
@@ -437,7 +438,7 @@ namespace Dnf.Play
                     continue;
                 }
                 slots.Add(MakeSlot(data, chr, (SkillKeys)(1 << position), def, book.LevelOf(skillId), recipes, effects, book.LevelOf,
-                    id => book.Catalog.Find(id) ?? data.GetSkill(job, id)));
+                    id => book.Catalog.Find(id) ?? data.GetSkill(job, id), registeredLinks));
             }
             // 学会了、有出招指令、没放进快捷栏的主动技能:只靠指令放(E-140)。没有放法的技能不进来(按指令也放不出东西)
             var commandSlots = new List<HeroSkillSlot>();
@@ -453,7 +454,7 @@ namespace Dnf.Play
                     continue;
                 }
                 HeroSkillSlot slot = MakeSlot(data, chr, SkillKeys.None, def, learned.Value, recipes, effects, book.LevelOf,
-                    id => book.Catalog.Find(id) ?? data.GetSkill(job, id));
+                    id => book.Catalog.Find(id) ?? data.GetSkill(job, id), registeredLinks);
                 if (IsImplemented(slot))
                 {
                     commandSlots.Add(slot);
@@ -463,7 +464,8 @@ namespace Dnf.Play
         }
 
         private static HeroSkillSlot MakeSlot(GameData data, CharacterDef chr, SkillKeys key, SkillDef def, int level, SkillRecipes recipes = null,
-            SkillEffectTable effects = null, Func<int, int> skillLevelOf = null, Func<int, SkillDef> resolveSkill = null)
+            SkillEffectTable effects = null, Func<int, int> skillLevelOf = null, Func<int, SkillDef> resolveSkill = null,
+            IReadOnlyList<SkillPassivePowerRate.Link> registeredLinks = null)
         {
             var slot = new HeroSkillSlot(key, def.Id, level, def);
             SkillRecipe recipe = (recipes ?? SkillRecipes.Default).Find(def.Id);
@@ -473,7 +475,9 @@ namespace Dnf.Play
             {
                 // 配方技能:逐段取攻击信息(角色 [etc attack info] 的下标)与伤害数(.skl [level info] 当前等级的两列),特效取技能预载表的下标(证据 E-129)
                 slot.Recipe = recipe;
-                IReadOnlyList<SkillPassivePowerRate.Link> powerLinks = SkillPassivePowerRate.LinksFromRecipes(recipe.PassivePowerLinks, def.Id);
+                IReadOnlyList<SkillPassivePowerRate.Link> recipeLinks = SkillPassivePowerRate.LinksFromRecipes(recipe.PassivePowerLinks, def.Id);
+                IReadOnlyList<SkillPassivePowerRate.Link> regForActive = SkillPassivePowerRate.RegisteredLinksForActive(registeredLinks, def.Id);
+                IReadOnlyList<SkillPassivePowerRate.Link> powerLinks = SkillPassivePowerRate.MergePassiveLinks(recipeLinks, regForActive);
                 Func<int, SkillDef> resolve = resolveSkill ?? (id => data.GetSkill(chr.Job, id));
                 Func<int, int> levelOf = skillLevelOf ?? (_ => 0);
                 const int slotBuildNativeState = 0;

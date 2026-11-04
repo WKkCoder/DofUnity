@@ -179,6 +179,9 @@ sq_setShake	Inferred	Both	15	震屏 (对象, 强度, 持续毫秒):成员写法 
 setObject	Inferred	Member	14	变量表:按编号存一个Object引用
 sq_GetObjectHeight	Inferred	Both	14	对象的高度;全局写法传入 null 返回 -1(客户端 0x005ae590)
 sq_SendChangeSkillEffectPacket	Inferred	Global	14	告诉角色某个技能的特效要变 (角色, 技能):在当前回调结束后调用登记了该技能的状态的 onChangeSkillEffect_*,发送缓冲里的数据随消息给出
+sq_AddPassiveSkillAttackBonusRate	Inferred	Both	0	登记被动→主动威力链接 (主动号, static 下标[, 终止标志]):被动号来自 onChangeSkillEffect 上下文;写入 +0x5938(0x00689f70,登记 0x0061040c,E-231)
+sq_RemovePassiveSkillAttackBonusRate	Inferred	Both	0	移除指向某一主动技能的全部 +0x5938 表项 (主动号;0x00689f90)
+sq_GetPassiveAttackRate	Inferred	Both	0	被动威力倍率 (主动号, native 状态):遍历 +0x5938(0x00610399→0x00684510,E-181)
 sq_setAttackPowerWithPassive	Inferred	Member	14	把技能威力写进当前攻击信息 (技能, 状态, 列, 等级, 倍率):列小于 0 时不改;规则同 sq_GetPowerWithPassive
 GetCurrentFrameIndex	Inferred	Member	13	动画当前帧号
 setCurrentAnimationFromCutomIndex	Inferred	Global	13	按 [etc motion] 的下标设置当前动画 (对象, 下标)(接口名拼写照原样)

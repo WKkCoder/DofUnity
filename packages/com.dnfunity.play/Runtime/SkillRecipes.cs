@@ -680,6 +680,19 @@ namespace Dnf.Play
                     new SkillObjectSpec(objectId: 20001, stage: 0, frame: 3, damageRateColumn: 2, damageFixedColumn: 0),
                 }),
 
+            // 波系技能的第二个(状态 0x18,证据 E-135/E-232):与第一个同族进入块 0xcd19ec、逐帧 0xcbb54f;施法动作暂与第一个共用 [etc motion] 第 9 项(第 10 项首帧非蓄力占位,skill-check 不通过),
+            // 对象帧常量为 4;伤害列与第一个相同族(百分比第 2 列、固定值第 0 列);基础成长类型的对象编号取进入块二选一里的那一支(非 PVP)。
+            new SkillRecipe(21,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 9, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0, castHoldFrames: 3),
+                },
+                slideSpeedIndex: 0, slideAccelIndex: 1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: 1, slideFollowsHeldDirection: false,
+                objects: new[]
+                {
+                    new SkillObjectSpec(objectId: 20002, stage: 0, frame: 4, damageRateColumn: 2, damageFixedColumn: 0),
+                }),
+
             // 挂多个特效、对象等特效关键帧的技能(状态 0x23,证据 E-137):施放动作是 [etc motion] 第 25 项,这个动作里一个攻击框也没有(状态码设的攻击信息没有框可打),
             // 所以主角的身体不打人,伤害全在放出的被动对象上。一进状态就把预载表的四个特效各放进一个图层(都跟着主角);
             // 动画播到第 6 帧以后、第 1 个特效播到关键帧标志 1 的那一帧,放一个被动对象:主角前方 85 像素、离地 82,朝向同主角,

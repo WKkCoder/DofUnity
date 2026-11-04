@@ -45,6 +45,15 @@ public sealed class SkillPassivePowerRateTests
     private static ScriptLine Str(string tag, string text) =>
         new ScriptLine(tag, new[] { new ScriptValue(ScriptValueKind.String, 0, text) });
 
+    [Fact]
+    public void MergeIncludesRegisteredLinks()
+    {
+        var recipe = new List<SkillPassivePowerRate.Link> { new SkillPassivePowerRate.Link(Passive, Active, 0) };
+        var reg = new List<SkillPassivePowerRate.Link> { new SkillPassivePowerRate.Link(903, Active, 1) };
+        IReadOnlyList<SkillPassivePowerRate.Link> merged = SkillPassivePowerRate.MergePassiveLinks(recipe, reg);
+        Assert.Equal(2, merged.Count);
+    }
+
     private static float Accumulate(int passiveLevel, int static0, int nativeState, IReadOnlyList<SkillPassivePowerRate.Link> links, params int[] executableStates)
     {
         SkillDef passive = PassiveDef(static0, executableStates);

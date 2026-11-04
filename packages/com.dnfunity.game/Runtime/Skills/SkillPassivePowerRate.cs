@@ -53,6 +53,41 @@ namespace Dnf.Game
             return list;
         }
 
+        /// <summary>配方显式链接与运行期登记链接合并;登记项追加在后(E-231)。</summary>
+        public static IReadOnlyList<Link> MergePassiveLinks(IReadOnlyList<Link> recipeLinks, IReadOnlyList<Link> registeredLinks)
+        {
+            if (registeredLinks == null || registeredLinks.Count == 0)
+            {
+                return recipeLinks ?? Array.Empty<Link>();
+            }
+            if (recipeLinks == null || recipeLinks.Count == 0)
+            {
+                return registeredLinks;
+            }
+            var merged = new List<Link>(recipeLinks.Count + registeredLinks.Count);
+            merged.AddRange(recipeLinks);
+            merged.AddRange(registeredLinks);
+            return merged;
+        }
+
+        /// <summary>从登记表筛出指向某一主动技能的链接。</summary>
+        public static IReadOnlyList<Link> RegisteredLinksForActive(IEnumerable<Link> registeredLinks, int activeSkillId)
+        {
+            if (registeredLinks == null)
+            {
+                return Array.Empty<Link>();
+            }
+            var list = new List<Link>();
+            foreach (Link link in registeredLinks)
+            {
+                if (link.ActiveSkillId == activeSkillId)
+                {
+                    list.Add(link);
+                }
+            }
+            return list;
+        }
+
         /// <summary>
         /// 0x0090dd10:被动技能的 [executable states] 须包含 <paramref name="nativeState"/>;空表则永不加成(与 isExcutableState 脚本的"空=不限"不同,以 0x90dd10 为准)。
         /// </summary>
@@ -98,7 +133,7 @@ namespace Dnf.Game
             return rate;
         }
 
-        internal static bool IsPassiveType(SkillDef def)
+        public static bool IsPassiveType(SkillDef def)
         {
             return def.Type != null && def.Type.IndexOf("passive", StringComparison.OrdinalIgnoreCase) >= 0;
         }

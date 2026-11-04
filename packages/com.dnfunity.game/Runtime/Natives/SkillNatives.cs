@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Dnf.Squirrel;
 
 namespace Dnf.Game
@@ -106,18 +107,25 @@ namespace Dnf.Game
             foreach (string n in new[] { "sq_GetBonusRateWithPassive", "sq_getBonusRateWithPassive" })
             {
                 Define(n, I,
-                    "技能第 idx 列的攻击力百分比乘以倍率:参数 (技能, 状态, idx, 倍率);被动技能加成尚未实现,按 1 倍计(列注释为'攻击力(%)')", B, c =>
+                    "技能第 idx 列的攻击力百分比乘以倍率:参数 (技能, 状态, idx, 倍率);再乘 0x00684510 登记的被动威力倍率(E-231)", B, c =>
                     {
                         GameObject o = c.SelfAs<GameObject>();
                         int skill = c.Int32(0);
+                        int nativeState = c.Int32(1);
                         int column = c.Int32(2);
                         float rate = c.FloatOr(3, 1f);
                         GameObject owner = SkillOwner(o);
                         SkillDef def = SkillOf(o, skill);
                         int level = owner.GetSkillLevel(skill);
-                        return c.Return(def == null ? 0f : def.GetLevel(level, column, PvpMode) * rate);
+                        if (def == null)
+                        {
+                            return c.Return(0f);
+                        }
+                        float passiveRate = PassiveAttackRate(owner, skill, nativeState);
+                        return c.Return(def.GetLevel(level, column, PvpMode) * rate * passiveRate);
                     });
             }
+            RegisterPassiveAttackBonusNatives();
             Define("sq_IsUseSkill", I, "玩家是否请求了这个技能且条件满足(这里:请求的技能编号与参数相同)", B, c =>
             {
                 GameObject o = c.SelfAs<GameObject>();
@@ -265,6 +273,72 @@ namespace Dnf.Game
             }
             o.CurrentAttackInfo = ai;
             o.HitObjects.Clear();
+        }
+
+        private float PassiveAttackRate(GameObject chr, int activeSkillId, int nativeState)
+        {
+            IReadOnlyList<SkillPassivePowerRate.Link> links = SkillPassivePowerStore.Snapshot(chr);
+            if (chr == null || links.Count == 0)
+            {
+                return 1f;
+            }
+            return SkillPassivePowerRate.Accumulate(1f, activeSkillId, nativeState, chr.GetSkillLevel,
+                id => SkillOf(chr, id), links);
+        }
+
+        private void RegisterPassiveAttackBonusNatives()
+        {
+            const NativeForm B = NativeForm.Both;
+            const NativeStatus I = NativeStatus.Inferred;
+
+            void AddLink(NativeCall c)
+            {
+                GameObject chr = TopCharacter(c.SelfAs<GameObject>()) ?? c.SelfAs<GameObject>();
+                if (chr == null)
+                {
+                    return;
+                }
+                int activeSkillId = c.Int32(0);
+                int staticIndex = c.Int32(1);
+                bool terminates = c.ArgCount >= 3 && c.Int32(2) != 0;
+                int passiveSkillId = SkillPassivePowerStore.ChangeEffectSkillContext;
+                if (passiveSkillId < 0)
+                {
+                    passiveSkillId = c.SelfAs<GameObject>()?.StateInfo?.Skill ?? -1;
+                }
+                if (passiveSkillId < 0 || activeSkillId < 0)
+                {
+                    return;
+                }
+                SkillPassivePowerStore.Add(chr, passiveSkillId, activeSkillId, staticIndex, terminates);
+            }
+
+            foreach (string n in new[] { "sq_AddPassiveSkillAttackBonusRate", "sq_addPassiveSkillAttackBonusRate" })
+            {
+                Define(n, I,
+                    "登记被动→主动威力链接(主动号, static 下标[, 终止标志]):被动号来自 onChangeSkillEffect 上下文;写入 +0x5938(0x00689f70,登记 0x0061040c,E-231)", B, c =>
+                {
+                    AddLink(c);
+                    return c.ReturnNothing();
+                });
+            }
+            Define("sq_RemovePassiveSkillAttackBonusRate", I,
+                "移除指向某一主动技能的全部登记链接(主动号;0x00689f90)", B, c =>
+                {
+                    GameObject chr = TopCharacter(c.SelfAs<GameObject>()) ?? c.SelfAs<GameObject>();
+                    SkillPassivePowerStore.RemoveForActive(chr, c.Int32(0));
+                    return c.ReturnNothing();
+                });
+            Define("sq_GetPassiveAttackRate", I,
+                "被动威力倍率(主动号, native 状态):走 0x00684510 遍历 +0x5938(E-181)", B, c =>
+                {
+                    GameObject chr = TopCharacter(c.SelfAs<GameObject>()) ?? c.SelfAs<GameObject>();
+                    if (chr == null)
+                    {
+                        return c.Return(1f);
+                    }
+                    return c.Return(PassiveAttackRate(chr, c.Int32(0), c.Int32(1)));
+                });
         }
     }
 }
