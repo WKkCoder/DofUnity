@@ -2559,8 +2559,7 @@ namespace Dnf.Play
             {
                 return _jumpStrike;
             }
-            SkillStageSpec stage = recipe.Stages[0];
-            return _jumpStrike.WithSkillDamage(slot.Def.GetLevel(slot.Level, stage.DamageRateColumn, false), slot.Def.GetLevel(slot.Level, stage.DamageFixedColumn, false));
+            return HeroJumpStrikeResolve.Apply(_jumpStrike, slot);
         }
 
         /// <summary>

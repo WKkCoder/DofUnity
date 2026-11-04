@@ -17,7 +17,8 @@ public class SkillJumpAttackTests
 {
     private const double HeroX = 300;
     private const int ArenaY = 100;
-    private const int Skill = AvatarFixture.JumpSkill;
+    internal const int JumpSkillId = AvatarFixture.JumpSkill;
+    private const int Skill = JumpSkillId;
     private const int MonsterHp = 100000;
 
     /// <param name="skillId">配方挂在哪个技能上(默认是指令为单独攻击键的合成技能;换成别的技能就是"指令不是攻击键"的情形)。</param>
@@ -49,15 +50,16 @@ public class SkillJumpAttackTests
     }
 
     private static RoomCombatTests.Arena NewArena(int[] monsterXs, HeroVitals vitals = null, bool quick = false, bool commands = true, HeroStrikeInfo jump = default,
-        int level = 2, bool learned = true, int seed = 1, int skillId = Skill, int motionA = AvatarFixture.JumpSkillAEtcIndex)
+        int level = 2, bool learned = true, int seed = 1, int skillId = Skill, int motionA = AvatarFixture.JumpSkillAEtcIndex, Func<GameData, HeroSkills> skillsLoad = null)
     {
         var monsters = new List<(int X, int Y)>();
         foreach (int x in monsterXs)
         {
             monsters.Add((x, ArenaY));
         }
+        Func<GameData, HeroSkills> factory = skillsLoad ?? (data => Load(data, level, quick, learned, skillId, motionA));
         var arena = new RoomCombatTests.Arena(monsters, hp: MonsterHp, chr: AvatarFixture.ActionChrPath, monsterSpeed: 0, vitals: vitals, jump: jump, seed: seed,
-            skillsFactory: data => Load(data, level, quick, learned, skillId, motionA));
+            skillsFactory: factory);
         arena.Session.CommandsEnabled = commands;
         return arena;
     }
@@ -475,6 +477,81 @@ public class SkillJumpAttackTests
         HeroStrikeInfo plain = poor.Session.CurrentHeroStrike;
         Assert.Equal((HeroMotion.JumpAttack, 0, false, 17, 55, true),
             (poor.Session.Hero.Motion, poor.Session.Hero.JumpAttackSkillId, plain.IsSkillDamage, plain.DamageBonus, plain.PushAside, plain.KnockDown));
+    }
+
+    private static SkillRecipes RecipesWithPassive()
+    {
+        return new SkillRecipes(new[]
+        {
+            new SkillRecipe(Skill,
+                new[] { new SkillStageSpec(motionIndex: -1, attackInfoIndex: -1, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0) },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                jumpAttack: new SkillJumpAttackSpec(AvatarFixture.JumpSkillAEtcIndex, AvatarFixture.JumpSkillBEtcIndex, effectFrame: 2, effectsA: new[] { 4, 6 }, effectsB: new[] { 5, 7 }),
+                passivePowerLinks: new[] { new SkillPassivePowerLink(902, 0) }),
+        });
+    }
+
+    internal static HeroSkills LoadWithPassive(GameData data, int passiveLevel, int skillLevel = 2)
+    {
+        CharacterDef chr = data.GetCharacter(0);
+        var defs = SkillCatalog.Load(data, 0).Skills.ToList();
+        defs.Add(new SkillDef(902, "skill/test/passive902.skl", new[]
+        {
+            new ScriptLine("[type]", new[] { new ScriptValue(ScriptValueKind.String, 0, "[passive]") }),
+            new ScriptLine("[executable states]", new[] { new ScriptValue(ScriptValueKind.Int, SkillPassivePowerRate.JumpAttackNativeState, null) }),
+            new ScriptLine("[static data]", new[] { new ScriptValue(ScriptValueKind.Int, 80, null) }),
+        }));
+        var catalog = new SkillCatalog(0, defs);
+        var book = new SkillBook(catalog);
+        book.SetGiven(SkillGrants.Read(chr.Tags.Lines, 0));
+        var levels = book.Learned.ToList();
+        levels.Add(new KeyValuePair<int, int>(Skill, skillLevel));
+        if (passiveLevel > 0)
+        {
+            levels.Add(new KeyValuePair<int, int>(902, passiveLevel));
+        }
+        book.Restore(levels, Array.Empty<KeyValuePair<int, int>>(), 0, 0);
+        return HeroSkills.Create(data, chr, 0, book, RecipesWithPassive());
+    }
+
+    [Fact]
+    public void JumpStageStrikeScalesWithPassiveAndJumpStrikeUsesStageStrikes()
+    {
+        const int PassiveBonus = 80;
+        using var fx = new AvatarFixture();
+        GameData data = new GameData(new PvfScriptSource(DnfAssets.Open(fx.Root).Pvf));
+        HeroSkills withPassive = LoadWithPassive(data, 1, 2);
+        HeroSkills withoutPassive = LoadWithPassive(data, 0, 2);
+        HeroSkillSlot slotOn = withPassive.SlotOfSkill(Skill);
+        HeroSkillSlot slotOff = withoutPassive.SlotOfSkill(Skill);
+        int baseRate = AvatarFixture.JumpSkillRate2;
+        int baseFixed = 0;
+        int expectRate = (int)Math.Round(baseRate * (1f + PassiveBonus * SkillPassivePowerRate.StaticScale), MidpointRounding.AwayFromZero);
+        HeroStrikeInfo plain = slotOff.StrikeAt(0).Value;
+        HeroStrikeInfo scaled = slotOn.StrikeAtWithPassiveNativeState(0, SkillPassivePowerRate.JumpAttackNativeState).Value;
+        Assert.Equal(baseRate, plain.SkillRatePercent);
+        Assert.NotEqual(plain.SkillRatePercent, scaled.SkillRatePercent);
+        Assert.Equal(expectRate, scaled.SkillRatePercent);
+        Assert.Equal(baseFixed, plain.SkillFixed);
+        Assert.Equal(baseFixed, scaled.SkillFixed);
+
+        using var arena = NewArena(new[] { (int)HeroX + 40 }, skillsLoad: data => LoadWithPassive(data, 1, 2));
+        RoomCombatSession s = arena.Session;
+        JumpUp(s, 30);
+        Attack(s);
+        HeroStrikeInfo hitStrike = default;
+        for (int i = 0; i < 30 && s.Hero.Motion == HeroMotion.JumpAttack; i++)
+        {
+            int before = s.Hits;
+            Step(s);
+            if (s.Hits > before)
+            {
+                hitStrike = s.CurrentHeroStrike;
+            }
+        }
+        Assert.Equal(1, s.Hits);
+        Assert.True(hitStrike.IsSkillDamage);
+        Assert.Equal(expectRate, hitStrike.SkillRatePercent);
     }
 
     [Fact]

@@ -1,0 +1,3 @@
+# 本机模拟器测量 passive_power_oracle.py --golden(非 REA);合成 static 整数
+MULTIPLIER	0.01
+CASE	static	50	delta	0.5

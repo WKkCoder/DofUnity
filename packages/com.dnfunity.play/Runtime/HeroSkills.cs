@@ -138,6 +138,15 @@ namespace Dnf.Play
         /// <summary>配方技能每一段命中用的攻击信息与伤害数,与 <see cref="SkillRecipe.Stages"/> 一一对应;不是配方技能为 null。</summary>
         public IReadOnlyList<HeroStrikeInfo> StageStrikes { get; internal set; }
 
+        /// <summary>建槽时用于缩放 level info 的被动倍率( native 状态 0;运行时可用 <see cref="StrikeAt(int,int)"/> 重算)。</summary>
+        internal float StagePassivePowerRateAtBuild { get; set; } = 1f;
+
+        internal IReadOnlyList<SkillPassivePowerRate.Link> PassivePowerLinks { get; set; }
+
+        internal Func<int, int> PassiveSkillLevelOf { get; set; }
+
+        internal Func<int, SkillDef> PassiveResolveSkill { get; set; }
+
         /// <summary>
         /// 蓄力跳跃类技能(<see cref="SkillRecipe.Hop"/>)重武装的命中窗口用的攻击信息与伤害数(证据 E-138);窗口数为 1 时唯一的窗口也用它。
         /// 其它技能为 null。
@@ -178,6 +187,26 @@ namespace Dnf.Play
                 return Strike;
             }
             return StageStrikes[Math.Max(0, Math.Min(stage, StageStrikes.Count - 1))];
+        }
+
+        /// <summary>按运行时 native 状态重算被动威力列(E-181);与建槽倍率不同时等比调整 SkillRate/Fixed。</summary>
+        public HeroStrikeInfo? StrikeAtWithPassiveNativeState(int stage, int passiveNativeState)
+        {
+            HeroStrikeInfo? strike = StrikeAt(stage);
+            if (PassivePowerLinks == null || PassivePowerLinks.Count == 0 || PassiveSkillLevelOf == null || PassiveResolveSkill == null
+                || !strike.HasValue || !strike.Value.IsSkillDamage)
+            {
+                return strike;
+            }
+            float live = SkillPassivePowerRate.Accumulate(1f, SkillId, passiveNativeState, PassiveSkillLevelOf, PassiveResolveSkill, PassivePowerLinks);
+            if (Math.Abs(live - StagePassivePowerRateAtBuild) < 1e-5f)
+            {
+                return strike;
+            }
+            HeroStrikeInfo v = strike.Value;
+            int rate = (int)Math.Round(v.SkillRatePercent * live / StagePassivePowerRateAtBuild, MidpointRounding.AwayFromZero);
+            int fix = (int)Math.Round(v.SkillFixed * live / StagePassivePowerRateAtBuild, MidpointRounding.AwayFromZero);
+            return v.WithSkillDamage(rate, fix);
         }
 
         /// <summary>
@@ -376,7 +405,8 @@ namespace Dnf.Play
                 {
                     continue;
                 }
-                slots.Add(MakeSlot(data, chr, (SkillKeys)(1 << slots.Count), def, initial[i + 1]));
+                slots.Add(MakeSlot(data, chr, (SkillKeys)(1 << slots.Count), def, initial[i + 1], skillLevelOf: _ => initial[i + 1],
+                    resolveSkill: id => data.GetSkill(job, id)));
             }
             return new HeroSkills(slots);
         }
@@ -406,7 +436,8 @@ namespace Dnf.Play
                 {
                     continue;
                 }
-                slots.Add(MakeSlot(data, chr, (SkillKeys)(1 << position), def, book.LevelOf(skillId), recipes, effects));
+                slots.Add(MakeSlot(data, chr, (SkillKeys)(1 << position), def, book.LevelOf(skillId), recipes, effects, book.LevelOf,
+                    id => book.Catalog.Find(id) ?? data.GetSkill(job, id)));
             }
             // 学会了、有出招指令、没放进快捷栏的主动技能:只靠指令放(E-140)。没有放法的技能不进来(按指令也放不出东西)
             var commandSlots = new List<HeroSkillSlot>();
@@ -421,7 +452,8 @@ namespace Dnf.Play
                 {
                     continue;
                 }
-                HeroSkillSlot slot = MakeSlot(data, chr, SkillKeys.None, def, learned.Value, recipes, effects);
+                HeroSkillSlot slot = MakeSlot(data, chr, SkillKeys.None, def, learned.Value, recipes, effects, book.LevelOf,
+                    id => book.Catalog.Find(id) ?? data.GetSkill(job, id));
                 if (IsImplemented(slot))
                 {
                     commandSlots.Add(slot);
@@ -431,7 +463,7 @@ namespace Dnf.Play
         }
 
         private static HeroSkillSlot MakeSlot(GameData data, CharacterDef chr, SkillKeys key, SkillDef def, int level, SkillRecipes recipes = null,
-            SkillEffectTable effects = null)
+            SkillEffectTable effects = null, Func<int, int> skillLevelOf = null, Func<int, SkillDef> resolveSkill = null)
         {
             var slot = new HeroSkillSlot(key, def.Id, level, def);
             SkillRecipe recipe = (recipes ?? SkillRecipes.Default).Find(def.Id);
@@ -441,13 +473,35 @@ namespace Dnf.Play
             {
                 // 配方技能:逐段取攻击信息(角色 [etc attack info] 的下标)与伤害数(.skl [level info] 当前等级的两列),特效取技能预载表的下标(证据 E-129)
                 slot.Recipe = recipe;
+                IReadOnlyList<SkillPassivePowerRate.Link> powerLinks = SkillPassivePowerRate.LinksFromRecipes(recipe.PassivePowerLinks, def.Id);
+                Func<int, SkillDef> resolve = resolveSkill ?? (id => data.GetSkill(chr.Job, id));
+                Func<int, int> levelOf = skillLevelOf ?? (_ => 0);
+                const int slotBuildNativeState = 0;
+                float powerRate = SkillPassivePowerRate.Accumulate(1f, def.Id, slotBuildNativeState, levelOf, resolve, powerLinks);
+                slot.PassivePowerLinks = powerLinks;
+                slot.PassiveSkillLevelOf = levelOf;
+                slot.PassiveResolveSkill = resolve;
+                slot.StagePassivePowerRateAtBuild = powerRate;
                 var strikes = new List<HeroStrikeInfo>();
                 foreach (SkillStageSpec stage in recipe.Stages)
                 {
-                    strikes.Add(stage.HasOwnStrike
-                        ? HeroStrikeInfo.Read(data, chr.CustomAttackInfoPath(stage.AttackInfoIndex))
-                            .WithSkillDamage(def.GetLevel(slot.Level, stage.DamageRateColumn, false), def.GetLevel(slot.Level, stage.DamageFixedColumn, false))
-                        : new HeroStrikeInfo(0, 0, false));
+                    if (stage.HasOwnStrike)
+                    {
+                        strikes.Add(HeroStrikeInfo.Read(data, chr.CustomAttackInfoPath(stage.AttackInfoIndex))
+                            .WithSkillDamage(ScaleLevel(def, slot.Level, stage.DamageRateColumn, powerRate),
+                                ScaleLevel(def, slot.Level, stage.DamageFixedColumn, powerRate)));
+                    }
+                    else if (stage.DamageRateColumn >= 0 || stage.DamageFixedColumn >= 0)
+                    {
+                        // 空中攻击强化等:身体沿用别的攻击信息,但伤害列仍取 .skl(E-150)
+                        strikes.Add(new HeroStrikeInfo(0, 0, false).WithSkillDamage(
+                            ScaleLevel(def, slot.Level, stage.DamageRateColumn, powerRate),
+                            ScaleLevel(def, slot.Level, stage.DamageFixedColumn, powerRate)));
+                    }
+                    else
+                    {
+                        strikes.Add(new HeroStrikeInfo(0, 0, false));
+                    }
                 }
                 slot.StageStrikes = strikes;
                 // 关键帧标志事件换的命中(M65,证据 E-163):攻击信息与两个伤害列里没写的沿用这一段原来的
@@ -466,7 +520,7 @@ namespace Dnf.Play
                         int rateColumn = ev.DamageRateColumn >= 0 ? ev.DamageRateColumn : stage.DamageRateColumn;
                         int fixedColumn = ev.DamageFixedColumn >= 0 ? ev.DamageFixedColumn : stage.DamageFixedColumn;
                         perEvent.Add(HeroStrikeInfo.Read(data, chr.CustomAttackInfoPath(atk))
-                            .WithSkillDamage(def.GetLevel(slot.Level, rateColumn, false), def.GetLevel(slot.Level, fixedColumn, false)));
+                            .WithSkillDamage(ScaleLevel(def, slot.Level, rateColumn, powerRate), ScaleLevel(def, slot.Level, fixedColumn, powerRate)));
                     }
                     flagStrikes.Add(perEvent);
                 }
@@ -476,7 +530,7 @@ namespace Dnf.Play
                     // 蓄力跳跃类技能:重武装窗口的攻击信息取 [etc attack info] 的另一项,伤害数用跳跃段的两列(证据 E-138)
                     SkillStageSpec jump = recipe.Stages[1];
                     slot.HopRepeatStrike = HeroStrikeInfo.Read(data, chr.CustomAttackInfoPath(recipe.Hop.RepeatAttackInfoIndex))
-                        .WithSkillDamage(def.GetLevel(slot.Level, jump.DamageRateColumn, false), def.GetLevel(slot.Level, jump.DamageFixedColumn, false));
+                        .WithSkillDamage(ScaleLevel(def, slot.Level, jump.DamageRateColumn, powerRate), ScaleLevel(def, slot.Level, jump.DamageFixedColumn, powerRate));
                 }
                 // 放出的被动对象:攻击信息取对象 .obj 的 [attack info],伤害数取 [level info] 当前等级的两列(证据 E-135)
                 var objectStrikes = new List<HeroStrikeInfo>();
@@ -484,7 +538,7 @@ namespace Dnf.Play
                 {
                     Dnf.Game.PassiveObjectDef objectDef = data.GetPassiveObject(o.ObjectId);
                     objectStrikes.Add(HeroStrikeInfo.Read(data, objectDef?.AttackInfoPath)
-                        .WithSkillDamage(def.GetLevel(slot.Level, o.DamageRateColumn, false), def.GetLevel(slot.Level, o.DamageFixedColumn, false)));
+                        .WithSkillDamage(ScaleLevel(def, slot.Level, o.DamageRateColumn, powerRate), ScaleLevel(def, slot.Level, o.DamageFixedColumn, powerRate)));
                 }
                 slot.ObjectStrikes = objectStrikes;
                 var paths = new List<string>();
@@ -510,6 +564,21 @@ namespace Dnf.Play
                 slot.EffectForwardX = HardAttackEffectForwardX;
             }
             return slot;
+        }
+
+        /// <summary>取 [level info] 一列再乘被动威力倍率(E-181);列无效为 0。</summary>
+        private static int ScaleLevel(SkillDef def, int level, int column, float powerRate)
+        {
+            if (def == null || column < 0)
+            {
+                return 0;
+            }
+            int raw = def.GetLevel(level, column, false);
+            if (Math.Abs(powerRate - 1f) < 1e-5f)
+            {
+                return raw;
+            }
+            return (int)Math.Round(raw * powerRate, MidpointRounding.AwayFromZero);
         }
 
         /// <summary>鬼斩的动作文件名(角色 [etc motion] 里)与攻击信息文件名(角色 [etc attack info] 里)。两个表的下标不同,按名字找。</summary>
@@ -1126,5 +1195,24 @@ namespace Dnf.Play
 
         /// <summary>上挑用连招的第几段(从 0 数):第三段(客户端取"连招动作表"的第 2 项,证据 E-076)。</summary>
         public const int UpperSlashStage = 2;
+    }
+
+    /// <summary>空中攻击强化取缩放后的 level 列(E-150/E-181);供 RoomCombat 与单测共用。</summary>
+    public static class HeroJumpStrikeResolve
+    {
+        /// <summary>把基础空中攻击攻击信息换成技能列;无 stage 列时退回 <paramref name="baseJump"/>。</summary>
+        public static HeroStrikeInfo Apply(HeroStrikeInfo baseJump, HeroSkillSlot slot)
+        {
+            if (slot?.Recipe?.JumpAttack == null || slot.Def == null)
+            {
+                return baseJump;
+            }
+            HeroStrikeInfo? strike = slot.StrikeAtWithPassiveNativeState(0, SkillPassivePowerRate.JumpAttackNativeState);
+            if (strike == null || !strike.Value.IsSkillDamage)
+            {
+                return baseJump;
+            }
+            return baseJump.WithSkillDamage(strike.Value.SkillRatePercent, strike.Value.SkillFixed);
+        }
     }
 }

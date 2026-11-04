@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Dnf.Game;
 
 // 证据:E-129(客户端原生技能状态码的读码结果:技能起手函数、状态进入块、逐帧块里的连击判定);E-135(波系技能状态 0x18:施法蓄力与主角放出的被动对象);
 // E-137(挂多个特效、对象等特效关键帧的那一类技能,状态 0x23:一进状态就挂四个特效、被动对象等特效动画的关键帧标志、帧号到数就结束状态);
@@ -375,7 +376,7 @@ namespace Dnf.Play
         public SkillRecipe(int skillId, IEnumerable<SkillStageSpec> stages, int slideSpeedIndex, int slideAccelIndex, int forwardSpeedIndex, int forwardAccelIndex,
             int chainFromFrame, bool slideFollowsHeldDirection = true, IEnumerable<SkillObjectSpec> objects = null, SkillHopSpec hop = null,
             bool forwardReplacesBase = false, int multiHitPassiveSkillId = 0, int multiHitCountIndex = -1, SkillDiveSpec dive = null,
-            SkillJumpAttackSpec jumpAttack = null, bool autoChain = false)
+            SkillJumpAttackSpec jumpAttack = null, bool autoChain = false, IEnumerable<SkillPassivePowerLink> passivePowerLinks = null)
         {
             if (dive != null && hop != null)
             {
@@ -408,6 +409,7 @@ namespace Dnf.Play
             ChainFromFrame = chainFromFrame;
             SlideFollowsHeldDirection = slideFollowsHeldDirection;
             Objects = new List<SkillObjectSpec>(objects ?? Array.Empty<SkillObjectSpec>()).AsReadOnly();
+            PassivePowerLinks = new List<SkillPassivePowerLink>(passivePowerLinks ?? Array.Empty<SkillPassivePowerLink>()).AsReadOnly();
             Hop = hop;
             if (hop != null && Stages.Count < 2)
             {
@@ -466,6 +468,9 @@ namespace Dnf.Play
 
         /// <summary>这个技能放出的被动对象(证据 E-135);没有为空表。</summary>
         public IReadOnlyList<SkillObjectSpec> Objects { get; }
+
+        /// <summary>被动技能对威力列的倍率加成(E-181);没有为空表。</summary>
+        public IReadOnlyList<SkillPassivePowerLink> PassivePowerLinks { get; }
 
         /// <summary>
         /// 蓄力跳跃类技能的参数(证据 E-138);不是这一类技能为 null。有它的配方第 0 段是蓄力姿势、第 1 段是跳跃,
@@ -745,7 +750,8 @@ namespace Dnf.Play
 
             // 空中攻击强化类技能(状态 7 带技能号参数,证据 E-150):在跳跃状态里按攻击键,这一击换成 [etc motion] 第 23、24 项(两项交替,上一次放了哪项记在
             // 主角字段里);命中沿用空中攻击的攻击信息,伤害取 [level info] 的百分比第 0 列(没有固定值列);动画播到第 2 帧放一次预载表里的特效:第一种放第 4、6 个,
-            // 第二种放第 5、7 个。没做:某个成长类型学了别的技能时的伤害加成与速度调整、普通空中攻击学了这个技能后多出的一个特效、特效图层与倍率、成长类型专属的命中附加效果、对战模式变体。
+            // 第二种放第 5、7 个。PassivePowerLinks 未填(E-181):+0x5938 由 sq_AddPassiveSkillAttackBonusRate(0x689f70)在技能脚本侧登记,非默认表字段;保持惰性;显式 PassivePowerLinks 仍生效。
+            // 没做:某个成长类型学了别的技能时的非威力列伤害加成与速度调整、普通空中攻击学了这个技能后多出的一个特效、特效图层与倍率、成长类型专属的命中附加效果、对战模式变体。
             new SkillRecipe(17,
                 new[]
                 {
