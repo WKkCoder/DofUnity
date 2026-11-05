@@ -124,7 +124,9 @@ public class SkillChainTests
                 if (st.HasOwnStrike)
                 {
                     // 蓄力跳跃类与悬停俯冲类技能自己的伤害没有固定值列(只取百分比列);自动接续类(E-154)的第一段、身体命中类(E-162)也只取百分比列
-                    Assert.True(st.DamageRateColumn >= 0 && (st.DamageFixedColumn >= 0 || r.Hop != null || r.Dive != null || r.AutoChain || bodyHit));
+                    // 两段式状态(0x3c、0x3e、0x3f,E-162、E-163)一族:各段只取百分比列,或(0x3c 的第二段)只取固定值列
+                    bool fixedOnly = r.BodyHit != null && st.DamageRateColumn < 0 && st.DamageFixedColumn >= 0;
+                    Assert.True(fixedOnly || (st.DamageRateColumn >= 0 && (st.DamageFixedColumn >= 0 || r.Hop != null || r.Dive != null || r.AutoChain || bodyHit || r.BodyHit != null)));
                 }
                 else
                 {

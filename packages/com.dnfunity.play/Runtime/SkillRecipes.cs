@@ -376,7 +376,8 @@ namespace Dnf.Play
         public SkillRecipe(int skillId, IEnumerable<SkillStageSpec> stages, int slideSpeedIndex, int slideAccelIndex, int forwardSpeedIndex, int forwardAccelIndex,
             int chainFromFrame, bool slideFollowsHeldDirection = true, IEnumerable<SkillObjectSpec> objects = null, SkillHopSpec hop = null,
             bool forwardReplacesBase = false, int multiHitPassiveSkillId = 0, int multiHitCountIndex = -1, SkillDiveSpec dive = null,
-            SkillJumpAttackSpec jumpAttack = null, bool autoChain = false, IEnumerable<SkillPassivePowerLink> passivePowerLinks = null)
+            SkillJumpAttackSpec jumpAttack = null, bool autoChain = false, IEnumerable<SkillPassivePowerLink> passivePowerLinks = null,
+            SkillBodyHitSpec bodyHit = null)
         {
             if (dive != null && hop != null)
             {
@@ -419,9 +420,14 @@ namespace Dnf.Play
             {
                 throw new ArgumentException("自动接续的配方至少要有两段", nameof(stages));
             }
+            BodyHit = bodyHit;
+            bodyHit?.CheckStages(Stages.Count);
         }
 
         public int SkillId { get; }
+
+        /// <summary>身体命中一族的额外规则(状态 0x3c、0x3e、0x3f 一族,见 <see cref="SkillBodyHitSpec"/>);没有为 null,所有规则都不生效。</summary>
+        public SkillBodyHitSpec BodyHit { get; }
         public IReadOnlyList<SkillStageSpec> Stages { get; }
 
         /// <summary>起滑速度在 [static data] 里的下标;负数表示不滑行。</summary>
@@ -892,6 +898,85 @@ namespace Dnf.Play
                     new SkillStageSpec(motionIndex: 2, attackInfoIndex: 1, damageRateColumn: 1, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
                 },
                 slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false),
+
+            // 两段自动接续、第二段中途起滑的类技能(状态 0x3c,证据 E-154、E-163):进入块(0x00cd662e)按参数分两个模式——模式 0x66 播 [etc motion] 第 102 项(姿势动作,不设攻击信息,身体不打人);
+            // 公共后段里守卫"当前状态 == 0x3c"的块(比较在 0x00cc6cc7)在这个动画播完那一刻(动画标志位 8)自己发"状态 0x3c、参数 [0x67]",就是模式 0x67:
+            // 动作取 [etc motion] 第 103 项,攻击信息取 [etc attack info] 第 72 项,伤害只取 [level info] 的固定值第 0 列(进入块 0x00cd689a 调固定值列函数 0x00913d70 写主角的固定伤害字段,没有写百分比字段,所以百分比列填 -1、按 0 算)。
+            // 模式 0x67 的动画走到关键帧标志 1 时守卫块读到它(0x00cc6dd7):横轴按住的方向恰好是朝向的反方向就不滑(0x00cc6e11–0x00cc6e1b),否则按 [static data] 第 0 个数(速度)、第 1 个数(加速度)朝前方起一段滑行(0x008486b0);
+            // 标志无论滑不滑当次消费(0x00cc6e96)。模式 0x67 的动画播完发"状态 0"站立。
+            // 没做:进入块里主角保护字段的写入([static data] 第 4 个数换算后调虚表槽 0x708)、属性扣减与物品消耗(0x00cd66e5 之后到 0x00cd67ae 一段,含虚表槽 0x238、0x2a4、0xa1c 的调用,含义没读通)、
+            // 非基础职业的预载特效助手、起手函数之外的第二个入口 0x00ceb2c7、主角在空中时的两个模式。
+            new SkillRecipe(103,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 102, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                    new SkillStageSpec(motionIndex: 103, attackInfoIndex: 72, damageRateColumn: -1, damageFixedColumn: 0, effectIndex: -1, effectFrame: 0),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                autoChain: true,
+                bodyHit: new SkillBodyHitSpec(scriptSlides: new[] { new SkillScriptSlide(stage: 1, flag: 1, speedStaticIndex: 0, accelStaticIndex: 1) })),
+
+            // 两段身体命中加续招类技能(状态 0x3e,证据 E-139、E-163):进入块(0x00cd6b05)按参数分两个模式。
+            // 模式 0:动作取 [etc motion] 第 106 项、攻击信息第 73 项,伤害取 [level info] 的百分比第 0 列(没有固定值列);起滑只看横轴按住的方向(0x00cd6baf–0x00cd6c14):没按横轴(只按上下也一样)取 [static data] 第 9 个数(速度)与第 10 个数(加速度),
+            // 顺着朝向按只把速度换成第 11 个数(加速度不变),反着按不滑;命中重武装:进入块起一个计时器(0x00cd6e41–0x00cd6e7b),起点是动画第 3 帧的开头,间隔取第 1 个数、次数取第 2 个数,两个标志都为真(起点那一刻就响,每次响都以此刻重新计间隔),
+            // 逐帧块(0x00cb153f,只在模式 0 轮询)每响一次清命中名单;动画播到第 5 帧以后按下热键表里的"技能"键就换模式 1(守卫块 0x00cc2232–0x00cc2320,默认武器类别通过;自己的快捷键不接段)。
+            // 模式 1:动作取第 107 项、攻击信息第 74 项,伤害 = 百分比第 0 列 × [static data] 第 8 个数 / 100(0x00cd6ed6–0x00cd6f3b),进入块把两个轴的滑行速度清零。
+            // 两个模式的进入块末尾(0x00cd6f40)都把"动画总时长 + [static data] 第 0 个数"记下来,守卫块在动画播完后等状态计时器到它才发"状态 0"(0x00cc21d9–0x00cc2230)。
+            // 没做:武器类别分支(虚表槽 0x7ac 取 1、5 时命中次数加第 5 个数、取 2 时改写主角的两个字段;各类别对应哪种武器没读通,按默认类别)、守卫块里技能等级够第 3 个数时、动画播到第 7 帧(模式 1 是第 8 帧)起对另外两个技能做的冷却重置(0x00910d90)、
+            // 受主角身上另一个对象影响的百分比修正(0x00ca6860、0x00ca6890,这个对象什么时候非空没读通)、第 12 个数(用途没读到)、音效与特效。起手:[command] 只有单个攻击键,不能靠指令放,只能靠快捷栏放。
+            new SkillRecipe(107,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 106, attackInfoIndex: 73, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                    new SkillStageSpec(motionIndex: 107, attackInfoIndex: 74, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                },
+                slideSpeedIndex: 9, slideAccelIndex: 10, forwardSpeedIndex: 11, forwardAccelIndex: -1, chainFromFrame: int.MaxValue,
+                bodyHit: new SkillBodyHitSpec(
+                    horizontalHeldSlide: true,
+                    slideFirstStageOnly: true,
+                    scales: new[] { new SkillStageScale(stage: 1, percentStaticIndex: 8) },
+                    rearms: new[] { new SkillRearmSpec(stage: 0, startFrame: 3, intervalStaticIndex: 1, countStaticIndex: 2) },
+                    chains: new[] { new SkillKeyChain(fromFirstStage: 0, fromLastStage: 0, toStage: 1, fromFrame: 5, keys: SkillChainKeys.SkillKey) },
+                    holds: new[]
+                    {
+                        new SkillStageHold(stage: 0, kind: SkillHoldKind.AfterAnimation, staticIndex: 0),
+                        new SkillStageHold(stage: 1, kind: SkillHoldKind.AfterAnimation, staticIndex: 0),
+                    })),
+
+            // 三段升空突进类技能(状态 0x3f,证据 E-139、E-163):进入块(0x00cd6f7c)按参数分五个模式,这里做模式 0、1 与默认武器类别下的模式 4(模式 2、3 是别的武器类别,没做)。
+            // 模式 0:动作取 [etc motion] 第 108 项(不设攻击信息,身体不打人);逐帧块(0x00cb1599)每步把主角摆在"段起点沿朝向 ± 整数线性插值(0, [static data] 第 1 个数(距离), 已过毫秒, 第 0 个数(总毫秒))"的位置
+            // (插值 0x011b98c0,带碰撞的取位置函数 0x00871250),已过毫秒到第 0 个数就发"状态 0x3f、参数 [1]"(基础职业,0x00cb1729)。模式 1:动作取第 109 项(不打人),同样的线性位移(距离第 5 个数、总毫秒第 4 个数),
+            // 已过毫秒到第 4 个数发"状态 0x3d"收尾(0x00cb1864–0x00cb1892)。模式 0、1 里(离地高度够第 11 个数、按下攻击键或自己的快捷键)就换模式 4(0x00cb1a74–0x00cb1b8c;默认武器类别):
+            // 动作取第 111 项、攻击信息第 77 项,伤害 = 百分比第 0 列 × [static data] 第 13 个数 / 100(0x00cd74ec–0x00cd754c);进入块起命中计时器(间隔第 8 个数、次数第 7 个数,起点 0,两个标志都为真,0x00cd755a–0x00cd757e),
+            // 逐帧块只在模式 4 轮询(0x00cb1922)、每响一次清命中名单;模式 4 同样走线性位移(距离第 5 个数、总毫秒第 4 个数);已过毫秒到第 4 个数、且(动画播完或离地高度为 0)就发"状态 0"站立(0x00cb19f7–0x00cb1a3f)。
+            // 近似:模式 4 的结束帧取动画第 4 帧的开头(播放倍率 1 时比第 4 个数的毫秒晚不到一个帧时长,倍率不是 1 时随倍率变);模式 0、1 的段长取"动画时长与对应毫秒数里大的那个"(AtLeast),所以播放倍率变快时也不缩短。
+            // 没做:离地高度(主角没有高度量,所以升空的缓出弧 0x011b9ef0 与"离地高度够不够"的条件都不做,按"够"算)、深度方向的空中操控(0x00cb1ba7 起,虚表槽 0x7c8 参数 1 → 虚表槽 0x5f0 轴 1)、模式 1 收尾的状态 0x3d、
+            // 武器类别 2、3、5 的模式 2、3、非基础职业的分支、受另一个对象影响的百分比修正(0x00ca6860、0x00ca6890)、音效与特效。起手:[command] 只有单个跳跃键,不能靠指令放,只能靠快捷栏放。
+            new SkillRecipe(108,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 108, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                    new SkillStageSpec(motionIndex: 109, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                    new SkillStageSpec(motionIndex: 111, attackInfoIndex: 77, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0, endFrame: 4),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                autoChain: true,
+                bodyHit: new SkillBodyHitSpec(
+                    scales: new[] { new SkillStageScale(stage: 2, percentStaticIndex: 13) },
+                    rearms: new[] { new SkillRearmSpec(stage: 2, startFrame: 0, intervalStaticIndex: 8, countStaticIndex: 7) },
+                    chains: new[] { new SkillKeyChain(fromFirstStage: 0, fromLastStage: 1, toStage: 2, fromFrame: 0, keys: SkillChainKeys.Own | SkillChainKeys.AttackKey) },
+                    holds: new[]
+                    {
+                        new SkillStageHold(stage: 0, kind: SkillHoldKind.AtLeast, staticIndex: 0),
+                        new SkillStageHold(stage: 1, kind: SkillHoldKind.AtLeast, staticIndex: 4),
+                    },
+                    travels: new[]
+                    {
+                        new SkillTravelSpec(stage: 0, distanceStaticIndex: 1, durationStaticIndex: 0),
+                        new SkillTravelSpec(stage: 1, distanceStaticIndex: 5, durationStaticIndex: 4),
+                        new SkillTravelSpec(stage: 2, distanceStaticIndex: 5, durationStaticIndex: 4),
+                    },
+                    autoChainLastFromStage: 0)),
         },
         new[]
         {
