@@ -651,7 +651,7 @@ namespace Dnf.Play
     /// 主角在 .act 脚本眼里的样子:位置、朝向与是否活着取自 <see cref="TownHero"/>;脚本对主角的"作用"(设速度、切动作、销毁……)一律不执行
     /// (这一版只让怪物与被动对象互相作用,主角被抓取、被推走之类的行为没做)。
     /// </summary>
-    public sealed class HeroActEntity : IActEntity
+    public sealed partial class HeroActEntity : IActEntity
     {
         private readonly TownHero _hero;
         private readonly Func<bool> _alive;

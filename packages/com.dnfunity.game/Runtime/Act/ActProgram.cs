@@ -394,6 +394,32 @@ namespace Dnf.Game.Act
 
         /// <summary>[IS DAMAGEBOX ENABLE] n:逐对象过滤(条件码 0x3a,块 0x010d7761;E-223)。</summary>
         IsDamageBoxEnable,
+
+        // ---- M107:符号、队伍、区域、受击开关(实现与读码依据见 ActRunner.Symbols.cs)
+
+        /// <summary>[CHECK SYMBOL] 模式 值:逐对象过滤(条件码 0x51)。</summary>
+        CheckSymbol,
+
+        /// <summary>[CHECK PARTY SYMBOL] 模式 值:整体真假(条件码 0x52)。</summary>
+        CheckPartySymbol,
+
+        /// <summary>[CHECK PLAYER NUM] 块:整体真假(条件码 0x61)。</summary>
+        CheckPlayerNum,
+
+        /// <summary>[CHECK PARTYMEMBERS STATE] 块:整体真假(条件码 0x4d,子码 0x4e / 0x4f / 0x50)。</summary>
+        CheckPartyMembersState,
+
+        /// <summary>[AREA] a b c d:逐对象过滤(条件码 0x5b)。</summary>
+        Area,
+
+        /// <summary>[IS IN AREA] 块:逐对象过滤,坐标写法不认得时整体为假(条件码 0x4c)。</summary>
+        IsInArea,
+
+        /// <summary>[IS DAMAGE ENABLE]:逐对象过滤(条件码 0x59)。</summary>
+        IsDamageEnable,
+
+        /// <summary>[CHECK PARTY SLOT] 槽 标志:整体真假(条件码 0x1b)。</summary>
+        CheckPartySlot,
     }
 
     /// <summary>
@@ -666,6 +692,20 @@ namespace Dnf.Game.Act
 
         /// <summary>[APPEND HIT] 前移 纵深 高度(行为码 0x82,块 0x010bdcac):拥有者对每个目标强行追加一击。</summary>
         AppendHit,
+
+        // ---- M107
+
+        /// <summary>[SET SYMBOL] v:给目标集合的每个对象写符号(行为码 0xf8,块 0x010c8310)。</summary>
+        SetSymbol,
+
+        /// <summary>[SET SYMBOL OPTION] v:写对象的第二个符号整数(行为码 0xf9,块 0x010c83db)。</summary>
+        SetSymbolOption,
+
+        /// <summary>[SET PARTY SYMBOL] v:写队伍符号(行为码 0xfa,块 0x010c849b)。</summary>
+        SetPartySymbol,
+
+        /// <summary>[ABS CASTING] a b:拥有者头上的绝对读条条(行为码 0x7f,块 0x010bd541),只管表现。</summary>
+        AbsCasting,
     }
 
     /// <summary>
@@ -837,7 +877,7 @@ namespace Dnf.Game.Act
     }
 
     /// <summary>行为组 [BEHAVIOR] 里的一条行为。字段按种类取用。</summary>
-    public sealed class ActBehavior
+    public sealed partial class ActBehavior
     {
         public ActBehaviorKind Kind { get; internal set; }
 
