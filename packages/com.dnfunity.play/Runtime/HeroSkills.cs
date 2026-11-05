@@ -45,7 +45,7 @@ namespace Dnf.Play
     }
 
     /// <summary>快捷槽里的一个技能:编号、等级、冷却的满值(取自 .skl)与此刻还剩的冷却。</summary>
-    public sealed class HeroSkillSlot
+    public sealed partial class HeroSkillSlot
     {
         public SkillKeys Key { get; }
 
@@ -168,7 +168,7 @@ namespace Dnf.Play
         /// </summary>
         public bool StageHasOwnStrike(int stage)
         {
-            if (Buff != null || Guard != null)
+            if (Buff != null || Guard != null || Throw != null)
             {
                 return false;
             }
@@ -331,7 +331,7 @@ namespace Dnf.Play
     /// 不启动冷却、不扣蓝);没给就不耗蓝(旧行为)。
     /// 没做:施放期间的无敌与技能自带的霸体(概率触发类增益带来的霸体已做,E-142)、冷却缩减、技能等级成长对伤害与攻击范围的影响。
     /// </summary>
-    public sealed class HeroSkills
+    public sealed partial class HeroSkills
     {
         /// <summary>快捷槽的个数(A S D F G H)。</summary>
         public const int SlotCount = SkillBook.QuickSlots;
@@ -370,16 +370,17 @@ namespace Dnf.Play
             }
         }
 
-        /// <summary>这个技能编号有没有实现放法(三个手写的、倒地起身,加上默认配方表里的配方技能、增益类技能与防御姿态类技能)。</summary>
+        /// <summary>这个技能编号有没有实现放法(三个手写的、倒地起身,加上默认配方表里的配方技能、增益类技能、防御姿态类技能与投掷类技能)。</summary>
         public static bool IsImplemented(int skillId)
         {
             return skillId == SkillIds.HardAttack || skillId == SkillIds.UpperSlash || skillId == SkillIds.BackStep || skillId == SkillIds.QuickStand
-                || SkillRecipes.Default.Find(skillId) != null || SkillRecipes.Default.FindBuff(skillId) != null || SkillRecipes.Default.FindGuard(skillId) != null;
+                || SkillRecipes.Default.Find(skillId) != null || SkillRecipes.Default.FindBuff(skillId) != null || SkillRecipes.Default.FindGuard(skillId) != null
+                || SkillRecipes.Default.FindThrow(skillId) != null;
         }
 
         private static bool IsImplemented(HeroSkillSlot slot)
         {
-            return slot.Recipe != null || slot.Buff != null || slot.Guard != null || IsImplemented(slot.SkillId);
+            return slot.Recipe != null || slot.Buff != null || slot.Guard != null || slot.Throw != null || IsImplemented(slot.SkillId);
         }
 
         /// <summary>
@@ -551,6 +552,12 @@ namespace Dnf.Play
                     paths.Add(PvfPath.ResolveRelativeTo(chr.Path, rel));
                 }
                 slot.StageEffects = paths;
+                return slot;
+            }
+            ThrowRecipe throwRecipe = (recipes ?? SkillRecipes.Default).FindThrow(def.Id);      // 投掷类技能(状态 0x0d 一族):对象的攻击信息与伤害数、两段姿势动画
+            if (throwRecipe != null)
+            {
+                BuildThrowSlot(slot, data, chr, def, throwRecipe, skillLevelOf, resolveSkill, registeredLinks);
                 return slot;
             }
             if (def.Id == SkillIds.HardAttack)
@@ -846,6 +853,7 @@ namespace Dnf.Play
                     began = slot.Recipe != null
                         ? (slot.Recipe.Dive != null ? BeginDive(slot, hero)
                             : (slot.Recipe.JumpAttack != null ? BeginJumpAttack(slot, hero) : BeginStage(slot, 0, hero, heldX, heldY, false, MultiHitWindows(slot))))
+                        : slot.Throw != null ? BeginThrow(slot, hero)      // 投掷类:原地摆阶段 0 的姿势,对象与霸体由房间会话放(状态 0x0d 一族)
                         : slot.Guard != null ? hero.BeginGuard(slot.SkillId, slot.Guard.MotionIndex, slot.GuardMinHoldMs)   // 防御姿态类:原地摆姿势、动画定在第 0 帧,按住攻击键维持(M66,E-164)
                         : slot.Buff != null && hero.BeginBuffMotion(slot.SkillId);   // 增益类:原地播 [buff motion],施法正常结束时才挂增益(E-141,由房间会话挂)
                     break;
@@ -1136,10 +1144,11 @@ namespace Dnf.Play
         /// <summary>
         /// 施法蓄力要停多久(毫秒,动画时间):施法时间(.skl [casting time] 按等级取)减去动作第 1 到第 n 帧的时长,不小于 0(证据 E-135,静态读码);
         /// 客户端最后还按施法速度(千分比)缩放,这里没有施法速度属性,按 1000 算。这一段没有蓄力返回 -1(动画照帧时长走)。
+        /// 标了 <see cref="SkillStageSpec.CastHoldWholeTime"/> 的段不减任何帧(下面的循环一次也不走),蓄力就是整段施法时间。
         /// </summary>
         internal static int CastHoldMs(HeroSkillSlot slot, SkillStageSpec spec, TownHero hero)
         {
-            if (spec.CastHoldFrames <= 0)
+            if (spec.CastHoldFrames <= 0 && !spec.CastHoldWholeTime)
             {
                 return -1;
             }
