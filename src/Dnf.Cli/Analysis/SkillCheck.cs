@@ -436,9 +436,11 @@ internal static class SkillCheck
                         recipeProblems.Add(label + " 第 " + i + " 段:升空段没有自己的命中");
                     }
                 }
-                if (st.HasOwnStrike && def.GetLevel(1, st.DamageRateColumn, false) <= 0)
+                // 有自己命中的段:百分比列读出来是正数;没有百分比列的段(只靠固定值伤害,E-163)改查固定值列
+                if (st.HasOwnStrike && (st.DamageRateColumn >= 0 ? def.GetLevel(1, st.DamageRateColumn, false) <= 0
+                    : st.DamageFixedColumn < 0 || def.GetLevel(1, st.DamageFixedColumn, false) <= 0))
                 {
-                    recipeProblems.Add(label + " 第 " + i + " 段:1 级的百分比伤害读出来不是正数");
+                    recipeProblems.Add(label + " 第 " + i + " 段:1 级的百分比伤害(没有百分比列的段是固定值伤害)读出来不是正数");
                 }
                 if (st.CastHoldFrames > 0)
                 {
@@ -1090,7 +1092,7 @@ internal static class SkillCheck
             var autoProblems = new List<string>();
             foreach (SkillRecipe recipe in SkillRecipes.Default.All)
             {
-                if (!recipe.AutoChain)
+                if (!recipe.AutoChain || recipe.BodyHit != null)      // 带身体命中规则的配方(段尾保持、自动接续有上界)由 SkillCheckBodyHit 查
                 {
                     continue;
                 }
@@ -1474,12 +1476,14 @@ internal static class SkillCheck
                 + guardMotionOk + " 个、按着不放一直不结束且松开后回到站立 " + guardCycles + " 个(问题 " + guardProblems.Count + " 条)");
         }
 
+        bad += SkillCheckBodyHit.Run(assets, opts, catalog, level);
+
         Console.WriteLine(bad == 0 ? "skill-check 全部通过" : "skill-check 有 " + bad + " 项失败");
         return bad == 0 ? 0 : 1;
     }
 
     /// <summary>一局新的房间战斗会话(检查用:每次放技能都要一局新的),主角带着花光点数的技能簿,出招指令开着,怪物不还手。</summary>
-    private static RoomCombatSession NewSession(DnfAssets assets, Options opts, HeroProgress progress)
+    internal static RoomCombatSession NewSession(DnfAssets assets, Options opts, HeroProgress progress)
     {
         RoomCombatSession session = DemoCombat.CreateSession(assets, opts.MapPath, opts.HeroWeapon ?? DemoHero.StarterWeapon, 1, false, progress);
         session.CommandsEnabled = true;
@@ -1513,7 +1517,7 @@ internal static class SkillCheck
     }
 
     /// <summary>让主角起跳并升到离地至少 <paramref name="minHeight"/> 像素(检查用:只在腾空时放得出来的技能)。返回有没有升到。</summary>
-    private static bool LiftOff(RoomCombatSession session, double minHeight)
+    internal static bool LiftOff(RoomCombatSession session, double minHeight)
     {
         session.Update(10, 0, 0, false, true, SkillKeys.None);
         for (int t = 0; t < 3000 && !(session.Hero.Motion == HeroMotion.Jump && session.Hero.Z >= minHeight); t += 10)
@@ -1524,13 +1528,13 @@ internal static class SkillCheck
     }
 
     /// <summary>把一条指令打成一串按键步骤的一步。</summary>
-    private readonly record struct CommandStep(double Ms, int DirX, int DirY, bool Attack, bool Jump, bool Skill, bool Buff)
+    internal readonly record struct CommandStep(double Ms, int DirX, int DirY, bool Attack, bool Jump, bool Skill, bool Buff)
     {
         /// <summary>这一步按下的出招指令键(技能键与增益键)。</summary>
         public SkillKeys Keys => (Skill ? SkillKeys.CommandSkill : SkillKeys.None) | (Buff ? SkillKeys.CommandBuff : SkillKeys.None);
     }
 
-    private static class CommandSteps
+    internal static class CommandSteps
     {
         /// <summary>
         /// 把指令打一遍:每个键按一步(方向键按下后在下一个键之前松开,"同时"连着下一个键的方向键一直按到下一个键按下那一步),

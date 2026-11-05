@@ -331,7 +331,7 @@ namespace Dnf.Play
     /// 不启动冷却、不扣蓝);没给就不耗蓝(旧行为)。
     /// 没做:施放期间的无敌与技能自带的霸体(概率触发类增益带来的霸体已做,E-142)、冷却缩减、技能等级成长对伤害与攻击范围的影响。
     /// </summary>
-    public sealed class HeroSkills
+    public sealed partial class HeroSkills
     {
         /// <summary>快捷槽的个数(A S D F G H)。</summary>
         public const int SlotCount = SkillBook.QuickSlots;
@@ -492,14 +492,14 @@ namespace Dnf.Play
                     if (stage.HasOwnStrike)
                     {
                         strikes.Add(HeroStrikeInfo.Read(data, chr.CustomAttackInfoPath(stage.AttackInfoIndex))
-                            .WithSkillDamage(ScaleLevel(def, slot.Level, stage.DamageRateColumn, powerRate),
+                            .WithSkillDamage(StageRate(recipe, strikes.Count, def, stage, ScaleLevel(def, slot.Level, stage.DamageRateColumn, powerRate)),
                                 ScaleLevel(def, slot.Level, stage.DamageFixedColumn, powerRate)));
                     }
                     else if (stage.DamageRateColumn >= 0 || stage.DamageFixedColumn >= 0)
                     {
                         // 空中攻击强化等:身体沿用别的攻击信息,但伤害列仍取 .skl(E-150)
                         strikes.Add(new HeroStrikeInfo(0, 0, false).WithSkillDamage(
-                            ScaleLevel(def, slot.Level, stage.DamageRateColumn, powerRate),
+                            StageRate(recipe, strikes.Count, def, stage, ScaleLevel(def, slot.Level, stage.DamageRateColumn, powerRate)),
                             ScaleLevel(def, slot.Level, stage.DamageFixedColumn, powerRate)));
                     }
                     else
@@ -909,6 +909,10 @@ namespace Dnf.Play
             {
                 return null;           // 自动接续类技能:每一段播完自己接下一段,不看按键(证据 E-154)
             }
+            if (recipe.BodyHit != null && recipe.BodyHit.Chains.Count > 0)
+            {
+                return null;           // 有按键接段表的配方:只走 TryChainBody(再按自己的键不一定接段)
+            }
             int next = hero.SkillStage + 1;
             if (next >= recipe.Stages.Count || hero.CurrentFrame < recipe.ChainFromFrame)
             {
@@ -940,7 +944,7 @@ namespace Dnf.Play
                 return false;
             }
             int next = hero.SkillStage + 1;
-            if (next >= recipe.Stages.Count)
+            if (next >= recipe.Stages.Count || !SkillBodyHitRules.AutoChainAllowed(recipe.BodyHit, hero.SkillStage))
             {
                 return false;
             }
@@ -971,6 +975,11 @@ namespace Dnf.Play
         {
             SkillStageSpec spec = slot.Recipe.Stages[stage];
             Slide(slot, hero, heldX, heldY, out double speed, out double accel);
+            if (!SkillBodyHitRules.SlidesInStage(slot.Recipe.BodyHit, stage))
+            {
+                speed = 0;
+                accel = 0;
+            }
             int hold = CastHoldMs(slot, spec, hero);
             if (!chain && stage == 0 && slot.Recipe.Hop != null)
             {
@@ -1166,6 +1175,12 @@ namespace Dnf.Play
             if (!r.SlideFollowsHeldDirection)
             {
                 return;   // 状态进入块里不读按住的方向:每一段都按基础的两个数朝主角的朝向滑(证据 E-131)
+            }
+            if (r.BodyHit != null && r.BodyHit.HorizontalHeldSlide)
+            {
+                SkillBodyHitRules.HeldSlide(speed, accel, r.ForwardSpeedIndex >= 0 && def != null,
+                    r.ForwardSpeedIndex >= 0 && def != null ? def.GetStatic(r.ForwardSpeedIndex, false) : 0, heldX, hero.FacingLeft, out speed, out accel);
+                return;
             }
             heldX = Math.Sign(heldX);
             heldY = Math.Sign(heldY);

@@ -2053,6 +2053,8 @@ namespace Dnf.Play
                 {
                     chained = Skills.TryChainCommand(_commands, _room.Hero, dirX, dirY);
                 }
+                _bodyHeldX = dirX;
+                chained = chained ?? Skills.TryChainBody(skillsPressed, attackPressed, _room.Hero, dirX, dirY);
                 HeroSkillSlot cast = quickPressed == SkillKeys.None || chained != null ? null : Skills.TryCast(quickPressed, _room.Hero, Vitals, dirX, dirY);
                 bool announce = quickPressed != SkillKeys.None;
                 bool viaCommand = false;
@@ -2519,7 +2521,15 @@ namespace Dnf.Play
         /// </summary>
         private bool FollowUpHeroSkill(TownHero hero)
         {
-            if (HeroDead || Skills == null || !Skills.FollowUp(hero))
+            if (HeroDead || Skills == null)
+            {
+                return false;
+            }
+            if (Skills.Holding(hero))
+            {
+                return true;           // 段尾保持:这一段播完了还要占着主角,不算接段
+            }
+            if (!Skills.FollowUp(hero))
             {
                 return false;
             }
@@ -2600,7 +2610,9 @@ namespace Dnf.Play
         private void ResolveHits()
         {
             TownHero hero = _room.Hero;
+            BodyKeyFlags(hero);
             ApplyKeyFlags(hero);
+            StepBodyHit(hero);
             if (!hero.IsAttacking || OwnStrikeless(hero))
             {
                 _evalSwing = -1;
