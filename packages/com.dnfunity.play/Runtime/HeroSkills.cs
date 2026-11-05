@@ -1139,12 +1139,42 @@ namespace Dnf.Play
         /// </summary>
         internal static int CastHoldMs(HeroSkillSlot slot, SkillStageSpec spec, TownHero hero)
         {
+            if (spec.CastMode != SkillCastMode.Placeholder)
+            {
+                return CastModeHoldMs(slot, spec, hero);
+            }
             if (spec.CastHoldFrames <= 0)
             {
                 return -1;
             }
             int castMs = slot.Def == null ? 0 : slot.Def.Interpolate(slot.Def.CastingTime, slot.Level);
             for (int frame = 1; frame <= spec.CastHoldFrames; frame++)
+            {
+                castMs -= hero.EtcFrameDelayMs(spec.MotionIndex, frame);
+            }
+            return Math.Max(0, castMs);
+        }
+
+        /// <summary>动画帧数的上限(<see cref="CastModeHoldMs"/> 累加各帧时长时的循环界;帧号越界的时长是 0,所以界只要不小于真实帧数即可)。</summary>
+        private const int MaxMotionFrames = 256;
+
+        /// <summary>
+        /// 另两种施法时间写法的第 0 帧停留(M105,<see cref="SkillCastMode"/>,静态读码):施法时间(.skl [casting time] 按等级插值)不大于 0 时返回 -1(动画照原样走);
+        /// <see cref="SkillCastMode.Stretch"/> = max(0, 施法时间 − 第 1 帧起各帧时长之和);<see cref="SkillCastMode.Pause"/> = 施法时间 + 第 0 帧自己的时长。
+        /// 客户端最后还按施法速度缩放,这里没有施法速度属性,按 1000 算(同 <see cref="CastHoldMs"/>)。
+        /// </summary>
+        private static int CastModeHoldMs(HeroSkillSlot slot, SkillStageSpec spec, TownHero hero)
+        {
+            int castMs = slot.Def == null ? 0 : slot.Def.Interpolate(slot.Def.CastingTime, slot.Level);
+            if (castMs <= 0)
+            {
+                return -1;
+            }
+            if (spec.CastMode == SkillCastMode.Pause)
+            {
+                return castMs + hero.EtcFrameDelayMs(spec.MotionIndex, 0);
+            }
+            for (int frame = 1; frame < MaxMotionFrames; frame++)
             {
                 castMs -= hero.EtcFrameDelayMs(spec.MotionIndex, frame);
             }

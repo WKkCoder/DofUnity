@@ -302,6 +302,8 @@ internal static class SkillCheck
         int recipeStages = 0;
         int recipeObjects = 0;
         int recipeHolds = 0;
+        int recipeCastModes = 0;
+        int recipeCastTimed = 0;
         int recipeEndFrames = 0;
         int recipeGates = 0;
         int recipeHops = 0;
@@ -439,6 +441,20 @@ internal static class SkillCheck
                 if (st.HasOwnStrike && def.GetLevel(1, st.DamageRateColumn, false) <= 0)
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:1 级的百分比伤害读出来不是正数");
+                }
+                if (st.CastMode != SkillCastMode.Placeholder)
+                {
+                    // M105:按施法时间伸缩或暂停的段:动作读得到、至少两帧(只有一帧就谈不上伸缩或暂停之后再放);施法时间 1 级读出来为正的段数另计(为 0 时动画原样走)
+                    recipeCastModes++;
+                    AniFile? modeMotion = assets.LoadAni(chr.CustomAnimationPath(st.MotionIndex) ?? "");
+                    if (modeMotion == null || modeMotion.Frames.Length < 2)
+                    {
+                        recipeProblems.Add(label + " 第 " + i + " 段:按施法时间伸缩或暂停的动作读不到或不足两帧");
+                    }
+                    if (def.Interpolate(def.CastingTime, 1) > 0)
+                    {
+                        recipeCastTimed++;
+                    }
                 }
                 if (st.CastHoldFrames > 0)
                 {
@@ -688,7 +704,11 @@ internal static class SkillCheck
                 {
                     recipeProblems.Add(label + " 对象 " + i + ":放出的帧 " + o.Frame + " 超出施法动作的帧数 " + (motion == null ? 0 : motion.Frames.Length));
                 }
-                if (def.GetLevel(1, o.DamageRateColumn, false) <= 0 || def.GetLevel(1, o.DamageFixedColumn, false) <= 0)
+                // 列号为 -1 表示客户端没给对象传这一列(M105:有的状态只传百分比或只传固定值);至少要有一列,用到的列 1 级读出来都得是正数
+                bool rateUsed = o.DamageRateColumn >= 0;
+                bool fixedUsed = o.DamageFixedColumn >= 0;
+                if ((!rateUsed && !fixedUsed) || (rateUsed && def.GetLevel(1, o.DamageRateColumn, false) <= 0)
+                    || (fixedUsed && def.GetLevel(1, o.DamageFixedColumn, false) <= 0))
                 {
                     recipeProblems.Add(label + " 对象 " + i + ":1 级的两个伤害列读出来不是正数");
                 }
@@ -716,7 +736,7 @@ internal static class SkillCheck
             Console.WriteLine("    " + line);
         }
         Report(recipeCount == SkillRecipes.Default.Count && recipeProblems.Count == 0,
-            "技能配方 " + recipeCount + " 个(共 " + recipeStages + " 段、放对象 " + recipeObjects + " 个、带蓄力 " + recipeHolds + " 段、等特效标志的对象 " + recipeGates
+            "技能配方 " + recipeCount + " 个(共 " + recipeStages + " 段、放对象 " + recipeObjects + " 个、带蓄力 " + recipeHolds + " 段、按施法时间伸缩或暂停 " + recipeCastModes + " 段(其中 1 级施法时间为正 " + recipeCastTimed + " 段)、等特效标志的对象 " + recipeGates
             + " 个、定结束帧 " + recipeEndFrames + " 段、蓄力跳跃 " + recipeHops + " 个、多段命中 " + recipeMultiHits + " 个、悬停俯冲 " + recipeDives + " 个、空中攻击强化 " + recipeJumpAttacks + " 个、自动接续 " + recipeAutoChains + " 个、关键帧标志事件 " + recipeFlagEvents + " 个、脚本升空 " + recipeRises + " 段)在真实数据里都读得通"
             + "(动作、攻击信息、特效、对象、蓄力、结束帧、[static data]、[level info] 列;问题 " + recipeProblems.Count + " 条)");
 
@@ -816,6 +836,64 @@ internal static class SkillCheck
             Report(ready.Count > 0 && missed == 0 && wrong == 0,
                 "指令放技能:已实现、已学会、能靠指令放的 " + ready.Count + " 个技能,在房间会话里各打一遍自己的指令:放出来的就是它自己 " + selfCast + " 个、落到指令更长的另一个技能 " + longerCast
                 + " 个、没放出来 " + missed + " 个、放成了别的 " + wrong + " 个");
+
+            // 指令放技能(各成长类型,M105):上一条只看本地主角的初始成长类型,子职业技能(只有对应成长类型能学)落不进去;
+            // 这里对成长类型 0 到 5 各转一次职(无限点数花光),把已实现、已学会、能靠指令放的技能各用自己的指令放一遍,只记各成长类型的个数:
+            // 能放(放出了技能动作)、放出来的就是自己、指令撞车(放成了别的技能,指令完全相同或更短的另一个技能先被认出来)。
+            var perGrowtypeReady = new List<int>();
+            var perGrowtypeSelf = new List<int>();
+            var perGrowtypeIds = new HashSet<int>();
+            int perGrowtypeMissed = 0;
+            int perGrowtypeCollide = 0;
+            for (int growtype = 0; growtype < SkillRules.GrowtypeCount; growtype++)
+            {
+                HeroProgress? other = HeroProgress.CreateForLocalHero(assets, level);
+                if (other == null || (growtype != 0 && !other.ChangeGrowtype(growtype)))
+                {
+                    perGrowtypeReady.Add(-1);
+                    perGrowtypeSelf.Add(-1);
+                    continue;
+                }
+                SkillPlanner.SpendAll(other);
+                int readyCount = 0;
+                int selfCount = 0;
+                foreach (SkillDef def in catalog.Skills)
+                {
+                    if (!def.IsActive || def.Id == SkillIds.QuickStand || !HeroSkills.IsImplemented(def.Id) || !HeroSkills.CommandCasts(def.Command)
+                        || other.Skills.LevelOf(def.Id) <= 0)
+                    {
+                        continue;
+                    }
+                    readyCount++;
+                    perGrowtypeIds.Add(def.Id);
+                    RoomCombatSession probeSession = NewSession(assets, opts, other);
+                    if (SkillRecipes.Default.Find(def.Id)?.Dive != null)
+                    {
+                        LiftOff(probeSession, 60.0);
+                    }
+                    foreach (CommandStep step in CommandSteps.Of(def.Command, probeSession.Hero.FacingLeft))
+                    {
+                        probeSession.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Keys);
+                    }
+                    if (probeSession.Hero.Motion != HeroMotion.Skill && !probeSession.Hero.IsBackStep)
+                    {
+                        perGrowtypeMissed++;
+                    }
+                    else if (probeSession.Hero.SkillId == def.Id || catalog.Find(probeSession.Hero.SkillId)?.Command.Length > def.Command.Length)
+                    {
+                        selfCount++;
+                    }
+                    else
+                    {
+                        perGrowtypeCollide++;
+                    }
+                }
+                perGrowtypeReady.Add(readyCount);
+                perGrowtypeSelf.Add(selfCount);
+            }
+            Report(perGrowtypeMissed == 0 && perGrowtypeReady.All(n => n >= 0),
+                "指令放技能(各成长类型 0 到 " + (SkillRules.GrowtypeCount - 1) + "):已实现、已学会、能靠指令放的技能个数 " + string.Join(" ", perGrowtypeReady) + "(不同技能 " + perGrowtypeIds.Count
+                + " 个),各打一遍自己的指令:放出来的就是自己(或指令更长的另一个)的个数 " + string.Join(" ", perGrowtypeSelf) + "、没放出来 " + perGrowtypeMissed + " 个、指令撞车放成别的 " + perGrowtypeCollide + " 个");
 
             // 倒地起身:躺着的主角打出倒地起身的指令
             SkillDef? quick = catalog.Find(SkillIds.QuickStand);

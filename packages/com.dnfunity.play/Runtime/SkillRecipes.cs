@@ -21,8 +21,10 @@ namespace Dnf.Play
     public sealed class SkillStageSpec
     {
         public SkillStageSpec(int motionIndex, int attackInfoIndex, int damageRateColumn, int damageFixedColumn, int effectIndex, int effectFrame, int requiresSkill = 0,
-            int castHoldFrames = 0, int[] moreEffects = null, int endFrame = -1, SkillFlagEvent[] flagEvents = null, SkillRiseSpec rise = null)
+            int castHoldFrames = 0, int[] moreEffects = null, int endFrame = -1, SkillFlagEvent[] flagEvents = null, SkillRiseSpec rise = null,
+            SkillCastMode castMode = SkillCastMode.Placeholder)
         {
+            CastMode = castMode;
             var keyEvents = new List<SkillFlagEvent>();
             if (flagEvents != null)
             {
@@ -90,6 +92,12 @@ namespace Dnf.Play
         /// </summary>
         public int CastHoldFrames { get; }
 
+        /// <summary>
+        /// 施法时间怎么落到这一段的动画上(M105,R7-he-01、R7-he-03,静态读码):默认 <see cref="SkillCastMode.Placeholder"/> 走 <see cref="CastHoldFrames"/>;
+        /// 另外两种不用 <see cref="CastHoldFrames"/>,施法时间为 0(技能数据没有 [casting time] 或这一级是 0)时都不改动画。
+        /// </summary>
+        public SkillCastMode CastMode { get; }
+
         /// <summary>这一段有自己的命中(攻击信息下标非负);没有的段主角的身体不打人。</summary>
         public bool HasOwnStrike => AttackInfoIndex >= 0;
 
@@ -101,6 +109,27 @@ namespace Dnf.Play
 
         /// <summary>这一段是脚本升空(M65,证据 E-163,<see cref="SkillRiseSpec"/>);不是为 null。</summary>
         public SkillRiseSpec Rise { get; }
+    }
+
+    /// <summary>
+    /// 施法时间落到一段动画上的三种办法(M105,静态读码;状态进入块里的三种写法)。
+    /// </summary>
+    public enum SkillCastMode
+    {
+        /// <summary>第 0 帧是写着很长停留的蓄力占位,停多久 = 施法时间 − 第 1 到第 <see cref="SkillStageSpec.CastHoldFrames"/> 帧的时长(E-135,状态 0x18)。</summary>
+        Placeholder = 0,
+
+        /// <summary>
+        /// 整段动画按施法时间伸缩(状态 0x1f 的姿势段:动画变速比 = 动画总时长 / 施法时间,施法时间为 0 时变速比 1)。
+        /// 渲染层没有动画变速,这里用"第 0 帧的停留补足"近似:停留 = max(0, 施法时间 − 第 1 帧起各帧时长之和),整段总时长等于施法时间(施法时间不够长时总时长大于它)。
+        /// </summary>
+        Stretch = 1,
+
+        /// <summary>
+        /// 动画定在第 0 帧不动,过了施法时间再从头放(状态 0x26:进入块把动画拨到第 0 帧并暂停,逐帧块在"当前时刻 ≥ 进入时刻 + 施法时间"那一步解除暂停,
+        /// 之后第 0 帧照原来的时长播)。停留 = 施法时间 + 第 0 帧自己的时长。
+        /// </summary>
+        Pause = 2,
     }
 
     /// <summary>
@@ -845,6 +874,67 @@ namespace Dnf.Play
                 },
                 slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
                 autoChain: true),
+
+            // ---- M105(R7-he):状态 0x1f、0x2d、0x26 的配方(静态读码,非 REA;状态号与技能号的对应来自 0x0049f860 构造函数登记表与 0x004a02d0 分派表)----
+
+            // 两段自动接续的"姿势→挥击"类技能(状态 0x1f,R7-he-01、R7-he-02):起手函数 0x0049f110 只发模式 0;进入块 0x00cd2d6b:模式 0 播 [etc motion] 第 12 项(姿势,不设攻击信息,
+            // 身体不打人),放预载表第 0 个特效到第 1 层;动画变速比 = 动画总时长 / 施法时间(施法时间取受保护函数 0x009114e0,为 0 时比 1)——渲染层没有变速,用第 0 帧停留补足近似(Stretch)。
+            // 公共后段守卫块 0x00cc5518:模式 0 的动画播完那一刻自己发"状态 0x1f、参数 [1]、优先级 1"。模式 1:动作第 13 项,攻击信息第 15 项(虚表槽 0x200),伤害取 [level info] 百分比第 0 列
+            // (没有固定值列),放预载表第 1、2 个特效到第 1 层。
+            // 模式 1 的结束:逐帧块 0x00cbbf6b 在第 2 个特效播到第 3 帧时记下"结束时刻 = 受保护函数 0x00d02d7c 的值 + 一张运行期表里的值 + 当前时刻",之后每 20 毫秒交替把屏幕抖 ±1 像素,
+            // 守卫块 0x00cc56a4 在当前时刻到了结束时刻时发"状态 0"。结束时刻的两个加数都读不到,这里按"动画播完结束"近似(最后一段播完技能才结束)。
+            // 没做:屏幕抖动、特效偏移(取自运行期表)、[level info] 第 4 列(客户端乘 0.1 写进主角的一个字段,用于特效缩放)、进入块末尾调的 0x00cad460(1, 0, 1)(含义没读到)、音效。
+            new SkillRecipe(57,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 12, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0,
+                        castMode: SkillCastMode.Stretch),
+                    new SkillStageSpec(motionIndex: 13, attackInfoIndex: 15, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: 1, effectFrame: 0,
+                        moreEffects: new[] { 2 }),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                autoChain: true),
+
+            // 两段自动接续的"姿势→跳劈"类技能(状态 0x2d,R7-he-05、R7-he-06):起手函数 0x0049ddc0 只发模式 0;进入块 0x00cd4bb6:模式 0 播 [etc motion] 第 66 项(姿势,不设攻击信息),
+            // 放预载表第 0、1 个特效(第 2、1 层),不蓄力;守卫块 0x00cc8c99:模式 0 的动画播完那一刻自己发"状态 0x2d、参数 [1]、优先级 1";模式 1 的动画播完发"状态 0"。
+            // 模式 1:动作第 67 项,攻击信息第 57 项,伤害取 [level info] 百分比第 0 列;放预载表第 2、3 个特效(第 2、1 层)。逐帧块 0x00cbd4d2:动画播到第 5 帧(含)以后、本机控制时,
+            // 放一个被动对象:主角前方 150 像素、y 与离地偏移 0,朝向同主角,伤害取 [level info] 固定值第 1 列(创建参数的"威力"位置是固定值列 0x00913d70 的结果,没有百分比列;
+            // 参数包里另有第 2 列、两个 [static data] 数与一个被动技能倍率,用途没读到);编号是基础职业的那个(0x0049c8f0 为真取其一,另一个职业的没做)。
+            // 没做:模式 1 按 [static data] 前两个数脚本位移(水平前冲到第 5 帧开头、竖直一段上升一段下降的弧;Play 层改不了主角离地高度)、第 5 帧放的三个特效、与另一个被动技能联动的威力倍率与对象尺寸、
+            // 震屏(0x008e9950)、音效。
+            new SkillRecipe(81,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 66, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0,
+                        moreEffects: new[] { 1 }),
+                    new SkillStageSpec(motionIndex: 67, attackInfoIndex: 57, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: 2, effectFrame: 0,
+                        moreEffects: new[] { 3 }),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                objects: new[]
+                {
+                    new SkillObjectSpec(objectId: 20043, stage: 1, frame: 5, damageRateColumn: -1, damageFixedColumn: 1, forwardX: 150, offsetY: 0, offsetZ: 0),
+                },
+                autoChain: true),
+
+            // 蓄力放对象类技能(状态 0x26,R7-he-03、R7-he-04):起手函数 0x0049caa0 发"状态 0x26"(无参数);进入块 0x00cda8d9:播 [etc motion] 第 46 项,不设攻击信息(身体不打人),
+            // 把动画拨到第 0 帧并暂停,施法时间取受保护函数 0x009114e0(技能数据的 [casting time]),记下"当前时刻 + 施法时间"并起一个读条;放预载表第 0 个特效。
+            // 逐帧块 0x00cc09e0:动画暂停且当前时刻 ≥ 记下的时刻就解除暂停(Pause:停留 = 施法时间 + 第 0 帧自己的时长);动画播到第 1 帧放预载表第 1 个特效(第 2 层);
+            // 动画播到第 4 帧(含)以后、本机控制时放一次被动对象:主角前方 150 像素、y 偏移 0、离地 68,朝向同主角,编号是基础职业的那个(0x0049c8f0 为真取其一,另一个职业的没做);
+            // 伤害取 [level info] 百分比第 1 列(创建参数的"威力"位置就是这一列的 0x009138c0 结果,没有固定值列)。动画播完守卫块发"状态 0"。
+            // 没做:对象创建参数包里的尺寸与其余列(第 2、7 列与两个 [static data] 数,用途没读到)、另一处用 0x00b5b82b(受保护函数)的返回值减 1 当次数、
+            // 对第 1、3 列等做的按次数累加(次数读不到,按 1 即不累加)、特效偏移(进入块里第 0 个特效带 −35、−68 偏移)、第 1 个特效比第 0 个晚放、读条界面、音效。
+            new SkillRecipe(2,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 46, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0,
+                        moreEffects: new[] { 1 }, castMode: SkillCastMode.Pause),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                objects: new[]
+                {
+                    new SkillObjectSpec(objectId: 20032, stage: 0, frame: 4, damageRateColumn: 1, damageFixedColumn: -1, forwardX: 150, offsetY: 0, offsetZ: 68),
+                }),
         },
         new[]
         {
