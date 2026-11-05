@@ -500,7 +500,7 @@ namespace Dnf.Play
     /// </summary>
     public sealed class BuffRecipe
     {
-        public BuffRecipe(int skillId, BuffStat stat, int durationColumn, int amountStaticIndex, int amountColumn, double amountScale = 1.0)
+        public BuffRecipe(int skillId, BuffStat stat, int durationColumn, int amountStaticIndex, int amountColumn, double amountScale = 1.0, int guardSkillId = 0)
         {
             SkillId = skillId;
             Stat = stat;
@@ -508,6 +508,7 @@ namespace Dnf.Play
             AmountStaticIndex = amountStaticIndex;
             AmountColumn = amountColumn;
             AmountScale = amountScale;
+            GuardSkillId = guardSkillId;
         }
 
         public int SkillId { get; }
@@ -526,6 +527,12 @@ namespace Dnf.Play
 
         /// <summary>读出来的整数乘它才是挂在属性上的数(缺省 1;概率类增益的数是千分比,乘 0.001 换成 0 到 1,E-142)。</summary>
         public double AmountScale { get; }
+
+        /// <summary>
+        /// 自动防御类增益(<see cref="BuffStat.AutoGuardChance"/>)借用的防御姿态技能编号:挡下时的穿过百分比、姿势动作、最短保持与后滑都取那个技能的数据,
+        /// 那个技能没学会就不触发(客户端钩子里写死的常量);别的增益为 0。
+        /// </summary>
+        public int GuardSkillId { get; }
     }
 
     /// <summary>
@@ -580,8 +587,10 @@ namespace Dnf.Play
         private readonly Dictionary<int, SkillRecipe> _byId = new Dictionary<int, SkillRecipe>();
         private readonly Dictionary<int, BuffRecipe> _buffs = new Dictionary<int, BuffRecipe>();
         private readonly Dictionary<int, GuardRecipe> _guards = new Dictionary<int, GuardRecipe>();
+        private readonly Dictionary<int, BuffRecipe> _classBuffs = new Dictionary<int, BuffRecipe>();
 
-        public SkillRecipes(IEnumerable<SkillRecipe> recipes, IEnumerable<BuffRecipe> buffs = null, IEnumerable<GuardRecipe> guards = null)
+        public SkillRecipes(IEnumerable<SkillRecipe> recipes, IEnumerable<BuffRecipe> buffs = null, IEnumerable<GuardRecipe> guards = null,
+            IEnumerable<BuffRecipe> classBuffs = null)
         {
             foreach (SkillRecipe r in recipes ?? throw new ArgumentNullException(nameof(recipes)))
             {
@@ -601,6 +610,28 @@ namespace Dnf.Play
                     _guards[g.SkillId] = g;
                 }
             }
+            if (classBuffs != null)
+            {
+                foreach (BuffRecipe b in classBuffs)
+                {
+                    _classBuffs[b.SkillId] = b;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 职业专属增益的个数。客户端里增益有两条挂法:主角基类的起手(<c>0x0085deb0</c>)按技能号挂的通用附加体(<see cref="AllBuffs"/>,E-141、E-142),
+        /// 和职业自己的起手覆盖(鬼剑士的 <c>0x00ce2290</c>)里按技能号挂的职业专属附加体类——后者单放一张表,和前者的统计口径分开。
+        /// </summary>
+        public int ClassBuffCount => _classBuffs.Count;
+
+        /// <summary>全部职业专属增益的放法(<see cref="AllBuffs"/> 不含它们)。</summary>
+        public IEnumerable<BuffRecipe> AllClassBuffs => _classBuffs.Values;
+
+        /// <summary>这个技能的职业专属增益放法;不是返回 null。</summary>
+        public BuffRecipe FindClassBuff(int skillId)
+        {
+            return _classBuffs.TryGetValue(skillId, out BuffRecipe b) ? b : null;
         }
 
         /// <summary>防御姿态类技能的个数。</summary>
@@ -845,6 +876,22 @@ namespace Dnf.Play
                 },
                 slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
                 autoChain: true),
+
+            // 单段身体命中类技能的另一个(状态 0x15,与 E-162、E-163 同一族):处理函数分派 0x004a02d0 里这个技能号走默认的空分支,起手不经起手函数,
+            // 而在主角逐帧函数公共后段的按键块 0x00cc1c6d:守卫(0x00cc1bbc 起)要求本地主角,当前状态与待发状态都不是 0x15、9,也不是 4、5;
+            // 键位检查(虚表槽 0x918 取快捷栏键信息,0x00cc1c7e)与"能不能用"检查(虚表槽 0x864,0x00cc1c8e)通过后发"状态 0x15、参数 [朝向, 标志]、优先级 2"(0x00cc1d7e)。
+            // 进入块 0x00cd03c0 起:动作取 [etc motion] 第 2 项,攻击信息取 [etc attack info] 第 1 项,伤害取 [level info] 的百分比第 1 列
+            // (调 0x00911dc0,返回值减 100.0 后存进主角的 +0x2f8;没有固定值列),两个轴的滑行速度都清零,没有预载特效、没有被动对象;
+            // 逐帧分支(逐帧函数 0x00cb9980 按状态分派,字节表 0x00cca368、跳转表 0x00cca2dc,这个状态的分支在 0x00cbad0b)只做一件事:
+            // 动画结束标志位(位 8)一亮就发"状态 0"回到站立——所以只有一段、没有接段帧。
+            // 没做:参数里的标志(按块里的关联技能对象与一个计时器置位,进入块存进主角的 +0x6650,用途没读到)、进入块开头按两个格式串取的命名声音(虚表槽 0x154)、
+            // 动画变速与方向的常量设置(1000、1.0,等同默认)、取伤害百分比时多传的虚表槽 0x238 返回值的影响(没读通)。
+            new SkillRecipe(7,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 2, attackInfoIndex: 1, damageRateColumn: 1, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false),
         },
         new[]
         {
@@ -864,8 +911,23 @@ namespace Dnf.Play
         {
             // 防御姿态类技能(状态 0x13,证据 E-164):动作取 [etc motion] 第 0 项(两帧,姿态阶段定第 0 帧、后滑阶段定第 1 帧);进入块的最短保持毫秒取 [static data] 第 0 个数;
             // 受击前钩子挡下一击时,物理攻击穿过的百分比 = 100 − [level info] 第 2 列、魔法攻击 = 100 − 第 3 列,后滑起滑速度取第 0 列、持续毫秒取第 1 列。
-            // 没做:同一个状态码的另一个技能(阶段 1 带标志 1 并放被动对象)、被动技能触发的自动防御、挡下时的音效与特效、受击方向以外的挡下条件(这一击"能不能挡"的受保护判断,按"有受击反应"近似)。
+            // 没做:同一个状态码的另一个技能(阶段 1 带标志 1 并放被动对象)、挡下时的音效与特效(被动技能触发的自动防御见下面的职业专属增益)、受击方向以外的挡下条件(这一击"能不能挡"的受保护判断,按"有受击反应"近似)。
             new GuardRecipe(1, motionIndex: 0, minHoldStaticIndex: 0, recoilSpeedColumn: 0, recoilMsColumn: 1, physicalColumn: 2, magicalColumn: 3),
+        },
+        new[]
+        {
+            // 职业专属增益(自动防御,静态读码,非 REA):施法状态仍是 0x11(枢纽块 0x00cc2db7 发"状态 0x11、参数 [技能号]、优先级 1",0x00cc2e33),
+            // 但挂附加体走鬼剑士自己的起手覆盖(0x00ce2290,先调基类起手 0x0085deb0)里这个技能号的分支(0x00ce272b):主角的 +0x6bfc 还没有附加体就先建一个
+            // 专属附加体类的对象(虚表 0x015661bc,构造 0x0042d720,生效标志是对象 +0x40 的字节,判断函数 0x00ca6440),再把 [level info] 当前等级的第 1 列(转整数)
+            // 写进附加体取到的子对象的保护整数里、挂上。这一列当持续毫秒是推断(中):数据里它每级同一个量、量级是毫秒,附加体里写的数也只有它。
+            // 效果在主角受击前钩子(虚表槽 0x2d8,0x00cb20a0)的 0x00cb23a6 起一段:附加体生效、本技能与防御姿态技能(编号是代码里写死的常量)都学过、
+            // 这一击能挡(黑盒 0x010ee67f,或攻击信息的 +0x4c 非 0)、主角不在状态 4 与 9(4 是倒地,E-105;9 是倒地结束时带异常状态 3 请求的状态,E-082,冰冻类,推断)、
+            // 掷中:0x00cb2487 起取本技能 [level info] 第 0 列转整数乘 100,与 0x00e5bf90 在 [0, 10000) 里掷出的数比,掷出的数小才算(所以概率 = 列值 / 100,缩放 0.01);
+            // 随后调防御姿态技能的"能不能用"(0x0049c920 → 脚本函数,没读通),通过就发"状态 0x13、带已挡下标志、优先级 0"(0x00cb2661);
+            // 穿过的百分比取防御姿态技能自己的第 2、3 列(同 E-164 的 GuardRecipe),攻击方在背后时 0x00cb25fc 一段让主角先转向攻击方。
+            // 没做:出招、跳跃、受击硬直中触发(状态请求的优先级是 0,能不能顶掉当前状态没读通,这里只在站立、走、跑时触发)、已在姿态里被打到背面时再挡、
+            // 触发时 0x01136b10 发的事件、防御姿态技能的"能不能用"(冷却与蓝算不算在内没读到,按学会就行)、PK 区那一段 [level info](这里不分区)。
+            new BuffRecipe(3, BuffStat.AutoGuardChance, durationColumn: 1, amountStaticIndex: -1, amountColumn: 0, amountScale: 0.01, guardSkillId: 1),
         });
     }
 }

@@ -782,6 +782,7 @@ internal static class SkillCheck
                 }
             }
             int selfCast = 0;
+            int quickCast = 0;
             int longerCast = 0;
             int missed = 0;
             int wrong = 0;
@@ -799,6 +800,7 @@ internal static class SkillCheck
                 if (session.Hero.Motion != HeroMotion.Skill && !session.Hero.IsBackStep)
                 {
                     missed++;      // 后跳是跳跃状态的特殊参数(动作是跳跃,不是技能动作),所以也要认
+                    Console.WriteLine("    没放出来:技能号 " + def.Id);
                 }
                 else if (session.Hero.SkillId == def.Id)
                 {
@@ -808,13 +810,19 @@ internal static class SkillCheck
                 {
                     longerCast++;
                 }
+                else if (SameCommandText(catalog.Find(session.Hero.SkillId), def) && CastsByQuickKey(assets, opts, level, def.Id))
+                {
+                    // 指令与别的技能完全相同(单键"技能"这类指令常常撞车;指令层的取舍是快捷槽在前、编号小的在前,E-140):换一局新会话,把它放进快捷栏第 1 格,按那个键能放出自己
+                    quickCast++;
+                }
                 else
                 {
                     wrong++;
+                    Console.WriteLine("    放成了别的:技能号 " + def.Id + " 放成了技能号 " + session.Hero.SkillId);
                 }
             }
             Report(ready.Count > 0 && missed == 0 && wrong == 0,
-                "指令放技能:已实现、已学会、能靠指令放的 " + ready.Count + " 个技能,在房间会话里各打一遍自己的指令:放出来的就是它自己 " + selfCast + " 个、落到指令更长的另一个技能 " + longerCast
+                "指令放技能:已实现、已学会、能靠指令放的 " + ready.Count + " 个技能,在房间会话里各打一遍自己的指令:放出来的就是它自己 " + selfCast + " 个、指令与别的技能完全相同而改按快捷键放出自己 " + quickCast + " 个、落到指令更长的另一个技能 " + longerCast
                 + " 个、没放出来 " + missed + " 个、放成了别的 " + wrong + " 个");
 
             // 倒地起身:躺着的主角打出倒地起身的指令
@@ -1252,7 +1260,7 @@ internal static class SkillCheck
             int buffCycles = 0;
             int buffMotionOk = 0;
             var buffProblems = new List<string>();
-            foreach (BuffRecipe recipe in SkillRecipes.Default.AllBuffs)
+            foreach (BuffRecipe recipe in SkillRecipes.Default.AllBuffs.Concat(SkillRecipes.Default.AllClassBuffs))
             {
                 buffSkills++;
                 string label = "增益 #" + buffSkills;
@@ -1284,15 +1292,35 @@ internal static class SkillCheck
                     {
                         buffProblems.Add(label + " " + lv + " 级:持续时间或数值不是正数");
                     }
-                    if (recipe.Stat == BuffStat.SuperArmorChance && amount * recipe.AmountScale > 1.0)
+                    if ((recipe.Stat == BuffStat.SuperArmorChance || recipe.Stat == BuffStat.AutoGuardChance) && amount * recipe.AmountScale > 1.0)
                     {
-                        buffProblems.Add(label + " " + lv + " 级:概率超过 100%(M49,E-142)");       // 概率类增益的数是千分比,换成 0 到 1 以后不会超过 1
+                        buffProblems.Add(label + " " + lv + " 级:概率超过 100%(M49,E-142)");       // 概率类增益的数换成 0 到 1 以后不会超过 1(超过了就是缩放或列号错了)
+                    }
+                }
+                if (recipe.Stat == BuffStat.AutoGuardChance)
+                {
+                    // 自动防御借用的防御姿态技能:得是表里的防御姿态配方、技能在目录里,而且在这个技能的前置要求里(客户端钩子里两个技能都要学过,前置要求保证学了这个就学过那个)
+                    SkillDef? guardDef = catalog.Find(recipe.GuardSkillId);
+                    if (SkillRecipes.Default.FindGuard(recipe.GuardSkillId) == null || guardDef == null || !guardDef.IsActive)
+                    {
+                        buffProblems.Add(label + ":借用的防御姿态技能不在配方表或目录里");
+                    }
+                    else if (!def.PreRequired.Any(pr => pr.SkillId == recipe.GuardSkillId))
+                    {
+                        buffProblems.Add(label + ":借用的防御姿态技能不在这个技能的前置要求里");
                     }
                 }
 
-                RoomCombatSession session = NewSession(assets, opts, caster);
+                // 默认主角(当前成长类型)学不到的子职业技能,换一个学得到的主角(CasterWhoKnows 按成长类型依次试)
+                HeroProgress? buffCaster = caster.Skills.LevelOf(def.Id) > 0 ? caster : CasterWhoKnows(assets, level, def.Id);
+                if (buffCaster == null)
+                {
+                    buffProblems.Add(label + ":没有哪个成长类型的主角学得到它");
+                    continue;
+                }
+                RoomCombatSession session = NewSession(assets, opts, buffCaster);
                 HeroSkillSlot? slot = session.Skills.SlotOfSkill(def.Id);
-                if (slot?.Buff == null || caster.Skills.LevelOf(def.Id) <= 0)
+                if (slot?.Buff == null || buffCaster.Skills.LevelOf(def.Id) <= 0)
                 {
                     buffProblems.Add(label + ":没有排进槽里(没学会或没有放法)");
                     continue;
@@ -1355,7 +1383,7 @@ internal static class SkillCheck
             {
                 Console.WriteLine("    " + line);
             }
-            Report(buffSkills == SkillRecipes.Default.BuffCount && buffSkills > 0 && buffProblems.Count == 0 && buffCycles == buffSkills && buffMotionOk == buffSkills,
+            Report(buffSkills == SkillRecipes.Default.BuffCount + SkillRecipes.Default.ClassBuffCount && buffSkills > 0 && buffProblems.Count == 0 && buffCycles == buffSkills && buffMotionOk == buffSkills,
                 "增益类技能 " + buffSkills + " 个(逐级查了 " + buffLevelsChecked + " 级的持续时间与数值都为正)在真实数据里读得通;真实会话里按各自的指令各放一遍:施法动作无攻击框 "
                 + buffMotionOk + " 个、施法结束挂上并到点失效 " + buffCycles + " 个(问题 " + buffProblems.Count + " 条)");
 
@@ -1510,6 +1538,33 @@ internal static class SkillCheck
             }
         }
         return null;
+    }
+
+    /// <summary>两个技能的 [command] 文本完全相同吗(检查用:撞车的技能靠指令分不开,指令层只放快捷槽在前、编号小的在前的那个,E-140)。</summary>
+    private static bool SameCommandText(SkillDef? other, SkillDef def)
+    {
+        return other != null && other.Id != def.Id && !def.Command.IsEmpty && other.Command.ToString() == def.Command.ToString();
+    }
+
+    /// <summary>
+    /// 指令撞车的技能改按快捷键放(检查用):找一个学会它的主角(新建的),把它排进快捷栏第 1 格,开一局新会话按那个键,
+    /// 主角进入的就是这个技能的施法动作则为真。
+    /// </summary>
+    private static bool CastsByQuickKey(DnfAssets assets, Options opts, int level, int skillId)
+    {
+        HeroProgress? who = CasterWhoKnows(assets, level, skillId);
+        if (who == null || !who.Skills.AssignQuick(0, skillId))
+        {
+            return false;
+        }
+        RoomCombatSession session = NewSession(assets, opts, who);
+        HeroSkillSlot? slot = session.Skills.SlotOfSkill(skillId);
+        if (slot == null || slot.Key == SkillKeys.None)
+        {
+            return false;
+        }
+        session.Update(10, 0, 0, false, false, slot.Key);
+        return session.Hero.Motion == HeroMotion.Skill && session.Hero.SkillId == skillId;
     }
 
     /// <summary>让主角起跳并升到离地至少 <paramref name="minHeight"/> 像素(检查用:只在腾空时放得出来的技能)。返回有没有升到。</summary>
