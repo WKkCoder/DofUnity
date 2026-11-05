@@ -45,7 +45,7 @@ namespace Dnf.Play
     }
 
     /// <summary>快捷槽里的一个技能:编号、等级、冷却的满值(取自 .skl)与此刻还剩的冷却。</summary>
-    public sealed class HeroSkillSlot
+    public sealed partial class HeroSkillSlot
     {
         public SkillKeys Key { get; }
 
@@ -469,7 +469,7 @@ namespace Dnf.Play
             IReadOnlyList<SkillPassivePowerRate.Link> registeredLinks = null)
         {
             var slot = new HeroSkillSlot(key, def.Id, level, def);
-            SkillRecipe recipe = (recipes ?? SkillRecipes.Default).Find(def.Id);
+            SkillRecipe recipe = (recipes ?? SkillRecipes.Default).Find(def.Id)?.ExpandFor(def);        // 逐击连段类按这个技能的击数展开(状态 0x27)
             slot.Buff = (recipes ?? SkillRecipes.Default).FindBuff(def.Id) ?? (recipes ?? SkillRecipes.Default).FindClassBuff(def.Id);   // 增益类技能(E-141):没有配方,放法只有一个施法动作与一个附加体
             slot.Guard = (recipes ?? SkillRecipes.Default).FindGuard(def.Id);      // 防御姿态类技能(E-164):没有配方,放法只有一个姿势动作,按住攻击键维持
             if (recipe != null)
@@ -914,6 +914,10 @@ namespace Dnf.Play
             {
                 return null;           // 有按键接段表的配方:只走 TryChainBody(再按自己的键不一定接段)
             }
+            if (!KeyChainsFrom(recipe, hero.SkillStage))
+            {
+                return null;           // 这一段标了"播完自己接"或"不许按键接"(状态 0x27 的起手段与被锁的打击段)
+            }
             int next = hero.SkillStage + 1;
             if (next >= recipe.Stages.Count || hero.CurrentFrame < recipe.ChainFromFrame)
             {
@@ -940,7 +944,7 @@ namespace Dnf.Play
             }
             HeroSkillSlot slot = SlotOfSkill(hero.SkillId);
             SkillRecipe recipe = slot?.Recipe;
-            if (recipe == null || !recipe.AutoChain)
+            if (recipe == null || !(recipe.AutoChain || AutoAdvancesFrom(recipe, hero.SkillStage)))
             {
                 return false;
             }
@@ -976,9 +980,9 @@ namespace Dnf.Play
         {
             SkillStageSpec spec = slot.Recipe.Stages[stage];
             Slide(slot, hero, heldX, heldY, out double speed, out double accel);
-            if (!SkillBodyHitRules.SlidesInStage(slot.Recipe.BodyHit, stage))
+            if (!spec.Slides || !SkillBodyHitRules.SlidesInStage(slot.Recipe.BodyHit, stage))
             {
-                speed = 0;
+                speed = 0;        // 这一段的进入块把滑行清零,不带配方上的起滑(状态 0x25 阶段 1、状态 0x27 阶段 0;身体命中一族只有首段起滑)
                 accel = 0;
             }
             int hold = CastHoldMs(slot, spec, hero);
@@ -992,9 +996,14 @@ namespace Dnf.Play
                 // 升空段:动画第 0 帧(带攻击框)停到升空时间结束(动画时间 = 墙钟 × 播放倍率,向上取整保证墙钟不短于升空时间),之后接着播剩下的帧
                 hold = (int)Math.Ceiling(rise.DurationMs * (hero.AttackAnimationRate > 0.0 ? hero.AttackAnimationRate : 1.0));
             }
-            return chain
+            bool began = chain
                 ? hero.ChainSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame, rearmWindows: multiHitWindows, rise: rise)
                 : hero.BeginSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame, multiHitWindows, rise);
+            if (began && spec.Warp != null)
+            {
+                ApplyWarp(slot, spec.Warp, hero);
+            }
+            return began;
         }
 
         /// <summary>

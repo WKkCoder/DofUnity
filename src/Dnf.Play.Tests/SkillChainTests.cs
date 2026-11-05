@@ -117,6 +117,9 @@ public class SkillChainTests
                 strikeLater |= later.HasOwnStrike;
             }
             bool poseThenStrike = r.AutoChain && r.Objects.Count == 0 && strikeLater;
+            // 起手段(M104,状态 0x27):播完自己接下一段、不设攻击信息,后面有一段自己的命中;逐击连段的击数展开前是四段模板,击打段只取百分比列
+            bool windUpThenStrike = strikeLater && r.Stages.Any(w => w.AutoAdvance);
+            bool hasWarp = r.Stages.Any(w => w.Warp != null);
             Assert.All(r.Stages, st =>
             {
                 // 悬停俯冲类的动画是空中攻击动作、空中攻击强化类的两种动作写在 SkillJumpAttackSpec 里,都没有这一段的 [etc motion] 下标(E-149、E-150)
@@ -126,7 +129,7 @@ public class SkillChainTests
                     // 蓄力跳跃类与悬停俯冲类技能自己的伤害没有固定值列(只取百分比列);自动接续类(E-154)的第一段、身体命中类(E-162)也只取百分比列
                     // 两段式状态(0x3c、0x3e、0x3f,E-162、E-163)一族:各段只取百分比列,或(0x3c 的第二段)只取固定值列
                     bool fixedOnly = r.BodyHit != null && st.DamageRateColumn < 0 && st.DamageFixedColumn >= 0;
-                    Assert.True(fixedOnly || (st.DamageRateColumn >= 0 && (st.DamageFixedColumn >= 0 || r.Hop != null || r.Dive != null || r.AutoChain || bodyHit || r.BodyHit != null)));
+                    Assert.True(fixedOnly || (st.DamageRateColumn >= 0 && (st.DamageFixedColumn >= 0 || r.Hop != null || r.Dive != null || r.AutoChain || bodyHit || r.BodyHit != null || r.Repeat != null)));
                 }
                 else
                 {
@@ -138,7 +141,8 @@ public class SkillChainTests
                     }
                     else
                     {
-                        Assert.True(st.AttackInfoIndex == -1 && st.DamageRateColumn == -1 && st.DamageFixedColumn == -1 && (r.Objects.Count > 0 || r.Hop != null || poseThenStrike));
+                        Assert.True(st.AttackInfoIndex == -1 && st.DamageRateColumn == -1 && st.DamageFixedColumn == -1
+                            && (r.Objects.Count > 0 || r.Hop != null || poseThenStrike || (st.AutoAdvance && windUpThenStrike)));
                     }
                 }
             });
@@ -168,8 +172,9 @@ public class SkillChainTests
             {
                 Assert.DoesNotContain(r.Objects, o => o.OnLanding);        // "落地放"只属于悬停俯冲
             }
+            // 对象的两个伤害列都要有;只有"段首瞬移那一段放的对象"(M104,状态 0x21)只有百分比一列
             Assert.All(r.Objects, o => Assert.True(o.ObjectId > 0 && o.Stage >= 0 && o.Stage < r.Stages.Count && o.Frame >= 0
-                && o.DamageRateColumn >= 0 && o.DamageFixedColumn >= 0));
+                && o.DamageRateColumn >= 0 && (o.DamageFixedColumn >= 0 || (hasWarp && o.FromWarpOrigin))));
         }
         Assert.Throws<ArgumentException>(() => new SkillRecipe(1, new SkillStageSpec[0], 0, 0, 0, 0, 1));
     }
