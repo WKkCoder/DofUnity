@@ -444,14 +444,16 @@ internal static partial class SkillCheck
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:1 级的百分比伤害(没有百分比列的段是固定值伤害)读出来不是正数");
                 }
-                if (st.CastHoldFrames > 0)
+                if (st.CastHoldFrames > 0 || st.CastHoldWholeTime)
                 {
+                    // 整段施法时间做蓄力(CastHoldWholeTime)的段不减后面几帧,但动画至少要有第 1 帧(阶段 0 过后动画从第 1 帧接着播)
                     recipeHolds++;
                     AniFile? cast = assets.LoadAni(chr.CustomAnimationPath(st.MotionIndex) ?? "");
                     int frames = cast == null ? 0 : cast.Frames.Length;
                     int firstDelay = 0;
                     int following = 0;
-                    if (cast != null && frames > st.CastHoldFrames)
+                    int needFrames = Math.Max(st.CastHoldFrames, 1);
+                    if (cast != null && frames > needFrames)
                     {
                         cast.Frames[0].TryGetDelayMs(out firstDelay);
                         for (int f = 1; f <= st.CastHoldFrames; f++)
@@ -460,11 +462,11 @@ internal static partial class SkillCheck
                             following += d;
                         }
                     }
-                    if (cast == null || frames <= st.CastHoldFrames)
+                    if (cast == null || frames <= needFrames)
                     {
-                        recipeProblems.Add(label + " 第 " + i + " 段:蓄力要减 " + st.CastHoldFrames + " 帧,动画只有 " + frames + " 帧");
+                        recipeProblems.Add(label + " 第 " + i + " 段:蓄力要用到第 " + needFrames + " 帧,动画只有 " + frames + " 帧");
                     }
-                    else if (firstDelay < 1000)
+                    else if (firstDelay < 1000 && !st.CastHoldWholeTime)      // 整段施法时间的蓄力由代码停住第 0 帧,动画文件里第 0 帧不必是长占位
                     {
                         recipeProblems.Add(label + " 第 " + i + " 段:有蓄力,第 0 帧的停留却只有 " + firstDelay + " 毫秒(不像蓄力占位)");
                     }
@@ -1511,6 +1513,175 @@ internal static partial class SkillCheck
             Report(guardSkills == SkillRecipes.Default.GuardCount && guardSkills > 0 && guardProblems.Count == 0 && guardCycles == guardSkills && guardMotionOk == guardSkills,
                 "防御姿态类技能 " + guardSkills + " 个(逐级查了 " + guardLevelsChecked + " 级的后滑时长为正、减伤百分比在 0 到 100 之间)在真实数据里读得通;真实会话里按各自的指令各放一遍:姿势动作无攻击框 "
                 + guardMotionOk + " 个、按着不放一直不结束且松开后回到站立 " + guardCycles + " 个(问题 " + guardProblems.Count + " 条)");
+
+            // 10. 投掷类技能(状态 0x0d 一族,ThrowRecipe):表里的每个在真实数据里都读得通——技能在目录里、是主动技能、有指令;[static data] 与 [level info] 的列够用、
+            // 两个阶段的时长读出来为正、学得到的每一级每个对象的百分比都为正;角色脚本里两个姿势标签都指到库里的动画、至少一帧;每个对象的 .obj 读得到且是老式对象、
+            // 基础动画有攻击框、攻击信息在库里;真实会话里按各自的指令打一遍:放出来的就是它自己、魔法值按 [consume MP] 扣、冷却开始计、全部对象在这一步放出一次、
+            // 两个阶段的时长与 [static data] 吻合(10 毫秒一步的误差内)、整段期间主角一直在放技能、结束后回到站立。只打印汇总数,时长与列内容不打印。
+            int throwSkills = 0;
+            int throwLevelsChecked = 0;
+            int throwObjectsChecked = 0;
+            int throwPosesOk = 0;
+            int throwArmored = 0;
+            int throwCycles = 0;
+            var throwProblems = new List<string>();
+            foreach (ThrowRecipe recipe in SkillRecipes.Default.AllThrows)
+            {
+                throwSkills++;
+                string label = "投掷 #" + throwSkills;
+                SkillDef? def = catalog.Find(recipe.SkillId);
+                if (def == null || !def.IsActive || def.Command.IsEmpty)
+                {
+                    throwProblems.Add(label + ":技能不在目录里、不是主动技能,或没有指令");
+                    continue;
+                }
+                int needStatic = new[] { recipe.ChargeStaticIndex, recipe.ShootStaticIndex, recipe.ArmorStaticIndex }.Max() + 1;
+                if (def.StaticData.Length < needStatic)
+                {
+                    throwProblems.Add(label + ":[static data] 只有 " + def.StaticData.Length + " 个数,配方要 " + needStatic + " 个");
+                }
+                else
+                {
+                    if (def.GetStatic(recipe.ChargeStaticIndex, false) <= 0 || def.GetStatic(recipe.ShootStaticIndex, false) <= 0)
+                    {
+                        throwProblems.Add(label + ":两个阶段的时长读出来不是正数");
+                    }
+                    throwArmored += recipe.ArmorStaticIndex >= 0 && def.GetStatic(recipe.ArmorStaticIndex, false) != 0 ? 1 : 0;
+                }
+                int needColumns = recipe.Objects.Max(o => o.DamageRateColumn) + 1;
+                if (def.LevelInfo.Columns < needColumns || !def.LevelInfo.IsConsistent || def.LevelInfo.Levels < def.MaximumLevel)
+                {
+                    throwProblems.Add(label + ":[level info] 只有 " + def.LevelInfo.Columns + " 列,配方要 " + needColumns + " 列(或行数不够)");
+                }
+                else
+                {
+                    int learnableLevels = def.GrowtypeMaxLevels.Length > 0 ? Math.Min(def.GrowtypeMaxLevels.Max(), def.MaximumLevel) : def.MaximumLevel;
+                    for (int lv = 1; lv <= learnableLevels; lv++)
+                    {
+                        throwLevelsChecked++;
+                        if (recipe.Objects.Any(o => def.GetLevel(lv, o.DamageRateColumn, false) <= 0))
+                        {
+                            throwProblems.Add(label + " " + lv + " 级:有对象的百分比伤害读出来不是正数");
+                        }
+                    }
+                }
+                foreach (string tag in new[] { recipe.ChargePoseTag, recipe.ShootPoseTag })
+                {
+                    string? posePath = chr.MotionPath(tag);
+                    AniFile? pose = posePath == null ? null : assets.LoadAni(posePath);
+                    if (pose == null || pose.Frames.Length == 0)
+                    {
+                        throwProblems.Add(label + ":角色脚本里的 " + tag + " 读不到或没有帧");
+                    }
+                    else
+                    {
+                        throwPosesOk++;
+                    }
+                }
+                for (int i = 0; i < recipe.Objects.Count; i++)
+                {
+                    throwObjectsChecked++;
+                    Dnf.Game.PassiveObjectDef? objectDef = data.GetPassiveObject(recipe.Objects[i].ObjectId);
+                    if (objectDef == null)
+                    {
+                        throwProblems.Add(label + " 对象 " + i + ":.obj 读不到");
+                        continue;
+                    }
+                    if (objectDef.BasicActionPath != null)
+                    {
+                        throwProblems.Add(label + " 对象 " + i + ":是 .act 驱动的新式对象(这条路径只放老式对象)");
+                    }
+                    AniFile? objectAni = objectDef.BasicMotionPath == null ? null : assets.LoadAni(objectDef.BasicMotionPath);
+                    if (objectAni == null || objectAni.Frames.Length == 0)
+                    {
+                        throwProblems.Add(label + " 对象 " + i + ":基础动画读不到");
+                    }
+                    else if (!objectAni.Frames.Any(fr => fr.Boxes.Any(b => b.Type == AniBoxType.Attack)))
+                    {
+                        throwProblems.Add(label + " 对象 " + i + ":基础动画没有任何攻击框");
+                    }
+                    if (!InLibrary(objectDef.AttackInfoPath))
+                    {
+                        throwProblems.Add(label + " 对象 " + i + ":攻击信息读不到");
+                    }
+                }
+
+                HeroProgress? thrower = caster.Skills.LevelOf(def.Id) > 0 ? caster : CasterWhoKnows(assets, level, def.Id);
+                if (thrower == null)
+                {
+                    throwProblems.Add(label + ":没有任何成长类型的主角学得会这个技能");
+                    continue;
+                }
+                RoomCombatSession session = NewSession(assets, opts, thrower);
+                HeroSkillSlot? slot = session.Skills.SlotOfSkill(def.Id);
+                if (slot?.Throw == null || slot.ThrowPoses == null)
+                {
+                    throwProblems.Add(label + ":没有排进槽里(没学会、没有放法,或读不到姿势动画)");
+                    continue;
+                }
+                int mpBefore = session.Vitals?.Mp ?? 0;
+                double castStepMs = 0;
+                foreach (CommandStep step in CommandSteps.Of(def.Command, session.Hero.FacingLeft))
+                {
+                    session.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Keys);
+                    castStepMs = step.Ms;
+                }
+                if (session.Hero.Motion != HeroMotion.Skill || session.Hero.SkillId != def.Id || session.ThrowCasts != 1 || session.CommandCasts != 1 || !session.ThrowActive)
+                {
+                    throwProblems.Add(label + ":按指令没有放出这个技能(或阶段机没有启动)");
+                    continue;
+                }
+                if (session.Vitals != null && session.Vitals.Mp != mpBefore - slot.ConsumeMp)
+                {
+                    throwProblems.Add(label + ":魔法值没按 [consume MP] 扣");
+                }
+                if (slot.CooldownMs > 0 && slot.CooldownLeftMs <= 0)
+                {
+                    throwProblems.Add(label + ":冷却没有开始计");
+                }
+                if (session.HeroObjectsSpawned != recipe.Objects.Count)
+                {
+                    throwProblems.Add(label + ":这一步放出的对象数不是 " + recipe.Objects.Count + "(是 " + session.HeroObjectsSpawned + ")");
+                }
+                // 阶段计时:放出那一步已经走了 castStepMs;之后每 10 毫秒一步,换阶段与结束的时刻落在 [配置值, 配置值 + 10) 毫秒里
+                int chargeMs = def.GetStatic(recipe.ChargeStaticIndex, false);
+                int shootMs = def.GetStatic(recipe.ShootStaticIndex, false);
+                double elapsed = castStepMs;
+                double phase1At = session.ThrowPhase == 1 ? elapsed : -1;
+                bool alwaysSkill = true;
+                for (int t = 0; t < 30000 && session.ThrowActive; t += 10)
+                {
+                    session.Update(10, 0, 0, false, false, SkillKeys.None);
+                    elapsed += 10;
+                    if (phase1At < 0 && session.ThrowPhase == 1)
+                    {
+                        phase1At = elapsed;
+                    }
+                    alwaysSkill &= !session.ThrowActive || (session.Hero.Motion == HeroMotion.Skill && session.Hero.SkillId == def.Id);
+                }
+                bool chargeOk = phase1At >= chargeMs && phase1At < chargeMs + 10;
+                bool shootOk = elapsed - phase1At >= shootMs && elapsed - phase1At < shootMs + 10;
+                if (session.ThrowActive || session.ThrowCancels != 0 || !chargeOk || !shootOk || !alwaysSkill || session.HeroObjectsSpawned != recipe.Objects.Count)
+                {
+                    throwProblems.Add(label + ":阶段计时与 [static data] 对不上(阶段 0 " + (chargeOk ? "吻合" : "不吻合") + "、阶段 1 " + (shootOk ? "吻合" : "不吻合")
+                        + "),或中途被打断 " + session.ThrowCancels + " 次、没有一直在放技能、对象数变了");
+                    continue;
+                }
+                if (session.Hero.Motion != HeroMotion.Rest || session.Hero.SkillId != 0)
+                {
+                    throwProblems.Add(label + ":整段结束后主角没有回到站立");
+                    continue;
+                }
+                throwCycles++;
+            }
+            foreach (string line in throwProblems)
+            {
+                Console.WriteLine("    " + line);
+            }
+            Report(throwSkills == SkillRecipes.Default.ThrowCount && throwSkills > 0 && throwProblems.Count == 0 && throwCycles == throwSkills,
+                "投掷类技能 " + throwSkills + " 个(逐级查了 " + throwLevelsChecked + " 级的对象百分比都为正;对象 " + throwObjectsChecked + " 个、姿势动画 " + throwPosesOk + " 个读得通;阶段 0 带霸体的 "
+                + throwArmored + " 个)在真实数据里读得通;真实会话里按各自的指令各放一遍:对象一次放齐、两个阶段的时长与 [static data] 吻合、一直在放技能、结束后回到站立的 "
+                + throwCycles + " 个(问题 " + throwProblems.Count + " 条)");
         }
 
         bad += SkillCheckBodyHit.Run(assets, opts, catalog, level);

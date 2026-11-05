@@ -21,8 +21,14 @@ namespace Dnf.Play
     public sealed partial class SkillStageSpec
     {
         public SkillStageSpec(int motionIndex, int attackInfoIndex, int damageRateColumn, int damageFixedColumn, int effectIndex, int effectFrame, int requiresSkill = 0,
-            int castHoldFrames = 0, int[] moreEffects = null, int endFrame = -1, SkillFlagEvent[] flagEvents = null, SkillRiseSpec rise = null)
+            int castHoldFrames = 0, int[] moreEffects = null, int endFrame = -1, SkillFlagEvent[] flagEvents = null, SkillRiseSpec rise = null,
+            bool castHoldWholeTime = false)
         {
+            if (castHoldWholeTime && castHoldFrames > 0)
+            {
+                throw new ArgumentException("整段施法时间做蓄力就不再减帧:castHoldWholeTime 与 castHoldFrames 只能给一个", nameof(castHoldFrames));
+            }
+            CastHoldWholeTime = castHoldWholeTime;
             var keyEvents = new List<SkillFlagEvent>();
             if (flagEvents != null)
             {
@@ -89,6 +95,13 @@ namespace Dnf.Play
         /// (n 就是这个数,波系技能是 3);0 表示动画照帧时长走,没有蓄力。
         /// </summary>
         public int CastHoldFrames { get; }
+
+        /// <summary>
+        /// 施法蓄力取整段施法时间、不减后面几帧的时长(客户端状态 0x1b 的阶段 0:时长直接是按等级插值的施法时间,再按施法速度折算,进入块 0x00cd90d1;
+        /// 阶段 0 里动画定在第 0 帧、阶段 2 起拨到第 1 帧继续播,所以第 0 帧停多久就是施法时间多久)。为真时 <see cref="CastHoldFrames"/> 必须是 0
+        /// (两个同时给,构造时抛 <see cref="ArgumentException"/>);默认 false,别的配方的蓄力算法不变。
+        /// </summary>
+        public bool CastHoldWholeTime { get; }
 
         /// <summary>这一段有自己的命中(攻击信息下标非负);没有的段主角的身体不打人。</summary>
         public bool HasOwnStrike => AttackInfoIndex >= 0;
@@ -588,7 +601,7 @@ namespace Dnf.Play
     /// 表里的数都是客户端状态码里的常量(下标、列号),不含 PVF 里的数据值,也不含任何文件名——文件名按下标到角色脚本与技能预载表里取。
     /// 增益类技能(<see cref="BuffRecipe"/>)与防御姿态类技能(<see cref="GuardRecipe"/>)各放一张表:它们没有多段动作与攻击信息,只有一个动作。
     /// </summary>
-    public sealed class SkillRecipes
+    public sealed partial class SkillRecipes
     {
         private readonly Dictionary<int, SkillRecipe> _byId = new Dictionary<int, SkillRecipe>();
         private readonly Dictionary<int, BuffRecipe> _buffs = new Dictionary<int, BuffRecipe>();
@@ -728,6 +741,24 @@ namespace Dnf.Play
                 objects: new[]
                 {
                     new SkillObjectSpec(objectId: 20002, stage: 0, frame: 4, damageRateColumn: 2, damageFixedColumn: 0),
+                }),
+
+            // 带蓄力阶段的发射类技能(状态 0x1b,静态读码:起手函数 0x0049f240,进入块 0x00cd8c62,公共尾部的守卫块 0x00cc8df6):动作取 [etc motion] 第 1 项,
+            // 阶段 0 的时长就是按等级插值的施法时间(不减后面几帧),动画定在第 0 帧;没有"按着键且学会了蓄力被动技能"时阶段 0 过后直接进阶段 2(放出),
+            // 阶段 2 把动画拨到第 1 帧继续播,播到第 4 帧放一个被动对象:主角前方 80 像素,朝向同主角,伤害取 [level info] 第 1 列(百分比,这是状态码读到的唯一一列);
+            // 播到第 17 帧的开头状态就结束。不滑行(进入块把速度清零),主角身体不命中(状态里没设攻击信息)。
+            // 固定值取第 0 列是推断(状态码没读它,列值的量级与同族的固定值列一致);没做:阶段 1 的蓄力保持(按着键且学会了被动技能)、蓄满换另一个对象、
+            // 蓄力放大对象的尺寸与伤害、施法条、基础职业之外的对象编号。
+            new SkillRecipe(50,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 1, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0,
+                        endFrame: 17, castHoldWholeTime: true),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: 1, slideFollowsHeldDirection: false,
+                objects: new[]
+                {
+                    new SkillObjectSpec(objectId: 20019, stage: 0, frame: 4, damageRateColumn: 1, damageFixedColumn: 0, forwardX: 80),
                 }),
 
             // 挂多个特效、对象等特效关键帧的技能(状态 0x23,证据 E-137):施放动作是 [etc motion] 第 25 项,这个动作里一个攻击框也没有(状态码设的攻击信息没有框可打),
@@ -1078,6 +1109,23 @@ namespace Dnf.Play
             // 没做:出招、跳跃、受击硬直中触发(状态请求的优先级是 0,能不能顶掉当前状态没读通,这里只在站立、走、跑时触发)、已在姿态里被打到背面时再挡、
             // 触发时 0x01136b10 发的事件、防御姿态技能的"能不能用"(冷却与蓝算不算在内没读到,按学会就行)、PK 区那一段 [level info](这里不分区)。
             new BuffRecipe(3, BuffStat.AutoGuardChance, durationColumn: 1, amountStaticIndex: -1, amountColumn: 0, amountScale: 0.01, guardSkillId: 1),
+        },
+        new[]
+        {
+            // 投掷类技能(状态 0x0d 的一个技能,静态读码:起手函数 0x0049def0,状态进入块 0x00cde8b2 里按技能号分支的 0x00ce0ce6,基类阶段机 0x00863369 与 0x0086916b,
+            // 离开块 0x00ccda17):阶段 0 的时长取 [static data] 下标 1 的数、阶段 1 的时长取下标 3 的数(毫秒),下标 4 的数非 0 时阶段 0 开霸体、阶段 1 关掉;
+            // 姿势动画取角色脚本 [throw motion 1-1](阶段 0)与 [throw motion 1-2](阶段 1,两个标签与阶段的对应是由名字推断的);
+            // 阶段 0 进来那一刻在主角位置放三个老式被动对象(朝向同主角,创建顺序按下表,创建调用在 0x00ce11d4、0x00ce1232、0x00ce13aa):
+            // 每个对象的"伤害百分比"参数与参数缓冲的首个数取自 [level info] 的同一列(取列函数 0x00913d70):前两个取第 0 列、第三个取第 2 列;
+            // 第二个在纵深方向偏 50;主角身体不命中。参数怎么变成伤害没读到,按老式对象惯例(百分比当倍率、缓冲首个数当固定值)是推断。
+            // 没做:被动技能联动的放大(0x00ca6a80 为真时缓冲里的数乘一个系数)、另一个职业分支的对象编号与偏移、第二个对象在基础动画之外的另三个动作(换动作的时机在对象自己的类里,没读到)、阶段 0 的施法条。
+            new ThrowRecipe(24, chargeStaticIndex: 1, shootStaticIndex: 3, armorStaticIndex: 4, poseSelector: 1,
+                objects: new[]
+                {
+                    new SkillObjectSpec(objectId: 20122, stage: 0, frame: 0, damageRateColumn: 0, damageFixedColumn: 0),
+                    new SkillObjectSpec(objectId: 20120, stage: 0, frame: 0, damageRateColumn: 0, damageFixedColumn: 0, offsetY: 50),
+                    new SkillObjectSpec(objectId: 20121, stage: 0, frame: 0, damageRateColumn: 2, damageFixedColumn: 2),
+                }),
         });
     }
 }

@@ -2089,6 +2089,10 @@ namespace Dnf.Play
                         BuffCasts++;
                     }
                     SpawnEffects(cast);
+                    if (cast.Throw != null)
+                    {
+                        BeginThrowRun(cast);      // 投掷类技能(状态 0x0d 一族):对象与霸体的时间线交给阶段机
+                    }
                 }
                 else if (attackPressed && TryPickupSelected(_room.Hero))
                 {
@@ -2100,6 +2104,7 @@ namespace Dnf.Play
                 _room.Update(heroDelta, dirX, dirY, attackPressed, jumpPressed);
                 UpdateBuffCast(_room.Hero);
                 SpawnStageEffect(_room.Hero);
+                StepThrow(heroDelta);
                 UpdateHopLanding(_room.Hero);
                 UpdateDive(_room.Hero);
                 SpawnJumpSkillEffect(_room.Hero);
@@ -2135,6 +2140,7 @@ namespace Dnf.Play
             RetireFinishedPassives();
             _heroObjects.RemoveAll(o => o.Finished);
             SpawnSkillObjects(hero);       // 这一步新放的对象从下一步起才走
+            SpawnThrowObjects();
             SyncStance();
             EmitCooldownCues();
             for (int i = _popups.Count - 1; i >= 0; i--)
@@ -3959,7 +3965,7 @@ namespace Dnf.Play
         private void StrikeHero(MonsterActor owner, HeroStrikeInfo info, bool attackerFacingLeft, TownHero hero, MonsterActor attacker, Aabb hit)
         {
             // 受击前钩子(onBeforeDamage,主角类的覆盖 0x00846bd0;E-142):带概率触发类增益、而且正在出招的主角,每挨一击掷一次霸体
-            _superArmorMode = RollSuperArmor(hero);
+            _superArmorMode = Math.Max(RollSuperArmor(hero), ThrowArmorLevel);      // 投掷类技能阶段 0 的霸体也算数(进入块 setSuperArmor,E-142 同一个档位)
             int attack = info.Magical ? owner.MagicalAttack : owner.PhysicalAttack;
             int damage = _damageConstants != null
                 ? MonsterDamage.Roll(info, owner.Level, attack, Vitals, _damageConstants, unchecked((uint)_monsterRandom.Next()))
