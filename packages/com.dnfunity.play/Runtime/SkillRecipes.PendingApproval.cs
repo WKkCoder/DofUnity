@@ -3,7 +3,7 @@ using System.Collections.Generic;
 namespace Dnf.Play
 {
     // M105(R7-he):读通了、配方与测试都写好了,但还没放进 Default 的两个技能。
-    // 原因(必须由集成者决定,见 /tmp/m72/he/REPORT_r7.md "需要用户决定/批准"):这两个技能放出的被动对象在客户端里只用一列伤害(一个只取固定值列、一个只取百分比列),
+    // 原因(必须由集成者决定,见第七轮 he 的交付报告"需要用户决定/批准"一节):这两个技能放出的被动对象在客户端里只用一列伤害(一个只取固定值列、一个只取百分比列),
     // 而默认表里已有两条表形状检查对所有配方一视同仁——SkillChainTests.WithoutARecipeTheSkillIsNotImplementedAndTheDefaultTableIsWellFormed 要求每个对象的百分比列与固定值列都非负,
     // SkillAutoChainTests.TheDefaultTableHasAnAutoChainRecipeWithABodyStrikeFirstAndAHeroObjectOnTheSecondStage 要求"自动接续且带对象"的配方只有一个而且是那一种形状。
     // 本轮的规定是现有测试必须原样通过,所以这两个配方不放进 Default(放进去会让这两条测试变红)。
