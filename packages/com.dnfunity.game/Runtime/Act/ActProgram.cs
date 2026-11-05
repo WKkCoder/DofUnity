@@ -651,6 +651,21 @@ namespace Dnf.Game.Act
 
         /// <summary>[SET TEAM] 值:对每个活着的碰撞体目标调 setTeam(0x010cb440,虚槽 0x228;E-221)。</summary>
         SetTeam,
+
+        /// <summary>[SEND DO BEHAVIOR] 选择器标记 组号(行为码 0x71,块 0x010b9483):让每个目标自己当前的动作执行第 n 组;见 <see cref="ActMessageSpec"/>。</summary>
+        SendDoBehavior,
+
+        /// <summary>[SEND MESSAGE] 子关键字 整数…(行为码 0x79,块 0x010bb716):给目标的 AI 发五族命令之一。</summary>
+        SendMessage,
+
+        /// <summary>[CHANGE AI] 难度关键字 槽号 "路径"(行为码 0xec,块 0x010c9719):换 AI 宿主上某个角色槽的 .ai。</summary>
+        ChangeAi,
+
+        /// <summary>[CAMOUFLAGE] 开关 毫秒(行为码 0xae,块 0x010c68da):主动对象伪装或解除。</summary>
+        Camouflage,
+
+        /// <summary>[APPEND HIT] 前移 纵深 高度(行为码 0x82,块 0x010bdcac):拥有者对每个目标强行追加一击。</summary>
+        AppendHit,
     }
 
     /// <summary>
@@ -1020,6 +1035,9 @@ namespace Dnf.Game.Act
 
         /// <summary>[SET TEAM] 的队伍号(值表达式,E-221)。</summary>
         public ActValue TeamValue { get; internal set; }
+
+        /// <summary>消息族五个行为([SEND DO BEHAVIOR]、[SEND MESSAGE]、[CHANGE AI]、[CAMOUFLAGE]、[APPEND HIT])的参数;别的行为是 null。</summary>
+        public ActMessageSpec Msg { get; internal set; }
 
         public override string ToString() => Kind + " " + Tag;
     }

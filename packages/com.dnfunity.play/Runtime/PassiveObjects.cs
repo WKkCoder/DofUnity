@@ -15,7 +15,7 @@ namespace Dnf.Play
     /// 当前帧的攻击框与主角的受击框相交就算打中。所有者是怪物(<see cref="Owner"/>,算伤害用它的等级与攻击力),
     /// 也可以是另一个被动对象放出来的(<see cref="Master"/> 指向直接的创建者,<see cref="Owner"/> 始终是链条上最早的那只怪物)。
     /// </summary>
-    public sealed class PassiveObject : IActEntity, IHomingBody
+    public sealed partial class PassiveObject : IActEntity, IHomingBody
     {
         /// <summary>没有任何消失条件(时限、动画播完)的对象最长的寿命(毫秒):不让漏写条件的对象永远留在房间里(推断)。</summary>
         public const int MaxLifeMs = 12000;
