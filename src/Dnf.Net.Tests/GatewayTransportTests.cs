@@ -15,6 +15,14 @@ public sealed class GatewayTransportTests
 {
     private static readonly TimeSpan Generous = TimeSpan.FromSeconds(20);
 
+    /// <summary>
+    /// 连回环假服务器的传输:不走系统与环境变量里的代理(个别机器上的全局代理会把回环请求也接过去,关着的端口就不再报"连接失败")。
+    /// </summary>
+    private static HttpGatewayTransport Direct(TimeSpan timeout)
+    {
+        return new HttpGatewayTransport(new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false }, timeout);
+    }
+
     private static HttpResponseMessage Ok(string text)
     {
         return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(text, Encoding.UTF8) };
@@ -245,7 +253,7 @@ public sealed class GatewayTransportTests
     public async Task ARealRequestCarriesTheExactHeadersAndBody()
     {
         using LoopbackServer server = new((request, stream, ct) => LoopbackServer.WriteResponseAsync(stream, 200, Encoding.ASCII.GetBytes("pong"), null, ct));
-        using HttpGatewayTransport transport = new(Generous);
+        using HttpGatewayTransport transport = Direct(Generous);
         GatewayHttpResponse r = await transport.PostTextAsync(server.BaseUrl + "/api/v1/auth", "QUJDRA==");
         Assert.Equal(200, r.StatusCode);
         Assert.Equal("pong", r.Text);
@@ -262,7 +270,7 @@ public sealed class GatewayTransportTests
     public async Task ARealGetUsesGetAndNoBody()
     {
         using LoopbackServer server = new((request, stream, ct) => LoopbackServer.WriteResponseAsync(stream, 200, Encoding.ASCII.GetBytes("{}"), null, ct));
-        using HttpGatewayTransport transport = new(Generous);
+        using HttpGatewayTransport transport = Direct(Generous);
         GatewayHttpResponse r = await transport.GetTextAsync(server.BaseUrl + "/health");
         Assert.Equal(200, r.StatusCode);
         Assert.True(server.Requests.TryPeek(out LoopbackRequest seen));
@@ -277,7 +285,7 @@ public sealed class GatewayTransportTests
         // 重定向指向同一个服务器的另一个路径;如果被跟随,服务器会收到更多请求
         using LoopbackServer redirecting = new((request, stream, ct) =>
             LoopbackServer.WriteResponseAsync(stream, 302, Array.Empty<byte>(), new[] { "Location: /elsewhere" }, ct));
-        using HttpGatewayTransport transport = new(Generous);
+        using HttpGatewayTransport transport = Direct(Generous);
         GatewayHttpResponse post = await transport.PostTextAsync(redirecting.BaseUrl + "/api/v1/auth", "AAAA");
         Assert.Equal(302, post.StatusCode);
         GatewayHttpResponse get = await transport.GetTextAsync(redirecting.BaseUrl + "/health");
@@ -301,7 +309,7 @@ public sealed class GatewayTransportTests
                 await stream.WriteAsync(chunk, ct);
             }
         });
-        using HttpGatewayTransport transport = new(Generous);
+        using HttpGatewayTransport transport = Direct(Generous);
         await Assert.ThrowsAsync<InvalidDataException>(() => GatewayTestSupport.Bounded(transport.GetTextAsync(server.BaseUrl + "/health")));
     }
 
@@ -309,7 +317,7 @@ public sealed class GatewayTransportTests
     public async Task ARealServerThatNeverAnswersTimesOut()
     {
         using LoopbackServer server = new((request, stream, ct) => Task.Delay(Timeout.Infinite, ct));
-        using HttpGatewayTransport transport = new(TimeSpan.FromMilliseconds(300));
+        using HttpGatewayTransport transport = Direct(TimeSpan.FromMilliseconds(300));
         await Assert.ThrowsAsync<TimeoutException>(() => GatewayTestSupport.Bounded(transport.PostTextAsync(server.BaseUrl + "/api/v1/auth", "AAAA")));
     }
 
@@ -323,7 +331,7 @@ public sealed class GatewayTransportTests
             await stream.FlushAsync(ct);
             await Task.Delay(Timeout.Infinite, ct);
         });
-        using HttpGatewayTransport transport = new(TimeSpan.FromMilliseconds(400));
+        using HttpGatewayTransport transport = Direct(TimeSpan.FromMilliseconds(400));
         await Assert.ThrowsAsync<TimeoutException>(() => GatewayTestSupport.Bounded(transport.GetTextAsync(server.BaseUrl + "/health")));
     }
 
@@ -333,7 +341,7 @@ public sealed class GatewayTransportTests
         byte[] big = new byte[GatewayProtocol.MaxResponseBytes + 4096];
         Array.Fill(big, (byte)'x');
         using LoopbackServer server = new((request, stream, ct) => LoopbackServer.WriteResponseAsync(stream, 200, big, null, ct));
-        using HttpGatewayTransport transport = new(Generous);
+        using HttpGatewayTransport transport = Direct(Generous);
         await Assert.ThrowsAsync<InvalidDataException>(() => transport.GetTextAsync(server.BaseUrl + "/health"));
     }
 
@@ -345,7 +353,7 @@ public sealed class GatewayTransportTests
         probe.Start();
         port = ((IPEndPoint)probe.LocalEndpoint).Port;
         probe.Stop();
-        using HttpGatewayTransport transport = new(Generous);
+        using HttpGatewayTransport transport = Direct(Generous);
         await Assert.ThrowsAsync<HttpRequestException>(() => transport.GetTextAsync("http://127.0.0.1:" + port + "/health"));
     }
 
