@@ -3850,7 +3850,7 @@ namespace Dnf.Play
         }
 
         /// <summary>脚本运行器眼里的房间:随机数、生成被动对象、解析选择器。</summary>
-        private sealed class ActWorld : IActHost
+        private sealed partial class ActWorld : IActHost
         {
             private readonly RoomCombatSession _session;
 

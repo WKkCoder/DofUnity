@@ -582,6 +582,7 @@ namespace Dnf.Game.Act
             _victim = null;
             _attacker = null;
             _delayed.Clear();      // 排队的延迟行为随动作重来作废(推断);变量不清,留到下一次(E-132)
+            _remote.Clear();       // 别的对象发来、还没执行的"执行第 n 组"消息同样作废(收件的动作实例已经不是原来那一个)
             _castArmed = false;    // 读条随动作结束作废(客户端:动作结束时重置 +0x40c 并让拥有者停读条,0x010ace2f,E-168)
             _castTargets.Clear();
             _moveArmed = false;    // 朝目标冲的计时随动作重来作废(与读条同一个理由,推断)
@@ -612,6 +613,7 @@ namespace Dnf.Game.Act
             _aborted = false;
             _time += dt;
             RunDelayed();
+            RunRemote();
             if (frame != 0)
             {
                 _loopReset = false;
@@ -1843,6 +1845,13 @@ namespace Dnf.Game.Act
                                 }
                             }
                         }
+                        break;
+                    case ActBehaviorKind.SendDoBehavior:
+                    case ActBehaviorKind.SendMessage:
+                    case ActBehaviorKind.ChangeAi:
+                    case ActBehaviorKind.Camouflage:
+                    case ActBehaviorKind.AppendHit:
+                        ExecuteMessage(b, targets);
                         break;
                     default:
                         _host.NoteUnsupportedBehavior(b.Tag);     // 没做的行为按空操作处理(ActBehaviorGroup.UnsupportedTags 供审计;实际打到几次由场景统计,E-147)

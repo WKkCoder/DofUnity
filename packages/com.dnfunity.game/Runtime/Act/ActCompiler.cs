@@ -1145,6 +1145,12 @@ namespace Dnf.Game.Act
                     return ParseCategoryChange(cur, tag);
                 case "[SET TEAM]":
                     return ParseSetTeam(cur, tag);
+                case "[SEND DO BEHAVIOR]":
+                case "[SEND MESSAGE]":
+                case "[CHANGE AI]":
+                case "[CAMOUFLAGE]":
+                case "[APPEND HIT]":
+                    return ActMessageCompiler.Parse(cur, tag, IsBehaviorHead);
                 case "[CASTING]":
                 {
                     // [CASTING] 毫秒 行为组号:两个值表达式(全库 372 处写的都是字面整数;客户端执行块 0x010bd088,E-168);读不全就当没做

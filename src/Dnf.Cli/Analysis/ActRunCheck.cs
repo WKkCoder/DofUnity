@@ -17,7 +17,7 @@ namespace Dnf.Cli.Analysis;
 ///   运行器认得的触发器占比不低于下限、能放出的被动对象的 .obj 读得到、模板(基础动画)配得出。
 ///   只输出个数与标签名,不输出路径与脚本里的值;输出放 out/,不入库。
 /// </summary>
-internal static class ActRunCheck
+internal static partial class ActRunCheck
 {
     /// <summary>一类 .act(按文件去重)的汇总。</summary>
     private sealed class Tally
@@ -678,7 +678,7 @@ internal static class ActRunCheck
     /// 实跑的小世界(E-158):只有被动对象自己,没有主角与目标;对象放出的对象也在里面跑(同时最多 <see cref="MaxObjects"/> 个,多了拒绝)。
     /// 用来验证真实脚本在开关板宿主上跑得起来(不抛异常),并数开关的读写;不是战斗模拟。
     /// </summary>
-    private sealed class LiveWorld : IActHost
+    private sealed partial class LiveWorld : IActHost
     {
         public const int MaxObjects = 200;
 
@@ -730,6 +730,16 @@ internal static class ActRunCheck
             else if (selector == ActSelector.Monster || selector == ActSelector.AllMonsterTeam || selector == ActSelector.AllOurTeam)
             {
                 into.AddRange(Monsters);
+            }
+            else if (selector == ActSelector.Passive && ResolvePassives)
+            {
+                foreach (PassiveObject o in All)
+                {
+                    if (!o.Finished)
+                    {
+                        into.Add(o);
+                    }
+                }
             }
         }
 
@@ -802,7 +812,7 @@ internal static class ActRunCheck
     }
 
     /// <summary>站着不动的替身(追踪实跑里的"主角"或"怪物"):活着、没有目标、血量很大。</summary>
-    private sealed class Stand : IActEntity
+    private sealed partial class Stand : IActEntity
     {
         public Stand(ActEntityKind kind, int objectIndex, float x, float y)
         {
@@ -2545,6 +2555,8 @@ internal static class ActRunCheck
         }
         int missingObjects = 0, objectsWithTriggers = 0, objectsRunnable = 0, objectsDepth2 = 0, objectsAllRunnable = 0;
         var objectActs = new Dictionary<string, ActProgram>(StringComparer.OrdinalIgnoreCase);
+        var censusReached = new ActTagCensus();
+        var censusAll = new ActTagCensus();
         var depth = new Dictionary<int, int>();
         foreach (int r in spawnRoots)
         {
@@ -2570,6 +2582,7 @@ internal static class ActRunCheck
                     continue;
                 }
                 objectActs[path!] = program;
+                censusReached.Note(program, id);
                 foreach (ActTrigger t in program.Triggers)
                 {
                     anyTriggers = true;
@@ -2636,6 +2649,7 @@ internal static class ActRunCheck
                     continue;
                 }
                 allActs[path!] = program;
+                censusAll.Note(program, id);
                 foreach (ActTrigger t in program.Triggers)
                 {
                     anyT = true;
@@ -2655,6 +2669,9 @@ internal static class ActRunCheck
             allTally.Add(p);
         }
         allTally.Print("被动对象全表的 .act");
+        ActTagCensus.PrintMonsterBehaviors(monsterBehaviorTags, 80);
+        censusReached.Print("怪物出招能放出的被动对象", 60);
+        censusAll.Print("被动对象全表的对象", 60);
         Console.WriteLine("被动对象各动作的触发器开关板(E-158,按对象):");
         boardsReached.Print("怪物出招能放出的");
         boardsAll.Print("全表");
@@ -2681,6 +2698,10 @@ internal static class ActRunCheck
         liveCasts.Print();
         LiveMoveTally liveMoves = RunLiveMoves(assets, data, library);
         liveMoves.Print();
+        var messageSelectors = new MessageSelectorCensus();
+        LiveMessageTally liveMessages = RunLiveMessages(assets, data, library, messageSelectors);
+        liveMessages.Print();
+        messageSelectors.Print();
         LoopTally loops = RunLoopCensus(assets, data, library);
         loops.Print();
         int templates = 0;
@@ -2736,6 +2757,9 @@ internal static class ActRunCheck
         Report(liveMoves.Attacks > 0 && liveMoves.Failed == 0 && liveMoves.NotEntered == 0 && liveMoves.Pushed > 0,
             "带 [MOVE TO TARGET] 的招式实跑(E-169):每一招都切得进去、各跑最多 60 秒不抛异常、真的冲得出去(" + liveMoves.Attacks + " 招,没切进去 " + liveMoves.NotEntered + " 招,抛异常 "
             + liveMoves.Failed + " 招,冲出去 " + liveMoves.Pushed + " 招)");
+        Report(liveMessages.Attacks > 0 && liveMessages.Failed == 0 && liveMessages.GroupsPostedToMonsters + liveMessages.GroupsPostedToObjects > 0,
+            "消息族招式实跑:带消息族行为的招各跑最多 30 秒不抛异常,\"执行第 n 组\"的消息真的送到收件对象(" + liveMessages.Attacks + " 招,抛异常 "
+            + liveMessages.Failed + " 招,收下消息的 " + liveMessages.AttacksWithPostedGroups + " 招)");
         Report(loops.Live > 0 && loops.Failed == 0 && loops.NotEntered == 0 && loops.StillRunning * 20 <= loops.Live * 3,
             "循环动画出招实跑(E-170):带循环动画而且脚本能收尾的招每一招都切得进去、各跑最多 60 秒不抛异常,到时间还在放的不超过 15%(" + loops.Live
             + " 招,没切进去 " + loops.NotEntered + " 招,抛异常 " + loops.Failed + " 招,到时间还在放 " + loops.StillRunning + " 招)");
@@ -2770,6 +2794,8 @@ internal static class ActRunCheck
                 liveCustoms = liveCustoms.ToJson(),
                 liveCasts = liveCasts.ToJson(),
                 liveMoves = liveMoves.ToJson(),
+                liveMessages = liveMessages.ToJson(),
+                messageSelectors = messageSelectors.ToJson(),
                 loopCensus = loops.ToJson(),
             };
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(opts.JsonFile))!);
