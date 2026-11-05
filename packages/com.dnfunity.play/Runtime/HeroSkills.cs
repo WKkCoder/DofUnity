@@ -1165,11 +1165,16 @@ namespace Dnf.Play
 
         /// <summary>
         /// 另两种施法时间写法的第 0 帧停留(M105,<see cref="SkillCastMode"/>,静态读码):施法时间(.skl [casting time] 按等级插值)不大于 0 时返回 -1(动画照原样走);
-        /// <see cref="SkillCastMode.Stretch"/> = max(0, 施法时间 − 第 1 帧起各帧时长之和);<see cref="SkillCastMode.Pause"/> = 施法时间 + 第 0 帧自己的时长。
+        /// <see cref="SkillCastMode.Stretch"/> = max(0, 施法时间 − 第 1 帧起各帧时长之和);<see cref="SkillCastMode.Pause"/> = 施法时间 + 第 0 帧自己的时长;
+        /// <see cref="SkillCastMode.StaticHold"/> = [static data] 指定那一项的毫秒数(不看施法时间,取不到那一项时按 0;配方没写下标或技能数据缺失返回 -1)。
         /// 客户端最后还按施法速度缩放,这里没有施法速度属性,按 1000 算(同 <see cref="CastHoldMs"/>)。
         /// </summary>
         private static int CastModeHoldMs(HeroSkillSlot slot, SkillStageSpec spec, TownHero hero)
         {
+            if (spec.CastMode == SkillCastMode.StaticHold)
+            {
+                return slot.Def == null || spec.HoldStaticIndex < 0 ? -1 : Math.Max(0, slot.Def.GetStatic(spec.HoldStaticIndex, false));
+            }
             int castMs = slot.Def == null ? 0 : slot.Def.Interpolate(slot.Def.CastingTime, slot.Level);
             if (castMs <= 0)
             {

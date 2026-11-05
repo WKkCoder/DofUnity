@@ -22,10 +22,11 @@ namespace Dnf.Play
     {
         public SkillStageSpec(int motionIndex, int attackInfoIndex, int damageRateColumn, int damageFixedColumn, int effectIndex, int effectFrame, int requiresSkill = 0,
             int castHoldFrames = 0, int[] moreEffects = null, int endFrame = -1, SkillFlagEvent[] flagEvents = null, SkillRiseSpec rise = null,
-            SkillCastMode castMode = SkillCastMode.Placeholder, bool slides = true)
+            SkillCastMode castMode = SkillCastMode.Placeholder, bool slides = true, int holdStaticIndex = -1)
         {
             CastMode = castMode;
             Slides = slides;
+            HoldStaticIndex = holdStaticIndex;
             var keyEvents = new List<SkillFlagEvent>();
             if (flagEvents != null)
             {
@@ -99,6 +100,9 @@ namespace Dnf.Play
         /// </summary>
         public SkillCastMode CastMode { get; }
 
+        /// <summary>[static data] 里的下标:<see cref="SkillCastMode.StaticHold"/> 的第 0 帧停留毫秒数取自这一项;别的施法方式不看它。</summary>
+        public int HoldStaticIndex { get; }
+
         /// <summary>
         /// 进入这一段时按配方的起滑数起滑(默认 true,所有已有配方都是);false 时这一段起滑速度与加速度都按 0(M105,R7-he-09,静态读码:
         /// 多段技能里只有最后一段的进入处设滑行速度,前几段沿用进入块里清零的值)。
@@ -137,6 +141,12 @@ namespace Dnf.Play
         /// 之后第 0 帧照原来的时长播)。停留 = 施法时间 + 第 0 帧自己的时长。
         /// </summary>
         Pause = 2,
+
+        /// <summary>
+        /// 第 0 帧的停留直接取 [static data] 的某一项(<see cref="SkillStageSpec.HoldStaticIndex"/>)的毫秒数(状态 0x17:进入块把这一项写进动画第 0 帧与各个外观图层的帧时长,
+        /// 与施法时间无关);停留 = 这一项的值(不小于 0,数据里没有这一项时按 0)。
+        /// </summary>
+        StaticHold = 3,
     }
 
     /// <summary>
@@ -942,6 +952,21 @@ namespace Dnf.Play
                 {
                     new SkillObjectSpec(objectId: 20032, stage: 0, frame: 4, damageRateColumn: 1, damageFixedColumn: -1, forwardX: 150, offsetY: 0, offsetZ: 68),
                 }),
+
+            // 单段身体命中类技能(状态 0x17,R7-he-10、R7-he-11):起手函数 0x0049ed50 的"能不能用"检查用 [etc motion] 第 8 项,发的状态参数 = 一个数
+            // (主角的 0x7ac 槽返回 3 时为 1,否则 0;能学这个技能的两个成长类型都返回别的数,所以参数是 0)。
+            // 进入块 0x00cd0fa0(与状态 0x38 共用,按状态号分支):播第 8 项、攻击信息取 [etc attack info] 第 8 项、起滑清零(两个轴都是 0);
+            // 伤害取 [level info] 的百分比第 0 列(没有固定值列);[static data] 第 0 个数(毫秒)写进动画第 0 帧与全部外观图层的帧时长(= 第 0 帧停留,与施法时间无关)。
+            // 逐帧块 0x00cbb05f:动画播到第 2 帧时把预载特效第 0、2 个放进图层 -2 与 1(这两个所有成长类型都放),再按 0x7ac 的返回值多放两个(1 与 3 / 4 与 5 / 6 与 7),动画播完状态结束。
+            // 另有:主角学了第 12 号被动技能、0x7ac 返回 0 时第 6 帧起放一个被动对象(能学这个技能的成长类型都不会走到,没做)。
+            // 没做:按成长类型多放的两个特效(Play 这一层读不到成长类型)、按成长类型叠加的状态附加(第 13 号或第 4 号技能的 [level info] 列)、音效。
+            new SkillRecipe(9,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 8, attackInfoIndex: 8, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: 0, effectFrame: 2,
+                        moreEffects: new[] { 2 }, castMode: SkillCastMode.StaticHold, holdStaticIndex: 0),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false),
 
             // 四段连击类技能(状态 0x2c 的模式 2,R7-he-07、R7-he-08):起手函数 0x0049e520 的"能不能用"检查用 [etc motion] 第 70 项、发的状态参数是 2(模式 2);
             // 进入块 0x00cd8493 的模式 2 分支(0x00cd8909)播第 70 项、不设攻击信息、起滑清零,把预载表第 0 到 3 个特效放进四个图层。
