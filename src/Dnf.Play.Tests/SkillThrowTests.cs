@@ -190,6 +190,18 @@ public sealed class SkillThrowTests
         Assert.Null(new HeroSkillSlot(SkillKeys.None, 901, 1, Def(901, 100, 200, 7)).NewThrowRun());
     }
 
+    [Fact]
+    public void TheArmorSwitchMayLiveAtStaticIndexZeroAndOnlyAMissingIndexMeansNoSwitch()
+    {
+        // 开关取第 0 个数、阶段 0 取第 1 个、阶段 1 取第 2 个:下标 0 是合法下标(只有负数表示"没有开关项")
+        var atZero = new ThrowRecipe(901, 1, 2, armorStaticIndex: 0, poseSelector: 1, objects: new[] { Obj(0) });
+
+        Assert.True(new HeroSkillSlot(SkillKeys.None, 901, 1, Def(901, 7, 100, 200)) { Throw = atZero }.ThrowArmor);     // 第 0 个数 7:非 0
+        Assert.False(new HeroSkillSlot(SkillKeys.None, 901, 1, Def(901, 0, 100, 200)) { Throw = atZero }.ThrowArmor);    // 第 0 个数 0:没有霸体
+        ThrowRun run = new HeroSkillSlot(SkillKeys.None, 901, 1, Def(901, 7, 100, 200)) { Throw = atZero }.NewThrowRun();
+        Assert.Equal((100, 200, true), (run.ChargeMs, run.ShootMs, run.ArmorInCharge));
+    }
+
     // ------------------------------------------------------------------ 放出
 
     [Fact]
@@ -487,6 +499,22 @@ public sealed class SkillThrowTests
 
         arena.RunUntil(() => false, 100);
         Assert.Equal(1, s.HeroObjectsSpawned);
+    }
+
+    [Fact]
+    public void AHeroPutIntoTheDownPoseCancelsTheRunEvenWithoutTheKnockdownMachineRunning()
+    {
+        // 倒地姿态只由倒地状态机进入;这里直接把主角摆进倒地姿态(状态机没在跑),打断条件里的"主角在倒地姿态"一项仍然要生效
+        using var arena = new StrikeArena(Strike(), data => LoadHurtable(data, AvatarFixture.HopSkill, HopRecipes(charge: 1, shoot: 0, armor: 2)));
+        RoomCombatSession s = arena.Session;
+        arena.Cast();
+        Steps(s, 2);
+        Assert.Equal((true, 0, false), (s.ThrowActive, s.ThrowCancels, s.HeroDown.Active));   // 还在阶段 0,没有被打,倒地状态机没动
+
+        Assert.True(arena.Hero.BeginDown());
+        Assert.Equal((true, false), (arena.Hero.IsDown, arena.Hero.IsHurt));                  // 只有"倒地姿态"一项为真
+        Steps(s, 1);
+        Assert.Equal((false, 1), (s.ThrowActive, s.ThrowCancels));
     }
 
     [Fact]
