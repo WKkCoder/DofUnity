@@ -971,6 +971,11 @@ namespace Dnf.Play
         {
             SkillStageSpec spec = slot.Recipe.Stages[stage];
             Slide(slot, hero, heldX, heldY, out double speed, out double accel);
+            if (!spec.Slides)
+            {
+                speed = 0;
+                accel = 0;
+            }
             int hold = CastHoldMs(slot, spec, hero);
             if (!chain && stage == 0 && slot.Recipe.Hop != null)
             {

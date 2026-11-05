@@ -22,9 +22,10 @@ namespace Dnf.Play
     {
         public SkillStageSpec(int motionIndex, int attackInfoIndex, int damageRateColumn, int damageFixedColumn, int effectIndex, int effectFrame, int requiresSkill = 0,
             int castHoldFrames = 0, int[] moreEffects = null, int endFrame = -1, SkillFlagEvent[] flagEvents = null, SkillRiseSpec rise = null,
-            SkillCastMode castMode = SkillCastMode.Placeholder)
+            SkillCastMode castMode = SkillCastMode.Placeholder, bool slides = true)
         {
             CastMode = castMode;
+            Slides = slides;
             var keyEvents = new List<SkillFlagEvent>();
             if (flagEvents != null)
             {
@@ -97,6 +98,12 @@ namespace Dnf.Play
         /// 另外两种不用 <see cref="CastHoldFrames"/>,施法时间为 0(技能数据没有 [casting time] 或这一级是 0)时都不改动画。
         /// </summary>
         public SkillCastMode CastMode { get; }
+
+        /// <summary>
+        /// 进入这一段时按配方的起滑数起滑(默认 true,所有已有配方都是);false 时这一段起滑速度与加速度都按 0(M105,R7-he-09,静态读码:
+        /// 多段技能里只有最后一段的进入处设滑行速度,前几段沿用进入块里清零的值)。
+        /// </summary>
+        public bool Slides { get; }
 
         /// <summary>这一段有自己的命中(攻击信息下标非负);没有的段主角的身体不打人。</summary>
         public bool HasOwnStrike => AttackInfoIndex >= 0;
@@ -935,6 +942,29 @@ namespace Dnf.Play
                 {
                     new SkillObjectSpec(objectId: 20032, stage: 0, frame: 4, damageRateColumn: 1, damageFixedColumn: -1, forwardX: 150, offsetY: 0, offsetZ: 68),
                 }),
+
+            // 四段连击类技能(状态 0x2c 的模式 2,R7-he-07、R7-he-08):起手函数 0x0049e520 的"能不能用"检查用 [etc motion] 第 70 项、发的状态参数是 2(模式 2);
+            // 进入块 0x00cd8493 的模式 2 分支(0x00cd8909)播第 70 项、不设攻击信息、起滑清零,把预载表第 0 到 3 个特效放进四个图层。
+            // 逐帧块 0x00cbed4b(模式 2 的分支):动画播完的那一步,看当前动画是第 70、71、72 项中的哪一项就换下一项(新动画从头播),同时撤掉旧的四个预载特效、放新的四个
+            // (预载表下标 = 段号 × 4 + 0 到 3):第 71 项配攻击信息第 58 项与 [level info] 百分比第 2 列,第 72 项配第 59 项与第 3 列,第 73 项配第 60 项与第 4 列;全都没有固定值列。
+            // 换进第 73 项的那一步(只有这一步)设起滑:没按方向键取 [static data] 第 1、2 个数(速度、加速度),按着朝向一侧的方向键换成第 3、4 个数,按着别的方向不滑;
+            // 自动接续在换段时读不到按住的方向,这里一律按"没按方向键"取第 1、2 个数。第 73 项播到第 2 帧起另放几个只管画面的对象(没做),第 73 项播完守卫块 0x00cc7521 发"状态 0"。
+            // 模式 0、1(第 68、69 项)是同一状态的另两个入口,逐帧块 0x00cbf4ad 在它们的第 2、3 帧放被动对象;起手函数不发这两个模式,这里不做。
+            // 没做:特效的图层与翻转标志、第 73 项的画面对象、音效、起滑按方向键的两种取法。
+            new SkillRecipe(82,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 70, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0,
+                        moreEffects: new[] { 1, 2, 3 }, slides: false),
+                    new SkillStageSpec(motionIndex: 71, attackInfoIndex: 58, damageRateColumn: 2, damageFixedColumn: -1, effectIndex: 4, effectFrame: 0,
+                        moreEffects: new[] { 5, 6, 7 }, slides: false),
+                    new SkillStageSpec(motionIndex: 72, attackInfoIndex: 59, damageRateColumn: 3, damageFixedColumn: -1, effectIndex: 8, effectFrame: 0,
+                        moreEffects: new[] { 9, 10, 11 }, slides: false),
+                    new SkillStageSpec(motionIndex: 73, attackInfoIndex: 60, damageRateColumn: 4, damageFixedColumn: -1, effectIndex: 12, effectFrame: 0,
+                        moreEffects: new[] { 13, 14, 15 }),
+                },
+                slideSpeedIndex: 1, slideAccelIndex: 2, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                autoChain: true),
         },
         new[]
         {
