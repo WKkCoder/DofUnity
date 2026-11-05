@@ -165,6 +165,7 @@ namespace Dnf.Game
         /// 这样 <c>sq_LoadSkillEffectAni(skillIndex, "前缀" + i + "后缀")</c> 在每一次都成了普通的路径字面量。
         /// 起值取不到、止值比起值小(一次也不跑)、次数超过 <see cref="MaxLoopCount"/>、循环体取不到的循环:一次也不跑的删掉,其余原样保留(里面的调用照旧读不到)。
         /// 循环体可以是花括号块、另一个循环或一条以分号结束的语句;外层循环先展开,里面的循环随后展开。
+        /// 来由(M105,R7-he-08,静态读码):四段连击类技能的预载脚本把四段各四个特效写成 <c>for</c> 循环,不展开时预载表里一个特效也读不到。
         /// </summary>
         internal static string ExpandLoops(string text)
         {
