@@ -99,9 +99,9 @@ public class SkillAutoChainTests
         SkillRecipe auto = null;
         foreach (SkillRecipe r in SkillRecipes.Default.All)
         {
-            if (r.AutoChain && r.Objects.Count > 0)
+            if (r.AutoChain && r.Objects.Count > 0 && r.Stages[0].HasOwnStrike)
             {
-                Assert.Null(auto);                                           // 带对象的自动接续配方只有一个(没有对象的姿势→挥击类见 SkillPoseStrikeTests)
+                Assert.Null(auto);                                           // 第一段身体打人、带对象的自动接续配方只有一个(没有对象的姿势→挥击类见 SkillPoseStrikeTests;第一段是姿势的见 M104 的 SkillStateFamilyTests)
                 auto = r;
             }
         }

@@ -15,7 +15,7 @@ namespace Dnf.Cli.Analysis;
 /// 4. 接线:本地主角的进度里快捷栏与旧的"初始技能表"排法一致、点数 = 等级对应的总额;存档往返不变。
 /// 数量、等级、点数来自用户自己的数据,只打印在本机的终端,不要抄进入库的文件;通过与否只看结构。
 /// </summary>
-internal static class SkillCheck
+internal static partial class SkillCheck
 {
     private const int Unlimited = 1_000_000_000;
 
@@ -334,6 +334,7 @@ internal static class SkillCheck
             {
                 needStatic = Math.Max(needStatic, recipe.MultiHitCountIndex + 1);
             }
+            needStatic = Math.Max(needStatic, recipe.ExtraStaticNeed);      // 段首瞬移的距离、逐击连段的击数与锁开关(M104)
             if (def.StaticData.Length < needStatic)
             {
                 recipeProblems.Add(label + ":[static data] 只有 " + def.StaticData.Length + " 个数,配方要 " + needStatic + " 个");
@@ -356,9 +357,10 @@ internal static class SkillCheck
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:攻击信息读不到");
                 }
-                if (!st.HasOwnStrike && recipe.Objects.Count == 0 && recipe.Hop == null && recipe.JumpAttack == null && !(recipe.AutoChain && recipe.Stages.Any(other => other.HasOwnStrike)))
+                if (!st.HasOwnStrike && recipe.Objects.Count == 0 && recipe.Hop == null && recipe.JumpAttack == null && !(recipe.AutoChain && recipe.Stages.Any(other => other.HasOwnStrike))
+                    && !(st.AutoAdvance && recipe.Stages.Any(other => other.HasOwnStrike)))
                 {
-                    // (姿势→挥击类的姿势段:没有命中也不放对象,后面有一段自己的命中,M65,E-163)
+                    // (姿势→挥击类的姿势段:没有命中也不放对象,后面有一段自己的命中,M65,E-163;逐击连段的起手段同理,播完自己接打击段,M104)
                     recipeProblems.Add(label + " 第 " + i + " 段:没有自己的命中,配方却没有放对象");
                 }
                 foreach (int effectIndex in st.EffectIndices)
@@ -688,9 +690,10 @@ internal static class SkillCheck
                 {
                     recipeProblems.Add(label + " 对象 " + i + ":放出的帧 " + o.Frame + " 超出施法动作的帧数 " + (motion == null ? 0 : motion.Frames.Length));
                 }
-                if (def.GetLevel(1, o.DamageRateColumn, false) <= 0 || def.GetLevel(1, o.DamageFixedColumn, false) <= 0)
+                if (def.GetLevel(1, o.DamageRateColumn, false) <= 0 || (o.DamageFixedColumn >= 0 && def.GetLevel(1, o.DamageFixedColumn, false) <= 0))
                 {
-                    recipeProblems.Add(label + " 对象 " + i + ":1 级的两个伤害列读出来不是正数");
+                    // 固定值列可以没有(下标 -1:这个技能的 [level info] 里只有百分比一列,M104)
+                    recipeProblems.Add(label + " 对象 " + i + ":1 级的伤害列读出来不是正数");
                 }
                 if (o.AfterEffect >= 0)
                 {
@@ -841,6 +844,9 @@ internal static class SkillCheck
                 Report(lying && session.QuickStands == 1 && session.HeroDown.QuickStanding,
                     "倒地起身:躺着的主角打出倒地起身的指令,起身 " + session.QuickStands + " 次(躺着 " + (lying ? "是" : "否") + ",正在起身 " + (session.HeroDown.QuickStanding ? "是" : "否") + ")");
             }
+
+            // 7a. 按成长类型数能放的技能(M104):子职业的技能默认主角学不了,逐个成长类型各建一个新主角转职、花光点数,已实现的、学会了的主动技能各放一遍。
+            ReportGrowtypeCasts(assets, opts, catalog, level, Report);
 
             // 7b. 悬停俯冲类技能(M55,证据 E-149)的真实会话:表里的每个俯冲技能——地面上打它的指令放不出它(不进冷却);主角起跳升到够高后打指令:放出来的就是它自己、
             // 动画定在空中攻击动作的最后一帧;一路走完悬停、俯冲(放预载特效)、落地(放出时的离地高度够就放冲击对象,不够就不放)、坐姿、回到站立;
@@ -1173,6 +1179,9 @@ internal static class SkillCheck
             Report(autoSkills > 0 && autoProblems.Count == 0 && autoCycles == autoSkills,
                 "自动接续类技能 " + autoSkills + " 个:按各自的指令放出第一段(指令撞车的 " + autoQuickCasts + " 个改按快捷键放),不按任何键各段自己接上、放出对象 " + autoObjects + " 个、整个技能播完回到站立走完 " + autoCycles
                 + " 个(其中升空出招 " + autoRises + " 个:升到空中、落回地面;魔法值与冷却只在起手算;问题 " + autoProblems.Count + " 条)");
+
+            // 7d2. 状态族的放法(M104,证据 E-271、E-272):段首瞬移、逐击连段、逐段不滑行在真实数据里走通。
+            ReportStateFamilies(assets, opts, catalog, level, Report);
 
             // 7e. 带关键帧标志事件的技能(M65,证据 E-163)的真实会话:表里每个这类技能放进快捷栏第 1 格、按键放出来、动画播完;
             // 会话触发的事件数等于"动作里带标志、而且这一段的事件表里有这个标志"的帧数(每帧一次),放完回到站立。只打印汇总数。

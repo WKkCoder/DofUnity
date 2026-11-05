@@ -2460,8 +2460,12 @@ namespace Dnf.Play
             {
                 return false;
             }
-            double x = hero.X + (hero.FacingLeft ? -spec.ForwardX : spec.ForwardX);
-            _heroObjects.Add(new HeroObject(template, slot.ObjectStrikes[index], slot.SkillId, x, hero.Y + spec.OffsetY, hero.Z + spec.OffsetZ, hero.FacingLeft));
+            bool fromOrigin = spec.FromWarpOrigin && slot.HasWarpOrigin;      // 状态 0x21:对象在原地创建、之后才瞬移(E-271)
+            double baseX = fromOrigin ? slot.WarpOriginX : hero.X;
+            double baseY = fromOrigin ? slot.WarpOriginY : hero.Y;
+            double baseZ = fromOrigin ? slot.WarpOriginZ : hero.Z;
+            double x = baseX + (hero.FacingLeft ? -spec.ForwardX : spec.ForwardX);
+            _heroObjects.Add(new HeroObject(template, slot.ObjectStrikes[index], slot.SkillId, x, baseY + spec.OffsetY, baseZ + spec.OffsetZ, hero.FacingLeft));
             HeroObjectsSpawned++;
             return true;
         }

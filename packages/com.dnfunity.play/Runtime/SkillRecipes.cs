@@ -18,7 +18,7 @@ namespace Dnf.Play
     /// 动作取 [etc motion] 的第几项,攻击信息取 [etc attack info] 的第几项,伤害取 .skl [level info] 当前等级的哪两列(百分比列、固定值列)。
     /// 攻击信息下标为 -1 的段没有自己的命中(主角的身体不打人,伤害由它放出的被动对象结算,<see cref="SkillObjectSpec"/>,证据 E-135),这时两个伤害列也填 -1。
     /// </summary>
-    public sealed class SkillStageSpec
+    public sealed partial class SkillStageSpec
     {
         public SkillStageSpec(int motionIndex, int attackInfoIndex, int damageRateColumn, int damageFixedColumn, int effectIndex, int effectFrame, int requiresSkill = 0,
             int castHoldFrames = 0, int[] moreEffects = null, int endFrame = -1, SkillFlagEvent[] flagEvents = null, SkillRiseSpec rise = null)
@@ -164,7 +164,7 @@ namespace Dnf.Play
     /// 朝向与主角一致;伤害取 .skl [level info] 当前等级的 <see cref="DamageRateColumn"/>(百分比)与 <see cref="DamageFixedColumn"/>(固定值)两列,
     /// 命中用对象自己 .obj 的 [attack info]。<see cref="Frame"/> 是下限;带 <see cref="AfterEffect"/> 时还要等那个特效的动画播到关键帧标志。
     /// </summary>
-    public sealed class SkillObjectSpec
+    public sealed partial class SkillObjectSpec
     {
         public SkillObjectSpec(int objectId, int stage, int frame, int damageRateColumn, int damageFixedColumn, int forwardX = 0, int offsetY = 0, int offsetZ = 0,
             int afterEffect = -1, int afterEffectFlag = 1, bool onLanding = false)
@@ -371,7 +371,7 @@ namespace Dnf.Play
     /// 没按方向键用这两个数,按着朝向一侧的方向键再加上第 <see cref="ForwardSpeedIndex"/>、<see cref="ForwardAccelIndex"/> 个数,按着别的方向(反向、上下)就不滑。
     /// 标了 <see cref="AutoChain"/> 的配方不看按键:每一段的动画播完就自己接下一段(证据 E-154)。
     /// </summary>
-    public sealed class SkillRecipe
+    public sealed partial class SkillRecipe
     {
         public SkillRecipe(int skillId, IEnumerable<SkillStageSpec> stages, int slideSpeedIndex, int slideAccelIndex, int forwardSpeedIndex, int forwardAccelIndex,
             int chainFromFrame, bool slideFollowsHeldDirection = true, IEnumerable<SkillObjectSpec> objects = null, SkillHopSpec hop = null,
@@ -422,7 +422,7 @@ namespace Dnf.Play
         }
 
         public int SkillId { get; }
-        public IReadOnlyList<SkillStageSpec> Stages { get; }
+        public IReadOnlyList<SkillStageSpec> Stages { get; private set; }
 
         /// <summary>起滑速度在 [static data] 里的下标;负数表示不滑行。</summary>
         public int SlideSpeedIndex { get; }
@@ -845,6 +845,71 @@ namespace Dnf.Play
                 },
                 slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
                 autoChain: true),
+
+            // 段首瞬移类技能(状态 0x21,起手函数 0x0049e3f0,证据 E-271、E-272):进入块 0x00cd3326 起,阶段号存在对象 +0x5f80(0 姿势、1 瞬移斩、2 收尾);
+            // 每个阶段进入时先把两个轴的滑行速度清零,所以都不滑行。阶段 0:动作取 [etc motion] 第 18 项,不设攻击信息;公共后段的守卫块(比较在 0x00cc57f3)
+            // 在这个动画播完时自己发"状态 0x21、参数 [1]"。阶段 1(进入块 0x00cd35a1 起):动作第 19 项;先在原地创建一个被动对象(0x00cd35db 起,
+            // 只有本机操控的角色才创建,0x007f9eb0 判):基础职业(0x0049c8f0 为真)与非基础职业各取一个对象号,这里只做基础职业那个;然后瞬移(SkillWarpSpec:距离取 [static data] 第 0 个数,
+            // 进入块 0x00cd370d 到 0x00cd3781);再设攻击信息([etc attack info] 第 21 项)、伤害百分比取 [level info] 第 0 列(0x009138c0,没有固定值列),
+            // 预载特效 0 放进图层 1(0x006902a0)。读真实数据得到:动作第 19 项(含武器图层)里没有任何攻击框,所以身体不打人,命中全在原地那个对象上
+            // (它的基础动画第 0 帧有一个宽攻击框),与波系技能一样伤害取技能 [level info] 的列(E-135)——因此配方里这一段不带攻击信息、对象标成放在瞬移之前的位置
+            // (SkillObjectSpec.AtWarpOrigin)。守卫块里阶段 1 动画播完:命中名单(+0x5f98)非空就发阶段 2,空的回站立。
+            // 没做:阶段 2(对被标记的目标各再打一下:放特效 1、2、3,伤害取另一个技能的 [level info] 一列,命中回调往名单里放目标的位置没读到,
+            // 所以这里一律按"名单空"回站立)、瞬移前的残影与落点的尘土特效(进入块里写死的名字)、阶段 0 的屏幕叠加对象、音效、非基础职业的对象与状态参数包。
+            new SkillRecipe(60,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 18, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                    new SkillStageSpec(motionIndex: 19, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0)
+                        .WithWarp(new SkillWarpSpec(distanceStaticIndex: 0)),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                objects: new[]
+                {
+                    new SkillObjectSpec(objectId: 20026, stage: 1, frame: 0, damageRateColumn: 0, damageFixedColumn: -1).AtWarpOrigin(),
+                },
+                autoChain: true),
+
+            // 两段滑行类技能(状态 0x25,起手函数 0x0049eea0,证据 E-271、E-272):进入块 0x00cd9192 起、逐帧块 0x00cc044e、守卫块 0x00cc7814;阶段号存在 +0x6b20(受保护字段):
+            // 0 第一段、1 第二段、2 蓄力、3 放出。阶段 0:动作 [etc motion] 第 43 项、攻击信息第 42 项、伤害百分比取 [level info] 第 0 列,横轴起滑速度与加速度取 [static data]
+            // 第 0、1 个数(不看方向键),进入时把预载特效 0(图层 1)与 4(图层 2)各放一个;阶段 1:动作第 44 项、攻击信息第 43 项、百分比第 1 列,两个轴的滑行清零(只有第一段滑),
+            // 动画播到第 1 帧放预载特效 1(逐帧块 0x00cc0517 起)。守卫块:阶段 0 动画播完发阶段 1;阶段 1 动画播完时技能键没按着就回站立,按着时
+            // 非基础职业进阶段 2(蓄力),基础职业还要(成长类型 3 且一个被动技能够级)或(成长类型 2 且另一个被动技能够级)才进蓄力,否则回站立——
+            // 能学这个技能的成长类型都不在这两条里,所以基础职业主角只走"阶段 0 → 阶段 1 → 站立"(推断,由条件读码得出),按两段自动接续放。
+            // 没做:阶段 2、3(蓄力,动作第 45 项,放出时百分比在 [level info] 第 3、4 列之间按蓄力比例插值——这个技能的 [level info] 只有两列,读不到第 3、4 列——
+            // 蓄满放被动对象)、非基础职业的路径、音效、两个阶段里别的特效。
+            new SkillRecipe(68,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 43, attackInfoIndex: 42, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0,
+                        moreEffects: new[] { 4 }),
+                    new SkillStageSpec(motionIndex: 44, attackInfoIndex: 43, damageRateColumn: 1, damageFixedColumn: -1, effectIndex: 1, effectFrame: 1)
+                        .WithoutSlide(),
+                },
+                slideSpeedIndex: 0, slideAccelIndex: 1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                autoChain: true),
+
+            // 逐击连段类技能(状态 0x27,起手函数 0x0049ec00,证据 E-271、E-272):进入块 0x00cd5323 起,守卫块 0x00cc642a 起;每一击都是"起手(阶段 0)+ 打击(阶段 1)",
+            // 击数取 [static data] 第 0 个数(进入块 0x00cd5486)。下面四段是模板(SkillRepeatSpec):非最后一击的起手(动作 [etc motion] 第 47 项,不设攻击信息,滑行清零)、
+            // 非最后一击的打击(动作第 49 项、攻击信息第 45 项、伤害百分比取 [level info] 第 0 列)、最后一击的起手(动作第 48 项)、最后一击的打击(动作第 50 项、攻击信息第 46 项、
+            // 百分比第 1 列);打击段的横轴起滑速度与加速度取 [static data] 第 2、3 个数(进入块 0x00cd57cf 起,第 4、5 个数是纵深轴的,没做),不看方向键。
+            // 起手段动画播完自己接打击段;打击段里动画播过第 2 帧后再按技能键接下一击,最后一击与没按键时动画播完回站立;[static data] 第 6 个数非 0 时倒数第二击不许按键接。
+            // 读真实数据得到:打击段的命中框在武器图层里(基础动作里没有),起手段没有——与"起手不设攻击信息"一致。
+            // 没做:纵深轴的滑行、打击段按住的方向决定转身、预载特效(进入块放的两个特效下标超出这个技能的预载表)、写死名字的几个音效与光效、
+            // 非基础职业击数改 1、两个被动技能让击数加 1(只在成长类型 0 时判)、按键接段时的"能不能用"检查与它的消耗(虚表槽 0x864 的含义没读通,这一版不扣)、
+            // 打击段进入时写进对象 +0x63c0 的 [static data] 第 1 个数(用途没读到)。
+            new SkillRecipe(72,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 47, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0)
+                        .WithoutSlide().WithAutoAdvance(),
+                    new SkillStageSpec(motionIndex: 49, attackInfoIndex: 45, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                    new SkillStageSpec(motionIndex: 48, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0)
+                        .WithoutSlide().WithAutoAdvance(),
+                    new SkillStageSpec(motionIndex: 50, attackInfoIndex: 46, damageRateColumn: 1, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0),
+                },
+                slideSpeedIndex: 2, slideAccelIndex: 3, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: 2, slideFollowsHeldDirection: false)
+                .WithRepeat(new SkillRepeatSpec(countStaticIndex: 0, lockPenultimateStaticIndex: 6)),
         },
         new[]
         {
