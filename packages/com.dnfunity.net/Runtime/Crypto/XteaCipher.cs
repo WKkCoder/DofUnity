@@ -5,7 +5,7 @@ namespace Dnf.Net.Crypto
     /// <summary>
     /// 槽 7:XTEA(服务端 CNCryptoXTea:Initialize 0x0809da20、Encrypt 0x0809dc78、Decrypt 0x0809dd6a;槽表见 E-204)。
     /// 与公开 XTEA 的关系:轮函数、32 轮、delta 0x9E3779B9 都一致;唯一的差别是字节序——密钥与数据块都按小端装成 32 位字。
-    /// 实测行为与 libtomcrypt 较早的公开版本一致;较新的公开版本改成了大端,同一把密钥会得到不同的密文。
+    /// 推断(E-292):与 libtomcrypt 较早的公开版本相符,较新的公开版本改成了大端,同一把密钥会得到不同的密文;版本对应只是依公开源码比对,服务端二进制里没有版本字符串。
     /// 密钥片 16 字节全部参与(本机模拟器探测:任一字节翻转都会改变密文,E-263)。
     /// </summary>
     public sealed class XteaCipher : BlockCipher
