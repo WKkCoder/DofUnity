@@ -1,0 +1,17 @@
+# 来源:服务端会话密码层研究的本机模拟器向量(合成密钥与合成数据),此处只做整理,不改结果。
+# 本机模拟器测量,非 REA:各槽对象虚表 +0x20 GetKeySize / +0x24 GetBlockSize 的返回值;GetCryptoType = 包号 % 14(0x08097160)
+# 列:slot name key_size block_size
+0	Shift	8	4
+1	Rijndael	16	16
+2	BlowFish	56	8
+3	Rc6	60	16
+4	TwoFish	32	16
+5	Tea	16	16
+6	Kasumi	16	8
+7	XTea	16	8
+8	Noekeon	16	16
+9	Khazad	16	8
+10	Cast5	16	8
+11	Skipjack	10	8
+12	Multi2	40	8
+13	Anubis	16	16
