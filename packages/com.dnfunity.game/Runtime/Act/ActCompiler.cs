@@ -290,7 +290,7 @@ namespace Dnf.Game.Act
     }
 
     /// <summary>触发器与行为组的编译(见 <see cref="ActProgram.Compile"/>)。</summary>
-    internal static class ActCompiler
+    internal static partial class ActCompiler
     {
         // ------------------------------------------------------------------ 触发器
 
@@ -660,6 +660,16 @@ namespace Dnf.Game.Act
                         break;
                     case "[SAVE TARGET OBJECT]":
                         records.Add(ParseSaveTarget(cur, tag, unsupported));
+                        break;
+                    case "[CHECK SYMBOL]":
+                    case "[CHECK PARTY SYMBOL]":
+                    case "[CHECK PLAYER NUM]":
+                    case "[CHECK PARTYMEMBERS STATE]":
+                    case "[CHECK PARTY SLOT]":
+                    case "[AREA]":
+                    case "[IS IN AREA]":
+                    case "[IS DAMAGE ENABLE]":
+                        ParseSymbolRecord(cur, tag, records, unsupported);      // M107:ActCompiler.Symbols.cs
                         break;
                     default:
                         AddUnsupported(records, unsupported, tag);
@@ -1145,6 +1155,11 @@ namespace Dnf.Game.Act
                     return ParseCategoryChange(cur, tag);
                 case "[SET TEAM]":
                     return ParseSetTeam(cur, tag);
+                case "[SET SYMBOL]":
+                case "[SET SYMBOL OPTION]":
+                case "[SET PARTY SYMBOL]":
+                case "[ABS CASTING]":
+                    return ParseSymbolBehavior(cur, tag);      // M107:ActCompiler.Symbols.cs
                 case "[CASTING]":
                 {
                     // [CASTING] 毫秒 行为组号:两个值表达式(全库 372 处写的都是字面整数;客户端执行块 0x010bd088,E-168);读不全就当没做

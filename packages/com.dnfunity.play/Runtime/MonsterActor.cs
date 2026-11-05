@@ -1167,7 +1167,7 @@ namespace Dnf.Play
         }
 
         /// <summary>怪物在 .act 脚本里的身份:位置、朝向取自怪物,脚本的"作用"落到怪物自己的方法上。</summary>
-        private sealed class ActBody : IActEntity
+        private sealed partial class ActBody : IActEntity
         {
             internal readonly MonsterActor _m;
 
