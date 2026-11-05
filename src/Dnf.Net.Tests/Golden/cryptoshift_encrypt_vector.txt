@@ -1,0 +1,4 @@
+# SYNTH rot(5b) xor_key u32 LE at +0xc; plain len=4
+0712345678	01020304	79543716
+03aabbccdd	ffeeddcc	22226666
+1fdeadbeef	00000000	efbeadde

@@ -1,0 +1,8 @@
+# packet_id	期望槽位(=id%14)
+# 本机模拟器测量,非 REA: elf_emu.call(0x08097160, packet_id) @ GetCryptoType
+0	0
+1	1
+14	0
+15	1
+604	2
+0x25c	2

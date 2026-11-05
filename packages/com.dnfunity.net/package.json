@@ -1,0 +1,13 @@
+{
+  "name": "com.dnfunity.net",
+  "version": "0.1.0",
+  "displayName": "DNF Network",
+  "description": "DNF 网络协议的 C# 实现:网关登录、游戏服的帧与会话算法槽。不含任何原版内容;运行时需要用户自备的服务器与账号。",
+  "unity": "6000.0",
+  "dependencies": {},
+  "keywords": [
+    "dnf",
+    "network",
+    "protocol"
+  ]
+}

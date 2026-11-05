@@ -1,0 +1,16 @@
+# slot	class	vtable	 block_bytes	encrypt_va	decrypt_va	algo_note
+# 静态读码 CreateCryptoGraph @ 0809df90 + vtable 读码,非 REA
+0	CNCryptoShift	0x8b139e8	4	0x809c6c8	0x809c7b0	ROR(rot&0x1f)+XOR u32 key
+1	CNCryptoRijndael	0x8b13988	16	0x809c2e8	0x809c376	CRijndael 内嵌
+2	CNCryptoBlowFish	0x8b136e8	8	0x8099d16	0x8099dfc	Blowfish
+3	CNCryptoRc6	0x8b13928	16	0x809bd1a	0x809be06	RC6
+4	CNCryptoTwoFish	0x8b13b08	16	0x809d6d4	0x809d7c6	Twofish
+5	CNCryptoTea	0x8b13aa8	16	0x809d228	0x809d2b6	CTEA 内嵌
+6	CNCryptoKasumi	0x8b137a8	8	0x809a85c	0x809a94e	KASUMI
+7	CNCryptoXTea	0x8b13b68	8	0x809dc78	0x809dd6a	XTEA 内嵌
+8	CNCryptoNoekeon	0x8b138c8	16	0x809b948	0x809ba3a	NOEKEON
+9	CNCryptoKhazad	0x8b13808	8	0x809ae00	0x809aef2	KHAZAD
+10	CNCryptoCast5	0x8b13748	8	0x809a2b8	0x809a3aa	CAST5
+11	CNCryptoSkipjack	0x8b13a48	8	0x809cc58	0x809cd4a	SKIPJACK
+12	CNCryptoMulti2	0x8b13868	8	0x809b3a4	0x809b496	MULTI2
+13	CNCryptoAnubis	0x8b13688	16	0x8099614	0x8099706	ANUBIS
