@@ -43,6 +43,8 @@ public sealed partial class ActRuntimeTests
         var hero = new Entity { Kind = ActEntityKind.Character };
         var mob = new Entity { Kind = ActEntityKind.Monster };
         mob.SetActTeam(0);
+        Assert.Equal(0, mob.OverrideActTeam);
+        mob.Log.Clear(); // SetActTeam 自己会记一行日志,不清掉的话"被留下"的判断会被它污染
         Assert.Equal(new[] { true, true, false }, Kept(p, owner, new Host(), hero, mob, new Entity { Kind = ActEntityKind.Monster }));
     }
 
@@ -66,6 +68,17 @@ public sealed partial class ActRuntimeTests
         var c = new Entity { ActVisibilityByte = 4 };
         var d = new Entity { ActVisibilityByte = 0x100 };
         Assert.Equal(new[] { true, true, false, false }, Kept(p, new Entity(), new Host(), a, b, c, d));
+
+        // 低字节整个参与比较(不只是低 4 位):0x13 与 0x03 的低 4 位相同,但字节不同
+        ActProgram q = Filter(L("[IS VISIBLE]", 0xF3), L("[/IS VISIBLE]"));
+        var e = new Entity { ActVisibilityByte = 0xF3 };
+        var f = new Entity { ActVisibilityByte = 0x1F3 };
+        var g = new Entity { ActVisibilityByte = 0x13 };
+        var h = new Entity { ActVisibilityByte = 0x03 };
+        Assert.Equal(new[] { true, true, false, false }, Kept(q, new Entity(), new Host(), e, f, g, h));
+        ActProgram r = Filter(L("[IS VISIBLE]", 3), L("[/IS VISIBLE]"));
+        var i = new Entity { ActVisibilityByte = 0x13 };
+        Assert.Equal(new[] { false }, Kept(r, new Entity(), new Host(), i));
     }
 
     [Fact]
