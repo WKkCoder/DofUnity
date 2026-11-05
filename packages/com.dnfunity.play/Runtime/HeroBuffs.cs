@@ -22,6 +22,15 @@ namespace Dnf.Play
         /// 掷中这一击不产生受击反应、伤害照扣(<see cref="RoomCombatSession.SuperArmorProcs"/>、<see cref="RoomCombatSession.SuperArmorAbsorbed"/>)。
         /// </summary>
         SuperArmorChance = 100,
+
+        /// <summary>
+        /// 被打时自动防御的概率(0 到 1;内部编号,客户端是专门的附加体类,不走属性号,同 E-142):客户端受击前钩子(0x00cb20a0)在防御姿态分支之后还有一段
+        /// (0x00cb23a6 起,E-164 当时留着没做):这个附加体生效、两个技能都学过、一击能挡、主角不在倒地与冰冻类状态时,概率 × 100 与 [0, 10000) 的随机数比,
+        /// 掷中就发防御姿态的状态(带"已挡下"标志)——主角站着、走着、跑着(<see cref="Dnf.Render.TownHero.CanBeginSkill"/>)时这里就是:转向攻击方、
+        /// 进姿态、伤害乘防御姿态技能的穿过百分比、没有受击反应、后滑(<see cref="RoomCombatSession.AutoGuardBlocks"/>)。
+        /// 借用哪个防御姿态技能由配方的 <see cref="BuffRecipe.GuardSkillId"/> 定。
+        /// </summary>
+        AutoGuardChance = 101,
     }
 
     /// <summary>一个生效中的增益(客户端:主角附加体容器里的一个属性附加体)。</summary>

@@ -148,7 +148,8 @@ internal static class CombatCheck
                     + (session.HeroDown.Active ? "  倒地阶段 " + session.HeroDown.Stage + " 离地 " + F(session.Hero.Z) : "  受击硬直 " + F(session.Hero.HurtSpanMs) + " 毫秒")
                     + (session.HeroDead ? "  主角死亡" : string.Empty)
                     + (session.HeroPauseMs > 0 ? "  定住 " + F(session.HeroPauseMs) + " 毫秒" : string.Empty)
-                    + (session.GuardBlocks > lastGuardBlocks ? "  防御姿态挡下(累计 " + session.GuardBlocks + " 次,共少挨 " + session.GuardDamagePrevented + " 点)" : string.Empty)
+                    + (session.GuardBlocks > lastGuardBlocks ? "  防御姿态挡下(累计 " + session.GuardBlocks + " 次,共少挨 " + session.GuardDamagePrevented + " 点"
+                        + (session.AutoGuardBlocks > 0 ? ",其中增益自动防御 " + session.AutoGuardBlocks + " 次" : string.Empty) + ")" : string.Empty)
                     + string.Concat(session.Popups.Where(p => p.OnHero && p.AgeMs <= CombatScript.StepMs * 2)
                         .Select(p => "  [数字 " + p.Value + " 标志 " + p.Flags + " 世界 (" + F(p.WorldX) + "," + F(p.WorldY) + "," + p.Z + ")]")));
                 lastHeroHits = session.HeroHits;
@@ -186,7 +187,8 @@ internal static class CombatCheck
             + ",剩余 " + session.AliveCount + " 个,怪物扔出投射物 " + session.ProjectilesThrown + " 个,打中主角 " + session.ProjectileHits + " 个(E-103),脚本放出被动对象 " + session.PassivesSpawned + " 个,打中主角 " + session.PassiveHits + " 次(E-130)"
             + ",角色技能放出对象 " + session.HeroObjectsSpawned + " 个,打中怪物 " + session.HeroObjectHits + " 次(E-135)"
             + (session.HopWindows > 0 ? ",命中窗口 " + session.HopWindows + " 个(E-138、E-139)" : string.Empty)
-            + (session.GuardBlocks > 0 ? ",防御姿态挡下 " + session.GuardBlocks + " 次、少挨 " + session.GuardDamagePrevented + " 点(E-164)" : string.Empty)
+            + (session.GuardBlocks > 0 ? ",防御姿态挡下 " + session.GuardBlocks + " 次、少挨 " + session.GuardDamagePrevented + " 点(E-164)"
+                + (session.AutoGuardBlocks > 0 ? ",其中增益自动防御 " + session.AutoGuardBlocks + " 次" : string.Empty) : string.Empty)
             + (session.Vitals != null
                 ? ",主角被打中 " + session.HeroHits + " 次(共 " + session.HeroDamageTaken + " 点),生命 " + session.Vitals.Hp + "/" + session.Vitals.HpMax
                     + ",魔法 " + session.Vitals.Mp + "/" + session.Vitals.MpMax

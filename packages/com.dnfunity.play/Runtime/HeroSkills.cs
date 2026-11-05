@@ -374,7 +374,8 @@ namespace Dnf.Play
         public static bool IsImplemented(int skillId)
         {
             return skillId == SkillIds.HardAttack || skillId == SkillIds.UpperSlash || skillId == SkillIds.BackStep || skillId == SkillIds.QuickStand
-                || SkillRecipes.Default.Find(skillId) != null || SkillRecipes.Default.FindBuff(skillId) != null || SkillRecipes.Default.FindGuard(skillId) != null;
+                || SkillRecipes.Default.Find(skillId) != null || SkillRecipes.Default.FindBuff(skillId) != null || SkillRecipes.Default.FindGuard(skillId) != null
+                || SkillRecipes.Default.FindClassBuff(skillId) != null;
         }
 
         private static bool IsImplemented(HeroSkillSlot slot)
@@ -469,7 +470,7 @@ namespace Dnf.Play
         {
             var slot = new HeroSkillSlot(key, def.Id, level, def);
             SkillRecipe recipe = (recipes ?? SkillRecipes.Default).Find(def.Id);
-            slot.Buff = (recipes ?? SkillRecipes.Default).FindBuff(def.Id);        // 增益类技能(E-141):没有配方,放法只有一个施法动作与一个附加体
+            slot.Buff = (recipes ?? SkillRecipes.Default).FindBuff(def.Id) ?? (recipes ?? SkillRecipes.Default).FindClassBuff(def.Id);   // 增益类技能(E-141):没有配方,放法只有一个施法动作与一个附加体
             slot.Guard = (recipes ?? SkillRecipes.Default).FindGuard(def.Id);      // 防御姿态类技能(E-164):没有配方,放法只有一个姿势动作,按住攻击键维持
             if (recipe != null)
             {

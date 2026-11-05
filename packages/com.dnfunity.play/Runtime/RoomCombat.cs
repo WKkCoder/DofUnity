@@ -3954,6 +3954,12 @@ namespace Dnf.Play
             }
             // 防御姿态(M66,E-164):主角在姿态里、迎面、这一击能挡——伤害按这一类攻击的穿过百分比折算(整数截断),不产生受击反应
             HeroSkillSlot guard = GuardSlotFor(info, attackerFacingLeft, attacker, hero);
+            bool automatic = false;
+            if (guard == null)
+            {
+                guard = AutoGuardSlotFor(info, hero);      // 手按的姿态没挡下时,自动防御增益还有一次机会(客户端钩子里姿态分支之后的一段)
+                automatic = guard != null;
+            }
             int rawDamage = damage;
             if (guard != null)
             {
@@ -3968,6 +3974,10 @@ namespace Dnf.Play
             {
                 GuardBlocks++;
                 GuardDamagePrevented += rawDamage - damage;
+                if (automatic)
+                {
+                    EnterAutoGuard(guard, attackerFacingLeft, attacker, hero);      // 自动防御:先转向攻击方、进姿态,再按手按姿态一样后滑
+                }
                 hero.BlockHit(guard.GuardRecoilSpeed, guard.GuardRecoilMs);      // 后滑;没有受击反应、没有异常状态与受击语音(客户端受击反应模式 2:受击方不命中停顿、不走受击反馈,推断)
             }
             else
