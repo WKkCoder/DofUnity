@@ -339,8 +339,8 @@ public class SkillLearningTests
         HeroProgress hero = LearningFixture.Hero(LearningFixture.Tree(), 55, LearningFixture.TreeChr());
         Assert.Equal(1540, hero.SkillPoints);                                              // 55 · 56 / 2
         Assert.Equal(6, hero.AwakeningPoints);                                             // 55 − 49
-        // 901 学两级:6 点;905 学两级(要求 10、15 级)每级 1 个觉醒点:2 点
-        SkillBatchResult result = new SkillLearning(hero).LearnAll(Steps((901, 2), (905, 2)));
+        // 901 一级一步学两次:3 + 3 = 6 点;905 一级一步学两次(要求 10、15 级)每级 1 个觉醒点:2 点;两个池子的合计各自累加
+        SkillBatchResult result = new SkillLearning(hero).LearnAll(Steps((901, 1), (905, 1), (901, 1), (905, 1)));
         Assert.True(result.Ok);
         Assert.Equal(6, result.Sp);
         Assert.Equal(2, result.Sfp);
@@ -360,6 +360,9 @@ public class SkillLearningTests
         Assert.Equal(-1, empty.FailedIndex);
         Assert.Equal(0, empty.Sp);
         Assert.Equal(version, hero.SkillsVersion);                                         // 空批什么也不做,不记变化
+        SkillBatchResult emptyForget = service.ForgetAll(Steps());
+        Assert.True(emptyForget.Ok);
+        Assert.Equal(version, hero.SkillsVersion);                                         // 空的退法同样不记变化
         // 级数不大于 0 的步不成(位置是它自己),前面成了的 902 也不留
         SkillBatchResult zero = service.LearnAll(Steps((902, 1), (901, 0)));
         Assert.Equal(SkillOpResult.Unknown, zero.Result);
@@ -468,12 +471,13 @@ public class SkillLearningTests
     {
         HeroProgress hero = LearningFixture.Hero(LearningFixture.Tree(), 55, LearningFixture.TreeChr());
         var service = new SkillLearning(hero);
-        Assert.True(service.LearnAll(Steps((905, 2))).Ok);                                 // 觉醒点 6 → 4
-        SkillBatchResult result = service.ForgetAll(Steps((905, 1)));                      // 退第 2 级:还 1 个觉醒点
+        Assert.True(service.LearnAll(Steps((905, 2), (901, 2))).Ok);                       // 觉醒点 6 → 4,技能点 1540 → 1534
+        // 905 一级一步退两次:每级 1 个觉醒点共 2 个;901 一级一步退两次:各 3 点共 6 点;两个池子各还各的
+        SkillBatchResult result = service.ForgetAll(Steps((905, 1), (901, 1), (905, 1), (901, 1)));
         Assert.True(result.Ok);
-        Assert.Equal(0, result.Sp);
-        Assert.Equal(1, result.Sfp);
-        Assert.Equal(5, hero.AwakeningPoints);
+        Assert.Equal(6, result.Sp);
+        Assert.Equal(2, result.Sfp);
+        Assert.Equal(6, hero.AwakeningPoints);
         Assert.Equal(1540, hero.SkillPoints);
     }
 
