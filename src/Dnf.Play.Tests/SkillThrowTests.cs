@@ -309,6 +309,24 @@ public sealed class SkillThrowTests
     }
 
     [Fact]
+    public void ObjectsScheduledForStageOneSpawnWhenPhaseOneStarts()
+    {
+        // 阶段 0 时长 250、阶段 1 时长 160(手算:WaveRecipes 默认 charge=0→250, shoot=1→160);对象只在阶段 1 进来时放
+        SkillObjectSpec[] objects = { new SkillObjectSpec(AvatarFixture.WaveObjectId, stage: 1, frame: 0, damageRateColumn: 0, damageFixedColumn: 0) };
+        using var arena = new RoomCombatTests.Arena(new[] { (900, 100) }, hp: 1000, frozen: true, chr: AvatarFixture.ActionChrPath,
+            skillsFactory: data => Load(data, AvatarFixture.WaveSkill, WaveRecipes(objects: objects)));
+        Attach(arena.Session, arena.Assets);
+        RoomCombatSession s = arena.Session;
+
+        s.Update(10, 0, 0, false, false, SkillKeys.A);
+        Assert.Equal((0, 0, true), (s.HeroObjectsSpawned, s.HeroObjects.Count, s.ThrowActive));
+        Steps(s, 24);                                                                    // 第 25 步:250 ≥ 250,换阶段 1
+        Assert.Equal((1, 1, 1), (s.ThrowPhase, s.HeroObjectsSpawned, s.HeroObjects.Count));
+        Steps(s, 20);
+        Assert.Equal(1, s.HeroObjectsSpawned);                                           // 不会重复放
+    }
+
+    [Fact]
     public void EveryObjectIsPlacedOnceAtTheCastWithItsOwnOffsetAndHitsByItsOwnColumn()
     {
         // 主角 (300, 100) 朝右。三个对象:放在 (300, 100)、(300, 150)、(300, 50),攻击框 x 从 +20 起宽 120、y 各 ±20、高 0 到 100;

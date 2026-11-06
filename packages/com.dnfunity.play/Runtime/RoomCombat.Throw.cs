@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Dnf.Render;
 
 namespace Dnf.Play
@@ -11,7 +12,7 @@ namespace Dnf.Play
     {
         private ThrowRun _throwRun;
         private HeroSkillSlot _throwSlot;
-        private bool _throwObjectsPending;
+        private bool[] _throwObjectSpawned;
         private int _throwPosePhase = -1;
 
         /// <summary>放出过的投掷类技能次数。</summary>
@@ -36,23 +37,35 @@ namespace Dnf.Play
         {
             _throwSlot = cast;
             _throwRun = cast.NewThrowRun();
-            _throwObjectsPending = _throwRun != null;
+            _throwObjectSpawned = _throwRun == null ? null : new bool[cast.Throw.Objects.Count];
             _throwPosePhase = 0;
             ThrowCasts++;
         }
 
-        /// <summary>阶段 0 开始那一刻在主角位置放出全部对象(按配方里的顺序,朝向同主角),只放一次。</summary>
+        /// <summary>当前阶段刚进来时在主角位置放出该阶段的对象(按配方顺序,朝向同主角),每个对象只放一次。</summary>
         private void SpawnThrowObjects()
         {
-            if (!_throwObjectsPending)
+            if (_throwRun == null || _throwObjectSpawned == null || _throwSlot?.Throw == null)
             {
                 return;
             }
-            _throwObjectsPending = false;
-            TownHero hero = _room.Hero;
-            for (int i = 0; i < _throwSlot.Throw.Objects.Count; i++)
+            int phase = _throwRun.Phase;
+            if (phase >= 2)
             {
-                AddSkillObject(_throwSlot, i, _throwSlot.Throw.Objects[i], hero);
+                return;
+            }
+            TownHero hero = _room.Hero;
+            IReadOnlyList<SkillObjectSpec> objects = _throwSlot.Throw.Objects;
+            for (int i = 0; i < objects.Count; i++)
+            {
+                if (_throwObjectSpawned[i] || objects[i].Stage != phase)
+                {
+                    continue;
+                }
+                if (AddSkillObject(_throwSlot, i, objects[i], hero))
+                {
+                    _throwObjectSpawned[i] = true;
+                }
             }
         }
 

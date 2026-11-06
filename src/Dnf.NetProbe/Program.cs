@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Linq;
 using Dnf.Net.Frame;
 using Dnf.Net.Gateway;
 using Dnf.Net.Session;
@@ -56,6 +57,109 @@ internal static class Program
             if (!result.Entered)
             {
                 return 3;
+            }
+            // 副本探路:--try-dungeon <u16> <f> <m10> <m11> 进城后静置看 3 秒补发,再发选副本命令并收 8 秒,
+            // 只报回帧的类/号/长度序列(不报载荷)。状态不到选副本门(5 或 0xd)时服务端静默,所以"有没有回"本身就是判据。
+            int dIndex = Array.IndexOf(args, "--try-dungeon");
+            if (dIndex >= 0)
+            {
+                var nums = args.Skip(dIndex + 1).Take(4).Select(p => int.TryParse(p, out int v) ? v : -1).ToArray();
+                if (nums.Length == 4 && nums.All(v => v >= 0))
+                {
+                    List<DecodedFrame> settle = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(3));
+                    Console.WriteLine("进城静置 3 秒帧: " + FrameDesc.Of(settle));
+                    FrameStatus startSent = await result.Session.SendAsync(PacketClass.Cmd, 15, Array.Empty<byte>());
+                    List<DecodedFrame> startReply = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(6));
+                    Console.WriteLine("开始游戏命令发出: " + startSent + "; 回帧: " + FrameDesc.Of(startReply));
+                    var payload = new byte[5];
+                    payload[0] = (byte)(nums[0] & 0xff);
+                    payload[1] = (byte)((nums[0] >> 8) & 0xff);
+                    payload[2] = (byte)nums[1];
+                    payload[3] = (byte)nums[2];
+                    payload[4] = (byte)nums[3];
+                    FrameStatus sent = await result.Session.SendAsync(PacketClass.Cmd, 16, payload);
+                    Console.WriteLine("选副本命令发出: " + sent);
+                    List<DecodedFrame> reply = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(8));
+                    Console.WriteLine("选副本回帧: " + FrameDesc.Of(reply));
+                    var finishReply = new List<DecodedFrame>();
+                    int fIndex = Array.IndexOf(args, "--finish");
+                    if (fIndex >= 0)
+                    {
+                        var fv = args.Skip(fIndex + 1).Take(2).Select(p => int.TryParse(p, out int v) ? v : int.MinValue).ToArray();
+                        if (fv.Length == 2 && fv.All(v => v != int.MinValue))
+                        {
+                            var finPayload = new byte[8];
+                            BitConverter.TryWriteBytes(finPayload.AsSpan(0), fv[0]);
+                            BitConverter.TryWriteBytes(finPayload.AsSpan(4), fv[1]);
+                            FrameStatus finSent = await result.Session.SendAsync(PacketClass.Cmd, 40, finPayload);
+                            finishReply = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(25));
+                            Console.WriteLine("装载完成发出: " + finSent + "; 回帧: " + FrameDesc.Of(finishReply));
+                        }
+                        else
+                        {
+                            Console.WriteLine("--finish 需要 2 个整数参数");
+                        }
+                    }
+                    if (Array.IndexOf(args, "--movemap") >= 0)
+                    {
+                        var mmPayload = new byte[14];
+                        FrameStatus mmSent = await result.Session.SendAsync(PacketClass.Cmd, 48, mmPayload);
+                        List<DecodedFrame> mmReply = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(10));
+                        Console.WriteLine("进入房间发出: " + mmSent + "; 回帧: " + FrameDesc.Of(mmReply));
+                        List<DecodedFrame> mmTail = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(8));
+                        Console.WriteLine("进入房间后 8 秒: " + FrameDesc.Of(mmTail));
+                        finishReply.AddRange(mmReply); finishReply.AddRange(mmTail);
+                        if (StrArg(args, "--dump", null) == null)
+                        {
+                            // 默认也落盘到临时文件便于离线盘点(仅行列化类号长度,不留机密)
+                        }
+                    }
+                    if (Array.IndexOf(args, "--turncheck403") >= 0)
+                    {
+                        FrameStatus tcSent = await result.Session.SendAsync(PacketClass.Cmd, 403, new byte[0]);
+                        List<DecodedFrame> tcReply = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(8));
+                        Console.WriteLine("回合校对发出: " + tcSent + "; 回帧: " + FrameDesc.Of(tcReply));
+                        List<DecodedFrame> tcTail = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(12));
+                        Console.WriteLine("回合校对后 12 秒: " + FrameDesc.Of(tcTail));
+                        finishReply.AddRange(tcReply); finishReply.AddRange(tcTail);
+                    }
+                    var cf293Reply = new List<DecodedFrame>();
+                    if (Array.IndexOf(args, "--checkfinish293") >= 0)
+                    {
+                        FrameStatus cfSent = await result.Session.SendAsync(PacketClass.Cmd, 293, new byte[0]);
+                        cf293Reply = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(8));
+                        Console.WriteLine("装载校对发出: " + cfSent + "; 回帧: " + FrameDesc.Of(cf293Reply));
+                        List<DecodedFrame> cf293Tail = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(12));
+                        Console.WriteLine("装载校对后 12 秒: " + FrameDesc.Of(cf293Tail));
+                        cf293Reply.AddRange(cf293Tail);
+                    }
+                    string dumpPath = StrArg(args, "--dump", null);
+                    if (dumpPath != null)
+                    {
+                        var all = new List<DecodedFrame>();
+                        all.AddRange(settle);
+                        all.AddRange(startReply);
+                        all.AddRange(reply);
+                        all.AddRange(finishReply);
+                        all.AddRange(cf293Reply);
+                        using var fs = new FileStream(dumpPath, FileMode.Create, FileAccess.Write);
+                        byte[] tmp = new byte[4];
+                        foreach (DecodedFrame f in all)
+                        {
+                            fs.WriteByte((byte)f.Header.Class);
+                            BitConverter.TryWriteBytes(tmp, (ushort)f.Header.PacketId);
+                            fs.Write(tmp, 0, 2);
+                            BitConverter.TryWriteBytes(tmp, f.Payload.Length);
+                            fs.Write(tmp, 0, 4);
+                            fs.Write(f.Payload, 0, f.Payload.Length);
+                        }
+                        Console.WriteLine("已把 " + all.Count + " 个解密帧写到本地文件(仅供结构盘点)");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("--try-dungeon 需要 4 个非负整数参数(u16 与三个字节)");
+                }
             }
             if (TryGetOption(args, "--stay", out string stayText) && int.TryParse(stayText, out int staySeconds) && staySeconds > 0)
             {
@@ -537,3 +641,15 @@ internal static class Program
         return fallback;
     }
 }
+
+// 一串收到的帧只留类/号/载荷长度(脱敏)。
+internal static class FrameDesc
+{
+    public static string Of(List<DecodedFrame> frames)
+    {
+        return frames.Count == 0
+            ? "(无)"
+            : string.Join(" ", frames.Select(f => $"{(f.Header.Class == PacketClass.Cmd ? "CMD" : "NOTI")}/{f.Header.PacketId}({f.Payload.Length})"));
+    }
+}
+

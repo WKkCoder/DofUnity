@@ -196,7 +196,8 @@ public sealed class ThrowRunTests
 
         // 对象规格:一律在阶段 0 进来那一刻放,百分比与固定值取同一列
         Assert.ThrowsAny<ArgumentException>(() => new ThrowRecipe(901, 1, 3, 4, 1, new[] { Object(id: 0) }));
-        Assert.ThrowsAny<ArgumentException>(() => new ThrowRecipe(901, 1, 3, 4, 1, new[] { new SkillObjectSpec(9211, stage: 1, frame: 0, damageRateColumn: 0, damageFixedColumn: 0) }));
+        Assert.ThrowsAny<ArgumentException>(() => new ThrowRecipe(901, 1, 3, 4, 1, new[] { new SkillObjectSpec(9211, stage: 2, frame: 0, damageRateColumn: 0, damageFixedColumn: 0) }));
+        Assert.ThrowsAny<ArgumentException>(() => new ThrowRecipe(901, 1, 3, 4, 1, new[] { new SkillObjectSpec(9211, stage: 1, frame: 1, damageRateColumn: 0, damageFixedColumn: 0) }));
         Assert.ThrowsAny<ArgumentException>(() => new ThrowRecipe(901, 1, 3, 4, 1, new[] { new SkillObjectSpec(9211, stage: 0, frame: 1, damageRateColumn: 0, damageFixedColumn: 0) }));
         Assert.ThrowsAny<ArgumentException>(() => new ThrowRecipe(901, 1, 3, 4, 1, new[] { new SkillObjectSpec(9211, 0, 0, 0, 0, onLanding: true) }));
         Assert.ThrowsAny<ArgumentException>(() => new ThrowRecipe(901, 1, 3, 4, 1, new[] { new SkillObjectSpec(9211, 0, 0, 0, 0, afterEffect: 0) }));
