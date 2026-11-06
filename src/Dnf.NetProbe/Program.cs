@@ -39,9 +39,10 @@ internal static class Program
     }
 
     // 走产品编排 OnlineTownEntry 的整条链(与 Unity 宿主同路),逐阶段与结局只报脱敏信息。
+    // --stay N:进城后继续挂 N 秒(心跳保活泵独占接收),结束时报回过几次心跳与连接是否还活。
     private static async Task<int> Orchestrated(string[] args)
     {
-        string repoRoot = args.Length >= 2 ? args[1] : Directory.GetCurrentDirectory();
+        string repoRoot = args.Length >= 2 && !args[1].StartsWith("--") ? args[1] : Directory.GetCurrentDirectory();
         if (!LocalDevEntrySettings.TryLoad(repoRoot, out OnlineEntrySettings settings, out string problem))
         {
             Console.WriteLine("装配失败: " + problem);
@@ -52,8 +53,50 @@ internal static class Program
         using (result)
         {
             Console.WriteLine($"结局: 阶段={result.Stage} 失败={result.Failure} 登录失败码={(result.LoginFailureCode.HasValue ? result.LoginFailureCode.Value.ToString() : "-")} 槽={result.Slot} 帧={result.FramesSeen} 第二层不符={result.SecondLayerMismatches}");
-            return result.Entered ? 0 : 3;
+            if (!result.Entered)
+            {
+                return 3;
+            }
+            if (TryGetOption(args, "--stay", out string stayText) && int.TryParse(stayText, out int staySeconds) && staySeconds > 0)
+            {
+                Console.WriteLine($"长驻 {staySeconds} 秒(心跳保活中)…");
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                Task<int> pump = OnlineHeartbeat.RunAsync(result.Session, CancellationToken.None);
+                Task winner = await Task.WhenAny(pump, Task.Delay(TimeSpan.FromSeconds(staySeconds)));
+                bool peerClosed = result.Session.PeerClosed;
+                int? answered = null;
+                if (winner == pump && pump.Status == TaskStatus.RanToCompletion)
+                {
+                    answered = pump.Result;
+                }
+                else
+                {
+                    result.Dispose(); // 关流让泵收尾并交回计数
+                    Task done = await Task.WhenAny(pump, Task.Delay(TimeSpan.FromSeconds(5)));
+                    if (done == pump && pump.Status == TaskStatus.RanToCompletion)
+                    {
+                        answered = pump.Result;
+                    }
+                }
+                Console.WriteLine($"长驻结束: 已过 {watch.Elapsed.TotalSeconds:F0} 秒, 对端关连接={peerClosed}, 回心跳={(answered.HasValue ? answered.Value.ToString() : "未知")}");
+                return peerClosed ? 4 : 0;
+            }
+            return 0;
         }
+    }
+
+    private static bool TryGetOption(string[] args, string name, out string value)
+    {
+        value = "";
+        for (int i = 0; i + 1 < args.Length; i++)
+        {
+            if (args[i] == name)
+            {
+                value = args[i + 1];
+                return true;
+            }
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------ 离线

@@ -658,6 +658,20 @@ namespace Dnf.Client
                 _netResult = result;
                 Debug.Log($"DNF_NET entered slot={result.Slot} frames={result.FramesSeen} mismatches={result.SecondLayerMismatches}");
                 _message = "已进城";
+                // 进城后由保活泵独占接收:服务端每 300 秒发一次心跳通知,不回会在 1200 秒被断开(E-306)。
+                OnlineHeartbeat.RunAsync(result.Session, _netCancel.Token).ContinueWith(
+                    t =>
+                    {
+                        if (t.Status == TaskStatus.RanToCompletion)
+                        {
+                            Debug.Log("DNF_NET heartbeat answered=" + t.Result);
+                        }
+                        else if (t.IsFaulted && t.Exception != null)
+                        {
+                            Debug.Log("DNF_NET heartbeat ended=" + t.Exception.GetBaseException().GetType().Name);
+                        }
+                    },
+                    TaskContinuationOptions.ExecuteSynchronously);
                 done(true);
                 yield break;
             }
