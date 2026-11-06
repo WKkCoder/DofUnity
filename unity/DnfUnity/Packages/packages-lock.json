@@ -29,6 +29,12 @@
         "com.dnfunity.script": "0.1.0"
       }
     },
+    "com.dnfunity.net": {
+      "version": "file:../../../packages/com.dnfunity.net",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {}
+    },
     "com.dnfunity.play": {
       "version": "file:../../../packages/com.dnfunity.play",
       "depth": 0,

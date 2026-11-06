@@ -227,25 +227,45 @@ namespace Dnf.Net.Session
             return true;
         }
 
-        // 返回读到的字节数;0 = 流结束;-1 = 到点没有数据
+        // 返回读到的字节数;0 = 流结束;-1 = 到点没有数据。
+        // 注意不能靠取消令牌去掐底层读:Unity 的 Mono 运行时里 NetworkStream.ReadAsync 不响应取消,
+        // 服务端静默时这样写会无限期等下去(控制台运行时则正常)。到点改成逻辑超时:
+        // 底层至多一笔在途读,超时先返回 -1,读留在下一轮消费它真正读到的字节。
+        private Task<int> _pendingRead;
+
         private async Task<int> ReadSomeAsync(TimeSpan left, CancellationToken cancellationToken)
         {
-            using (CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            if (_pendingRead == null)
             {
-                linked.CancelAfter(left);
-                try
+                _pendingRead = _stream.ReadAsync(_chunk, 0, _chunk.Length, CancellationToken.None);
+            }
+            Task<int> read = _pendingRead;
+            if (!read.IsCompleted)
+            {
+                Task winner = await Task.WhenAny(read, Task.Delay(left, cancellationToken)).ConfigureAwait(false);
+                if (winner != read)
                 {
-                    return await _stream.ReadAsync(_chunk, 0, _chunk.Length, linked.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        throw new OperationCanceledException(cancellationToken);
+                    }
                     return -1;
                 }
-                catch (IOException)
-                {
-                    _closed = true;
-                    return 0;
-                }
+            }
+            _pendingRead = null;
+            try
+            {
+                return await read.ConfigureAwait(false);
+            }
+            catch (IOException)
+            {
+                _closed = true;
+                return 0;
+            }
+            catch (ObjectDisposedException)
+            {
+                _closed = true;
+                return 0;
             }
         }
     }

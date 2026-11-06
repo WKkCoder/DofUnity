@@ -7,6 +7,7 @@
         "Dnf.Data",
         "Dnf.Render",
         "Dnf.Client",
+        "Dnf.Net",
         "Dnf.Play",
         "Dnf.Squirrel",
         "Dnf.Script",

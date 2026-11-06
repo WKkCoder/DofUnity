@@ -30,8 +30,30 @@ internal static class Program
         {
             return await Live(args);
         }
-        Console.WriteLine("用法: dnf-netprobe offline <首包文件> | live [--register] [--channel-port N] [--data-version N] [--seconds N]");
+        if (args.Length >= 1 && args[0] == "orchestrated")
+        {
+            return await Orchestrated(args);
+        }
+        Console.WriteLine("用法: dnf-netprobe offline <首包文件> | live [--register] [--channel-port N] [--data-version N] [--seconds N] | orchestrated [仓库根]");
         return 64;
+    }
+
+    // 走产品编排 OnlineTownEntry 的整条链(与 Unity 宿主同路),逐阶段与结局只报脱敏信息。
+    private static async Task<int> Orchestrated(string[] args)
+    {
+        string repoRoot = args.Length >= 2 ? args[1] : Directory.GetCurrentDirectory();
+        if (!LocalDevEntrySettings.TryLoad(repoRoot, out OnlineEntrySettings settings, out string problem))
+        {
+            Console.WriteLine("装配失败: " + problem);
+            return 2;
+        }
+        var entry = new OnlineTownEntry(settings);
+        OnlineEntryResult result = await entry.RunAsync(stage => Console.WriteLine("阶段: " + stage));
+        using (result)
+        {
+            Console.WriteLine($"结局: 阶段={result.Stage} 失败={result.Failure} 登录失败码={(result.LoginFailureCode.HasValue ? result.LoginFailureCode.Value.ToString() : "-")} 槽={result.Slot} 帧={result.FramesSeen} 第二层不符={result.SecondLayerMismatches}");
+            return result.Entered ? 0 : 3;
+        }
     }
 
     // ------------------------------------------------------------------ 离线

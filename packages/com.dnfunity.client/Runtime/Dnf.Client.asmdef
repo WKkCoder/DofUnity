@@ -4,7 +4,8 @@
     "references": [
         "Dnf.Data",
         "Dnf.Render",
-        "Dnf.Play"
+        "Dnf.Play",
+        "Dnf.Net"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

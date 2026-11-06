@@ -6,6 +6,7 @@
     "com.dnfunity.game": "file:../../../packages/com.dnfunity.game",
     "com.dnfunity.render": "file:../../../packages/com.dnfunity.render",
     "com.dnfunity.play": "file:../../../packages/com.dnfunity.play",
+    "com.dnfunity.net": "file:../../../packages/com.dnfunity.net",
     "com.dnfunity.client": "file:../../../packages/com.dnfunity.client",
     "com.unity.test-framework": "1.6.0",
     "com.unity.modules.androidjni": "1.0.0",

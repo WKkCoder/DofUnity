@@ -2,7 +2,10 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using Dnf.Data;
+using Dnf.Net.Session;
 using Dnf.Play;
 using Dnf.Render;
 using UnityEngine;
@@ -20,6 +23,8 @@ namespace Dnf.Client
     /// 带 -dnfdungeon &lt;副本定义路径&gt;(例如 dungeon/act1/lorien.dgn)时玩一整座副本:迷宫里的一格一格房间,怪物清完出口打开,走进出口换到相邻的房间,
     /// 屏幕右上角有占位小地图,首领房清空后出 CLEAR(<see cref="DungeonSession"/>,证据 E-070)。-dnfbot 让自动机替你打(-dnfexplore 先逛遍所有房间),
     /// -dnfseed 与 -dnfrandomlayout 指定战斗种子与随机选房。
+    /// 带 -dnfnet 时先真联网(开发版:网关登录一路跑到选角进城,凭据从仓库根本地配置读,-dnfnetroot 指仓库根,-dnfnetport 改频道端口),
+    /// 进城成功后按城镇流程继续(角色本体数据先用本地占位);联网阶段与结果只打不含凭据的 DNF_NET 日志。
     /// 带 -dnfflow 时玩整条流程(<see cref="GameFlow"/>,证据 E-093):从选角(-dnfflowfrom char,证据 E-096:方向键移动选中、回车或空格开始游戏、Esc 或点"结束游戏"退出,点角色格子选中)、
     /// 城镇(town,默认)、副本选择(select)或副本(dungeon)开始;
     /// 城镇走城镇图册(<see cref="AtlasTownWorld"/>,证据 E-095):登录落在赛丽亚房间、走进地图边缘的出口换区域、艾尔文防线走到地下城入口区域再走进右边的出口打开世界地图,
@@ -202,6 +207,12 @@ namespace Dnf.Client
         private int _difficulty;                           // -dnfdifficulty:副本难度(0 到 4),不检查通关记录(M33)
         private bool _raiseDifficulty;                     // -dnfraisedifficulty:流程自动机在选择界面把难度调到当前能选的最高一档
         private bool _flowMode;
+        private bool _netMode;                              // -dnfnet:先真联网(网关登录到选角进城)再进城镇
+        private string _netRoot;                            // -dnfnetroot:仓库根(读本地开发凭据);不给时从数据目录向上找
+        private int _netPort = -1;                          // -dnfnetport:游戏频道端口(不给用编排默认)
+        private OnlineEntryResult _netResult;               // 进城后的联网结果(持有活连接,退出时释放)
+        private CancellationTokenSource _netCancel;
+        private volatile int _netStage = -1;                // 后台编排的最新阶段(主线程只读它打日志)
         private string _flowFrom = "town";
         private string _flowChoices = DefaultFlowChoices;
         private string _worldMapPath = DefaultWorldMap;
@@ -405,6 +416,16 @@ namespace Dnf.Client
                     case "-dnfflow":
                         _flowMode = true;
                         break;
+                    case "-dnfnet":
+                        _netMode = true;
+                        break;
+                    case "-dnfnetroot":
+                        if (value != null) { _netRoot = value; i++; }
+                        break;
+                    case "-dnfnetport":
+                        if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                                System.Globalization.CultureInfo.InvariantCulture, out int nport) && nport > 0 && nport < 65536) { _netPort = nport; i++; }
+                        break;
                     case "-dnfflowfrom":
                         if (value != null && (value == "char" || value == "town" || value == "select" || value == "dungeon")) { _flowFrom = value; i++; }
                         break;
@@ -517,6 +538,18 @@ namespace Dnf.Client
             _state = State.Loading;
             _message = "Opening the game data…";
             yield return null;
+            if (_netMode)
+            {
+                // 真联网:-dnfnet 时先把网关登录一路跑到选角进城,成功了再按流程进城(角色本体数据先用本地占位)
+                bool entered = false;
+                yield return RunOnlineEntry(dir, ok => entered = ok);
+                if (!entered)
+                {
+                    yield break; // 失败已经在 RunOnlineEntry 里报进日志与提示屏了
+                }
+                _flowMode = true;
+                _flowFrom = "town";
+            }
             try
             {
                 DisposeView();
@@ -562,6 +595,113 @@ namespace Dnf.Client
             _runningSince = Time.realtimeSinceStartup;
             CreateTouch();
             Debug.Log("DNF_TOWN_DEMO running map=" + (_session != null ? _session.MapPath : mapPath) + " npcs=" + _view.NpcCount + " layers=" + _view.LayerCount + HeroLog());
+        }
+
+        /// <summary>
+        /// -dnfnet 的联网一段:先在仓库根读本地开发凭据(与探针同源,只给开发版用),再在后台线程跑
+        /// 网关登录到选角进城的编排;主线程轮询阶段、更新加载屏并打日志。全过程不打印任何凭据;
+        /// 成功时保留结果对象(它持有与服务端的活连接,退出时释放),失败时把失败面写进日志与提示屏。
+        /// 进城后暂未接心跳回复(不回心跳服务端不会马上断开,足够手动试玩),后续单做。
+        /// </summary>
+        private IEnumerator RunOnlineEntry(string dataDir, Action<bool> done)
+        {
+            ResolveNetRoot(dataDir, out string repoRoot);
+            OnlineEntrySettings settings = null;
+            string problem = null;
+            if (repoRoot == null || !LocalDevEntrySettings.TryLoad(repoRoot, out settings, out problem))
+            {
+                problem ??= "找不到仓库根(需要 -dnfnetroot,或从数据目录向上找含本地凭据文件的目录)";
+                Debug.Log("DNF_NET failed stage=settings problem=" + problem);
+                Fail(new InvalidOperationException("联网设置不完整:" + problem));
+                done(false);
+                yield break;
+            }
+            if (_netPort > 0) settings.ChannelPort = _netPort;
+
+            _netCancel = new CancellationTokenSource();
+            _netStage = -1;
+            var entry = new OnlineTownEntry(settings);
+            Task<OnlineEntryResult> task = Task.Run(() =>
+                entry.RunAsync(stage => _netStage = (int)stage, _netCancel.Token));
+            int reportedStage = -1;
+            while (!task.IsCompleted)
+            {
+                int stage = _netStage;
+                if (stage != reportedStage)
+                {
+                    reportedStage = stage;
+                    Debug.Log("DNF_NET stage=" + (OnlineStage)stage);
+                    _message = "联网中:" + StageText(stage) + "…";
+                    _state = State.Loading;
+                }
+                yield return null;
+            }
+
+            if (task.IsFaulted)
+            {
+                Exception e = task.Exception != null ? task.Exception.GetBaseException() : new Exception("online task");
+                Debug.Log("DNF_NET failed exception=" + e.GetType().Name);
+                Fail(e);
+                done(false);
+                yield break;
+            }
+            if (task.IsCanceled)
+            {
+                Fail(new OperationCanceledException("联网已取消"));
+                done(false);
+                yield break;
+            }
+
+            OnlineEntryResult result = task.Result;
+            if (result.Entered)
+            {
+                _netResult = result;
+                Debug.Log($"DNF_NET entered slot={result.Slot} frames={result.FramesSeen} mismatches={result.SecondLayerMismatches}");
+                _message = "已进城";
+                done(true);
+                yield break;
+            }
+            Debug.Log($"DNF_NET failed stage={result.Stage} failure={result.Failure} code=" +
+                (result.LoginFailureCode.HasValue
+                    ? result.LoginFailureCode.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : ""));
+            result.Dispose();
+            Fail(new InvalidOperationException($"联网未进城(阶段 {result.Stage},{result.Failure})"));
+            done(false);
+        }
+
+        private static string StageText(int stage) => (OnlineStage)stage switch
+        {
+            OnlineStage.GatewayLogin => "网关登录",
+            OnlineStage.GameServerAddress => "取游戏服地址",
+            OnlineStage.ChannelConnect => "连游戏频道",
+            OnlineStage.Bootstrap => "收频道启动包",
+            OnlineStage.GameLogin => "游戏登录",
+            OnlineStage.SelectSlot => "选角进城",
+            OnlineStage.Done => "完成",
+            _ => "…",
+        };
+
+        private void ResolveNetRoot(string dataDir, out string repoRoot)
+        {
+            repoRoot = null;
+            if (!string.IsNullOrEmpty(_netRoot))
+            {
+                repoRoot = _netRoot;
+                return;
+            }
+            // 从数据目录开始向上逐层找:同时有 local.env 与本地凭据文件的目录就是仓库根
+            string cursor = Path.GetFullPath(dataDir);
+            for (int hop = 0; hop < 6 && cursor != null; hop++)
+            {
+                if (File.Exists(Path.Combine(cursor, "local.env")) &&
+                    File.Exists(Path.Combine(cursor, "local.secrets.env")))
+                {
+                    repoRoot = cursor;
+                    return;
+                }
+                cursor = Path.GetDirectoryName(cursor);
+            }
         }
 
         /// <summary>
@@ -3309,6 +3449,9 @@ namespace Dnf.Client
 
         private void OnDestroy()
         {
+            _netCancel?.Cancel();
+            _netResult?.Dispose();
+            _netResult = null;
             _touch?.Dispose();
             _touch = null;
             DisposeView();
