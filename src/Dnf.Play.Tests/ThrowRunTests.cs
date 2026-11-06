@@ -196,7 +196,8 @@ public sealed class ThrowRunTests
 
         // 对象规格:一律在阶段 0 进来那一刻放,百分比与固定值取同一列
         Assert.ThrowsAny<ArgumentException>(() => new ThrowRecipe(901, 1, 3, 4, 1, new[] { Object(id: 0) }));
-        Assert.ThrowsAny<ArgumentException>(() => new ThrowRecipe(901, 1, 3, 4, 1, new[] { new SkillObjectSpec(9211, stage: 1, frame: 0, damageRateColumn: 0, damageFixedColumn: 0) }));
+        Assert.ThrowsAny<ArgumentException>(() => new ThrowRecipe(901, 1, 3, 4, 1, new[] { new SkillObjectSpec(9211, stage: 2, frame: 0, damageRateColumn: 0, damageFixedColumn: 0) }));
+        Assert.ThrowsAny<ArgumentException>(() => new ThrowRecipe(901, 1, 3, 4, 1, new[] { new SkillObjectSpec(9211, stage: 1, frame: 1, damageRateColumn: 0, damageFixedColumn: 0) }));
         Assert.ThrowsAny<ArgumentException>(() => new ThrowRecipe(901, 1, 3, 4, 1, new[] { new SkillObjectSpec(9211, stage: 0, frame: 1, damageRateColumn: 0, damageFixedColumn: 0) }));
         Assert.ThrowsAny<ArgumentException>(() => new ThrowRecipe(901, 1, 3, 4, 1, new[] { new SkillObjectSpec(9211, 0, 0, 0, 0, onLanding: true) }));
         Assert.ThrowsAny<ArgumentException>(() => new ThrowRecipe(901, 1, 3, 4, 1, new[] { new SkillObjectSpec(9211, 0, 0, 0, 0, afterEffect: 0) }));
@@ -230,23 +231,26 @@ public sealed class ThrowRunTests
     }
 
     [Fact]
-    public void TheDefaultTableHasOneThrowRecipeBuiltFromTheReadEngineConstants()
+    public void TheDefaultTableHasThrowRecipesBuiltFromTheReadEngineConstants()
     {
-        // 状态 0x0d 的一个技能(静态读码):阶段 0 时长取 [static data] 第 1 个数、阶段 1 取第 3 个、霸体开关取第 4 个,姿势选择号 1;
-        // 三个对象都在阶段 0 进来时放:第二个在纵深方向偏 50,前两个取 [level info] 第 0 列、第三个取第 2 列(百分比与固定值同一列)。技能号与对象编号不在这里断言
-        ThrowRecipe real = Assert.Single(SkillRecipes.Default.AllThrows);
-        Assert.Equal(1, SkillRecipes.Default.ThrowCount);
-        Assert.Same(real, SkillRecipes.Default.FindThrow(real.SkillId));
-        Assert.True(HeroSkills.IsImplemented(real.SkillId));
-        Assert.Null(SkillRecipes.Default.Find(real.SkillId));
-        Assert.Null(SkillRecipes.Default.FindThrow(real.SkillId + 1000));
+        // 状态 0x0d 的两个技能(静态读码):阶段 0/1 时长与霸体下标、对象段号与伤害列;技能号与对象编号不在这里断言
+        Assert.Equal(2, SkillRecipes.Default.ThrowCount);
+        ThrowRecipe first = SkillRecipes.Default.FindThrow(24);
+        ThrowRecipe second = SkillRecipes.Default.FindThrow(44);
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.True(HeroSkills.IsImplemented(24));
+        Assert.True(HeroSkills.IsImplemented(44));
 
-        Assert.Equal((1, 3, 4, 1), (real.ChargeStaticIndex, real.ShootStaticIndex, real.ArmorStaticIndex, real.PoseSelector));
-        Assert.Equal(3, real.Objects.Count);
-        Assert.Equal(new[] { 0, 0, 2 }, real.Objects.Select(o => o.DamageRateColumn).ToArray());
-        Assert.Equal(new[] { 0, 0, 2 }, real.Objects.Select(o => o.DamageFixedColumn).ToArray());
-        Assert.Equal(new[] { 0, 50, 0 }, real.Objects.Select(o => o.OffsetY).ToArray());
-        Assert.All(real.Objects, o => Assert.Equal((0, 0, 0, 0), (o.ForwardX, o.OffsetZ, o.Stage, o.Frame)));
-        Assert.Equal(3, real.Objects.Select(o => o.ObjectId).Distinct().Count());
+        Assert.Equal((1, 3, 4, 1), (first.ChargeStaticIndex, first.ShootStaticIndex, first.ArmorStaticIndex, first.PoseSelector));
+        Assert.Equal(3, first.Objects.Count);
+        Assert.Equal(new[] { 0, 0, 2 }, first.Objects.Select(o => o.DamageRateColumn).ToArray());
+        Assert.All(first.Objects, o => Assert.Equal(0, o.Stage));
+
+        Assert.Equal((1, 3, 4, 1), (second.ChargeStaticIndex, second.ShootStaticIndex, second.ArmorStaticIndex, second.PoseSelector));
+        Assert.Single(second.Objects);
+        Assert.Equal(1, second.Objects[0].Stage);
+        Assert.Equal(20080, second.Objects[0].ObjectId);
+        Assert.Equal((0, 0), (second.Objects[0].DamageRateColumn, second.Objects[0].DamageFixedColumn));
     }
 }
