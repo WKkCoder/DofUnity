@@ -272,4 +272,18 @@ public class SkillCastModeTests
         Assert.True(plain.WithAutoAdvance().Slides);
         Assert.Equal(SkillCastMode.Pause, plain.WithAutoAdvance().CastMode);
     }
+
+    [Theory]
+    [InlineData(SkillCastMode.Stretch)]
+    [InlineData(SkillCastMode.Pause)]
+    [InlineData(SkillCastMode.StaticHold)]
+    public void ASlotWithoutSkillDataHoldsNothingInEveryCastModeInsteadOfFailing(SkillCastMode mode)
+    {
+        // 槽里没有技能数据(技能号不在目录里的占位槽):三种施法方式都没有施法时间、也没有 [static data] 可取,第 0 帧不停留(-1),不能抛空引用;
+        // 前两种走"施法时间 <= 0 返回 -1",静态停留走"技能数据缺失返回 -1"——后一条是单独的判断,这里把它钉住
+        var slot = new HeroSkillSlot(SkillKeys.A, 901, 1, null);
+        var spec = new SkillStageSpec(motionIndex: 1, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: -1, effectFrame: 0,
+            castMode: mode, holdStaticIndex: 0);
+        Assert.Equal(-1, HeroSkills.CastHoldMs(slot, spec, null));
+    }
 }
