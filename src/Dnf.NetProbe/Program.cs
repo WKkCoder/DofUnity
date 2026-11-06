@@ -82,6 +82,13 @@ internal static class Program
                     List<DecodedFrame> reply = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(8));
                     Console.WriteLine("选副本回帧: " + FrameDesc.Of(reply));
                     var finishReply = new List<DecodedFrame>();
+                    if (Array.IndexOf(args, "--movemap-first") >= 0)
+                    {
+                        FrameStatus mmfSent = await result.Session.SendAsync(PacketClass.Cmd, 48, new byte[14]);
+                        List<DecodedFrame> mmfReply = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(10));
+                        Console.WriteLine("先进房(跳过装载完成)发出: " + mmfSent + "; 回帧: " + FrameDesc.Of(mmfReply));
+                        finishReply.AddRange(mmfReply);
+                    }
                     int fIndex = Array.IndexOf(args, "--finish");
                     if (fIndex >= 0)
                     {
