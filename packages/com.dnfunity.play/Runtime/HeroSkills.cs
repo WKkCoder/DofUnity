@@ -989,7 +989,7 @@ namespace Dnf.Play
             Slide(slot, hero, heldX, heldY, out double speed, out double accel);
             if (!spec.Slides || !SkillBodyHitRules.SlidesInStage(slot.Recipe.BodyHit, stage))
             {
-                speed = 0;        // 这一段的进入块把滑行清零,不带配方上的起滑(状态 0x25 阶段 1、状态 0x27 阶段 0;身体命中一族只有首段起滑)
+                speed = 0;        // 这一段的进入块把滑行清零,不带配方上的起滑(状态 0x25 阶段 1、状态 0x27 阶段 0;身体命中一族只有首段起滑;四段连击技能的前三段,M105)
                 accel = 0;
             }
             int hold = CastHoldMs(slot, spec, hero);
@@ -1166,12 +1166,47 @@ namespace Dnf.Play
         /// </summary>
         internal static int CastHoldMs(HeroSkillSlot slot, SkillStageSpec spec, TownHero hero)
         {
+            if (spec.CastMode != SkillCastMode.Placeholder)
+            {
+                return CastModeHoldMs(slot, spec, hero);
+            }
             if (spec.CastHoldFrames <= 0 && !spec.CastHoldWholeTime)
             {
                 return -1;
             }
             int castMs = slot.Def == null ? 0 : slot.Def.Interpolate(slot.Def.CastingTime, slot.Level);
             for (int frame = 1; frame <= spec.CastHoldFrames; frame++)
+            {
+                castMs -= hero.EtcFrameDelayMs(spec.MotionIndex, frame);
+            }
+            return Math.Max(0, castMs);
+        }
+
+        /// <summary>动画帧数的上限(<see cref="CastModeHoldMs"/> 累加各帧时长时的循环界;帧号越界的时长是 0,所以界只要不小于真实帧数即可)。</summary>
+        private const int MaxMotionFrames = 256;
+
+        /// <summary>
+        /// 另两种施法时间写法的第 0 帧停留(M105,<see cref="SkillCastMode"/>,静态读码):施法时间(.skl [casting time] 按等级插值)不大于 0 时返回 -1(动画照原样走);
+        /// <see cref="SkillCastMode.Stretch"/> = max(0, 施法时间 − 第 1 帧起各帧时长之和);<see cref="SkillCastMode.Pause"/> = 施法时间 + 第 0 帧自己的时长;
+        /// <see cref="SkillCastMode.StaticHold"/> = [static data] 指定那一项的毫秒数(不看施法时间,取不到那一项时按 0;配方没写下标或技能数据缺失返回 -1)。
+        /// 客户端最后还按施法速度缩放,这里没有施法速度属性,按 1000 算(同 <see cref="CastHoldMs"/>)。
+        /// </summary>
+        private static int CastModeHoldMs(HeroSkillSlot slot, SkillStageSpec spec, TownHero hero)
+        {
+            if (spec.CastMode == SkillCastMode.StaticHold)
+            {
+                return slot.Def == null || spec.HoldStaticIndex < 0 ? -1 : Math.Max(0, slot.Def.GetStatic(spec.HoldStaticIndex, false));
+            }
+            int castMs = slot.Def == null ? 0 : slot.Def.Interpolate(slot.Def.CastingTime, slot.Level);
+            if (castMs <= 0)
+            {
+                return -1;
+            }
+            if (spec.CastMode == SkillCastMode.Pause)
+            {
+                return castMs + hero.EtcFrameDelayMs(spec.MotionIndex, 0);
+            }
+            for (int frame = 1; frame < MaxMotionFrames; frame++)
             {
                 castMs -= hero.EtcFrameDelayMs(spec.MotionIndex, frame);
             }
