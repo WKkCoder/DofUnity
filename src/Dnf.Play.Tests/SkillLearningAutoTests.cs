@@ -174,7 +174,12 @@ public class SkillLearnHostTests
     {
         HeroProgress hero = Hero(Tree(), 10, TreeChr());
         SkillLearning service = Service(hero);
-        Assert.Equal("Ok", SkillLearn.LearnAll(service, new[] { 901, 902, 903 }, new[] { 1, 1, 1 }, out int failed));
+        // 学法也报第几步:第 2 步(下标 1)的 903 要 902 做前置、902 还没学,整批不成;第 1 步的 901 也不留(仍是白送的 1 级)
+        Assert.Equal("NotAllowed", SkillLearn.LearnAll(service, new[] { 901, 903 }, new[] { 1, 1 }, out int failed));
+        Assert.Equal(1, failed);
+        Assert.Equal(1, hero.Skills.LevelOf(901));
+        Assert.Equal(0, hero.Skills.LevelOf(903));
+        Assert.Equal("Ok", SkillLearn.LearnAll(service, new[] { 901, 902, 903 }, new[] { 1, 1, 1 }, out failed));
         Assert.Equal(-1, failed);
         Assert.Equal(1, hero.Skills.LevelOf(903));
         Assert.Equal("NeededByOther", SkillLearn.ForgetAll(service, new[] { 902, 903 }, new[] { 1, 1 }, out failed));   // 903 还要 902
