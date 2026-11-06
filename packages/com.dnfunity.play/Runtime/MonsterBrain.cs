@@ -65,7 +65,10 @@ namespace Dnf.Play
     /// <para>
     /// 推断与经验值(都单独标出):<b>发现之后过 <see cref="NoticeDelayMs"/> 毫秒才进入敌对</b>是基线 S09b 里量到的迟滞(一个样本;客户端是把"目标改变"发给服务器、
     /// 再从服务器的回包里进入敌对模式,时延的来源没读到);客户端的各模式还有一组"速度修正"数组(进入模式时写进一个控制对象,敌对与绕背写 100、
-    /// 对强悍与凶猛类别的靠近写 200),读不到谁消费它,这里不改速度;被打中后客户端还会按 70% 的几率叫附近的同伴也去靠近(0x0088f170),没做;
+    /// 对强悍与凶猛类别的靠近写 200),读不到谁消费它,这里不改速度;
+    /// 被打中后靠近成功的话,客户端还会按 70% 的几率叫附近的同伴也去靠近(0x0088f170):名额按副本难度、顺序按房间对象表,规则在
+    /// <see cref="MonsterAlertRules"/>,房间那一侧的收集与叫人在 <see cref="MonsterAlert"/>;受击回调里靠近之前的两道门(+0x50d4/+0x50d8 的时间窗、
+    /// +0x4824 起的受击触发器表命中就提前返回)没读通,没有建模,等于它们都不挡;
     /// 客户端的方向选择函数在怪物没有任何出招记录时直接返回(不设方向),没有接。
     /// </para>
     /// </summary>
@@ -101,6 +104,7 @@ namespace Dnf.Play
         private int _selfY;
         private int _heroX;
         private int _heroY;
+        private bool _alertPending;
 
         /// <param name="sight">[sight](没写取 <see cref="MonsterMoveRules.DefaultSight"/>);0 表示无限远。</param>
         /// <param name="warlike">[warlike](没写取 50)。</param>
@@ -288,9 +292,13 @@ namespace Dnf.Play
         /// 挨了打(0x0089c7b0):绕背冲刺里转追击;攻击者离自己不近(距离不小于 <see cref="MonsterMoveRules.FarHitDistance"/>)
         /// 而且还没在靠近中,就进靠近模式朝攻击者走。攻击者的位置取最近一次 <see cref="Update"/> 给的主角位置。
         /// 客户端有个"受击后立刻找目标"的开关([targeting on damage]),全库没有一个怪物写它,所以这里不做:没有目标的怪物仍按一秒的间隔找。
+        /// 靠近成功(进了靠近模式、攻击者在放大后的视野里仍是有效目标)之后再掷一次 <see cref="MonsterAlertRules.ChancePercent"/>%:
+        /// 中了就记下一份"要叫同伴"的请求,由房间那一侧用 <see cref="TakeAlertRequest"/> 取走去叫(客户端同一处直接调 0x0088f170)。
+        /// 每次挨打先清掉上一份没取走的请求。
         /// </summary>
         public void NotifyDamaged()
         {
+            _alertPending = false;
             if (_stationary)
             {
                 return;
@@ -299,7 +307,32 @@ namespace Dnf.Play
             {
                 ChangeMode(MonsterMoveMode.Chase, _clockMs, _selfX, _selfY, _heroX, _heroY);
             }
-            TryApproach();
+            if (TryApproach())
+            {
+                _alertPending = MonsterAlertRules.Roll(_random());
+            }
+        }
+
+        /// <summary>取走"要叫同伴"的请求(<see cref="NotifyDamaged"/> 里靠近成功又掷中了几率时为真);取走即清,没有请求时为假。</summary>
+        public bool TakeAlertRequest()
+        {
+            bool pending = _alertPending;
+            _alertPending = false;
+            return pending;
+        }
+
+        /// <summary>
+        /// 被同伴叫去靠近攻击者(0x0088f170 对每个被叫的同伴调它的靠近,槽 +0x7a0):做一次和挨打时同样的靠近,攻击者的位置取最近一次
+        /// <see cref="Update"/> 给的主角位置。原地不动的怪物与已在靠近中的什么也不做(后者叫人时本来就被跳过);
+        /// 被叫的不会再接着叫别人。返回的是靠近的结果(进了靠近模式且主角仍是有效目标),叫人的一方不看它。
+        /// </summary>
+        public bool AlertApproach()
+        {
+            if (_stationary)
+            {
+                return false;
+            }
+            return TryApproach();
         }
 
         /// <summary>这只怪物打中了主角(0x00892880):绕背冲刺或靠近途中转追击。</summary>
@@ -389,16 +422,19 @@ namespace Dnf.Play
             return false;
         }
 
-        /// <summary>被远处打中后的靠近(0x0089dd20):按类别算终点,进靠近模式。</summary>
-        private void TryApproach()
+        /// <summary>
+        /// 被远处打中后的靠近(0x0089dd20):按类别算终点,进靠近模式。返回值照客户端:进了靠近模式之后,主角在(已放大 1.5 倍的)视野里
+        /// 仍是有效目标才为真(函数末尾问一次有效目标 0x0088a240);已在靠近中、攻击者不够远、没有位置时都是假。
+        /// </summary>
+        private bool TryApproach()
         {
             if (!_positionsKnown || Mode == MonsterMoveMode.Approach)
             {
-                return;
+                return false;
             }
             if (MonsterMoveRules.Distance(_selfX, _selfY, _heroX, _heroY) < MonsterMoveRules.FarHitDistance)
             {
-                return;
+                return false;
             }
             MonsterMoveRules.ApproachStyle style;
             if (_traits.Passive || _traits.Carefully)
@@ -428,6 +464,7 @@ namespace Dnf.Play
             _destX = Math.Max(0, Math.Min(_roomWidth, destX));
             _destY = destY;
             ChangeMode(MonsterMoveMode.Approach, _clockMs, _selfX, _selfY, _heroX, _heroY);
+            return MonsterMoveRules.IsValidTarget(_sight, _selfX, _selfY, _heroX, _heroY);
         }
 
         /// <summary>
