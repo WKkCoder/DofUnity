@@ -130,6 +130,22 @@ internal static class Program
                         Console.WriteLine("回合校对后 12 秒: " + FrameDesc.Of(tcTail));
                         finishReply.AddRange(tcReply); finishReply.AddRange(tcTail);
                     }
+                    if (TryGetOption(args, "--linger", out string lingerText) && int.TryParse(lingerText, out int lingerSeconds) && lingerSeconds > 0)
+                    {
+                        var watch = System.Diagnostics.Stopwatch.StartNew();
+                        int batchNo = 0;
+                        while (watch.Elapsed.TotalSeconds < lingerSeconds && !result.Session.PeerClosed)
+                        {
+                            List<DecodedFrame> batch = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(5));
+                            batchNo++;
+                            if (batch.Count > 0)
+                            {
+                                Console.WriteLine($"静候第 {batchNo} 批({watch.Elapsed.TotalSeconds:F0} 秒): " + FrameDesc.Of(batch));
+                                finishReply.AddRange(batch);
+                            }
+                        }
+                        Console.WriteLine($"静候结束: 已过 {watch.Elapsed.TotalSeconds:F0} 秒, 对端关连接={result.Session.PeerClosed}");
+                    }
                     var cf293Reply = new List<DecodedFrame>();
                     if (Array.IndexOf(args, "--checkfinish293") >= 0)
                     {
