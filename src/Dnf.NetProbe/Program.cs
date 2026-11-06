@@ -78,6 +78,7 @@ internal static class Program
         int channelPort = IntArg(args, "--channel-port", 30011);
         uint dataVersion = (uint)IntArg(args, "--data-version", 0);
         int seconds = IntArg(args, "--seconds", 20);
+        string slotsArg = StrArg(args, "--select-slots", null);
 
         LocalConfig cfg;
         try
@@ -206,7 +207,79 @@ internal static class Program
         FrameStatus sent = await session.SendAsync(PacketClass.Cmd, LoginRequest.PacketId, request.Build());
         Console.WriteLine("LOGIN 已发出: " + sent + "(数据版本 " + dataVersion + ")");
 
-        List<DecodedFrame> frames = await session.ReceiveAsync(TimeSpan.FromSeconds(seconds));
+        // 先收登录回包:进程内解析账号号(不打印),校验成功后立刻发 GET_USERINFO 取角色列表
+        List<DecodedFrame> frames = await session.ReceiveAsync(TimeSpan.FromSeconds(seconds), stopAfterFrames: 8);
+        DecodedFrame loginReply = frames.FirstOrDefault(f => f.Header.Class == PacketClass.Cmd && f.Header.PacketId == LoginRequest.PacketId && f.Payload.Length >= 5 && f.Payload[0] == 1);
+        if (loginReply != null)
+        {
+            byte[] payload = loginReply.Payload;
+            int nameLen = BitConverter.ToInt32(payload, 1);
+            int accOff = 5 + nameLen + 8;
+            bool layoutOk = nameLen >= 0 && nameLen <= 0x14 && accOff + 4 <= payload.Length;
+            Console.WriteLine("成功包布局: 名字长度字段=" + nameLen + " 账号号偏移=" + accOff + " 在界内=" + layoutOk);
+            if (!layoutOk)
+            {
+                PrintEvents(session);
+                return 1;
+            }
+            int accId = BitConverter.ToInt32(payload, accOff);
+            // 角色列表请求(CMD 1/8):u16 账号号(低 16 位) + u8 列表类型 2(自己的角色列表)
+            var charReq = new byte[3];
+            charReq[0] = (byte)(accId & 0xff);
+            charReq[1] = (byte)((accId >> 8) & 0xff);
+            charReq[2] = 2;
+            FrameStatus listSent = await session.SendAsync(PacketClass.Cmd, 8, charReq);
+            Console.WriteLine("GET_USERINFO(类型 2)已发出: " + listSent + ",等待应答 " + seconds + " 秒…");
+            List<DecodedFrame> listFrames = await session.ReceiveAsync(TimeSpan.FromSeconds(seconds), stopAfterFrames: 12);
+            frames.AddRange(listFrames);
+            DecodedFrame listReply = listFrames.FirstOrDefault(f => f.Header.Class == PacketClass.Noti && f.Header.PacketId == 2 && f.Payload.Length >= 2);
+            if (listReply == null)
+            {
+                Console.WriteLine("未等到角色列表应答(NOTI 0/2;可能被封进 561 信封),继续后续步骤。");
+            }
+            else
+            {
+                byte[] lp = listReply.Payload;
+                Console.WriteLine("角色列表应答 " + lp.Length + " 字节;前三字节(结构量): " +
+                    lp[0] + "," + lp[1] + "," + (lp.Length > 2 ? lp[2].ToString() : "-"));
+            }
+
+            if (slotsArg != null)
+            {
+                // 逐槽选角(CMD 1/4 只带 u8 槽号):选错空槽只回错误码无副作用;成功则继续收集进城包流(只记包号与长度)
+                foreach (string part in slotsArg.Split(','))
+                {
+                    if (!int.TryParse(part.Trim(), out int slot) || slot < 0 || slot > 0x23)
+                    {
+                        Console.WriteLine("槽位参数无效: " + part);
+                        continue;
+                    }
+                    FrameStatus selSent = await session.SendAsync(PacketClass.Cmd, 4, new byte[] { (byte)slot });
+                    List<DecodedFrame> selFrames = await session.ReceiveAsync(TimeSpan.FromSeconds(Math.Max(seconds, 10)), stopAfterFrames: 48);
+                    frames.AddRange(selFrames);
+                    DecodedFrame reply = selFrames.FirstOrDefault(f => f.Header.Class == PacketClass.Cmd && f.Header.PacketId == 4 && f.Payload.Length >= 1);
+                    string seq = string.Join(" ", selFrames.Select(f => (f.Header.Class == PacketClass.Cmd ? "C" : "N") + "/" + f.Header.PacketId + "(" + f.Payload.Length + ")"));
+                    // 成功回包与失败错误包都可能被封进 561 信封而没有明文 CMD/4:以包流形态兜底判定——
+                    // 无明文失败包且本窗出现单个 >=3000 字节的数据大包(选角成功才下发的角色/城镇数据)视为成功
+                    bool burst = reply == null && selFrames.Any(f => f.Payload.Length >= 3000);
+                    if ((reply != null && reply.Payload[0] == 1) || burst)
+                    {
+                        Console.WriteLine("选角 槽 " + slot + ": 成功" + (reply != null ? "(明文成功回包 " + reply.Payload.Length + " 字节)" : "(按进城包流形态判定,成功回包应在信封内)") + ";本窗包流: " + seq);
+                        List<DecodedFrame> townFrames = await session.ReceiveAsync(TimeSpan.FromSeconds(seconds), stopAfterFrames: 64);
+                        frames.AddRange(townFrames);
+                        string townSeq = string.Join(" ", townFrames.Select(f => (f.Header.Class == PacketClass.Cmd ? "C" : "N") + "/" + f.Header.PacketId + "(" + f.Payload.Length + ")"));
+                        Console.WriteLine("选角后包流 " + townFrames.Count + " 个: " + townSeq);
+                        break;
+                    }
+                    if (reply != null && reply.Payload[0] == 0)
+                    {
+                        Console.WriteLine("选角 槽 " + slot + ": 失败,码 " + (reply.Payload.Length >= 2 ? reply.Payload[1].ToString() : "?") + ";本窗包流: " + seq);
+                        continue;
+                    }
+                    Console.WriteLine("选角 槽 " + slot + ": 无 CMD/4 回包(静默失败或回包被封);本窗包流: " + seq);
+                }
+            }
+        }
         PrintEvents(session);
         Console.WriteLine("对端关闭: " + session.PeerClosed + ";第二层不符次数: " + session.SecondLayerMismatches);
         int verdict = 8;
@@ -230,6 +303,20 @@ internal static class Program
         if (noti183 > 0)
         {
             Console.WriteLine("受理前通知 0/183 到达 " + noti183 + " 个(说明 LOGIN 的前置检查都过了)");
+        }
+        DecodedFrame charList = frames.FirstOrDefault(f => f.Header.Class == PacketClass.Noti && f.Header.PacketId == 2 && f.Payload.Length >= 9);
+        if (charList != null)
+        {
+            var reader = new PacketReader(charList.Payload);
+            reader.TryGetByte(out byte listType);
+            reader.TryGetByte(out byte slotLimit);
+            reader.TryGetByte(out _);
+            reader.TryGetByte(out _);
+            reader.TryGetInt(out _);
+            bool countOk = reader.TryGetShort(out short charCount);
+            Console.WriteLine("角色列表: 类型 " + listType + ",槽位上限 " + slotLimit + ",角色数 " + (countOk ? charCount.ToString() : "读不出")
+                + ",载荷共 " + charList.Payload.Length + " 字节(名字不打印)");
+            verdict = verdict == 0 ? 0 : verdict;
         }
         return verdict;
     }
@@ -350,6 +437,18 @@ internal static class Program
             if (args[i] == name && int.TryParse(args[i + 1], out int v))
             {
                 return v;
+            }
+        }
+        return fallback;
+    }
+
+    private static string StrArg(string[] args, string name, string fallback)
+    {
+        for (int i = 0; i + 1 < args.Length; i++)
+        {
+            if (args[i] == name)
+            {
+                return args[i + 1];
             }
         }
         return fallback;
