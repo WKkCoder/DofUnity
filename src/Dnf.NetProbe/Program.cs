@@ -79,6 +79,7 @@ internal static class Program
         uint dataVersion = (uint)IntArg(args, "--data-version", 0);
         int seconds = IntArg(args, "--seconds", 20);
         string slotsArg = StrArg(args, "--select-slots", null);
+        string dumpPath = StrArg(args, "--dump", null);
 
         LocalConfig cfg;
         try
@@ -282,6 +283,23 @@ internal static class Program
         }
         PrintEvents(session);
         Console.WriteLine("对端关闭: " + session.PeerClosed + ";第二层不符次数: " + session.SecondLayerMismatches);
+        if (dumpPath != null)
+        {
+            // 把本次收到的解密帧逐条([u8 类][u16 包号][u32 载荷长][载荷])写到本地文件,供离线结构盘点。
+            // 文件可能含账号内数据,只许落在本地忽略区,内容永不打印、不入库。
+            using var fs = new FileStream(dumpPath, FileMode.Create, FileAccess.Write);
+            byte[] tmp = new byte[4];
+            foreach (DecodedFrame f in frames)
+            {
+                fs.WriteByte((byte)f.Header.Class);
+                BitConverter.TryWriteBytes(tmp, (ushort)f.Header.PacketId);
+                fs.Write(tmp, 0, 2);
+                BitConverter.TryWriteBytes(tmp, f.Payload.Length);
+                fs.Write(tmp, 0, 4);
+                fs.Write(f.Payload, 0, f.Payload.Length);
+            }
+            Console.WriteLine("已把 " + frames.Count + " 个解密帧写到本地文件(仅供结构盘点)");
+        }
         int verdict = 8;
         foreach (DecodedFrame f in frames)
         {
