@@ -244,4 +244,32 @@ public class SkillCastModeTests
         Assert.Equal(1, hero.SkillStage);
         Assert.Equal(0.0, hero.SkillSlideSpeed);
     }
+
+    [Theory]
+    [InlineData(SkillCastMode.Stretch)]
+    [InlineData(SkillCastMode.Pause)]
+    [InlineData(SkillCastMode.StaticHold)]
+    public void TheWholeTimeHoldBelongsToThePlaceholderModeOnlyAndRefusesTheOtherCastModes(SkillCastMode mode)
+    {
+        // 合并两条线时补的守卫:"整段施法时间做蓄力"(状态 0x1b 一族)与另三种施法方式互斥,同给时构造抛异常,免得其中一个被静默忽略
+        Assert.Throws<ArgumentException>(() => new SkillStageSpec(0, -1, -1, -1, effectIndex: -1, effectFrame: 0, castHoldWholeTime: true, castMode: mode));
+        // 反例:占位模式配整段施法时间照常构造,两个字段原样保留
+        var ok = new SkillStageSpec(0, -1, -1, -1, effectIndex: -1, effectFrame: 0, castHoldWholeTime: true);
+        Assert.Equal((true, SkillCastMode.Placeholder), (ok.CastHoldWholeTime, ok.CastMode));
+    }
+
+    [Fact]
+    public void ThePerStageSlideFlagFromTheConstructorAndTheCopyMethodAreTheSameSwitchAndCopiesKeepTheCastMode()
+    {
+        // 起滑开关只有一个(状态 0x25/0x27 那条线的 WithoutSlide() 与本线构造参数 slides 同指一个属性):两种写法等价,复制不丢施法方式与静态停留下标
+        var viaCtor = new SkillStageSpec(0, -1, -1, -1, effectIndex: -1, effectFrame: 0, castMode: SkillCastMode.StaticHold, slides: false, holdStaticIndex: 3);
+        var viaCopy = new SkillStageSpec(0, -1, -1, -1, effectIndex: -1, effectFrame: 0, castMode: SkillCastMode.StaticHold, holdStaticIndex: 3).WithoutSlide();
+        Assert.Equal((false, SkillCastMode.StaticHold, 3), (viaCtor.Slides, viaCtor.CastMode, viaCtor.HoldStaticIndex));
+        Assert.Equal((false, SkillCastMode.StaticHold, 3), (viaCopy.Slides, viaCopy.CastMode, viaCopy.HoldStaticIndex));
+        // 反例:默认起滑;别的复制方法不碰起滑
+        var plain = new SkillStageSpec(0, -1, -1, -1, effectIndex: -1, effectFrame: 0, castMode: SkillCastMode.Pause);
+        Assert.True(plain.Slides);
+        Assert.True(plain.WithAutoAdvance().Slides);
+        Assert.Equal(SkillCastMode.Pause, plain.WithAutoAdvance().CastMode);
+    }
 }

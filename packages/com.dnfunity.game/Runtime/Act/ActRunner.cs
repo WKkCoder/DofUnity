@@ -18,7 +18,7 @@ namespace Dnf.Game.Act
     /// 动作脚本里能被选中、被作用的对象(主角、怪物、被动对象)。坐标是世界坐标:X 横向、Y 纵深、Z 离地高度;朝向只有左右两种。
     /// 行为的"效果"由对象自己实现(怎么切动作、怎么设速度取决于它是怪物还是被动对象),运行器只负责"何时对谁做什么"。
     /// </summary>
-    public interface IActEntity
+    public partial interface IActEntity
     {
         ActEntityKind Kind { get; }
 
@@ -264,7 +264,7 @@ namespace Dnf.Game.Act
     }
 
     /// <summary>运行器对世界的请求:随机数、生成被动对象、解析选择器。</summary>
-    public interface IActHost
+    public partial interface IActHost
     {
         /// <summary>[0, n) 的随机整数(n &gt;= 1)。</summary>
         int Random(int n);
@@ -582,6 +582,7 @@ namespace Dnf.Game.Act
             _victim = null;
             _attacker = null;
             _delayed.Clear();      // 排队的延迟行为随动作重来作废(推断);变量不清,留到下一次(E-132)
+            _remote.Clear();       // 别的对象发来、还没执行的"执行第 n 组"消息同样作废(收件的动作实例已经不是原来那一个)
             _castArmed = false;    // 读条随动作结束作废(客户端:动作结束时重置 +0x40c 并让拥有者停读条,0x010ace2f,E-168)
             _castTargets.Clear();
             _moveArmed = false;    // 朝目标冲的计时随动作重来作废(与读条同一个理由,推断)
@@ -612,6 +613,7 @@ namespace Dnf.Game.Act
             _aborted = false;
             _time += dt;
             RunDelayed();
+            RunRemote();
             if (frame != 0)
             {
                 _loopReset = false;
@@ -783,7 +785,30 @@ namespace Dnf.Game.Act
                     case ActRecordKind.IsOurTeamAttacked:
                     case ActRecordKind.IsVisible:
                     case ActRecordKind.IsDamageBoxEnable:
+                    case ActRecordKind.CheckSymbol:
+                    case ActRecordKind.Area:
                         FilterSet(rec);
+                        break;
+                    case ActRecordKind.IsInArea:
+                        if (!ApplyIsInArea(rec))
+                        {
+                            return;
+                        }
+                        break;
+                    case ActRecordKind.IsDamageEnable:
+                        if (!ApplyIsDamageEnable())
+                        {
+                            return;
+                        }
+                        break;
+                    case ActRecordKind.CheckPartySymbol:
+                    case ActRecordKind.CheckPartySlot:
+                    case ActRecordKind.CheckPlayerNum:
+                    case ActRecordKind.CheckPartyMembersState:
+                        if (!PartyConditionPasses(rec))
+                        {
+                            return;
+                        }
                         break;
                     case ActRecordKind.RealDungeonCheckup:
                         if (!RealDungeonCheckupPasses(rec))
@@ -1029,6 +1054,10 @@ namespace Dnf.Game.Act
                         return false;
                     }
                     return e.IsActDamageBoxEnabled == (rec.Number != 0);
+                case ActRecordKind.CheckSymbol:
+                    return KeepSymbol(rec, e);
+                case ActRecordKind.Area:
+                    return KeepArea(rec, e);
                 default:
                     return true;
             }
@@ -1843,6 +1872,19 @@ namespace Dnf.Game.Act
                                 }
                             }
                         }
+                        break;
+                    case ActBehaviorKind.SendDoBehavior:
+                    case ActBehaviorKind.SendMessage:
+                    case ActBehaviorKind.ChangeAi:
+                    case ActBehaviorKind.Camouflage:
+                    case ActBehaviorKind.AppendHit:
+                        ExecuteMessage(b, targets);
+                        break;
+                    case ActBehaviorKind.SetSymbol:
+                    case ActBehaviorKind.SetSymbolOption:
+                    case ActBehaviorKind.SetPartySymbol:
+                    case ActBehaviorKind.AbsCasting:
+                        ExecuteSymbolBehavior(b, targets);
                         break;
                     default:
                         _host.NoteUnsupportedBehavior(b.Tag);     // 没做的行为按空操作处理(ActBehaviorGroup.UnsupportedTags 供审计;实际打到几次由场景统计,E-147)

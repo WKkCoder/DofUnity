@@ -1167,7 +1167,7 @@ namespace Dnf.Play
         }
 
         /// <summary>怪物在 .act 脚本里的身份:位置、朝向取自怪物,脚本的"作用"落到怪物自己的方法上。</summary>
-        private sealed class ActBody : IActEntity
+        private sealed partial class ActBody : IActEntity
         {
             internal readonly MonsterActor _m;
 
@@ -1459,6 +1459,7 @@ namespace Dnf.Play
             }
             _lastWalk = walk;
             AdvanceStatAppendages(deltaMs);        // 属性改变附加物的时限按墙钟走(M63,E-161)
+            AdvanceCamouflage(deltaMs);            // 伪装的时限同样按墙钟走(推断)
             if (_lifeLeftMs > 0 && IsAlive)
             {
                 // 召唤物的存活时间按墙钟走(命中停顿里不冻结,推断);到点按脚本杀死处理(E-134)

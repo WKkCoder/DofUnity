@@ -160,7 +160,8 @@ public class SkillR7DefaultRecipeTests
         }
         foreach (SkillRecipe d in SkillRecipes.Default.All)
         {
-            Assert.All(d.Objects, o => Assert.True(o.DamageRateColumn >= 0 && o.DamageFixedColumn >= 0));
+            // 合并主线之后放宽一处:主线 M104 的"段首瞬移那一段放的对象"(FromWarpOrigin,状态 0x21)本来就只有百分比一列,是默认表里唯一缺列的形状
+            Assert.All(d.Objects, o => Assert.True(o.DamageRateColumn >= 0 && (o.DamageFixedColumn >= 0 || o.FromWarpOrigin)));
         }
     }
 }

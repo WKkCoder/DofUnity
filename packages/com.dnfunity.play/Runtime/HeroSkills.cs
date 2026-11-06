@@ -45,7 +45,7 @@ namespace Dnf.Play
     }
 
     /// <summary>快捷槽里的一个技能:编号、等级、冷却的满值(取自 .skl)与此刻还剩的冷却。</summary>
-    public sealed class HeroSkillSlot
+    public sealed partial class HeroSkillSlot
     {
         public SkillKeys Key { get; }
 
@@ -168,7 +168,7 @@ namespace Dnf.Play
         /// </summary>
         public bool StageHasOwnStrike(int stage)
         {
-            if (Buff != null || Guard != null)
+            if (Buff != null || Guard != null || Throw != null)
             {
                 return false;
             }
@@ -331,7 +331,7 @@ namespace Dnf.Play
     /// 不启动冷却、不扣蓝);没给就不耗蓝(旧行为)。
     /// 没做:施放期间的无敌与技能自带的霸体(概率触发类增益带来的霸体已做,E-142)、冷却缩减、技能等级成长对伤害与攻击范围的影响。
     /// </summary>
-    public sealed class HeroSkills
+    public sealed partial class HeroSkills
     {
         /// <summary>快捷槽的个数(A S D F G H)。</summary>
         public const int SlotCount = SkillBook.QuickSlots;
@@ -370,16 +370,17 @@ namespace Dnf.Play
             }
         }
 
-        /// <summary>这个技能编号有没有实现放法(三个手写的、倒地起身,加上默认配方表里的配方技能、增益类技能与防御姿态类技能)。</summary>
+        /// <summary>这个技能编号有没有实现放法(三个手写的、倒地起身,加上默认配方表里的配方技能、增益类技能、防御姿态类技能与投掷类技能)。</summary>
         public static bool IsImplemented(int skillId)
         {
             return skillId == SkillIds.HardAttack || skillId == SkillIds.UpperSlash || skillId == SkillIds.BackStep || skillId == SkillIds.QuickStand
-                || SkillRecipes.Default.Find(skillId) != null || SkillRecipes.Default.FindBuff(skillId) != null || SkillRecipes.Default.FindGuard(skillId) != null;
+                || SkillRecipes.Default.Find(skillId) != null || SkillRecipes.Default.FindBuff(skillId) != null || SkillRecipes.Default.FindGuard(skillId) != null
+                || SkillRecipes.Default.FindClassBuff(skillId) != null || SkillRecipes.Default.FindThrow(skillId) != null;
         }
 
         private static bool IsImplemented(HeroSkillSlot slot)
         {
-            return slot.Recipe != null || slot.Buff != null || slot.Guard != null || IsImplemented(slot.SkillId);
+            return slot.Recipe != null || slot.Buff != null || slot.Guard != null || slot.Throw != null || IsImplemented(slot.SkillId);
         }
 
         /// <summary>
@@ -468,8 +469,8 @@ namespace Dnf.Play
             IReadOnlyList<SkillPassivePowerRate.Link> registeredLinks = null)
         {
             var slot = new HeroSkillSlot(key, def.Id, level, def);
-            SkillRecipe recipe = (recipes ?? SkillRecipes.Default).Find(def.Id);
-            slot.Buff = (recipes ?? SkillRecipes.Default).FindBuff(def.Id);        // 增益类技能(E-141):没有配方,放法只有一个施法动作与一个附加体
+            SkillRecipe recipe = (recipes ?? SkillRecipes.Default).Find(def.Id)?.ExpandFor(def);        // 逐击连段类按这个技能的击数展开(状态 0x27)
+            slot.Buff = (recipes ?? SkillRecipes.Default).FindBuff(def.Id) ?? (recipes ?? SkillRecipes.Default).FindClassBuff(def.Id);   // 增益类技能(E-141):没有配方,放法只有一个施法动作与一个附加体
             slot.Guard = (recipes ?? SkillRecipes.Default).FindGuard(def.Id);      // 防御姿态类技能(E-164):没有配方,放法只有一个姿势动作,按住攻击键维持
             if (recipe != null)
             {
@@ -492,14 +493,14 @@ namespace Dnf.Play
                     if (stage.HasOwnStrike)
                     {
                         strikes.Add(HeroStrikeInfo.Read(data, chr.CustomAttackInfoPath(stage.AttackInfoIndex))
-                            .WithSkillDamage(ScaleLevel(def, slot.Level, stage.DamageRateColumn, powerRate),
+                            .WithSkillDamage(StageRate(recipe, strikes.Count, def, stage, ScaleLevel(def, slot.Level, stage.DamageRateColumn, powerRate)),
                                 ScaleLevel(def, slot.Level, stage.DamageFixedColumn, powerRate)));
                     }
                     else if (stage.DamageRateColumn >= 0 || stage.DamageFixedColumn >= 0)
                     {
                         // 空中攻击强化等:身体沿用别的攻击信息,但伤害列仍取 .skl(E-150)
                         strikes.Add(new HeroStrikeInfo(0, 0, false).WithSkillDamage(
-                            ScaleLevel(def, slot.Level, stage.DamageRateColumn, powerRate),
+                            StageRate(recipe, strikes.Count, def, stage, ScaleLevel(def, slot.Level, stage.DamageRateColumn, powerRate)),
                             ScaleLevel(def, slot.Level, stage.DamageFixedColumn, powerRate)));
                     }
                     else
@@ -551,6 +552,12 @@ namespace Dnf.Play
                     paths.Add(PvfPath.ResolveRelativeTo(chr.Path, rel));
                 }
                 slot.StageEffects = paths;
+                return slot;
+            }
+            ThrowRecipe throwRecipe = (recipes ?? SkillRecipes.Default).FindThrow(def.Id);      // 投掷类技能(状态 0x0d 一族):对象的攻击信息与伤害数、两段姿势动画
+            if (throwRecipe != null)
+            {
+                BuildThrowSlot(slot, data, chr, def, throwRecipe, skillLevelOf, resolveSkill, registeredLinks);
                 return slot;
             }
             if (def.Id == SkillIds.HardAttack)
@@ -846,6 +853,7 @@ namespace Dnf.Play
                     began = slot.Recipe != null
                         ? (slot.Recipe.Dive != null ? BeginDive(slot, hero)
                             : (slot.Recipe.JumpAttack != null ? BeginJumpAttack(slot, hero) : BeginStage(slot, 0, hero, heldX, heldY, false, MultiHitWindows(slot))))
+                        : slot.Throw != null ? BeginThrow(slot, hero)      // 投掷类:原地摆阶段 0 的姿势,对象与霸体由房间会话放(状态 0x0d 一族)
                         : slot.Guard != null ? hero.BeginGuard(slot.SkillId, slot.Guard.MotionIndex, slot.GuardMinHoldMs)   // 防御姿态类:原地摆姿势、动画定在第 0 帧,按住攻击键维持(M66,E-164)
                         : slot.Buff != null && hero.BeginBuffMotion(slot.SkillId);   // 增益类:原地播 [buff motion],施法正常结束时才挂增益(E-141,由房间会话挂)
                     break;
@@ -909,6 +917,14 @@ namespace Dnf.Play
             {
                 return null;           // 自动接续类技能:每一段播完自己接下一段,不看按键(证据 E-154)
             }
+            if (recipe.BodyHit != null && recipe.BodyHit.Chains.Count > 0)
+            {
+                return null;           // 有按键接段表的配方:只走 TryChainBody(再按自己的键不一定接段)
+            }
+            if (!KeyChainsFrom(recipe, hero.SkillStage))
+            {
+                return null;           // 这一段标了"播完自己接"或"不许按键接"(状态 0x27 的起手段与被锁的打击段)
+            }
             int next = hero.SkillStage + 1;
             if (next >= recipe.Stages.Count || hero.CurrentFrame < recipe.ChainFromFrame)
             {
@@ -935,12 +951,12 @@ namespace Dnf.Play
             }
             HeroSkillSlot slot = SlotOfSkill(hero.SkillId);
             SkillRecipe recipe = slot?.Recipe;
-            if (recipe == null || !recipe.AutoChain)
+            if (recipe == null || !(recipe.AutoChain || AutoAdvancesFrom(recipe, hero.SkillStage)))
             {
                 return false;
             }
             int next = hero.SkillStage + 1;
-            if (next >= recipe.Stages.Count)
+            if (next >= recipe.Stages.Count || !SkillBodyHitRules.AutoChainAllowed(recipe.BodyHit, hero.SkillStage))
             {
                 return false;
             }
@@ -971,9 +987,9 @@ namespace Dnf.Play
         {
             SkillStageSpec spec = slot.Recipe.Stages[stage];
             Slide(slot, hero, heldX, heldY, out double speed, out double accel);
-            if (!spec.Slides)
+            if (!spec.Slides || !SkillBodyHitRules.SlidesInStage(slot.Recipe.BodyHit, stage))
             {
-                speed = 0;
+                speed = 0;        // 这一段的进入块把滑行清零,不带配方上的起滑(状态 0x25 阶段 1、状态 0x27 阶段 0;身体命中一族只有首段起滑;四段连击技能的前三段,M105)
                 accel = 0;
             }
             int hold = CastHoldMs(slot, spec, hero);
@@ -987,9 +1003,14 @@ namespace Dnf.Play
                 // 升空段:动画第 0 帧(带攻击框)停到升空时间结束(动画时间 = 墙钟 × 播放倍率,向上取整保证墙钟不短于升空时间),之后接着播剩下的帧
                 hold = (int)Math.Ceiling(rise.DurationMs * (hero.AttackAnimationRate > 0.0 ? hero.AttackAnimationRate : 1.0));
             }
-            return chain
+            bool began = chain
                 ? hero.ChainSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame, rearmWindows: multiHitWindows, rise: rise)
                 : hero.BeginSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame, multiHitWindows, rise);
+            if (began && spec.Warp != null)
+            {
+                ApplyWarp(slot, spec.Warp, hero);
+            }
+            return began;
         }
 
         /// <summary>
@@ -1141,6 +1162,7 @@ namespace Dnf.Play
         /// <summary>
         /// 施法蓄力要停多久(毫秒,动画时间):施法时间(.skl [casting time] 按等级取)减去动作第 1 到第 n 帧的时长,不小于 0(证据 E-135,静态读码);
         /// 客户端最后还按施法速度(千分比)缩放,这里没有施法速度属性,按 1000 算。这一段没有蓄力返回 -1(动画照帧时长走)。
+        /// 标了 <see cref="SkillStageSpec.CastHoldWholeTime"/> 的段不减任何帧(下面的循环一次也不走),蓄力就是整段施法时间。
         /// </summary>
         internal static int CastHoldMs(HeroSkillSlot slot, SkillStageSpec spec, TownHero hero)
         {
@@ -1148,7 +1170,7 @@ namespace Dnf.Play
             {
                 return CastModeHoldMs(slot, spec, hero);
             }
-            if (spec.CastHoldFrames <= 0)
+            if (spec.CastHoldFrames <= 0 && !spec.CastHoldWholeTime)
             {
                 return -1;
             }
@@ -1206,6 +1228,12 @@ namespace Dnf.Play
             if (!r.SlideFollowsHeldDirection)
             {
                 return;   // 状态进入块里不读按住的方向:每一段都按基础的两个数朝主角的朝向滑(证据 E-131)
+            }
+            if (r.BodyHit != null && r.BodyHit.HorizontalHeldSlide)
+            {
+                SkillBodyHitRules.HeldSlide(speed, accel, r.ForwardSpeedIndex >= 0 && def != null,
+                    r.ForwardSpeedIndex >= 0 && def != null ? def.GetStatic(r.ForwardSpeedIndex, false) : 0, heldX, hero.FacingLeft, out speed, out accel);
+                return;
             }
             heldX = Math.Sign(heldX);
             heldY = Math.Sign(heldY);

@@ -7,6 +7,7 @@
     <Project Path="src/Dnf.Game/Dnf.Game.csproj" />
     <Project Path="src/Dnf.Net.Tests/Dnf.Net.Tests.csproj" />
     <Project Path="src/Dnf.Net/Dnf.Net.csproj" />
+    <Project Path="src/Dnf.NetProbe/Dnf.NetProbe.csproj" />
     <Project Path="src/Dnf.Play.Tests/Dnf.Play.Tests.csproj" />
     <Project Path="src/Dnf.Play/Dnf.Play.csproj" />
     <Project Path="src/Dnf.Render.Tests/Dnf.Render.Tests.csproj" />

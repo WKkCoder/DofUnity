@@ -2053,6 +2053,8 @@ namespace Dnf.Play
                 {
                     chained = Skills.TryChainCommand(_commands, _room.Hero, dirX, dirY);
                 }
+                _bodyHeldX = dirX;
+                chained = chained ?? Skills.TryChainBody(skillsPressed, attackPressed, _room.Hero, dirX, dirY);
                 HeroSkillSlot cast = quickPressed == SkillKeys.None || chained != null ? null : Skills.TryCast(quickPressed, _room.Hero, Vitals, dirX, dirY);
                 bool announce = quickPressed != SkillKeys.None;
                 bool viaCommand = false;
@@ -2087,6 +2089,10 @@ namespace Dnf.Play
                         BuffCasts++;
                     }
                     SpawnEffects(cast);
+                    if (cast.Throw != null)
+                    {
+                        BeginThrowRun(cast);      // 投掷类技能(状态 0x0d 一族):对象与霸体的时间线交给阶段机
+                    }
                 }
                 else if (attackPressed && TryPickupSelected(_room.Hero))
                 {
@@ -2098,6 +2104,7 @@ namespace Dnf.Play
                 _room.Update(heroDelta, dirX, dirY, attackPressed, jumpPressed);
                 UpdateBuffCast(_room.Hero);
                 SpawnStageEffect(_room.Hero);
+                StepThrow(heroDelta);
                 UpdateHopLanding(_room.Hero);
                 UpdateDive(_room.Hero);
                 SpawnJumpSkillEffect(_room.Hero);
@@ -2133,6 +2140,7 @@ namespace Dnf.Play
             RetireFinishedPassives();
             _heroObjects.RemoveAll(o => o.Finished);
             SpawnSkillObjects(hero);       // 这一步新放的对象从下一步起才走
+            SpawnThrowObjects();
             SyncStance();
             EmitCooldownCues();
             for (int i = _popups.Count - 1; i >= 0; i--)
@@ -2460,8 +2468,12 @@ namespace Dnf.Play
             {
                 return false;
             }
-            double x = hero.X + (hero.FacingLeft ? -spec.ForwardX : spec.ForwardX);
-            _heroObjects.Add(new HeroObject(template, slot.ObjectStrikes[index], slot.SkillId, x, hero.Y + spec.OffsetY, hero.Z + spec.OffsetZ, hero.FacingLeft));
+            bool fromOrigin = spec.FromWarpOrigin && slot.HasWarpOrigin;      // 状态 0x21:对象在原地创建、之后才瞬移(E-271)
+            double baseX = fromOrigin ? slot.WarpOriginX : hero.X;
+            double baseY = fromOrigin ? slot.WarpOriginY : hero.Y;
+            double baseZ = fromOrigin ? slot.WarpOriginZ : hero.Z;
+            double x = baseX + (hero.FacingLeft ? -spec.ForwardX : spec.ForwardX);
+            _heroObjects.Add(new HeroObject(template, slot.ObjectStrikes[index], slot.SkillId, x, baseY + spec.OffsetY, baseZ + spec.OffsetZ, hero.FacingLeft));
             HeroObjectsSpawned++;
             return true;
         }
@@ -2519,7 +2531,15 @@ namespace Dnf.Play
         /// </summary>
         private bool FollowUpHeroSkill(TownHero hero)
         {
-            if (HeroDead || Skills == null || !Skills.FollowUp(hero))
+            if (HeroDead || Skills == null)
+            {
+                return false;
+            }
+            if (Skills.Holding(hero))
+            {
+                return true;           // 段尾保持:这一段播完了还要占着主角,不算接段
+            }
+            if (!Skills.FollowUp(hero))
             {
                 return false;
             }
@@ -2600,7 +2620,9 @@ namespace Dnf.Play
         private void ResolveHits()
         {
             TownHero hero = _room.Hero;
+            BodyKeyFlags(hero);
             ApplyKeyFlags(hero);
+            StepBodyHit(hero);
             if (!hero.IsAttacking || OwnStrikeless(hero))
             {
                 _evalSwing = -1;
@@ -3850,7 +3872,7 @@ namespace Dnf.Play
         }
 
         /// <summary>脚本运行器眼里的房间:随机数、生成被动对象、解析选择器。</summary>
-        private sealed class ActWorld : IActHost
+        private sealed partial class ActWorld : IActHost
         {
             private readonly RoomCombatSession _session;
 
@@ -3943,7 +3965,7 @@ namespace Dnf.Play
         private void StrikeHero(MonsterActor owner, HeroStrikeInfo info, bool attackerFacingLeft, TownHero hero, MonsterActor attacker, Aabb hit)
         {
             // 受击前钩子(onBeforeDamage,主角类的覆盖 0x00846bd0;E-142):带概率触发类增益、而且正在出招的主角,每挨一击掷一次霸体
-            _superArmorMode = RollSuperArmor(hero);
+            _superArmorMode = Math.Max(RollSuperArmor(hero), ThrowArmorLevel);      // 投掷类技能阶段 0 的霸体也算数(进入块 setSuperArmor,E-142 同一个档位)
             int attack = info.Magical ? owner.MagicalAttack : owner.PhysicalAttack;
             int damage = _damageConstants != null
                 ? MonsterDamage.Roll(info, owner.Level, attack, Vitals, _damageConstants, unchecked((uint)_monsterRandom.Next()))
@@ -3954,6 +3976,12 @@ namespace Dnf.Play
             }
             // 防御姿态(M66,E-164):主角在姿态里、迎面、这一击能挡——伤害按这一类攻击的穿过百分比折算(整数截断),不产生受击反应
             HeroSkillSlot guard = GuardSlotFor(info, attackerFacingLeft, attacker, hero);
+            bool automatic = false;
+            if (guard == null)
+            {
+                guard = AutoGuardSlotFor(info, hero);      // 手按的姿态没挡下时,自动防御增益还有一次机会(客户端钩子里姿态分支之后的一段)
+                automatic = guard != null;
+            }
             int rawDamage = damage;
             if (guard != null)
             {
@@ -3968,6 +3996,10 @@ namespace Dnf.Play
             {
                 GuardBlocks++;
                 GuardDamagePrevented += rawDamage - damage;
+                if (automatic)
+                {
+                    EnterAutoGuard(guard, attackerFacingLeft, attacker, hero);      // 自动防御:先转向攻击方、进姿态,再按手按姿态一样后滑
+                }
                 hero.BlockHit(guard.GuardRecoilSpeed, guard.GuardRecoilMs);      // 后滑;没有受击反应、没有异常状态与受击语音(客户端受击反应模式 2:受击方不命中停顿、不走受击反馈,推断)
             }
             else

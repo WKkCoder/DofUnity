@@ -15,7 +15,7 @@ namespace Dnf.Cli.Analysis;
 /// 4. 接线:本地主角的进度里快捷栏与旧的"初始技能表"排法一致、点数 = 等级对应的总额;存档往返不变。
 /// 数量、等级、点数来自用户自己的数据,只打印在本机的终端,不要抄进入库的文件;通过与否只看结构。
 /// </summary>
-internal static class SkillCheck
+internal static partial class SkillCheck
 {
     private const int Unlimited = 1_000_000_000;
 
@@ -336,6 +336,7 @@ internal static class SkillCheck
             {
                 needStatic = Math.Max(needStatic, recipe.MultiHitCountIndex + 1);
             }
+            needStatic = Math.Max(needStatic, recipe.ExtraStaticNeed);      // 段首瞬移的距离、逐击连段的击数与锁开关(M104)
             if (def.StaticData.Length < needStatic)
             {
                 recipeProblems.Add(label + ":[static data] 只有 " + def.StaticData.Length + " 个数,配方要 " + needStatic + " 个");
@@ -358,9 +359,10 @@ internal static class SkillCheck
                 {
                     recipeProblems.Add(label + " 第 " + i + " 段:攻击信息读不到");
                 }
-                if (!st.HasOwnStrike && recipe.Objects.Count == 0 && recipe.Hop == null && recipe.JumpAttack == null && !(recipe.AutoChain && recipe.Stages.Any(other => other.HasOwnStrike)))
+                if (!st.HasOwnStrike && recipe.Objects.Count == 0 && recipe.Hop == null && recipe.JumpAttack == null && !(recipe.AutoChain && recipe.Stages.Any(other => other.HasOwnStrike))
+                    && !(st.AutoAdvance && recipe.Stages.Any(other => other.HasOwnStrike)))
                 {
-                    // (姿势→挥击类的姿势段:没有命中也不放对象,后面有一段自己的命中,M65,E-163)
+                    // (姿势→挥击类的姿势段:没有命中也不放对象,后面有一段自己的命中,M65,E-163;逐击连段的起手段同理,播完自己接打击段,M104)
                     recipeProblems.Add(label + " 第 " + i + " 段:没有自己的命中,配方却没有放对象");
                 }
                 foreach (int effectIndex in st.EffectIndices)
@@ -438,9 +440,11 @@ internal static class SkillCheck
                         recipeProblems.Add(label + " 第 " + i + " 段:升空段没有自己的命中");
                     }
                 }
-                if (st.HasOwnStrike && def.GetLevel(1, st.DamageRateColumn, false) <= 0)
+                // 有自己命中的段:百分比列读出来是正数;没有百分比列的段(只靠固定值伤害,E-163)改查固定值列
+                if (st.HasOwnStrike && (st.DamageRateColumn >= 0 ? def.GetLevel(1, st.DamageRateColumn, false) <= 0
+                    : st.DamageFixedColumn < 0 || def.GetLevel(1, st.DamageFixedColumn, false) <= 0))
                 {
-                    recipeProblems.Add(label + " 第 " + i + " 段:1 级的百分比伤害读出来不是正数");
+                    recipeProblems.Add(label + " 第 " + i + " 段:1 级的百分比伤害(没有百分比列的段是固定值伤害)读出来不是正数");
                 }
                 if (st.CastMode != SkillCastMode.Placeholder)
                 {
@@ -456,14 +460,16 @@ internal static class SkillCheck
                         recipeCastTimed++;
                     }
                 }
-                if (st.CastHoldFrames > 0)
+                if (st.CastHoldFrames > 0 || st.CastHoldWholeTime)
                 {
+                    // 整段施法时间做蓄力(CastHoldWholeTime)的段不减后面几帧,但动画至少要有第 1 帧(阶段 0 过后动画从第 1 帧接着播)
                     recipeHolds++;
                     AniFile? cast = assets.LoadAni(chr.CustomAnimationPath(st.MotionIndex) ?? "");
                     int frames = cast == null ? 0 : cast.Frames.Length;
                     int firstDelay = 0;
                     int following = 0;
-                    if (cast != null && frames > st.CastHoldFrames)
+                    int needFrames = Math.Max(st.CastHoldFrames, 1);
+                    if (cast != null && frames > needFrames)
                     {
                         cast.Frames[0].TryGetDelayMs(out firstDelay);
                         for (int f = 1; f <= st.CastHoldFrames; f++)
@@ -472,11 +478,11 @@ internal static class SkillCheck
                             following += d;
                         }
                     }
-                    if (cast == null || frames <= st.CastHoldFrames)
+                    if (cast == null || frames <= needFrames)
                     {
-                        recipeProblems.Add(label + " 第 " + i + " 段:蓄力要减 " + st.CastHoldFrames + " 帧,动画只有 " + frames + " 帧");
+                        recipeProblems.Add(label + " 第 " + i + " 段:蓄力要用到第 " + needFrames + " 帧,动画只有 " + frames + " 帧");
                     }
-                    else if (firstDelay < 1000)
+                    else if (firstDelay < 1000 && !st.CastHoldWholeTime)      // 整段施法时间的蓄力由代码停住第 0 帧,动画文件里第 0 帧不必是长占位
                     {
                         recipeProblems.Add(label + " 第 " + i + " 段:有蓄力,第 0 帧的停留却只有 " + firstDelay + " 毫秒(不像蓄力占位)");
                     }
@@ -710,7 +716,8 @@ internal static class SkillCheck
                 if ((!rateUsed && !fixedUsed) || (rateUsed && def.GetLevel(1, o.DamageRateColumn, false) <= 0)
                     || (fixedUsed && def.GetLevel(1, o.DamageFixedColumn, false) <= 0))
                 {
-                    recipeProblems.Add(label + " 对象 " + i + ":1 级的两个伤害列读出来不是正数");
+                    // 固定值列可以没有(下标 -1:这个技能的 [level info] 里只有百分比一列,M104)
+                    recipeProblems.Add(label + " 对象 " + i + ":1 级的伤害列读出来不是正数");
                 }
                 if (o.AfterEffect >= 0)
                 {
@@ -802,6 +809,7 @@ internal static class SkillCheck
                 }
             }
             int selfCast = 0;
+            int quickCast = 0;
             int longerCast = 0;
             int missed = 0;
             int wrong = 0;
@@ -819,6 +827,7 @@ internal static class SkillCheck
                 if (session.Hero.Motion != HeroMotion.Skill && !session.Hero.IsBackStep)
                 {
                     missed++;      // 后跳是跳跃状态的特殊参数(动作是跳跃,不是技能动作),所以也要认
+                    Console.WriteLine("    没放出来:技能号 " + def.Id);
                 }
                 else if (session.Hero.SkillId == def.Id)
                 {
@@ -828,13 +837,19 @@ internal static class SkillCheck
                 {
                     longerCast++;
                 }
+                else if (SameCommandText(catalog.Find(session.Hero.SkillId), def) && CastsByQuickKey(assets, opts, level, def.Id))
+                {
+                    // 指令与别的技能完全相同(单键"技能"这类指令常常撞车;指令层的取舍是快捷槽在前、编号小的在前,E-140):换一局新会话,把它放进快捷栏第 1 格,按那个键能放出自己
+                    quickCast++;
+                }
                 else
                 {
                     wrong++;
+                    Console.WriteLine("    放成了别的:技能号 " + def.Id + " 放成了技能号 " + session.Hero.SkillId);
                 }
             }
             Report(ready.Count > 0 && missed == 0 && wrong == 0,
-                "指令放技能:已实现、已学会、能靠指令放的 " + ready.Count + " 个技能,在房间会话里各打一遍自己的指令:放出来的就是它自己 " + selfCast + " 个、落到指令更长的另一个技能 " + longerCast
+                "指令放技能:已实现、已学会、能靠指令放的 " + ready.Count + " 个技能,在房间会话里各打一遍自己的指令:放出来的就是它自己 " + selfCast + " 个、指令与别的技能完全相同而改按快捷键放出自己 " + quickCast + " 个、落到指令更长的另一个技能 " + longerCast
                 + " 个、没放出来 " + missed + " 个、放成了别的 " + wrong + " 个");
 
             // 指令放技能(各成长类型,M105):上一条只看本地主角的初始成长类型,子职业技能(只有对应成长类型能学)落不进去;
@@ -919,6 +934,9 @@ internal static class SkillCheck
                 Report(lying && session.QuickStands == 1 && session.HeroDown.QuickStanding,
                     "倒地起身:躺着的主角打出倒地起身的指令,起身 " + session.QuickStands + " 次(躺着 " + (lying ? "是" : "否") + ",正在起身 " + (session.HeroDown.QuickStanding ? "是" : "否") + ")");
             }
+
+            // 7a. 按成长类型数能放的技能(M104):子职业的技能默认主角学不了,逐个成长类型各建一个新主角转职、花光点数,已实现的、学会了的主动技能各放一遍。
+            ReportGrowtypeCasts(assets, opts, catalog, level, Report);
 
             // 7b. 悬停俯冲类技能(M55,证据 E-149)的真实会话:表里的每个俯冲技能——地面上打它的指令放不出它(不进冷却);主角起跳升到够高后打指令:放出来的就是它自己、
             // 动画定在空中攻击动作的最后一帧;一路走完悬停、俯冲(放预载特效)、落地(放出时的离地高度够就放冲击对象,不够就不放)、坐姿、回到站立;
@@ -1168,7 +1186,7 @@ internal static class SkillCheck
             var autoProblems = new List<string>();
             foreach (SkillRecipe recipe in SkillRecipes.Default.All)
             {
-                if (!recipe.AutoChain)
+                if (!recipe.AutoChain || recipe.BodyHit != null)      // 带身体命中规则的配方(段尾保持、自动接续有上界)由 SkillCheckBodyHit 查
                 {
                     continue;
                 }
@@ -1252,6 +1270,9 @@ internal static class SkillCheck
                 "自动接续类技能 " + autoSkills + " 个:按各自的指令放出第一段(指令撞车的 " + autoQuickCasts + " 个改按快捷键放),不按任何键各段自己接上、放出对象 " + autoObjects + " 个、整个技能播完回到站立走完 " + autoCycles
                 + " 个(其中升空出招 " + autoRises + " 个:升到空中、落回地面;魔法值与冷却只在起手算;问题 " + autoProblems.Count + " 条)");
 
+            // 7d2. 状态族的放法(M104,证据 E-271、E-272):段首瞬移、逐击连段、逐段不滑行在真实数据里走通。
+            ReportStateFamilies(assets, opts, catalog, level, Report);
+
             // 7e. 带关键帧标志事件的技能(M65,证据 E-163)的真实会话:表里每个这类技能放进快捷栏第 1 格、按键放出来、动画播完;
             // 会话触发的事件数等于"动作里带标志、而且这一段的事件表里有这个标志"的帧数(每帧一次),放完回到站立。只打印汇总数。
             int flagSkills = 0;
@@ -1330,7 +1351,7 @@ internal static class SkillCheck
             int buffCycles = 0;
             int buffMotionOk = 0;
             var buffProblems = new List<string>();
-            foreach (BuffRecipe recipe in SkillRecipes.Default.AllBuffs)
+            foreach (BuffRecipe recipe in SkillRecipes.Default.AllBuffs.Concat(SkillRecipes.Default.AllClassBuffs))
             {
                 buffSkills++;
                 string label = "增益 #" + buffSkills;
@@ -1362,15 +1383,35 @@ internal static class SkillCheck
                     {
                         buffProblems.Add(label + " " + lv + " 级:持续时间或数值不是正数");
                     }
-                    if (recipe.Stat == BuffStat.SuperArmorChance && amount * recipe.AmountScale > 1.0)
+                    if ((recipe.Stat == BuffStat.SuperArmorChance || recipe.Stat == BuffStat.AutoGuardChance) && amount * recipe.AmountScale > 1.0)
                     {
-                        buffProblems.Add(label + " " + lv + " 级:概率超过 100%(M49,E-142)");       // 概率类增益的数是千分比,换成 0 到 1 以后不会超过 1
+                        buffProblems.Add(label + " " + lv + " 级:概率超过 100%(M49,E-142)");       // 概率类增益的数换成 0 到 1 以后不会超过 1(超过了就是缩放或列号错了)
+                    }
+                }
+                if (recipe.Stat == BuffStat.AutoGuardChance)
+                {
+                    // 自动防御借用的防御姿态技能:得是表里的防御姿态配方、技能在目录里,而且在这个技能的前置要求里(客户端钩子里两个技能都要学过,前置要求保证学了这个就学过那个)
+                    SkillDef? guardDef = catalog.Find(recipe.GuardSkillId);
+                    if (SkillRecipes.Default.FindGuard(recipe.GuardSkillId) == null || guardDef == null || !guardDef.IsActive)
+                    {
+                        buffProblems.Add(label + ":借用的防御姿态技能不在配方表或目录里");
+                    }
+                    else if (!def.PreRequired.Any(pr => pr.SkillId == recipe.GuardSkillId))
+                    {
+                        buffProblems.Add(label + ":借用的防御姿态技能不在这个技能的前置要求里");
                     }
                 }
 
-                RoomCombatSession session = NewSession(assets, opts, caster);
+                // 默认主角(当前成长类型)学不到的子职业技能,换一个学得到的主角(CasterWhoKnows 按成长类型依次试)
+                HeroProgress? buffCaster = caster.Skills.LevelOf(def.Id) > 0 ? caster : CasterWhoKnows(assets, level, def.Id);
+                if (buffCaster == null)
+                {
+                    buffProblems.Add(label + ":没有哪个成长类型的主角学得到它");
+                    continue;
+                }
+                RoomCombatSession session = NewSession(assets, opts, buffCaster);
                 HeroSkillSlot? slot = session.Skills.SlotOfSkill(def.Id);
-                if (slot?.Buff == null || caster.Skills.LevelOf(def.Id) <= 0)
+                if (slot?.Buff == null || buffCaster.Skills.LevelOf(def.Id) <= 0)
                 {
                     buffProblems.Add(label + ":没有排进槽里(没学会或没有放法)");
                     continue;
@@ -1433,7 +1474,7 @@ internal static class SkillCheck
             {
                 Console.WriteLine("    " + line);
             }
-            Report(buffSkills == SkillRecipes.Default.BuffCount && buffSkills > 0 && buffProblems.Count == 0 && buffCycles == buffSkills && buffMotionOk == buffSkills,
+            Report(buffSkills == SkillRecipes.Default.BuffCount + SkillRecipes.Default.ClassBuffCount && buffSkills > 0 && buffProblems.Count == 0 && buffCycles == buffSkills && buffMotionOk == buffSkills,
                 "增益类技能 " + buffSkills + " 个(逐级查了 " + buffLevelsChecked + " 级的持续时间与数值都为正)在真实数据里读得通;真实会话里按各自的指令各放一遍:施法动作无攻击框 "
                 + buffMotionOk + " 个、施法结束挂上并到点失效 " + buffCycles + " 个(问题 " + buffProblems.Count + " 条)");
 
@@ -1550,14 +1591,185 @@ internal static class SkillCheck
             Report(guardSkills == SkillRecipes.Default.GuardCount && guardSkills > 0 && guardProblems.Count == 0 && guardCycles == guardSkills && guardMotionOk == guardSkills,
                 "防御姿态类技能 " + guardSkills + " 个(逐级查了 " + guardLevelsChecked + " 级的后滑时长为正、减伤百分比在 0 到 100 之间)在真实数据里读得通;真实会话里按各自的指令各放一遍:姿势动作无攻击框 "
                 + guardMotionOk + " 个、按着不放一直不结束且松开后回到站立 " + guardCycles + " 个(问题 " + guardProblems.Count + " 条)");
+
+            // 10. 投掷类技能(状态 0x0d 一族,ThrowRecipe):表里的每个在真实数据里都读得通——技能在目录里、是主动技能、有指令;[static data] 与 [level info] 的列够用、
+            // 两个阶段的时长读出来为正、学得到的每一级每个对象的百分比都为正;角色脚本里两个姿势标签都指到库里的动画、至少一帧;每个对象的 .obj 读得到且是老式对象、
+            // 基础动画有攻击框、攻击信息在库里;真实会话里按各自的指令打一遍:放出来的就是它自己、魔法值按 [consume MP] 扣、冷却开始计、全部对象在这一步放出一次、
+            // 两个阶段的时长与 [static data] 吻合(10 毫秒一步的误差内)、整段期间主角一直在放技能、结束后回到站立。只打印汇总数,时长与列内容不打印。
+            int throwSkills = 0;
+            int throwLevelsChecked = 0;
+            int throwObjectsChecked = 0;
+            int throwPosesOk = 0;
+            int throwArmored = 0;
+            int throwCycles = 0;
+            var throwProblems = new List<string>();
+            foreach (ThrowRecipe recipe in SkillRecipes.Default.AllThrows)
+            {
+                throwSkills++;
+                string label = "投掷 #" + throwSkills;
+                SkillDef? def = catalog.Find(recipe.SkillId);
+                if (def == null || !def.IsActive || def.Command.IsEmpty)
+                {
+                    throwProblems.Add(label + ":技能不在目录里、不是主动技能,或没有指令");
+                    continue;
+                }
+                int needStatic = new[] { recipe.ChargeStaticIndex, recipe.ShootStaticIndex, recipe.ArmorStaticIndex }.Max() + 1;
+                if (def.StaticData.Length < needStatic)
+                {
+                    throwProblems.Add(label + ":[static data] 只有 " + def.StaticData.Length + " 个数,配方要 " + needStatic + " 个");
+                }
+                else
+                {
+                    if (def.GetStatic(recipe.ChargeStaticIndex, false) <= 0 || def.GetStatic(recipe.ShootStaticIndex, false) <= 0)
+                    {
+                        throwProblems.Add(label + ":两个阶段的时长读出来不是正数");
+                    }
+                    throwArmored += recipe.ArmorStaticIndex >= 0 && def.GetStatic(recipe.ArmorStaticIndex, false) != 0 ? 1 : 0;
+                }
+                int needColumns = recipe.Objects.Max(o => o.DamageRateColumn) + 1;
+                if (def.LevelInfo.Columns < needColumns || !def.LevelInfo.IsConsistent || def.LevelInfo.Levels < def.MaximumLevel)
+                {
+                    throwProblems.Add(label + ":[level info] 只有 " + def.LevelInfo.Columns + " 列,配方要 " + needColumns + " 列(或行数不够)");
+                }
+                else
+                {
+                    int learnableLevels = def.GrowtypeMaxLevels.Length > 0 ? Math.Min(def.GrowtypeMaxLevels.Max(), def.MaximumLevel) : def.MaximumLevel;
+                    for (int lv = 1; lv <= learnableLevels; lv++)
+                    {
+                        throwLevelsChecked++;
+                        if (recipe.Objects.Any(o => def.GetLevel(lv, o.DamageRateColumn, false) <= 0))
+                        {
+                            throwProblems.Add(label + " " + lv + " 级:有对象的百分比伤害读出来不是正数");
+                        }
+                    }
+                }
+                foreach (string tag in new[] { recipe.ChargePoseTag, recipe.ShootPoseTag })
+                {
+                    string? posePath = chr.MotionPath(tag);
+                    AniFile? pose = posePath == null ? null : assets.LoadAni(posePath);
+                    if (pose == null || pose.Frames.Length == 0)
+                    {
+                        throwProblems.Add(label + ":角色脚本里的 " + tag + " 读不到或没有帧");
+                    }
+                    else
+                    {
+                        throwPosesOk++;
+                    }
+                }
+                for (int i = 0; i < recipe.Objects.Count; i++)
+                {
+                    throwObjectsChecked++;
+                    Dnf.Game.PassiveObjectDef? objectDef = data.GetPassiveObject(recipe.Objects[i].ObjectId);
+                    if (objectDef == null)
+                    {
+                        throwProblems.Add(label + " 对象 " + i + ":.obj 读不到");
+                        continue;
+                    }
+                    if (objectDef.BasicActionPath != null)
+                    {
+                        throwProblems.Add(label + " 对象 " + i + ":是 .act 驱动的新式对象(这条路径只放老式对象)");
+                    }
+                    AniFile? objectAni = objectDef.BasicMotionPath == null ? null : assets.LoadAni(objectDef.BasicMotionPath);
+                    if (objectAni == null || objectAni.Frames.Length == 0)
+                    {
+                        throwProblems.Add(label + " 对象 " + i + ":基础动画读不到");
+                    }
+                    else if (!objectAni.Frames.Any(fr => fr.Boxes.Any(b => b.Type == AniBoxType.Attack)))
+                    {
+                        throwProblems.Add(label + " 对象 " + i + ":基础动画没有任何攻击框");
+                    }
+                    if (!InLibrary(objectDef.AttackInfoPath))
+                    {
+                        throwProblems.Add(label + " 对象 " + i + ":攻击信息读不到");
+                    }
+                }
+
+                HeroProgress? thrower = caster.Skills.LevelOf(def.Id) > 0 ? caster : CasterWhoKnows(assets, level, def.Id);
+                if (thrower == null)
+                {
+                    throwProblems.Add(label + ":没有任何成长类型的主角学得会这个技能");
+                    continue;
+                }
+                RoomCombatSession session = NewSession(assets, opts, thrower);
+                HeroSkillSlot? slot = session.Skills.SlotOfSkill(def.Id);
+                if (slot?.Throw == null || slot.ThrowPoses == null)
+                {
+                    throwProblems.Add(label + ":没有排进槽里(没学会、没有放法,或读不到姿势动画)");
+                    continue;
+                }
+                int mpBefore = session.Vitals?.Mp ?? 0;
+                double castStepMs = 0;
+                foreach (CommandStep step in CommandSteps.Of(def.Command, session.Hero.FacingLeft))
+                {
+                    session.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Keys);
+                    castStepMs = step.Ms;
+                }
+                if (session.Hero.Motion != HeroMotion.Skill || session.Hero.SkillId != def.Id || session.ThrowCasts != 1 || session.CommandCasts != 1 || !session.ThrowActive)
+                {
+                    throwProblems.Add(label + ":按指令没有放出这个技能(或阶段机没有启动)");
+                    continue;
+                }
+                if (session.Vitals != null && session.Vitals.Mp != mpBefore - slot.ConsumeMp)
+                {
+                    throwProblems.Add(label + ":魔法值没按 [consume MP] 扣");
+                }
+                if (slot.CooldownMs > 0 && slot.CooldownLeftMs <= 0)
+                {
+                    throwProblems.Add(label + ":冷却没有开始计");
+                }
+                if (session.HeroObjectsSpawned != recipe.Objects.Count)
+                {
+                    throwProblems.Add(label + ":这一步放出的对象数不是 " + recipe.Objects.Count + "(是 " + session.HeroObjectsSpawned + ")");
+                }
+                // 阶段计时:放出那一步已经走了 castStepMs;之后每 10 毫秒一步,换阶段与结束的时刻落在 [配置值, 配置值 + 10) 毫秒里
+                int chargeMs = def.GetStatic(recipe.ChargeStaticIndex, false);
+                int shootMs = def.GetStatic(recipe.ShootStaticIndex, false);
+                double elapsed = castStepMs;
+                double phase1At = session.ThrowPhase == 1 ? elapsed : -1;
+                bool alwaysSkill = true;
+                for (int t = 0; t < 30000 && session.ThrowActive; t += 10)
+                {
+                    session.Update(10, 0, 0, false, false, SkillKeys.None);
+                    elapsed += 10;
+                    if (phase1At < 0 && session.ThrowPhase == 1)
+                    {
+                        phase1At = elapsed;
+                    }
+                    alwaysSkill &= !session.ThrowActive || (session.Hero.Motion == HeroMotion.Skill && session.Hero.SkillId == def.Id);
+                }
+                bool chargeOk = phase1At >= chargeMs && phase1At < chargeMs + 10;
+                bool shootOk = elapsed - phase1At >= shootMs && elapsed - phase1At < shootMs + 10;
+                if (session.ThrowActive || session.ThrowCancels != 0 || !chargeOk || !shootOk || !alwaysSkill || session.HeroObjectsSpawned != recipe.Objects.Count)
+                {
+                    throwProblems.Add(label + ":阶段计时与 [static data] 对不上(阶段 0 " + (chargeOk ? "吻合" : "不吻合") + "、阶段 1 " + (shootOk ? "吻合" : "不吻合")
+                        + "),或中途被打断 " + session.ThrowCancels + " 次、没有一直在放技能、对象数变了");
+                    continue;
+                }
+                if (session.Hero.Motion != HeroMotion.Rest || session.Hero.SkillId != 0)
+                {
+                    throwProblems.Add(label + ":整段结束后主角没有回到站立");
+                    continue;
+                }
+                throwCycles++;
+            }
+            foreach (string line in throwProblems)
+            {
+                Console.WriteLine("    " + line);
+            }
+            Report(throwSkills == SkillRecipes.Default.ThrowCount && throwSkills > 0 && throwProblems.Count == 0 && throwCycles == throwSkills,
+                "投掷类技能 " + throwSkills + " 个(逐级查了 " + throwLevelsChecked + " 级的对象百分比都为正;对象 " + throwObjectsChecked + " 个、姿势动画 " + throwPosesOk + " 个读得通;阶段 0 带霸体的 "
+                + throwArmored + " 个)在真实数据里读得通;真实会话里按各自的指令各放一遍:对象一次放齐、两个阶段的时长与 [static data] 吻合、一直在放技能、结束后回到站立的 "
+                + throwCycles + " 个(问题 " + throwProblems.Count + " 条)");
         }
+
+        bad += SkillCheckBodyHit.Run(assets, opts, catalog, level);
 
         Console.WriteLine(bad == 0 ? "skill-check 全部通过" : "skill-check 有 " + bad + " 项失败");
         return bad == 0 ? 0 : 1;
     }
 
     /// <summary>一局新的房间战斗会话(检查用:每次放技能都要一局新的),主角带着花光点数的技能簿,出招指令开着,怪物不还手。</summary>
-    private static RoomCombatSession NewSession(DnfAssets assets, Options opts, HeroProgress progress)
+    internal static RoomCombatSession NewSession(DnfAssets assets, Options opts, HeroProgress progress)
     {
         RoomCombatSession session = DemoCombat.CreateSession(assets, opts.MapPath, opts.HeroWeapon ?? DemoHero.StarterWeapon, 1, false, progress);
         session.CommandsEnabled = true;
@@ -1590,8 +1802,35 @@ internal static class SkillCheck
         return null;
     }
 
+    /// <summary>两个技能的 [command] 文本完全相同吗(检查用:撞车的技能靠指令分不开,指令层只放快捷槽在前、编号小的在前的那个,E-140)。</summary>
+    private static bool SameCommandText(SkillDef? other, SkillDef def)
+    {
+        return other != null && other.Id != def.Id && !def.Command.IsEmpty && other.Command.ToString() == def.Command.ToString();
+    }
+
+    /// <summary>
+    /// 指令撞车的技能改按快捷键放(检查用):找一个学会它的主角(新建的),把它排进快捷栏第 1 格,开一局新会话按那个键,
+    /// 主角进入的就是这个技能的施法动作则为真。
+    /// </summary>
+    private static bool CastsByQuickKey(DnfAssets assets, Options opts, int level, int skillId)
+    {
+        HeroProgress? who = CasterWhoKnows(assets, level, skillId);
+        if (who == null || !who.Skills.AssignQuick(0, skillId))
+        {
+            return false;
+        }
+        RoomCombatSession session = NewSession(assets, opts, who);
+        HeroSkillSlot? slot = session.Skills.SlotOfSkill(skillId);
+        if (slot == null || slot.Key == SkillKeys.None)
+        {
+            return false;
+        }
+        session.Update(10, 0, 0, false, false, slot.Key);
+        return session.Hero.Motion == HeroMotion.Skill && session.Hero.SkillId == skillId;
+    }
+
     /// <summary>让主角起跳并升到离地至少 <paramref name="minHeight"/> 像素(检查用:只在腾空时放得出来的技能)。返回有没有升到。</summary>
-    private static bool LiftOff(RoomCombatSession session, double minHeight)
+    internal static bool LiftOff(RoomCombatSession session, double minHeight)
     {
         session.Update(10, 0, 0, false, true, SkillKeys.None);
         for (int t = 0; t < 3000 && !(session.Hero.Motion == HeroMotion.Jump && session.Hero.Z >= minHeight); t += 10)
@@ -1602,13 +1841,13 @@ internal static class SkillCheck
     }
 
     /// <summary>把一条指令打成一串按键步骤的一步。</summary>
-    private readonly record struct CommandStep(double Ms, int DirX, int DirY, bool Attack, bool Jump, bool Skill, bool Buff)
+    internal readonly record struct CommandStep(double Ms, int DirX, int DirY, bool Attack, bool Jump, bool Skill, bool Buff)
     {
         /// <summary>这一步按下的出招指令键(技能键与增益键)。</summary>
         public SkillKeys Keys => (Skill ? SkillKeys.CommandSkill : SkillKeys.None) | (Buff ? SkillKeys.CommandBuff : SkillKeys.None);
     }
 
-    private static class CommandSteps
+    internal static class CommandSteps
     {
         /// <summary>
         /// 把指令打一遍:每个键按一步(方向键按下后在下一个键之前松开,"同时"连着下一个键的方向键一直按到下一个键按下那一步),
