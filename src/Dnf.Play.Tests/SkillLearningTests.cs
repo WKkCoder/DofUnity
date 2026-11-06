@@ -542,6 +542,14 @@ public class SkillLearningTests
         second.Skills.SetPoints(1000, 0);
         Assert.Equal(1, second.Skills.LevelOf(904));
         Assert.Equal(1, new SkillLearning(second).LearnableLevels(904));
+        // 单个的检查也用主角的成长类型与等级:同一个 904,成长类型 1 的主角学得了(2 点),成长类型 0 的学不了;
+        // 2 级主角把 901 学到第 2 级要 3 级,差一级
+        Assert.Equal(SkillOpResult.Ok, new SkillLearning(second).CheckLearn(904, 1, out int cost));
+        Assert.Equal(2, cost);
+        Assert.Equal(SkillOpResult.NotAllowed, service.CheckLearn(904, 1, out cost));
+        Assert.Equal(0, cost);
+        Assert.Equal(SkillOpResult.NotAllowed, new SkillLearning(second).CheckLearn(901, 1, out cost));
+        Assert.Equal(0, cost);
         // 905 是特殊技能:看觉醒点,不看技能点;55 级主角觉醒点 6 点,要求 10、15、20 级都够,最高 3 级,每级 1 点
         HeroProgress awake = LearningFixture.Hero(LearningFixture.Tree(), 55, LearningFixture.TreeChr());
         Assert.Equal(3, new SkillLearning(awake).LearnableLevels(905));

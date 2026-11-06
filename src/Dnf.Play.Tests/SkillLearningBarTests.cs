@@ -116,6 +116,44 @@ public class SkillLearningBarTests
         Assert.Equal("901,902,907,904,905,906", Bar(hero));                                // 907 占空格,906 不用让
         Assert.Equal(SkillReach.OnBar, service.ReachOf(906));
         Assert.Equal(SkillReach.CommandOnly, service.ReachOf(903));                        // 903 是玩家自己清下去的,没人动它,仍然靠指令放
+        // 空格比够不着的技能多时:只占需要的,多出来的空格不动
+        LearnOne(service, 908);                                                            // 栏上没有空格,908 放不下
+        Assert.Equal(1, service.Stranded());
+        Assert.True(hero.Skills.ClearQuick(4));
+        Assert.True(hero.Skills.ClearQuick(5));
+        Assert.Equal("901,902,907,904,0,0", Bar(hero));
+        Assert.Equal(1, service.ArrangeBar());
+        Assert.Equal("901,902,907,904,908,0", Bar(hero));
+    }
+
+    [Fact]
+    public void TheGetUpSkillNeverNeedsABarSlotWhenItHasACommand()
+    {
+        // 倒地起身有自己的起身通路(打指令或按键都行),所以有指令就不算"只能靠快捷键"——哪怕它的指令是单个跳跃,指令层不放
+        (HeroProgress hero, SkillLearning service) = Setup(aware: true);
+        service.QuickStandId = 908;                                                        // 908 的指令只有一个跳跃键:指令层放不出
+        Assert.Equal(SkillIds.QuickStand, new SkillLearning(hero).QuickStandId);           // 默认是真实的倒地起身
+        LearnOne(service, 901, 902, 903, 904, 905, 906, 908);
+        Assert.Equal("901,902,903,904,905,906", Bar(hero));                                // 不占栏、也不顶掉别人
+        Assert.Equal(SkillReach.CommandOnly, service.ReachOf(908));
+        Assert.Equal(0, service.Stranded());
+
+        // 没有指令的倒地起身只能按键:占栏,和别的只能靠快捷键的技能一样
+        (HeroProgress noCommand, SkillLearning plain) = Setup(aware: true);
+        plain.QuickStandId = 907;                                                          // 907 没有指令
+        LearnOne(plain, 901, 902, 903, 904, 905, 906, 907);
+        Assert.Equal("901,902,903,904,905,907", Bar(noCommand));
+        Assert.Equal(SkillReach.OnBar, plain.ReachOf(907));
+
+        // 占在栏上的倒地起身,在别的格都被只能靠快捷键的技能占满时,也和靠指令放的技能一样让位
+        (HeroProgress crowded, SkillLearning third) = Setup(aware: true);
+        third.QuickStandId = 908;
+        LearnOne(third, 909, 910, 911, 912, 913, 908);                                     // 前五格是只能靠快捷键的,908 在第 5 格
+        Assert.Equal("909,910,911,912,913,908", Bar(crowded));
+        LearnOne(third, 907);                                                              // 907 要格:只有 908 能让
+        Assert.Equal("909,910,911,912,913,907", Bar(crowded));
+        Assert.Equal(SkillReach.CommandOnly, third.ReachOf(908));
+        Assert.Equal(0, third.Stranded());
     }
 
     [Fact]

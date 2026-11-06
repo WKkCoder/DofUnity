@@ -26,10 +26,25 @@ namespace Dnf.Play
             set => _implemented = value ?? HeroSkills.IsImplemented;
         }
 
-        /// <summary>这个技能靠出招指令放得出来吗:放法实现了,并且指令能由指令层放出(<see cref="HeroSkills.CommandCasts"/>:技能键或增益键当扳机,或跳跃、攻击键收尾的多键指令)。</summary>
+        /// <summary>
+        /// 倒地起身技能的编号(默认 <see cref="SkillIds.QuickStand"/>)。它不走指令层,有自己的起身通路:躺着的时候打出它的指令或按它的快捷键都行(E-140),
+        /// 所以只要它有指令就不必占快捷栏。合成数据的测试换成合成编号。
+        /// </summary>
+        public int QuickStandId { get; set; } = SkillIds.QuickStand;
+
+        /// <summary>
+        /// 出招指令够得着这个技能:指令能由指令层放出(<see cref="HeroSkills.CommandCasts"/>:技能键或增益键当扳机,或跳跃、攻击键收尾的多键指令),
+        /// 或者是有指令的倒地起身(<see cref="QuickStandId"/>)。
+        /// </summary>
+        private bool CommandReaches(SkillDef def)
+        {
+            return HeroSkills.CommandCasts(def.Command) || (def.Id == QuickStandId && !def.Command.IsEmpty);
+        }
+
+        /// <summary>这个技能靠出招指令放得出来吗:放法实现了,并且指令够得着(<see cref="CommandReaches"/>)。</summary>
         private bool CastsByCommand(SkillDef def)
         {
-            return def != null && _implemented(def.Id) && HeroSkills.CommandCasts(def.Command);
+            return def != null && _implemented(def.Id) && CommandReaches(def);
         }
 
         /// <summary>
@@ -69,7 +84,7 @@ namespace Dnf.Play
             foreach (KeyValuePair<int, int> learned in book.Learned)
             {
                 SkillDef def = book.Catalog.Find(learned.Key);
-                if (def != null && def.IsActive && book.QuickSlotOf(def.Id) < 0 && _implemented(def.Id) && !HeroSkills.CommandCasts(def.Command))
+                if (def != null && def.IsActive && book.QuickSlotOf(def.Id) < 0 && _implemented(def.Id) && !CommandReaches(def))
                 {
                     list.Add(def);
                 }
@@ -135,7 +150,7 @@ namespace Dnf.Play
                 {
                     unimplemented.Add(slot);
                 }
-                else if (HeroSkills.CommandCasts(def.Command))
+                else if (CommandReaches(def))
                 {
                     byCommand.Add(slot);
                 }

@@ -38,6 +38,19 @@ public class SkillLearningAutoTests
         Assert.Equal(5, service.Update());
         Assert.Equal("sp=2 sfp=0 levels=901:3,902:2,903:1, bar=901,903,0,0,0,0,", State(hero));
         Assert.Equal(0, service.Update());                                                 // 升级只对账一次:没有新的升级就不再学
+        hero.Skills.AddPoints(100, 0);                                                     // 之后只加点不升级:点数够学 903 第 2 级等等,但不该学
+        Assert.Equal(0, service.Update());
+        Assert.Equal(102, hero.SkillPoints);
+    }
+
+    [Fact]
+    public void SettingItOnAgainDoesNotForgetALevelUpThatIsStillPending()
+    {
+        HeroProgress hero = NewHero();
+        var service = new SkillLearning(hero) { AutoLearn = true };
+        hero.Gain(2000);
+        service.AutoLearn = true;                                                          // 已经开着,再设一次开不重新对账
+        Assert.Equal(5, service.Update());
     }
 
     [Fact]
