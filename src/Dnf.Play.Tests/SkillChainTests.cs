@@ -172,9 +172,19 @@ public class SkillChainTests
             {
                 Assert.DoesNotContain(r.Objects, o => o.OnLanding);        // "落地放"只属于悬停俯冲
             }
-            // 对象的两个伤害列都要有;只有"段首瞬移那一段放的对象"(M104,状态 0x21)只有百分比一列
-            Assert.All(r.Objects, o => Assert.True(o.ObjectId > 0 && o.Stage >= 0 && o.Stage < r.Stages.Count && o.Frame >= 0
-                && o.DamageRateColumn >= 0 && (o.DamageFixedColumn >= 0 || (hasWarp && o.FromWarpOrigin))));
+            // 对象的两个伤害列都要有;只有三种对象只有一列(缺的那一列必须写 NoColumn,不是别的负数):
+            // (一)"段首瞬移那一段放的对象"(M104,状态 0x21)只有百分比一列;
+            // (二)M105 放宽,状态 0x2d 的对象(自动接续配方后一段放的)只有固定值一列:创建调用的伤害实参只来自取固定值列的函数 0x00913d70,那一块逐帧代码里没有 0x009138c0 的调用(NOTES 的证据 R7-he-06);
+            // (三)M105 放宽,状态 0x26 的对象(放在"暂停施法"那一段)只有百分比一列:伤害实参只来自 0x009138c0,没有 0x00913d70 的调用(R7-he-04)。
+            // 放宽只给这两种形状,别的对象仍要两列都有;第七轮之前这里要求"两列都 >= 0"(或 M104 的瞬移例外)。
+            Assert.All(r.Objects, o =>
+            {
+                bool poseObject = r.AutoChain && !o.HasRateColumn && o.HasFixedColumn && o.DamageRateColumn == SkillObjectSpec.NoColumn;
+                bool chargeObject = o.Stage < r.Stages.Count && r.Stages[o.Stage].CastMode == SkillCastMode.Pause && !o.HasFixedColumn && o.HasRateColumn
+                    && o.DamageFixedColumn == SkillObjectSpec.NoColumn;
+                Assert.True(o.ObjectId > 0 && o.Stage >= 0 && o.Stage < r.Stages.Count && o.Frame >= 0
+                    && ((o.DamageRateColumn >= 0 && (o.DamageFixedColumn >= 0 || (hasWarp && o.FromWarpOrigin))) || poseObject || chargeObject));
+            });
         }
         Assert.Throws<ArgumentException>(() => new SkillRecipe(1, new SkillStageSpec[0], 0, 0, 0, 0, 1));
     }

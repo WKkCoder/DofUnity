@@ -5,22 +5,17 @@ namespace Dnf.Play.Tests;
 /// <summary>
 /// 默认配方表里第七轮(M105,R7-he-01 到 R7-he-11)新增的五个配方的常量:动作、攻击信息、伤害列、特效、施法方式、起滑、对象都是客户端状态码里写死的下标,
 /// 期望值取自静态读码的记录(状态进入块、逐帧块、守卫块),与实现里的写法无关。按动作项找配方(不写技能编号),每个只有一份。
-/// 其中两个(姿势→跳劈、蓄力放对象)在待批准表里(<see cref="SkillRecipes.PendingApproval"/>):它们的对象只有一列伤害,会让默认表里两条既有的表形状检查变红,按规定不放进默认表。
+/// 其中两个(姿势→跳劈、蓄力放对象)的对象只给一列伤害(另一列写 <see cref="SkillObjectSpec.NoColumn"/>),集成者批准后放进了默认表,
+/// 默认表里两条既有的表形状检查按这个事实放宽了(见 SkillChainTests 与 SkillAutoChainTests 里写明依据的那两处)。
 /// </summary>
 public class SkillR7DefaultRecipeTests
 {
     private static SkillRecipe Find(Func<SkillRecipe, bool> match)
     {
-        return FindIn(SkillRecipes.Default, match, inDefault: true);
+        return FindIn(SkillRecipes.Default, match);
     }
 
-    /// <summary>待批准表里找(读通了、配方写好了,但还没放进默认表:见 SkillRecipes.PendingApproval.cs 开头的注释)。</summary>
-    private static SkillRecipe FindPending(Func<SkillRecipe, bool> match)
-    {
-        return FindIn(SkillRecipes.PendingApproval, match, inDefault: false);
-    }
-
-    private static SkillRecipe FindIn(SkillRecipes table, Func<SkillRecipe, bool> match, bool inDefault)
+    private static SkillRecipe FindIn(SkillRecipes table, Func<SkillRecipe, bool> match)
     {
         SkillRecipe found = null;
         foreach (SkillRecipe r in table.All)
@@ -32,8 +27,8 @@ public class SkillR7DefaultRecipeTests
             }
         }
         Assert.NotNull(found);
-        Assert.Equal(inDefault, HeroSkills.IsImplemented(found.SkillId));      // 默认表里的算"已实现",待批准的不算
-        Assert.Equal(inDefault, SkillRecipes.Default.Find(found.SkillId) != null);
+        Assert.True(HeroSkills.IsImplemented(found.SkillId));      // 默认表里的算"已实现"
+        Assert.Same(found, SkillRecipes.Default.Find(found.SkillId));
         return found;
     }
 
@@ -76,7 +71,7 @@ public class SkillR7DefaultRecipeTests
     public void ThePoseThenLeapRecipeDropsOneObjectFromFrame5OfTheSecondStageWithOnlyAFixedColumn()
     {
         // 状态 0x2d:姿势(动作 66,特效第 0、1 个)→ 自动接跳劈(动作 67,攻击信息 57,百分比第 0 列,特效第 2、3 个)
-        SkillRecipe r = FindPending(x => x.Stages.Count == 2 && x.Stages[0].MotionIndex == 66 && x.Stages[1].MotionIndex == 67);
+        SkillRecipe r = Find(x => x.Stages.Count == 2 && x.Stages[0].MotionIndex == 66 && x.Stages[1].MotionIndex == 67);
         AssertPlainStage(r.Stages[0], 66, -1, -1, -1, new[] { 0, 1 }, 0, SkillCastMode.Placeholder);
         AssertPlainStage(r.Stages[1], 67, 57, 0, -1, new[] { 2, 3 }, 0, SkillCastMode.Placeholder);
         AssertNoOtherMechanics(r, autoChain: true);
@@ -93,7 +88,7 @@ public class SkillR7DefaultRecipeTests
     public void TheChargeThenObjectRecipePausesTheFirstFrameAndDropsOneObjectFromFrame4()
     {
         // 状态 0x26:一段(动作 46,身体不打人,特效第 0、1 个,暂停施法);动画播到第 4 帧起放对象 20032:前方 150、y 偏移 0、离地 68,伤害只取百分比第 1 列
-        SkillRecipe r = FindPending(x => x.Stages.Count == 1 && x.Stages[0].MotionIndex == 46);
+        SkillRecipe r = Find(x => x.Stages.Count == 1 && x.Stages[0].MotionIndex == 46);
         AssertPlainStage(r.Stages[0], 46, -1, -1, -1, new[] { 0, 1 }, 0, SkillCastMode.Pause);
         AssertNoOtherMechanics(r, autoChain: false);
         SkillObjectSpec o = Assert.Single(r.Objects);
@@ -145,23 +140,6 @@ public class SkillR7DefaultRecipeTests
                     Assert.Equal(0, st.CastHoldFrames);              // 两种写法互斥:新施法方式的段不再按"蓄力帧数"算
                 }
             }
-        }
-    }
-
-    [Fact]
-    public void ThePendingTableHoldsExactlyTheTwoSingleColumnObjectRecipesAndNeverCollidesWithTheDefaultTable()
-    {
-        // 待批准表里正好两个配方,编号与默认表不重复;默认表里没有一个对象缺伤害列(缺列的对象只在待批准表里)——批准前不能让默认表带上它们
-        Assert.Equal(2, SkillRecipes.PendingApproval.Count);
-        foreach (SkillRecipe p in SkillRecipes.PendingApproval.All)
-        {
-            Assert.Null(SkillRecipes.Default.Find(p.SkillId));
-            Assert.All(p.Objects, o => Assert.True((o.DamageRateColumn >= 0) != (o.DamageFixedColumn >= 0)));      // 恰好一列
-        }
-        foreach (SkillRecipe d in SkillRecipes.Default.All)
-        {
-            // 合并主线之后放宽一处:主线 M104 的"段首瞬移那一段放的对象"(FromWarpOrigin,状态 0x21)本来就只有百分比一列,是默认表里唯一缺列的形状
-            Assert.All(d.Objects, o => Assert.True(o.DamageRateColumn >= 0 && (o.DamageFixedColumn >= 0 || o.FromWarpOrigin)));
         }
     }
 }

@@ -227,9 +227,27 @@ namespace Dnf.Play
     /// </summary>
     public sealed partial class SkillObjectSpec
     {
+        /// <summary>
+        /// 伤害列"客户端没给对象传这一项"的写法(M105,R7-he-04、R7-he-06):<see cref="DamageRateColumn"/> / <see cref="DamageFixedColumn"/> 填这个数,
+        /// 意思是创建这个对象的状态码里没有读这一列、创建参数里也没有这一项,<b>不是</b>"读第 -1 列"。证据(静态读码,非 REA):
+        /// 取固定值列的函数 0x00913d70 的第二个实参 0xffff0001 是"不带百分比修正"的哨兵(0x00913cbc 处比较,相等就跳过百分比那一步乘法),即缺的百分比项等于没有这个因子;
+        /// 创建调用(虚槽 0x340 的入口 0x00878470)的伤害实参由状态码自己拼:状态 0x2d(技能的一个)只调 0x00913d70、整块没有 0x009138c0 的调用,状态 0x26 反过来。
+        /// 消费端一律按"缺哪一列、哪一项就是 0":<c>HeroSkills.ScaleLevel</c> 对负列返回 0,<c>SkillLevelTable.Get</c> 对负列也返回 0(两层都有,不会去读别的列);
+        /// 这个类只接受不小于它的列号(更小的数是写错,构造时抛 <see cref="ArgumentOutOfRangeException"/>)。两列都没有的对象不拒绝(命令行检查把它记成配方问题)。
+        /// </summary>
+        public const int NoColumn = -1;
+
         public SkillObjectSpec(int objectId, int stage, int frame, int damageRateColumn, int damageFixedColumn, int forwardX = 0, int offsetY = 0, int offsetZ = 0,
             int afterEffect = -1, int afterEffectFlag = 1, bool onLanding = false)
         {
+            if (damageRateColumn < NoColumn)
+            {
+                throw new ArgumentOutOfRangeException(nameof(damageRateColumn), "列号只能是 -1(没有这一项)或非负数");
+            }
+            if (damageFixedColumn < NoColumn)
+            {
+                throw new ArgumentOutOfRangeException(nameof(damageFixedColumn), "列号只能是 -1(没有这一项)或非负数");
+            }
             OnLanding = onLanding;
             ObjectId = objectId;
             Stage = stage;
@@ -257,6 +275,12 @@ namespace Dnf.Play
 
         /// <summary>.skl [level info] 里对象伤害的固定值列。</summary>
         public int DamageFixedColumn { get; }
+
+        /// <summary>对象有百分比这一项(<see cref="DamageRateColumn"/> 不是 <see cref="NoColumn"/>)。</summary>
+        public bool HasRateColumn => DamageRateColumn != NoColumn;
+
+        /// <summary>对象有固定值这一项(<see cref="DamageFixedColumn"/> 不是 <see cref="NoColumn"/>)。</summary>
+        public bool HasFixedColumn => DamageFixedColumn != NoColumn;
 
         /// <summary>放在主角世界 x 的前方多少像素(朝左往左,朝右往右)。</summary>
         public int ForwardX { get; }
@@ -1019,6 +1043,51 @@ namespace Dnf.Play
                 },
                 slideSpeedIndex: 1, slideAccelIndex: 2, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
                 autoChain: true),
+
+            // 两段自动接续的"姿势→跳劈"类技能(状态 0x2d,R7-he-05、R7-he-06,集成者已批准进默认表):起手函数 0x0049ddc0 只发模式 0;进入块 0x00cd4bb6:模式 0 播 [etc motion] 第 66 项(姿势,不设攻击信息),
+            // 放预载表第 0、1 个特效(第 2、1 层),不蓄力;守卫块 0x00cc8c99:模式 0 的动画播完那一刻自己发"状态 0x2d、参数 [1]、优先级 1";模式 1 的动画播完发"状态 0"。
+            // 模式 1:动作第 67 项,攻击信息第 57 项,伤害取 [level info] 百分比第 0 列;放预载表第 2、3 个特效(第 2、1 层)。逐帧块 0x00cbd4d2:动画播到第 5 帧(含)以后、本机控制时,
+            // 放一个被动对象:主角前方 150 像素(0x00cbd937)、y 与离地偏移 0,朝向同主角,编号是基础职业的那个(0x0049c8f0 为真取其一,另一个职业的没做)。
+            // 对象的伤害只取一列:创建调用(虚槽 0x340,调用在 0x00cbd960)的"伤害"实参是取列函数 0x00913d70 对 [level info] 第 1 列的结果(调用在 0x00cbd7ac,第二个实参是"不带百分比修正"的哨兵 0xffff0001),
+            // 整块逐帧代码里没有一处调 0x009138c0(百分比列的取列函数)——所以百分比列填 -1(SkillObjectSpec.NoColumn),固定值列填 1。参数缓冲里另有第 2 列(0x00cbd7d8)与两个 [static data] 数、
+            // 一个被动技能倍率,对象类怎么用它们没读到(对象类在受保护区,见 NOTES 的"未知")。
+            // 没做:模式 1 按 [static data] 前两个数脚本位移(水平前冲到第 5 帧开头、竖直一段上升一段下降的弧;Play 层改不了主角离地高度)、第 5 帧放的三个特效、与另一个被动技能联动的威力倍率与对象尺寸、
+            // 震屏(0x008e9950)、音效。
+            new SkillRecipe(81,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 66, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0,
+                        moreEffects: new[] { 1 }),
+                    new SkillStageSpec(motionIndex: 67, attackInfoIndex: 57, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: 2, effectFrame: 0,
+                        moreEffects: new[] { 3 }),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                objects: new[]
+                {
+                    new SkillObjectSpec(objectId: 20043, stage: 1, frame: 5, damageRateColumn: SkillObjectSpec.NoColumn, damageFixedColumn: 1, forwardX: 150, offsetY: 0, offsetZ: 0),
+                },
+                autoChain: true),
+
+            // 蓄力放对象类技能(状态 0x26,R7-he-03、R7-he-04,集成者已批准进默认表):起手函数 0x0049caa0 发"状态 0x26"(无参数);进入块 0x00cda8d9:播 [etc motion] 第 46 项,不设攻击信息(身体不打人),
+            // 把动画拨到第 0 帧并暂停,施法时间取受保护函数 0x009114e0(技能数据的 [casting time]),记下"当前时刻 + 施法时间"并起一个读条;放预载表第 0 个特效。
+            // 逐帧块 0x00cc09e0:动画暂停且当前时刻 ≥ 记下的时刻就解除暂停(Pause:停留 = 施法时间 + 第 0 帧自己的时长);动画播到第 1 帧放预载表第 1 个特效(第 2 层);
+            // 动画播到第 4 帧(含)以后、本机控制时放一次被动对象:主角前方 150 像素(0x00cc0e82)、y 偏移 0、离地 68(0x00cc0e7e),朝向同主角,编号是基础职业的那个(0x0049c8f0 为真取其一,另一个职业的没做)。
+            // 对象的伤害只取一列:创建调用(虚槽 0x340,调用在 0x00cc0e8e)的"伤害"实参是取列函数 0x009138c0 对 [level info] 第 1 列的结果(调用在 0x00cc0be8,倍率实参 1.0),
+            // 整块逐帧代码里没有一处调 0x00913d70(固定值列的取列函数)——所以固定值列填 -1(SkillObjectSpec.NoColumn),百分比列填 1。参数缓冲里另有按次数累加的几个列
+            // (0x00cc0bbd、0x00cc0c35 起的 0x00911b90 与 0x008459f0 读数,与第 7 列的 0x009138c0)与三个 [static data] 数:对象类怎么用没读到。
+            // 没做:对象创建参数包里的尺寸与其余列、另一处用 0x00b5b82b(受保护函数)的返回值减 1 当次数、对第 1、3 列等做的按次数累加(次数读不到,按 1 即不累加)、
+            // 特效偏移(进入块里第 0 个特效带 −35、−68 偏移)、第 1 个特效比第 0 个晚放、读条界面、音效。动画播完守卫块发"状态 0"。
+            new SkillRecipe(2,
+                new[]
+                {
+                    new SkillStageSpec(motionIndex: 46, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0,
+                        moreEffects: new[] { 1 }, castMode: SkillCastMode.Pause),
+                },
+                slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
+                objects: new[]
+                {
+                    new SkillObjectSpec(objectId: 20032, stage: 0, frame: 4, damageRateColumn: 1, damageFixedColumn: SkillObjectSpec.NoColumn, forwardX: 150, offsetY: 0, offsetZ: 68),
+                }),
 
             // 单段身体命中类技能的另一个(状态 0x15,与 E-162、E-163 同一族):处理函数分派 0x004a02d0 里这个技能号走默认的空分支,起手不经起手函数,
             // 而在主角逐帧函数公共后段的按键块 0x00cc1c6d:守卫(0x00cc1bbc 起)要求本地主角,当前状态与待发状态都不是 0x15、9,也不是 4、5;

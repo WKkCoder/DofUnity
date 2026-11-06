@@ -64,4 +64,29 @@ public class SkillSingleColumnObjectTests
         HeroStrikeInfo both = Slot(data, 2, rateColumn: 2, fixedColumn: 0).ObjectStrikes[0];
         Assert.Equal((333, 12), (both.SkillRatePercent, both.SkillFixed));
     }
+
+    [Fact]
+    public void TheMissingColumnMarkerIsMinusOneAndTheHasFlagsFollowIt()
+    {
+        Assert.Equal(-1, SkillObjectSpec.NoColumn);
+        var fixedOnly = new SkillObjectSpec(9211, 0, 0, SkillObjectSpec.NoColumn, 0);
+        Assert.Equal((false, true), (fixedOnly.HasRateColumn, fixedOnly.HasFixedColumn));
+        var rateOnly = new SkillObjectSpec(9211, 0, 0, 0, SkillObjectSpec.NoColumn);
+        Assert.Equal((true, false), (rateOnly.HasRateColumn, rateOnly.HasFixedColumn));
+        // 边界:第 0 列是真的一列(不是"没有");两列都有;两列都没有(构造不拒绝,命令行检查把它记成配方问题)
+        var both = new SkillObjectSpec(9211, 0, 0, 0, 0);
+        Assert.Equal((true, true), (both.HasRateColumn, both.HasFixedColumn));
+        var none = new SkillObjectSpec(9211, 0, 0, -1, -1);
+        Assert.Equal((false, false), (none.HasRateColumn, none.HasFixedColumn));
+    }
+
+    [Theory]
+    [InlineData(-2, 0)]
+    [InlineData(0, -2)]
+    [InlineData(int.MinValue, 0)]
+    [InlineData(0, int.MinValue)]
+    public void AColumnBelowTheMissingMarkerIsAWrittenWrongAndRejected(int rateColumn, int fixedColumn)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new SkillObjectSpec(9211, 0, 0, rateColumn, fixedColumn));
+    }
 }
