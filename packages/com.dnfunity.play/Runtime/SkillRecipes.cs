@@ -1301,17 +1301,6 @@ namespace Dnf.Play
                     new SkillObjectSpec(objectId: 20120, stage: 0, frame: 0, damageRateColumn: 0, damageFixedColumn: 0, offsetY: 50),
                     new SkillObjectSpec(objectId: 20121, stage: 0, frame: 0, damageRateColumn: 2, damageFixedColumn: 2),
                 }),
-
-            // 投掷类技能(状态 0x0d,静态读码,非 REA;起手 0x0049e200,后段 0x00cdf2d8):阶段 0 只放声音并用 0x00862d50 把 +0x5018 与 +0x5024 两段时长之和写进读条;
-            // 起手向量里只显式登记了 [static data] 下标 1(阶段 0 时长)与下标 4(霸体开关),没有像技能 24 那样登记下标 3,阶段 1 时长可能仍走 +0x5024 的默认填法(未知,按同族下标 3 接线)。
-            // 阶段 1 的进入块(0x00cdf4dc,阶段字段 +0x4ffc==1)用虚槽 +0x340 创建一个被动对象(0x0049c8f0 为真取 0x4e70,否则 0x4e70+0xffffffbe):
-            // 创建实参(0x00cdf505..0x00cdf54c)全是 0——伤害百分比 0、无参数缓冲、前方/纵深/离地偏移 0、方向码 4;对象定义是空壳(无动画与攻击信息,本机脚本读,非 REA),落地与命中在对象类里(受保护区,见 R7-hc-07),Play 只放占位对象。
-            // 没做:阶段 0 的读条 UI、对象类行为、另一职业分支的对象编号。
-            new ThrowRecipe(44, chargeStaticIndex: 1, shootStaticIndex: 3, armorStaticIndex: 4, poseSelector: 1,
-                objects: new[]
-                {
-                    new SkillObjectSpec(objectId: 20080, stage: 1, frame: 0, damageRateColumn: 0, damageFixedColumn: 0),
-                }),
         });
     }
 }
