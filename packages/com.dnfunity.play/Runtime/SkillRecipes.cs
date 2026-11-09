@@ -1051,15 +1051,17 @@ namespace Dnf.Play
             // 对象的伤害只取一列:创建调用(虚槽 0x340,调用在 0x00cbd960)的"伤害"实参是取列函数 0x00913d70 对 [level info] 第 1 列的结果(调用在 0x00cbd7ac,第二个实参是"不带百分比修正"的哨兵 0xffff0001),
             // 整块逐帧代码里没有一处调 0x009138c0(百分比列的取列函数)——所以百分比列填 -1(SkillObjectSpec.NoColumn),固定值列填 1。参数缓冲里另有第 2 列(0x00cbd7d8)与两个 [static data] 数、
             // 一个被动技能倍率,对象类怎么用它们没读到(对象类在受保护区,见 NOTES 的"未知")。
-            // 没做:模式 1 按 [static data] 前两个数脚本位移(水平前冲到第 5 帧开头、竖直一段上升一段下降的弧;Play 层改不了主角离地高度)、第 5 帧放的三个特效、与另一个被动技能联动的威力倍率与对象尺寸、
-            // 震屏(0x008e9950)、音效。
+            // 脚本前冲(R14 读码,进入块 0x00cd4e1e 起、逐帧块 0x00cbd4d2 起;详见 SkillLeapSpec):模式 1 进入时记起点横坐标,取 [static data] 第 0 个数当水平距离、第 1 个数当最大高度;
+            // 逐帧在"已过毫秒 < 动画第 5 帧开头"时水平 = 起点 ± 整数线性插值(0, 距离, 已过, 第 5 帧开头),落地那一步起不再摆位置(不补满距离)——水平段已接线(房间会话 StepLeap)。
+            // 没做:离地高度的弧(前半缓出到最大高度、后半缓入回 0,纯规则 SkillLeapRules.Height 已有,但主角的高度只有渲染层能改,见交接说明)、落地块里的两个声音与三个预载特效(第 4、5、6 项)与脚下特效对象、
+            // 震屏(0x008e9950,幅度 5、300 毫秒)、与另一个被动技能联动的威力倍率与对象尺寸。
             new SkillRecipe(81,
                 new[]
                 {
                     new SkillStageSpec(motionIndex: 66, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0,
                         moreEffects: new[] { 1 }),
                     new SkillStageSpec(motionIndex: 67, attackInfoIndex: 57, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: 2, effectFrame: 0,
-                        moreEffects: new[] { 3 }),
+                        moreEffects: new[] { 3 }).WithLeap(new SkillLeapSpec(distanceStaticIndex: 0, heightStaticIndex: 1, landFrame: 5)),
                 },
                 slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
                 objects: new[]

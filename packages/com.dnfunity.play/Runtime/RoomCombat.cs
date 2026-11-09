@@ -2623,6 +2623,7 @@ namespace Dnf.Play
             BodyKeyFlags(hero);
             ApplyKeyFlags(hero);
             StepBodyHit(hero);
+            StepLeap(hero);
             if (!hero.IsAttacking || OwnStrikeless(hero))
             {
                 _evalSwing = -1;
