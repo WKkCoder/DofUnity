@@ -84,7 +84,7 @@ internal static class Program
                     var finishReply = new List<DecodedFrame>();
                     if (Array.IndexOf(args, "--movemap-first") >= 0)
                     {
-                        FrameStatus mmfSent = await result.Session.SendAsync(PacketClass.Cmd, 48, new byte[14]);
+                        FrameStatus mmfSent = await result.Session.SendAsync(PacketClass.Cmd, 48, new byte[43]);
                         List<DecodedFrame> mmfReply = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(10));
                         Console.WriteLine("先进房(跳过装载完成)发出: " + mmfSent + "; 回帧: " + FrameDesc.Of(mmfReply));
                         finishReply.AddRange(mmfReply);
@@ -105,6 +105,57 @@ internal static class Program
                         else
                         {
                             Console.WriteLine("--finish 需要 2 个整数参数");
+                        }
+                    }
+                    if (Array.IndexOf(args, "--movemap-fix") >= 0)
+                    {
+                        // 与 --movemap 同布局的 14 字节,但最后一字节填 1(服务端对该字节有"应为 1"的期望,见本地笔记)。
+                        var fixPayload = new byte[14];
+                        fixPayload[13] = 1;
+                        FrameStatus fixSent = await result.Session.SendAsync(PacketClass.Cmd, 48, fixPayload);
+                        List<DecodedFrame> fixReply = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(10));
+                        Console.WriteLine("进入房间(末字节 1)发出: " + fixSent + "; 回帧: " + FrameDesc.Of(fixReply));
+                        List<DecodedFrame> fixTail = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(8));
+                        Console.WriteLine("进入房间(末字节 1)后 8 秒: " + FrameDesc.Of(fixTail));
+                        finishReply.AddRange(fixReply); finishReply.AddRange(fixTail);
+                    }
+                    if (Array.IndexOf(args, "--movemap-long") >= 0)
+                    {
+                        // 32 字节加长版:若断连源于"读包长度不足",加长后应能通过读取阶段。
+                        var longPayload = new byte[32];
+                        longPayload[13] = 1;
+                        FrameStatus longSent = await result.Session.SendAsync(PacketClass.Cmd, 48, longPayload);
+                        List<DecodedFrame> longReply = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(10));
+                        Console.WriteLine("进入房间(加长 32)发出: " + longSent + "; 回帧: " + FrameDesc.Of(longReply));
+                        List<DecodedFrame> longTail = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(8));
+                        Console.WriteLine("进入房间(加长 32)后 8 秒: " + FrameDesc.Of(longTail));
+                        finishReply.AddRange(longReply); finishReply.AddRange(longTail);
+                    }
+                    if (Array.IndexOf(args, "--movemap-43") >= 0)
+                    {
+                        // 服务端读取侧完整消费 43 字节(定长结构);全零即目标格 (0,0)。
+                        var p43 = new byte[43];
+                        FrameStatus s43 = await result.Session.SendAsync(PacketClass.Cmd, 48, p43);
+                        List<DecodedFrame> r43 = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(10));
+                        Console.WriteLine("进入房间(43 字节)发出: " + s43 + "; 回帧: " + FrameDesc.Of(r43));
+                        List<DecodedFrame> t43 = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(10));
+                        Console.WriteLine("进入房间(43 字节)后 10 秒: " + FrameDesc.Of(t43));
+                        finishReply.AddRange(r43); finishReply.AddRange(t43);
+                    }
+                    if (TryGetOption(args, "--movemap-43xy", out string xyText))
+                    {
+                        string[] xyParts = xyText.Split(',');
+                        if (xyParts.Length == 2 && int.TryParse(xyParts[0], out int tx) && int.TryParse(xyParts[1], out int ty))
+                        {
+                            var pxy = new byte[43];
+                            pxy[0] = (byte)tx;
+                            pxy[1] = (byte)ty;
+                            FrameStatus sxy = await result.Session.SendAsync(PacketClass.Cmd, 48, pxy);
+                            List<DecodedFrame> rxy = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(10));
+                            Console.WriteLine($"进入房间(43 字节 格 {tx},{ty})发出: " + sxy + "; 回帧: " + FrameDesc.Of(rxy));
+                            List<DecodedFrame> txy = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(10));
+                            Console.WriteLine("进入房间(格) 后 10 秒: " + FrameDesc.Of(txy));
+                            finishReply.AddRange(rxy); finishReply.AddRange(txy);
                         }
                     }
                     if (Array.IndexOf(args, "--movemap") >= 0)
@@ -149,7 +200,7 @@ internal static class Program
                     var cf293Reply = new List<DecodedFrame>();
                     if (Array.IndexOf(args, "--checkfinish293") >= 0)
                     {
-                        FrameStatus cfSent = await result.Session.SendAsync(PacketClass.Cmd, 293, new byte[0]);
+                        FrameStatus cfSent = await result.Session.SendAsync(PacketClass.Cmd, 293, new byte[8]);
                         cf293Reply = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(8));
                         Console.WriteLine("装载校对发出: " + cfSent + "; 回帧: " + FrameDesc.Of(cf293Reply));
                         List<DecodedFrame> cf293Tail = await result.Session.ReceiveAsync(TimeSpan.FromSeconds(12));
