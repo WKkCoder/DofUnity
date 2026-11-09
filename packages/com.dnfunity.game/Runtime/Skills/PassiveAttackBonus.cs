@@ -101,6 +101,29 @@ namespace Dnf.Game
         }
     }
 
+    // --- r9-ps 读码注释:被动刷新 flushPassiveSkills(角色虚槽 +0x7dc)的触发时机图。只记静态读码结论,不新增接线,默认行为不变。
+    // 标记:【观】= 有地址的观察;【推】= 推断;【未】= 未知。逐条地址与方法局限见工作树笔记 out/ps/PROGRESS.md(被 .gitignore 忽略,不入库)。
+    // 入口:11 张角色虚表的 +0x7dc 全部 = 基类 0x00857900,没有职业覆盖。它遍历 255 个技能槽,getSkill(槽 +0x804)返回对象、且对象 +0xd4 受保护整数 == 1 的槽(推断:被动),
+    //   无论等级都以(槽号,当前等级)调 +0x980(IRDSQRCharacter 实现 0x006885d0 → 脚本 ProcPassiveSkill_<职业>);登记 0x00689f70 只发生在脚本的 skill_level > 0 分支里,
+    //   ProcPassiveSkill 里没有对称删除,读取按当前等级(0 → 0),所以过期登记无害,漏掉某个刷新点最多让"登记晚发生"。
+    // 【观】惯用次序:addSkill(+0x7cc)→ flushSkillParameter(+0x7d8)→ flushPassiveSkills(+0x7dc)。以下都只对主角 [0x01ac790c](除注明外)。
+    // 学习类:BUY_SKILL 0x0071d220(回包成功字节非 0;站点 0x0071d521/0x0071d5d6)、REFUND_SKILL 0x00719220(0x007193bd)、换技能页 CHANGE_ANOTHER_SKILL_TREE 0x0070c270 → 0x00851310(0x0085137f)、
+    //   技能信息整包 SKILLINFO 0x007484e0 → 0x00851500(套当前页后刷新,0x0085155c)、完成任务 FINISH_QUEST 0x00724460 → 0x00851500(0x00724e03,进入条件【未】)。
+    //   技能重置 NOTIPACKET_SKILL_INIT 0x007320b0 只弹提示、不刷新;随后由 SKILLINFO 触发只是【推】。
+    // 升级类:EXP 包 0x0073f040 仅当包内等级 ≠ 记录等级(0x0073f2c5)时,对双技能页各 addSkill(0xae, 等级) 后刷新(0x0073f541/0x0073f58e);
+    //   USERINFO 0x00515970 → 0x00512ab0 在本机等级上升时调 0x00814ed0(同样三步,0x00814f5b/0x00814f9b);USERINFO 里其他玩家的记录经 0x005135a0 → 0x00851500。
+    // 重置/进出副本:角色虚槽 +0x434(resetDungeonStart)的 11 个类全部汇到基类 0x0086cc60,它在 0x0086cdbb 无条件刷新,与原因/标志参数无关。
+    //   调用点(原因,标志,第三参):START_GAME 0x007407d0(2,0,1)、CNTownModule::onEnterModule 0x01113e40(2,x,1)、对战准备状态(0x01111840、0x0110b8e0 等,(2,0,1))、
+    //   死亡/复活(DIE_STATE 0x00741280、WARROOM_DIE_STATE 0x0073c4a0、PVP_REVIVE 0x0073d530,原因 1)、录像回放 0x0096ff30、Tag 系统(START_MAP 链 0x00749c50 → 0x008f1800 → 0x008f0e60)。
+    // 模块切换:changeModule 0x007615a0 → onChangeModule 0x00760e70 → 0x0075e870 → 对全体角色调 0x0086e4d0(重绑 255 个技能对象后刷新,0x0086e521)。
+    //   仅当 to ∈ {1,3,4,5,7,9,10,11,12,13,14,16}、from ∉ {0,2},且全局标签串(0x01a6ee64)≠ 表[to](0x01d2d4f0)时才执行:
+    //   模块 SELECT_CHARACTER/TOWN/SELECT_DUNGEON/MAIN_GAME/SELECT_CHANNEL/LOGIN/BLOOD_SYSTEM/DESPAIR_TOWER/BOSS_TOWER/ADVANCE_ALTAR 都是 "[dungeon]",PVP 与 FAIR_PVP "[pvp]",
+    //   WARROOM "[warroom]",ASSAULT "[assault]",DEAD_TOWER "[death tower]",TOURNAMENT 为空串;所以村↔副本(TOWN↔MAIN_GAME)不触发。
+    // 创建装配:AI 角色创建走虚槽 +0x9f4 → 0x00844a10(站点 0x00845253;START_MAP 链 0x00749c50 → 0x007e8510 → 0x007e7450 → 0x00843740 可达);
+    //   TAG_CHARACTER_INFO → 0x006f1fd0、START_MAP → 0x006fca00(Ep1::setTutorialData)、UDP 包 0x0115abf0、回放连招 0x00972b20,直接或经 0x00851500 刷新。
+    // 【未】换装:装备类包没有登记处理函数,物品类处理函数也没有直接调用链到刷新站点,没找到换装触发刷新的证据;脚本侧是否调用(只抽了部分职业的 211 个 .nut,0 处调用)、
+    //   公会成员信息 0x0072e9d0 写的 [hero+0x52f0]、站点 0x0084cdc0/0x0084df00/0x00864c10/0x00865740/0x00867c20/0x00795a60 的语义。直接调用图看不到虚调用,以上是下界。
+
     /// <summary>某个主角对象的被动威力登记表(两族各一张),按技能号升序,语义同 MSVC 的 map&lt;int,int&gt;。</summary>
     public sealed class PassiveAttackBonusMap
     {
