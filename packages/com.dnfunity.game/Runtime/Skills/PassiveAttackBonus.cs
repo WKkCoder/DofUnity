@@ -121,12 +121,15 @@ namespace Dnf.Game
     //   WARROOM "[warroom]",ASSAULT "[assault]",DEAD_TOWER "[death tower]",TOURNAMENT 为空串;所以村↔副本(TOWN↔MAIN_GAME)不触发。
     // 创建装配:AI 角色创建走虚槽 +0x9f4 → 0x00844a10(站点 0x00845253;START_MAP 链 0x00749c50 → 0x007e8510 → 0x007e7450 → 0x00843740 可达);
     //   TAG_CHARACTER_INFO → 0x006f1fd0、START_MAP → 0x006fca00(Ep1::setTutorialData)、UDP 包 0x0115abf0、回放连招 0x00972b20,直接或经 0x00851500 刷新。
-    // 换装:角色虚槽 +0x548(装入,基类 0x00867c20,站点 0x00867f1b)、+0x550(取/脱槽位物品,基类 0x00865740,站点 0x00865870)与物品类虚槽 +0x110(基类 0x00795a60,站点 0x00795bfd)
-    //   都会刷新(条件:新旧物品不同 / 槽位状态在 0 与非 0 之间变化或强制)。已登记处理函数里的调用点:UPDATE_ITEM_LIST 0x00753720(0x00753a3f、0x00753b3b)、
-    //   DROP_ITEM / SELL_ITEM / DELETE_ITEM、COMPOUND_ITEM(及 _BY_EXPERT_JOB)、FINISH_QUEST、PC_ROOM_RENT_ITEM 的"卸下/消耗已穿戴物品"分支(各自的 +0x550 站点见笔记);
+    // 换装:角色虚槽 +0x548(装入,基类 0x00867c20)在 0x00867f1b、+0x550(取/脱槽位物品,基类 0x00865740)在 0x00865870、物品类虚槽 +0x110(基类 0x00795a60)在 0x00795bfd 刷新;
+    //   条件:+0x548 须新旧物品不同且 0x0082d5a0(角色,槽)为真,+0x550 须槽位物品非空且 0x0082d5a0 为真,+0x110 须槽位状态在 0 与非 0 之间变化或被强制。
+    //   已登记处理函数里主角接收者的调用点:UPDATE_ITEM_LIST 0x00753720(0x00753a3f、0x00753b3b)、DROP_ITEM / SELL_ITEM / DELETE_ITEM、COMPOUND_ITEM(及 _BY_EXPERT_JOB)、
+    //   FINISH_QUEST、PC_ROOM_RENT_ITEM 的"卸下/消耗已穿戴物品"分支(各自的 +0x550 站点见笔记)、USE_RIGHT_OF_CHANGE_GROW_TYPE 0x00f88c40;
+    //   onChangeModule 0x00760e70 在 from == 3 且条件成立时按槽重装(0x007613b2);雨天活动 EVENT_INFO 0x0074ddb0 → 0x00762330 → 0x00457bf0(武器槽取下再装回);
     //   角色信息包的整套装备:USERINFO 0x00515970 → 0x00514c30 → 0x007523c0(0x0075299e、0x00752adc)、TAG_CHARACTER_INFO 0x006f6670 → 0x006f7fb0 → 0x007523c0。
     //   另见:0x0084cdc0(状态/附加物改 [this+0x52fc] 后刷新)、0x0084df00(骑乘对象状态 5 时对骑乘者)、0x00864c10(虚槽 +0x72c,选角/地图开始链上)。
-    // 【未】玩家主动穿脱的主流程(A#0x13 MOVE_ITEMSPACE 0x007088c0 与 B#0xd ITEM_LIST 0x00752b70 的函数体里没有换装调用点,UI 侧约 100 个 +0x548 调用点没追);
+    // 【未】玩家主动穿脱的主流程:A#0x13 MOVE_ITEMSPACE 0x007088c0 与 B#0xd ITEM_LIST 0x00752b70 的函数体里没有换装调用点;+0x548 的 123 个调用函数里,
+    //   接收者取自主角全局变量的只有 8 个,其余约 100 个(UI 类为主,接收者来自参数/成员指针)没追;
     //   脚本侧是否调用(只抽了部分职业的 211 个 .nut,0 处调用);受保护区 0x01dd9000–0x02c98000 里的调用点(按规定不读);公会成员信息 0x0072e9d0 写的 [hero+0x52f0] 的含义。
     //   直接调用图看不到虚调用与回调,以上是下界。时机图不完整,所以本轮不接线(见笔记第 4 节)。
 
