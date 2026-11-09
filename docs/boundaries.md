@@ -18,7 +18,7 @@
 - 每条被实现的规则都要能追溯到一条**证据**或一次**差分测试**(同样输入在原版客户端与 Unity 里各跑一遍再比较)。
 - 结论要区分**观察**、**推断**、**未知**。静态分析不能说成观察到了运行。
 - 普通 shell 或 Python 的测量不是 REA 证据,台账里单独标注。
-- 台账见 [evidence/ledger.md](evidence/ledger.md)。
+- 台账见 [evidence/ledger.md](evidence/ledger.md)(卷首有分卷索引,E-300 以前在两卷冻结归档里)。
 
 ## 版权与关联
 

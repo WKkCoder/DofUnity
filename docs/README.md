@@ -35,7 +35,7 @@
 
 | 文档 | 内容 |
 |---|---|
-| [evidence/ledger.md](evidence/ledger.md) | **证据台账**(E-001 至 E-376):每条结论的类型、来源、复现方法、置信度。体量很大(约 1 MB),按编号搜,不要通读 |
+| [evidence/ledger.md](evidence/ledger.md) | **证据台账**(E-001 至 E-376,已分卷):活跃卷为本文件(E-300 起);冻结归档为 [ledger-archive-1.md](evidence/ledger-archive-1.md)(E-001 至 E-106)与 [ledger-archive-2.md](evidence/ledger-archive-2.md)(E-107 至 E-299)。按编号搜,不要通读 |
 | [reverse-workflow.md](reverse-workflow.md) | 逆向工作流:对 `DNF.exe` 做静态分析的做法 |
 | [baseline.md](baseline.md) | 对照基线:原版客户端怎么跑、怎么截、截哪些场景(S01–S10) |
 | [hit-pipeline.md](hit-pipeline.md) | 命中与受伤流水线(客户端 `DNF.exe` 的静态读取结果) |
