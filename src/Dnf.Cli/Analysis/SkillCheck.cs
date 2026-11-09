@@ -293,6 +293,9 @@ internal static partial class SkillCheck
                 + ",快捷栏排了 " + filled + " 格(学会的主动技能 " + activeLearned + " 个)");
         }
 
+        // 5b. 技能学习服务(批量学退全成全不成、一次能学几级、快捷栏占用、自动学;SkillCheck.Learning.cs)
+        ReportLearningService(assets, catalog, level, Report);
+
         // 6. 技能配方(M37,证据 E-129;M42 补对象与蓄力,证据 E-135):配方表里的每个技能在真实数据里都读得通——技能在目录里且是主动技能、[static data] 与 [level info] 的列数够用、
         // 角色的 [etc motion] 与 [etc attack info] 的下标落在表内且文件在库里、特效列表够长且每个动画文件都在库里、要求的技能在目录里、1 级的逐段伤害数读得出;
         // 放被动对象的配方:.obj 读得到、基础动画在库里且有攻击框、攻击信息在库里、放出的帧不越界、两个伤害列读出来是正数;有蓄力的段:第 0 帧确实是长停留、各级的蓄力不为负
