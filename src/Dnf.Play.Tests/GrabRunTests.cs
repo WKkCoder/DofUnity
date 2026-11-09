@@ -197,6 +197,23 @@ public sealed class GrabRunTests
     }
 
     [Fact]
+    public void PhaseOneNeverFinishesEvenPastTheDurationUntilTheReleaseHappens()
+    {
+        var run = new GrabRun(300, 200, 1, true);       // 总时长 300 比释放延迟 750 短
+        Assert.True(Go(run, 100).Hit);                  // 次数 1:一下就用完
+        Go(run, 101);                                   // 下一帧进阶段 1
+        Assert.Equal(1, run.Phase);
+
+        var atDuration = Go(run, 300);                  // 阶段 1:300 ≥ 总时长 300,但不到阶段 2 不结束;300 < 750 也不释放
+        Assert.Equal((false, false, 1), (atDuration.Release, atDuration.Finished, run.Phase));
+        var beforeRelease = Go(run, 749);               // 749 < 750:同上
+        Assert.Equal((false, false, 1), (beforeRelease.Release, beforeRelease.Finished, run.Phase));
+
+        var release = Go(run, 750);                     // 750:先释放进阶段 2,同一帧 750 ≥ 300 就结束
+        Assert.Equal((true, true, 2), (release.Release, release.Finished, run.Phase));
+    }
+
+    [Fact]
     public void AFinishedRunIgnoresFurtherSteps()
     {
         var run = new GrabRun(500, 200, 1, true);
