@@ -2962,6 +2962,7 @@ namespace Dnf.Play
             bool armor = monster.IsSuperArmored && !info.IgnoreSuperArmor && !info.ReactionNone;
             bool killed = monster.ApplyHit(damage, info.KnockDown, info.PushAside, facingLeft, StunInput(info), DownInput(info), info.ReactionNone || armor,
                 info.Input.ElementMask);
+            MonsterAlert.Broadcast(monster, _monsters, ExpDifficulty);      // 挨了打的怪物靠近成功又掷中 70%:按副本难度叫同伴一起靠近(0x0088f170)
             if (armor && !killed)
             {
                 MonsterArmorAbsorbed++;

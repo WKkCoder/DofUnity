@@ -39,12 +39,14 @@ public class RoomCombatTests
         /// <param name="objects">房间里摆的物件(可破坏物件的测试用);拿到打开的素材后建出来,不给就是空房间。</param>
         /// <param name="walkArea">主角可走的区域(不给就没有限制;<paramref name="frozen"/> 优先);测"够不着"的场景用。</param>
         /// <param name="skillsFactory">给了就用它排技能槽(拿到打开的数据),优先于 <paramref name="withSkills"/>。</param>
+        /// <param name="expDifficulty">会话的副本难度编号(0 到 4);默认 0。</param>
         public Arena(IReadOnlyList<(int X, int Y)> monsters, HeroStrikeInfo[] strikes = null, bool facingLeft = false, int hp = 100,
             bool frozen = false, int seed = 1, string chr = null, HeroStrikeInfo dash = default, HeroStrikeInfo jump = default, double monsterSpeed = 222.5,
             bool withSkills = false, int weaponStun = 0, HitStunTable stunTable = null, int monsterRecovery = 0, float weaponDelay = -1f,
             HeroPanel heroPanel = null, DamageConstants damageConstants = null, DefenderPanel defense = null, HeroVitals vitals = null,
             HeroProgress progress = null, float expWeight = 1f, int monsterLevel = 1, bool monsterBoss = false,
-            Func<DnfAssets, IReadOnlyList<RoomObject>> objects = null, List<WorldRect> walkArea = null, Func<GameData, HeroSkills> skillsFactory = null)
+            Func<DnfAssets, IReadOnlyList<RoomObject>> objects = null, List<WorldRect> walkArea = null, Func<GameData, HeroSkills> skillsFactory = null,
+            int expDifficulty = 0)
         {
             Assets = DnfAssets.Open(_fx.Root);
             var tiles = new List<TileFile>();
@@ -79,7 +81,7 @@ public class RoomCombatTests
                 skills = HeroSkills.Create(data, data.GetCharacter(0), 0);
             }
             Session = new RoomCombatSession(Assets, room, actors, strikes ?? Plain(), seed, dash, jump, skills, weaponStun, weaponDelay, stunTable,
-                vitals: vitals, damageConstants: damageConstants, heroPanel: heroPanel, progress: progress, expWeight: expWeight);
+                vitals: vitals, damageConstants: damageConstants, heroPanel: heroPanel, progress: progress, expWeight: expWeight, expDifficulty: expDifficulty);
         }
 
         /// <summary>每 10 毫秒一步推进:前 <paramref name="steps"/> 步按 (dirX, dirY) 走,攻击键与跳跃键在 <paramref name="attackAt"/>、<paramref name="jumpAt"/> 那一步按下(从 0 数)。</summary>
