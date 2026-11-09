@@ -93,3 +93,25 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll game-check --sweep --only frozenl
 - **合成数据测试**(可提交):测试里自己构造最小的 PVF、NPK、IMG,验证解析器。
 - **全库对拍**(只在本机跑,数据不提交):C# 实现与 Python 参考实现、PVF 文件清单逐项比较;随机抽 1000 帧逐像素比较。
 - **差分测试**(P3 以后):同样输入在原版客户端(Wine)与 Unity 里各跑一遍再比较。
+
+## 发布到 GitHub(2026-11-09 新增)
+
+**不要直接 `git push`。** 历史里有几个旧提交的 `tools/baseline/tool.sh` 带着真实的游戏账号名(只是名字,不是口令;
+当前版本早已改掉)。仓库是公开的,推上去就收不回来,所以用脱敏脚本发布:
+
+```sh
+tools/publish-github.sh --dry-run    # 先演练:脱敏 + 全部校验,不推送
+tools/publish-github.sh              # 推送到 https://github.com/WKkCoder/DofUnity.git
+tools/publish-github.sh --ssh        # 或者走 SSH(需先把公钥登记到 GitHub)
+```
+
+它在**临时克隆**里重写历史(只改 `tools/baseline/tool.sh`,取值换成 `example`),本地仓库与其它 worktree 完全不动。
+所以 **GitHub 上的提交号与本地不同**,最新版本的内容完全相同(树哈希一致)。重写是确定性的:以后每次发布都是对远端的快进;
+脚本会核对远端 `main` 是本次结果的祖先,不是就中止,**绝不强推**。校验口径与提交守卫相同(`local.secrets.env` 里的全部取值,
+长度 8 以上按子串、3 到 7 按独立单词),扫描器带哨兵自检,脱敏前后各扫一遍全部历史,必须零命中才会推送。
+
+推送需要 GitHub 授权,在**终端**里运行脚本,git 会自己提示:
+
+- https:用户名填 GitHub 用户名,密码填**个人访问令牌**([新建](https://github.com/settings/tokens),经典令牌勾 `repo`;
+  细粒度令牌给这个仓库的 Contents 读写),macOS 钥匙串会记住;
+- SSH:把 `~/.ssh/id_ed25519.pub` 的内容贴到 [GitHub 的 SSH 密钥页](https://github.com/settings/ssh/new),再运行 `tools/publish-github.sh --ssh`。

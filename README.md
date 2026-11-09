@@ -152,6 +152,7 @@ tools/play-dungeon.sh flow
 ```
 
 更多命令(命令行子命令、自动机、联网探针、各平台构建)见 [docs/usage.md](docs/usage.md)。
+维护者要把本地 `main` 发布到 GitHub,**不要直接 `git push`**,用 `tools/publish-github.sh`(原因与用法见同一份手册末尾)。
 
 ## 文档导航
 
