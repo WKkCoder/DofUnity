@@ -1923,8 +1923,6 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --room --map 
 
 第八十一节之后,鉴赏了「开个窗口就能看到人物站在城镇里」这条总链:运行时把网关登录、频道连接、登录回馈、选角进城与心跳保活按节成串,进城之后在窗口里切换到真实城镇。这一节的重点是那个副本试探:选副本命令发出去了、服务端回了成功,进入房间命令也发出去了,却被服务端回一个「连接登记」信号主动断开。在那之前,登录→选角→进城的整段已经在窗口里稳定跑过这一遍;副本的第一步(选图回成功信号)也实测确立。
 
-回放:https://raw.githubusercontent.com/wk/dnf-unity/main/docs/replay/flow-81.md
-
 ```text
 ./src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe orchestrated <仓库根> --try-dungeon 1 0 0 0 --finish 0 0 --movemap --stay 60
 ```
@@ -1935,8 +1933,6 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --room --map 
 
 投掷类技能的运行时在这一轮被一个框架需求照亮:同一族里有的对象是在阶段 0 进来那一刻放、有的要在阶段 1 才创建。框架按对象规格里的段号(0 或 1)在对应阶段进来时各自放出,每个只放一次、放出失败下一轮重试,配方校验允许段号 0 到 1、帧号必须是 0,百分比列与固定值列必须同列。与此同时,对技能 44 按同族下标接出的那条默认表配方做了真数据复核:真实数据里它的静态数据是空的、放出的对象读不出动画与攻击信息,五条问题一摆出来就撤销。三技能的静态读码(38 的起手仍未知、62 读通但起手未确证、102 不是独立施法)与技能 74、31 的未完路线都落进台账备查。
 
-回放:https://raw.githubusercontent.com/wk/dnf-unity/main/docs/replay/flow-82.md
-
 ```text
 ./src/Dnf.Cli/bin/Release/net10.0/dnf skill-check
 ```
@@ -1946,8 +1942,6 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --room --map 
 ## 84 M104/M69c:技能学习成服务、怪物会叫同伴(E-367、E-368)
 
 这一节收两件"早就该有"的东西。一是技能学习:以前学技能是散在技能簿上的几个方法,现在收成一个服务——单个学退仍旧委托技能簿那套老规矩,批量学退则讲究"全成全不成":先在副本上按顺序演算一遍,中间哪一步不行就整批作废、连快捷栏都不动,全行才一次换入。顺带补了两个默认关着的可选规则:快捷栏按"只能靠快捷键的优先占位"整理、升级之后自动补学(花点策略没变,还是老的规划器)。二是怪物呼叫同伴:打中一只,它有机会把附近的同伴一起叫过来,叫几个看副本难度,被叫的也能再往下叫——纯规则、大脑、房间会话三层分开,合成测试整链覆盖。两件都由主 agent 在工人工作树里重跑官方测试与变异后才并入。
-
-回放:https://raw.githubusercontent.com/wk/dnf-unity/main/docs/replay/flow-83.md
 
 ```text
 dotnet test DnfUnity.slnx -c Release

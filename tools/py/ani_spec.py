@@ -1,6 +1,6 @@
 """二进制 .ani 的参考解析器(Python),以及对全库"恰好吃完整个文件"的验证。
 
-结构(在全部 187,365 个二进制 .ani 上验证通过, 见 README.md):
+结构(在全部 187,365 个二进制 .ani 上验证通过, 见 docs/formats.md):
   u16 frameCount, u16 imageCount
   imageCount * (u32 len, bytes path)
   u16 globalCount, globalCount * (u16 id + 负载)
