@@ -136,7 +136,8 @@ re/  out/                 逆向产物与生成物:只在本机,已被 .gitignor
 目前只在 **macOS** 上验证过。需要 .NET SDK 10(`global.json` 锁定);要跑播放器再装 Unity 6000.3.26f1。
 
 ```sh
-# 1. 先跑合成数据测试——不需要任何原版数据(6,044 条,2026-11-09 实测全部通过)
+# 1. 先跑合成数据测试——不需要任何原版数据(6,044 条,2026-11-09 实测全部通过;已构建过时约半分钟)
+. tools/env.sh                       # 仅当 dotnet 装在 ~/.dotnet 且不在 PATH 里时需要
 dotnet test DnfUnity.slnx -c Release
 
 # 2. 准备你自己的数据目录(含 Script.pvf 与 ImagePacks2/),并装上提交守卫(贡献者必装)
