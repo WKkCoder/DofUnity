@@ -1942,3 +1942,16 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll render-town --scene --room --map 
 ```
 
 正式结论入台账:E-366。
+
+## 84 M104/M69c:技能学习成服务、怪物会叫同伴(E-367、E-368)
+
+这一节收两件"早就该有"的东西。一是技能学习:以前学技能是散在技能簿上的几个方法,现在收成一个服务——单个学退仍旧委托技能簿那套老规矩,批量学退则讲究"全成全不成":先在副本上按顺序演算一遍,中间哪一步不行就整批作废、连快捷栏都不动,全行才一次换入。顺带补了两个默认关着的可选规则:快捷栏按"只能靠快捷键的优先占位"整理、升级之后自动补学(花点策略没变,还是老的规划器)。二是怪物呼叫同伴:打中一只,它有机会把附近的同伴一起叫过来,叫几个看副本难度,被叫的也能再往下叫——纯规则、大脑、房间会话三层分开,合成测试整链覆盖。两件都由主 agent 在工人工作树里重跑官方测试与变异后才并入。
+
+回放:https://raw.githubusercontent.com/wk/dnf-unity/main/docs/replay/flow-83.md
+
+```text
+dotnet test DnfUnity.slnx -c Release
+./src/Dnf.Cli/bin/Release/net10.0/dnf skill-check
+```
+
+正式结论入台账:E-367、E-368。
