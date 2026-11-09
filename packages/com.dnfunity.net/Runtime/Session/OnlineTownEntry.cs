@@ -101,7 +101,8 @@ namespace Dnf.Net.Session
         private TcpClient _tcp;
 
         internal OnlineEntryResult(OnlineStage stage, OnlineFailure failure, byte? loginFailureCode, int slot,
-            GameClientSession session, TcpClient tcp, int framesSeen, int secondLayerMismatches)
+            GameClientSession session, TcpClient tcp, int framesSeen, int secondLayerMismatches,
+            TownEntrySnapshot snapshot = null)
         {
             Stage = stage;
             Failure = failure;
@@ -111,6 +112,7 @@ namespace Dnf.Net.Session
             _tcp = tcp;
             FramesSeen = framesSeen;
             SecondLayerMismatches = secondLayerMismatches;
+            Snapshot = snapshot;
         }
 
         /// <summary>停在的阶段(成功为 <see cref="OnlineStage.Done"/>)。</summary>
@@ -136,6 +138,12 @@ namespace Dnf.Net.Session
 
         /// <summary>第二层校验不符的帧数。</summary>
         public int SecondLayerMismatches { get; }
+
+        /// <summary>
+        /// 进城回程明文帧的只读快照(没进城为 null;进城后永不为 null,字段缺口见 <see cref="TownEntrySnapshot"/>)。
+        /// 只是附加信息:不影响阶段与失败判定。
+        /// </summary>
+        public TownEntrySnapshot Snapshot { get; }
 
         /// <summary>关闭连接与会话。</summary>
         public void Dispose()
@@ -235,8 +243,15 @@ namespace Dnf.Net.Session
                     SlotOutcome outcome = SlotJudge.Judge(window);
                     if (outcome.Kind == SlotOutcomeKind.Entered)
                     {
-                        await session.ReceiveAsync(TailWindow, cancellationToken: cancellationToken).ConfigureAwait(false);
-                        return new OnlineEntryResult(OnlineStage.Done, OnlineFailure.None, null, slot, session, tcp, session.Events.Count, session.SecondLayerMismatches);
+                        List<DecodedFrame> tail = await session.ReceiveAsync(TailWindow, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                        // 进城后给明文帧做只读快照:选角窗口加尾窗口的全部帧(解析器对错位与未知帧号只跳过,不抛)。
+                        var entryFrames = new List<DecodedFrame>(window.Count + tail.Count);
+                        entryFrames.AddRange(window);
+                        entryFrames.AddRange(tail);
+                        TownEntrySnapshot snapshot = TownEntryParser.Parse(entryFrames, slot);
+
+                        return new OnlineEntryResult(OnlineStage.Done, OnlineFailure.None, null, slot, session, tcp, session.Events.Count, session.SecondLayerMismatches, snapshot);
                     }
                 }
                 return Fail(OnlineStage.SelectSlot, OnlineFailure.NoUsableSlot, null, -1, session.Events.Count, null, tcp, session.SecondLayerMismatches);
