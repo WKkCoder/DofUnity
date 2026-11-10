@@ -52,6 +52,24 @@ namespace Dnf.Play
             { "NONE LEFT", "已经没有了" },
             { "ARROWS MOVE   ENTER EQUIP OR USE   Q E PAGE   I CLOSE", "方向键 移动   回车 装备或使用   Q E 翻页   I 关闭" },
 
+            // 背包的装扮页(r15-avatarhost)
+            { "AVATAR", "时装" },
+            { "V AVATAR", "V 时装" },
+            { "V ITEMS", "V 物品" },
+            { "HAT", "帽子" },
+            { "HAIR", "头发" },
+            { "FACE", "脸" },
+            { "BRST", "胸饰" },
+            { "WAIST", "腰饰" },
+            { "SKIN", "皮肤" },
+            { "AURA", "灵气" },
+            { "WORN", "已穿上" },
+            { "TAKEN OFF", "已脱下" },
+            { "CAN WEAR", "可以穿" },
+            { "AVATARS UNAVAILABLE", "时装功能不可用" },
+            { "AVATARS: TOWN ONLY", "时装只能在城镇里换" },
+            { "ARROWS MOVE   ENTER WEAR OR TAKE OFF   V ITEMS   I CLOSE", "方向键 移动   回车 穿上或脱下   V 切回物品   I 关闭" },
+
             // 商店
             { "SHOP", "商店" },
             { "WEAPON SHOP", "武器商店" },
@@ -212,6 +230,11 @@ namespace Dnf.Play
             { "EXP +{0}", "经验 +{0}" },
             { "GOLD +{0}", "金币 +{0}" },
             { "ITEMS {0}", "物品 {0}" },
+
+            // 背包的装扮页(r15-avatarhost;左下角三行统计)
+            { "WORN {0}", "已穿 {0}" },
+            { "IN BAG {0}", "背包里 {0}" },
+            { "USABLE {0}", "可穿 {0}" },
 
             // 通关结算(M32;"RANK BONUS" 要排在 "RANK {0}" 前面,句式按字面开头逐条比)
             { "CLEAR EXP +{0}", "通关经验 +{0}" },
