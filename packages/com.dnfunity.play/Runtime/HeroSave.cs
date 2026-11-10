@@ -134,7 +134,7 @@ namespace Dnf.Play
     /// 第一行 <c>DNFUNITY-SAVE 版本号</c>,之后每行 <c>键 值…</c>(<c>bag 编号 数量</c>、<c>worn 部位 编号</c>、<c>quick 格号 编号</c> 可以有很多行),空行与 # 开头的行忽略,
     /// 不认得的键忽略(以后加字段旧版本还能读),认得的键值写坏了整个存档当作读不懂(不读一半)。
     /// </summary>
-    public sealed class HeroSave
+    public sealed partial class HeroSave
     {
         public const string Magic = "DNFUNITY-SAVE";
 
@@ -227,6 +227,7 @@ namespace Dnf.Play
             {
                 sb.Append("quick ").Append(quick.Slot.ToString(Inv)).Append(' ').Append(quick.Code.ToString(Inv)).Append('\n');
             }
+            PetSaveFormat.Write(this, sb);
             foreach (SavedQuest quest in Quests)
             {
                 sb.Append("quest ").Append(quest.Id.ToString(Inv));
@@ -324,6 +325,10 @@ namespace Dnf.Play
             if (key == "quest")
             {
                 return ParseQuest(r, f, no, out error);
+            }
+            if (PetSaveFormat.Handles(key))
+            {
+                return PetSaveFormat.Parse(r, key, f, no, out error);
             }
             int arity;
             switch (key)
