@@ -25,6 +25,9 @@ namespace Dnf.Client
     /// -dnfseed 与 -dnfrandomlayout 指定战斗种子与随机选房。
     /// 带 -dnfnet 时先真联网(开发版:网关登录一路跑到选角进城,凭据从仓库根本地配置读,-dnfnetroot 指仓库根,-dnfnetport 改频道端口),
     /// 进城成功后按城镇流程继续(角色本体数据先用本地占位);联网阶段与结果只打不含凭据的 DNF_NET 日志。
+    /// 再带 -dnfnetdungeon &lt;副本编号&gt; &lt;模式 0 到 4&gt;(要同时带 -dnfnet)时,进城后在同一个会话上接着走联网进副本(开始游戏 → 选副本 → 收到起始地图,<see cref="OnlineDungeonRunner"/>),
+    /// 阶段与结局只打 DNF_NET stage=dungeon 日志(阶段名、失败原因与计数,不含载荷内容),进城快照里的角色等级、职业、成长类型打一行 DNF_NET snapshot;
+    /// 进副本这一步有结局后才继续城镇流程,心跳保活在进副本之后接上、照旧跑到退出;没有怪物、没有战斗。不带这个参数时联网流程与以前一字不变。
     /// 带 -dnfflow 时玩整条流程(<see cref="GameFlow"/>,证据 E-093):从选角(-dnfflowfrom char,证据 E-096:方向键移动选中、回车或空格开始游戏、Esc 或点"结束游戏"退出,点角色格子选中)、
     /// 城镇(town,默认)、副本选择(select)或副本(dungeon)开始;
     /// 城镇走城镇图册(<see cref="AtlasTownWorld"/>,证据 E-095):登录落在赛丽亚房间、走进地图边缘的出口换区域、艾尔文防线走到地下城入口区域再走进右边的出口打开世界地图,
@@ -213,6 +216,11 @@ namespace Dnf.Client
         private OnlineEntryResult _netResult;               // 进城后的联网结果(持有活连接,退出时释放)
         private CancellationTokenSource _netCancel;
         private volatile int _netStage = -1;                // 后台编排的最新阶段(主线程只读它打日志)
+        private bool _netDungeon;                           // -dnfnetdungeon:-dnfnet 进城之后,同一会话上接着走联网进副本
+        private int _netDungeonId;                          // 联网进副本的副本编号(0 到 65535)
+        private int _netDungeonMode;                        // 联网进副本的模式(0 到 4)
+        private volatile bool _netDungeonDone;              // 后台进副本这一步已有结局(成功或失败),主线程据此放行城镇流程
+        private const float NetDungeonWaitLimitSeconds = 90f; // 等进副本有结局的兜底上限(后台三步各有超时,合计不过半分钟)
         private string _flowFrom = "town";
         private string _flowChoices = DefaultFlowChoices;
         private string _worldMapPath = DefaultWorldMap;
@@ -426,6 +434,21 @@ namespace Dnf.Client
                         if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
                                 System.Globalization.CultureInfo.InvariantCulture, out int nport) && nport > 0 && nport < 65536) { _netPort = nport; i++; }
                         break;
+                    case "-dnfnetdungeon":
+                        // -dnfnetdungeon <副本编号 0..65535> <模式 0..4>:两个参数都合规才生效(解析与范围见 OnlineDungeonRunner.TryParseArguments);
+                        // 写错就当没带,只留一行提示
+                        if (i + 2 < args.Length && OnlineDungeonRunner.TryParseArguments(value, args[i + 2], out int ndDungeon, out int ndMode))
+                        {
+                            _netDungeon = true;
+                            _netDungeonId = ndDungeon;
+                            _netDungeonMode = ndMode;
+                            i += 2;
+                        }
+                        else
+                        {
+                            Debug.Log("DNF_NET stage=dungeon ignored reason=BadArguments");
+                        }
+                        break;
                     case "-dnfflowfrom":
                         if (value != null && (value == "char" || value == "town" || value == "select" || value == "dungeon")) { _flowFrom = value; i++; }
                         break;
@@ -550,6 +573,11 @@ namespace Dnf.Client
                 _flowMode = true;
                 _flowFrom = "town";
             }
+            else if (_netDungeon)
+            {
+                // 联网进副本要在 -dnfnet 的基础上:没带 -dnfnet 就不联网,参数只留一行提示,其它行为不变
+                Debug.Log("DNF_NET stage=dungeon ignored reason=NeedsDnfnet");
+            }
             try
             {
                 DisposeView();
@@ -658,6 +686,15 @@ namespace Dnf.Client
                 _netResult = result;
                 Debug.Log($"DNF_NET entered slot={result.Slot} frames={result.FramesSeen} mismatches={result.SecondLayerMismatches}");
                 _message = "已进城";
+                if (_netDungeon)
+                {
+                    // 带 -dnfnetdungeon:会话由进副本独占(它不回心跳,不能与心跳泵同时收同一个会话),
+                    // 所以这里不立刻起心跳;进副本之后由 OnlineDungeonRunner 接上同一个心跳泵,日志同文。
+                    Debug.Log(OnlineNetLog.Snapshot(result.Snapshot));
+                    yield return RunOnlineDungeon(result.Session);
+                    done(true);
+                    yield break;
+                }
                 // 进城后由保活泵独占接收:服务端每 300 秒发一次心跳通知,不回会在 1200 秒被断开(E-306)。
                 OnlineHeartbeat.RunAsync(result.Session, _netCancel.Token).ContinueWith(
                     t =>
@@ -682,6 +719,36 @@ namespace Dnf.Client
             result.Dispose();
             Fail(new InvalidOperationException($"联网未进城(阶段 {result.Stage},{result.Failure})"));
             done(false);
+        }
+
+        /// <summary>
+        /// -dnfnetdungeon 的联网进副本一段:在进城用的同一个会话上走"开始游戏 → 选副本 → 起始地图"(<see cref="OnlineDungeonRunner"/>),
+        /// 在后台线程里跑;主线程只等这一步有结局(成功或失败都算)就放行城镇流程。协议与日志都在 OnlineDungeonRunner 里:
+        /// 阶段与结局只打 DNF_NET stage=dungeon 行(阶段名、失败原因与计数,不含载荷内容)。
+        /// 进副本之后 OnlineDungeonRunner 接上与以前同一个心跳泵(日志同文 DNF_NET heartbeat …),一直跑到退出(OnDestroy 取消)。没有怪物,没有战斗。
+        /// </summary>
+        private IEnumerator RunOnlineDungeon(GameClientSession session)
+        {
+            _message = "联网中:进副本…";
+            _state = State.Loading;
+            _netDungeonDone = false;
+            var runner = new OnlineDungeonRunner(session);
+            int dungeonId = _netDungeonId;
+            int dungeonMode = _netDungeonMode;
+            CancellationToken token = _netCancel.Token;
+            _ = Task.Run(() => runner.RunAsync(
+                dungeonId, dungeonMode, line => Debug.Log(line), token, entered: _ => _netDungeonDone = true));
+            float waitedSince = Time.realtimeSinceStartup;
+            while (!_netDungeonDone)
+            {
+                if (Time.realtimeSinceStartup - waitedSince > NetDungeonWaitLimitSeconds)
+                {
+                    // 后台各步都有超时,正常到不了这里;兜底只防加载屏永远不走
+                    Debug.Log("DNF_NET stage=dungeon failed step=host failure=WaitLimit");
+                    yield break;
+                }
+                yield return null;
+            }
         }
 
         private static string StageText(int stage) => (OnlineStage)stage switch
