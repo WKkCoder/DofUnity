@@ -253,6 +253,7 @@ namespace Dnf.Play
             {
                 sb.Append("skquick ").Append(slot.Slot.ToString(Inv)).Append(' ').Append(slot.SkillId.ToString(Inv)).Append('\n');
             }
+            CraftSaveFormat.Write(this, sb);
             return sb.ToString();
         }
 
@@ -329,6 +330,10 @@ namespace Dnf.Play
             if (PetSaveFormat.Handles(key))
             {
                 return PetSaveFormat.Parse(r, key, f, no, out error);
+            }
+            if (CraftSaveFormat.Handles(key))
+            {
+                return CraftSaveFormat.Parse(r, f, no, out error);
             }
             int arity;
             switch (key)
