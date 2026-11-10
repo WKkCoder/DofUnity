@@ -157,6 +157,7 @@ namespace Dnf.Net.Session
         /// <summary>
         /// 在 <paramref name="window"/> 时间内收帧并解码,返回解出的帧(顺序与到达一致)。
         /// 到点、流结束或解出 <paramref name="stopAfterFrames"/> 帧(大于 0 时)就返回;没读完的半个帧留给下一次调用。
+        /// 解出 561 号信封且拆得开时,内层帧紧跟在信封帧之后一并返回(所以返回的帧数可能比 <paramref name="stopAfterFrames"/> 多一个)。
         /// </summary>
         public async Task<List<DecodedFrame>> ReceiveAsync(TimeSpan window, int stopAfterFrames = 0, CancellationToken cancellationToken = default)
         {
@@ -208,6 +209,35 @@ namespace Dnf.Net.Session
                     + (frame.SecondLayerChecked ? (frame.SecondLayerOk ? ",第二层相符" : ",第二层不符") : string.Empty);
                 _events.Add(new SessionEvent(false, frame.Header.Class, frame.Header.PacketId, total, frame.Payload.Length, note));
                 sink.Add(frame);
+                if (frame.Kind == DecodedKind.Plain && frame.Header.Class == PacketClass.Noti && frame.Header.PacketId == AntibotEnvelope.PacketId)
+                {
+                    AppendAntibotInner(frame, total, sink);
+                }
+            }
+        }
+
+        // 561 号信封(外部反作弊库封的包,载荷明文就是信封):拆得开就把内层完整帧作为一个解码结果附在信封帧之后(类、包号、总长取内层自己的帧头,
+        // 载荷从第 15 字节起);拆不开只记事件。信封帧本身总是照常保留,不受拆包结果影响。
+        private void AppendAntibotInner(DecodedFrame envelope, int envelopeFrameLength, List<DecodedFrame> sink)
+        {
+            if (!AntibotEnvelope.TryUnwrap(envelope.Payload, out byte[] inner, out AntibotEnvelopeStatus status))
+            {
+                _events.Add(new SessionEvent(false, envelope.Header.Class, envelope.Header.PacketId, envelopeFrameLength, 0, "信封拆包失败:" + status));
+                return;
+            }
+
+            FrameLayout layout = FrameLayout.ServerToClient;
+            if (PacketHeader.TryRead(layout, inner, out PacketHeader header) && header.TotalLength == (uint)inner.Length)
+            {
+                byte[] body = new byte[inner.Length - layout.CipherOffset];
+                Buffer.BlockCopy(inner, layout.CipherOffset, body, 0, body.Length);
+                _events.Add(new SessionEvent(false, header.Class, header.PacketId, inner.Length, body.Length, "信封内层"));
+                sink.Add(new DecodedFrame(header, DecodedKind.Plain, body, false, false, true));
+            }
+            else
+            {
+                // 内层不足一个 15 字节帧头:展开不了,只把类与包号记在事件里
+                _events.Add(new SessionEvent(false, (PacketClass)inner[0], inner[1] | (inner[2] << 8), inner.Length, 0, "信封内层(帧头不足,未展开)"));
             }
         }
 
