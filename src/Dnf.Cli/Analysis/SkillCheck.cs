@@ -1241,6 +1241,7 @@ internal static partial class SkillCheck
                 int ms = 0;
                 double maxHeight = 0.0;
                 bool hasRise = recipe.Stages.Any(st => st.Rise != null);
+                bool hasLeap = recipe.Stages.Any(st => st.Leap != null);       // 脚本前冲段(R14,状态 0x2d 模式 1):空中走弧,中途离地、落地回到地面
                 while ((caster1.Motion == HeroMotion.Skill || caster1.Motion == HeroMotion.Jump) && ms < 20000)    // 升空类技能结束在空中:等它落地回到站立
                 {
                     session.Update(10, 0, 0, false, false, SkillKeys.None);
@@ -1248,11 +1249,11 @@ internal static partial class SkillCheck
                     stageSeen = Math.Max(stageSeen, caster1.SkillStage);
                     maxHeight = Math.Max(maxHeight, caster1.Z);
                 }
-                // 升空类技能:放的过程中真的升到了空中,而且最后落回地面(站立、离地高度 0);别的技能一直在地面
+                // 升空类与脚本前冲类技能:放的过程中真的离开了地面,而且最后落回地面(站立、离地高度 0);别的技能一直在地面
                 bool ok = stageSeen == recipe.Stages.Count - 1 && session.SkillChains == recipe.Stages.Count - 1 && session.SkillCasts == 1
                     && session.HeroObjectsSpawned == recipe.Objects.Count && caster1.Motion == HeroMotion.Rest && caster1.SkillId == 0 && slot.CooldownLeftMs > 0
                     && (session.Vitals == null || session.Vitals.Mp == mpBefore - slot.ConsumeMp)
-                    && caster1.Z == 0.0 && (hasRise ? maxHeight > 0.0 : maxHeight == 0.0);
+                    && caster1.Z == 0.0 && (hasRise || hasLeap ? maxHeight > 0.0 : maxHeight == 0.0);
                 if (ok && hasRise)
                 {
                     autoRises++;

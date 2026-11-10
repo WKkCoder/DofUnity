@@ -1051,17 +1051,22 @@ namespace Dnf.Play
             // 对象的伤害只取一列:创建调用(虚槽 0x340,调用在 0x00cbd960)的"伤害"实参是取列函数 0x00913d70 对 [level info] 第 1 列的结果(调用在 0x00cbd7ac,第二个实参是"不带百分比修正"的哨兵 0xffff0001),
             // 整块逐帧代码里没有一处调 0x009138c0(百分比列的取列函数)——所以百分比列填 -1(SkillObjectSpec.NoColumn),固定值列填 1。参数缓冲里另有第 2 列(0x00cbd7d8)与两个 [static data] 数、
             // 一个被动技能倍率,对象类怎么用它们没读到(对象类在受保护区,见 NOTES 的"未知")。
-            // 脚本前冲(R14 读码,进入块 0x00cd4e1e 起、逐帧块 0x00cbd4d2 起;详见 SkillLeapSpec):模式 1 进入时记起点横坐标,取 [static data] 第 0 个数当水平距离、第 1 个数当最大高度;
-            // 逐帧在"已过毫秒 < 动画第 5 帧开头"时水平 = 起点 ± 整数线性插值(0, 距离, 已过, 第 5 帧开头),落地那一步起不再摆位置(不补满距离)——水平段已接线(房间会话 StepLeap)。
-            // 没做:离地高度的弧(前半缓出到最大高度、后半缓入回 0,纯规则 SkillLeapRules.Height 已有,但主角的高度只有渲染层能改,见交接说明)、落地块里的两个声音与三个预载特效(第 4、5、6 项)与脚下特效对象、
-            // 震屏(0x008e9950,幅度 5、300 毫秒)、与另一个被动技能联动的威力倍率与对象尺寸。
+            // 脚本前冲(R14 读码,进入块 0x00cd4e1e 起、逐帧块 0x00cbd4d2 起;详见 SkillLeapSpec 与渲染包的 SkillLeapPlan):模式 1 进入时记起点横坐标,取 [static data] 第 0 个数当水平距离、第 1 个数当最大高度;
+            // 逐帧在"已过毫秒 < 动画第 5 帧开头"时水平 = 起点 ± 整数线性插值(0, 距离, 已过, 第 5 帧开头)(带碰撞设位置)、高度走前半缓出后半缓入的弧;落地那一步起高度归 0、不再摆位置(不补满距离)——主角自己按动画时间走(TownHero.StepLeap)。
+            // 落地块(0x00cbd5be 起,基础职业一支;名字是客户端写死的加密常量,0x0049c8f0 为真取其一):先按名字放两个声音(0x00cbd5f0、0x00cbd624,常量在 0x016fc0d4 与 0x016fc0b0)、震屏(0x008e9950,幅度 5、300 毫秒,0x00cbd66b)、
+            // 再放预载表第 4 项(第 4 层)、第 5 项(第 3 层)、第 6 项(第 6 层,偏移 121、10;0x00cbd67a、0x00cbd689、0x00cbd6b4);落地之后每步(0x00cbda30 起)预载第 4 项播到第 5 帧(含)以后就把第 4、5 项撤掉。
+            // 模式 0 的进入块(0x00cd4c71 起)还按名字放一个声音(常量在 0x016fea58;另一个职业多放一个,没做)。没做:另一个职业的声音名、落地后每步在主角前方 150 像素放的地面粒子(.ptl,渲染层没有粒子设施)、
+            // 与另一个被动技能联动的威力倍率与对象尺寸(对象类在受保护区,见 NOTES 的"未知")。
             new SkillRecipe(81,
                 new[]
                 {
                     new SkillStageSpec(motionIndex: 66, attackInfoIndex: -1, damageRateColumn: -1, damageFixedColumn: -1, effectIndex: 0, effectFrame: 0,
-                        moreEffects: new[] { 1 }),
+                        moreEffects: new[] { 1 }).WithStartSounds("OUTRAGE_READY"),
                     new SkillStageSpec(motionIndex: 67, attackInfoIndex: 57, damageRateColumn: 0, damageFixedColumn: -1, effectIndex: 2, effectFrame: 0,
-                        moreEffects: new[] { 3 }).WithLeap(new SkillLeapSpec(distanceStaticIndex: 0, heightStaticIndex: 1, landFrame: 5)),
+                        moreEffects: new[] { 3 }).WithLeap(new SkillLeapSpec(distanceStaticIndex: 0, heightStaticIndex: 1, landFrame: 5).WithLanding(
+                            new SkillLeapLanding(shakeStrength: 5, shakeMs: 300, sounds: new[] { "OUTRAGE_SWING", "CCRASH_CRASH" },
+                                effects: new[] { new SkillLandingEffect(4), new SkillLandingEffect(5), new SkillLandingEffect(6, forward: 121, down: 10) },
+                                trim: new SkillEffectTrim(watchIndex: 4, frame: 5, removeIndices: new[] { 4, 5 })))),
                 },
                 slideSpeedIndex: -1, slideAccelIndex: -1, forwardSpeedIndex: -1, forwardAccelIndex: -1, chainFromFrame: int.MaxValue, slideFollowsHeldDirection: false,
                 objects: new[]

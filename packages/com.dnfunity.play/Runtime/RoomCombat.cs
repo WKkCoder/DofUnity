@@ -2107,6 +2107,7 @@ namespace Dnf.Play
                 StepThrow(heroDelta);
                 UpdateHopLanding(_room.Hero);
                 UpdateDive(_room.Hero);
+                UpdateLeapSkill(_room.Hero);
                 SpawnJumpSkillEffect(_room.Hero);
             }
             EmitHeroCues();
@@ -2623,7 +2624,6 @@ namespace Dnf.Play
             BodyKeyFlags(hero);
             ApplyKeyFlags(hero);
             StepBodyHit(hero);
-            StepLeap(hero);
             if (!hero.IsAttacking || OwnStrikeless(hero))
             {
                 _evalSwing = -1;
