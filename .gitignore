@@ -24,6 +24,8 @@ __pycache__/
 .venv/
 .idea/
 .vscode/
+# 各 worktree 里并行任务的交接文件:含本机路径,只留本机(真要提交请先清理,并用 git add -f)
+HANDOFF.json
 
 # ---- .NET ----
 bin/
