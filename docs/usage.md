@@ -88,6 +88,26 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll game-check --sweep --json out/gam
 dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll game-check --sweep --only frozenland
 ```
 
+12. 联网(P7,2026-11-10 新增;证据 E-357 至 E-387):探针与联网宿主。**只对作者自己搭的服务器有意义**:服务器地址、账号与口令只从本机未入库的配置文件读取,
+    日志一律脱敏——只报状态、长度、计数与失败码,不报地址、账号、令牌与载荷内容。
+
+```sh
+# 联网探针(命令行;在仓库根目录或带 local.env 的工作树根目录下运行;不在测试的构建范围里,第一次先构建)
+dotnet build src/Dnf.NetProbe -c Release
+src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe offline <首包文件>               # 不联网:把保存下来的频道首包喂给会话层,验证解码与频道信息解析
+src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe live [--register] [--seconds N]  # 网关健康检查 → 登录(或先注册测试号)→ 取游戏服地址 → 连频道 → 收首包 → 登录 → 收集 N 秒回包
+src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe orchestrated [仓库根] [--stay N]  # 与 Unity 宿主同一条编排:网关登录 → 取游戏服地址 → 连频道 → 游戏登录 → 逐槽选角 → 进城;--stay N 进城后再挂 N 秒(心跳保活)
+```
+
+    Unity 开发版宿主(第 9 条的播放器)加联网参数:`-dnfnet` 先在后台把上面那条编排跑完、再进入城镇(`-dnfnetroot <仓库根>` 指定读本地凭据的位置,`-dnfnetport <端口>` 改频道端口);
+    再加 `-dnfnetdungeon <副本编号 0–65535> <模式 0–4>`(必须同时带 `-dnfnet`)时,进城后在同一条会话上接着走完进副本五步(开始游戏 → 装载通知 → 选副本 → 副本信息 → 起始地图),
+    有了结局再接上心跳;不带时联网进城的行为一字不变,参数不合规只打一行说明并忽略。
+
+```sh
+open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 与 ImagePacks2 的目录>" -dnfnet
+open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<同上>" -dnfnet -dnfnetdungeon <副本编号> <模式>
+```
+
 ## 测试策略
 
 - **合成数据测试**(可提交):测试里自己构造最小的 PVF、NPK、IMG,验证解析器。
