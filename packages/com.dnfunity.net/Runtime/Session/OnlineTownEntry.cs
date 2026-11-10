@@ -2,12 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Dnf.Net.Frame;
 using Dnf.Net.Gateway;
+
+// 进城的"启动包之后"那一段(EnterOnSessionAsync)与它的窗口长度是内部成员,假会话测试要直接走到它们
+[assembly: InternalsVisibleTo("Dnf.Net.Tests")]
 
 namespace Dnf.Net.Session
 {
@@ -98,10 +102,10 @@ namespace Dnf.Net.Session
     /// <summary>联网进城的结局。成功时 <see cref="Session"/> 与连接归调用方,记得释放本结果对象。</summary>
     public sealed class OnlineEntryResult : IDisposable
     {
-        private TcpClient _tcp;
+        private IDisposable _connection;
 
         internal OnlineEntryResult(OnlineStage stage, OnlineFailure failure, byte? loginFailureCode, int slot,
-            GameClientSession session, TcpClient tcp, int framesSeen, int secondLayerMismatches,
+            GameClientSession session, IDisposable connection, int framesSeen, int secondLayerMismatches,
             TownEntrySnapshot snapshot = null)
         {
             Stage = stage;
@@ -109,7 +113,7 @@ namespace Dnf.Net.Session
             LoginFailureCode = loginFailureCode;
             Slot = slot;
             Session = session;
-            _tcp = tcp;
+            _connection = connection;
             FramesSeen = framesSeen;
             SecondLayerMismatches = secondLayerMismatches;
             Snapshot = snapshot;
@@ -141,6 +145,8 @@ namespace Dnf.Net.Session
 
         /// <summary>
         /// 进城回程明文帧的只读快照(没进城为 null;进城后永不为 null,字段缺口见 <see cref="TownEntrySnapshot"/>)。
+        /// 喂给解析器的帧是城镇阶段收到的全部帧,各一遍:登录回包窗口、登录后拉角色列表的窗口(应答若被封进信封,会话层拆开后的内层帧也在其中)、
+        /// 选角窗口、尾窗口;进副本阶段的帧不在其中。
         /// 只是附加信息:不影响阶段与失败判定。
         /// </summary>
         public TownEntrySnapshot Snapshot { get; }
@@ -148,23 +154,20 @@ namespace Dnf.Net.Session
         /// <summary>关闭连接与会话。</summary>
         public void Dispose()
         {
-            _tcp?.Dispose();
-            _tcp = null;
+            _connection?.Dispose();
+            _connection = null;
         }
     }
 
     /// <summary>
-    /// 联网进城编排：网关登录 → 取游戏服地址 → 连频道收启动包 → 游戏登录 →（顺带请求一次角色列表，应答可能被封进信封，先不依赖）
-    /// → 逐槽选角 → 等到进城完成(E-357、E-358、E-359)。全程没有落盘与打印;凭据只在进程内。
+    /// 联网进城编排：网关登录 → 取游戏服地址 → 连频道收启动包 → 游戏登录 →（顺带请求一次角色列表，应答可能被封进信封，不依赖它选角，
+    /// 但它的帧会留给进城快照回填角色的等级、职业与成长类型）→ 逐槽选角 → 等到进城完成(E-357、E-358、E-359)。
+    /// 全程没有落盘与打印;凭据只在进程内。
     /// </summary>
     public sealed class OnlineTownEntry
     {
         private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
         private static readonly TimeSpan BootstrapTimeout = TimeSpan.FromSeconds(15);
-        private static readonly TimeSpan LoginWindow = TimeSpan.FromSeconds(8);
-        private static readonly TimeSpan ListWindow = TimeSpan.FromSeconds(2);
-        private static readonly TimeSpan SlotWindow = TimeSpan.FromSeconds(10);
-        private static readonly TimeSpan TailWindow = TimeSpan.FromSeconds(3);
 
         private readonly OnlineEntrySettings _settings;
 
@@ -220,54 +223,78 @@ namespace Dnf.Net.Session
                     return Fail(OnlineStage.Bootstrap, failure, null, -1, framesSeen, null, tcp, 0);
                 }
 
-                onStage?.Invoke(OnlineStage.GameLogin);
-                OnlineEntryResult loginFailure = await TryGameLogin(session, token, tcp, cancellationToken).ConfigureAwait(false);
-                if (loginFailure != null)
-                {
-                    return loginFailure;
-                }
-
-                // 帧数按会话的脱敏事件总数计(只进不减)。
-                framesSeen = session.Events.Count;
-
-                onStage?.Invoke(OnlineStage.SelectSlot);
-                for (int slot = 0; slot < _settings.MaxSlots; slot++)
-                {
-                    FrameStatus sent = await session.SendAsync(PacketClass.Cmd, (ushort)SlotJudge.SelectPacketId, new byte[] { (byte)slot }, cancellationToken).ConfigureAwait(false);
-                    if (sent != FrameStatus.Ok)
-                    {
-                        break;
-                    }
-                    List<DecodedFrame> window = await session.ReceiveAsync(SlotWindow, stopAfterFrames: 64, cancellationToken).ConfigureAwait(false);
-                    framesSeen = session.Events.Count;
-                    SlotOutcome outcome = SlotJudge.Judge(window);
-                    if (outcome.Kind == SlotOutcomeKind.Entered)
-                    {
-                        List<DecodedFrame> tail = await session.ReceiveAsync(TailWindow, cancellationToken: cancellationToken).ConfigureAwait(false);
-
-                        // 进城后给明文帧做只读快照:选角窗口加尾窗口的全部帧(解析器对错位与未知帧号只跳过,不抛)。
-                        var entryFrames = new List<DecodedFrame>(window.Count + tail.Count);
-                        entryFrames.AddRange(window);
-                        entryFrames.AddRange(tail);
-                        TownEntrySnapshot snapshot = TownEntryParser.Parse(entryFrames, slot);
-
-                        return new OnlineEntryResult(OnlineStage.Done, OnlineFailure.None, null, slot, session, tcp, session.Events.Count, session.SecondLayerMismatches, snapshot);
-                    }
-                }
-                return Fail(OnlineStage.SelectSlot, OnlineFailure.NoUsableSlot, null, -1, session.Events.Count, null, tcp, session.SecondLayerMismatches);
+                return await EnterOnSessionAsync(session, token, LocalAddressOf(tcp), tcp, onStage, null, cancellationToken).ConfigureAwait(false);
             }
         }
 
-        /// <summary>游戏登录一步:成功返回 null;失败返回现成的结果对象(连接由结果接管释放)。</summary>
-        private async Task<OnlineEntryResult> TryGameLogin(GameClientSession session, string token, TcpClient tcp, CancellationToken cancellationToken)
+        /// <summary>
+        /// 收到启动包之后的后半段:游戏登录 → 顺带拉一次角色列表 → 逐槽选角 → 进城后做快照。
+        /// 从 <see cref="RunAsync"/> 里拆出来,只为让假会话(内存里的管道)能走到真代码;<see cref="RunAsync"/> 把网关、取地址、
+        /// 连频道、收启动包接在它前面,行为与拆出来之前一致。<paramref name="connection"/> 是与会话同生死的连接
+        /// (真链路是 <see cref="TcpClient"/>,测试里可以是任何 <see cref="IDisposable"/>),成功或失败的结果对象都接管它的释放。
+        /// </summary>
+        internal async Task<OnlineEntryResult> EnterOnSessionAsync(GameClientSession session, string token, uint localAddress,
+            IDisposable connection, Action<OnlineStage> onStage, OnlineTownWindows windows, CancellationToken cancellationToken)
         {
-            uint localAddress = 0;
+            OnlineTownWindows w = windows ?? OnlineTownWindows.Default;
+
+            onStage?.Invoke(OnlineStage.GameLogin);
+            var earlyFrames = new List<DecodedFrame>();
+            OnlineEntryResult loginFailure = await TryGameLogin(session, token, localAddress, connection, w, earlyFrames, cancellationToken).ConfigureAwait(false);
+            if (loginFailure != null)
+            {
+                return loginFailure;
+            }
+
+            onStage?.Invoke(OnlineStage.SelectSlot);
+            for (int slot = 0; slot < _settings.MaxSlots; slot++)
+            {
+                FrameStatus sent = await session.SendAsync(PacketClass.Cmd, (ushort)SlotJudge.SelectPacketId, new byte[] { (byte)slot }, cancellationToken).ConfigureAwait(false);
+                if (sent != FrameStatus.Ok)
+                {
+                    break;
+                }
+                List<DecodedFrame> window = await session.ReceiveAsync(w.Slot, stopAfterFrames: 64, cancellationToken).ConfigureAwait(false);
+                SlotOutcome outcome = SlotJudge.Judge(window);
+                if (outcome.Kind == SlotOutcomeKind.Entered)
+                {
+                    List<DecodedFrame> tail = await session.ReceiveAsync(w.Tail, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                    // 进城后给明文帧做只读快照,喂的是城镇阶段收到的全部帧,各一遍:登录回包窗口与登录后拉角色列表的窗口(早先被丢弃的那部分;
+                    // 应答被信封封住的,会话层拆开后的内层帧已紧跟在信封帧后面)、选角窗口、尾窗口。进副本阶段的帧不在其中(快照在这里定下,之后不再喂)。
+                    // 解析器对错位与未知帧号只跳过,不抛。
+                    var entryFrames = new List<DecodedFrame>(earlyFrames.Count + window.Count + tail.Count);
+                    entryFrames.AddRange(earlyFrames);
+                    entryFrames.AddRange(window);
+                    entryFrames.AddRange(tail);
+                    TownEntrySnapshot snapshot = TownEntryParser.Parse(entryFrames, slot);
+
+                    // 帧数按会话的脱敏事件总数计(只进不减)。
+                    return new OnlineEntryResult(OnlineStage.Done, OnlineFailure.None, null, slot, session, connection, session.Events.Count, session.SecondLayerMismatches, snapshot);
+                }
+            }
+            return Fail(OnlineStage.SelectSlot, OnlineFailure.NoUsableSlot, null, -1, session.Events.Count, null, connection, session.SecondLayerMismatches);
+        }
+
+        /// <summary>本机出口地址按小端 u32 取(登录请求里要带);不是 IPv4 或取不到就是 0。</summary>
+        private static uint LocalAddressOf(TcpClient tcp)
+        {
             if (tcp.Client.LocalEndPoint is IPEndPoint local && local.AddressFamily == AddressFamily.InterNetwork)
             {
                 byte[] b = local.Address.GetAddressBytes();
-                localAddress = (uint)(b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24));
+                return (uint)(b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24));
             }
+            return 0;
+        }
 
+        /// <summary>
+        /// 游戏登录一步:成功返回 null;失败返回现成的结果对象(连接由结果接管释放)。
+        /// 登录回包窗口里收到的全部帧,以及登录成功后顺带拉的那次角色列表的窗口里收到的全部帧,按到达顺序追加进 <paramref name="earlyFrames"/>
+        /// (调用方进城后交给 <see cref="TownEntryParser"/>;登录失败时结果对象不带快照,追加的内容不会被用到)。
+        /// </summary>
+        private async Task<OnlineEntryResult> TryGameLogin(GameClientSession session, string token, uint localAddress,
+            IDisposable connection, OnlineTownWindows windows, List<DecodedFrame> earlyFrames, CancellationToken cancellationToken)
+        {
             byte[] mouseCipher = _settings.MouseCipher != null && _settings.MouseCipher.Length == LoginRequest.MouseCipherBytes
                 ? _settings.MouseCipher
                 : new byte[LoginRequest.MouseCipherBytes];
@@ -285,28 +312,30 @@ namespace Dnf.Net.Session
             };
             if (request.Validate() != LoginRequestProblem.None)
             {
-                return Fail(OnlineStage.GameLogin, OnlineFailure.BadLoginRequest, null, -1, session.Events.Count, null, tcp, 0);
+                return Fail(OnlineStage.GameLogin, OnlineFailure.BadLoginRequest, null, -1, session.Events.Count, null, connection, 0);
             }
 
             FrameStatus sent = await session.SendAsync(PacketClass.Cmd, LoginRequest.PacketId, request.Build(), cancellationToken).ConfigureAwait(false);
             if (sent != FrameStatus.Ok)
             {
-                return Fail(OnlineStage.GameLogin, OnlineFailure.GameLoginNoReply, null, -1, session.Events.Count, null, tcp, 0);
+                return Fail(OnlineStage.GameLogin, OnlineFailure.GameLoginNoReply, null, -1, session.Events.Count, null, connection, 0);
             }
 
-            List<DecodedFrame> window = await session.ReceiveAsync(LoginWindow, stopAfterFrames: 8, cancellationToken).ConfigureAwait(false);
+            List<DecodedFrame> window = await session.ReceiveAsync(windows.Login, stopAfterFrames: 8, cancellationToken).ConfigureAwait(false);
+            earlyFrames.AddRange(window);
             DecodedFrame reply = window.Find(f => f.Header.Class == PacketClass.Cmd && f.Header.PacketId == LoginRequest.PacketId && f.Payload.Length >= 1);
             if (reply == null)
             {
-                return Fail(OnlineStage.GameLogin, OnlineFailure.GameLoginNoReply, null, -1, session.Events.Count, null, tcp, 0);
+                return Fail(OnlineStage.GameLogin, OnlineFailure.GameLoginNoReply, null, -1, session.Events.Count, null, connection, 0);
             }
             byte? failureCode = LoginReplyParse.FailureCode(reply.Payload);
             if (reply.Payload[0] != 1 || failureCode.HasValue)
             {
-                return Fail(OnlineStage.GameLogin, OnlineFailure.GameLoginRejected, failureCode, -1, session.Events.Count, null, tcp, 0);
+                return Fail(OnlineStage.GameLogin, OnlineFailure.GameLoginRejected, failureCode, -1, session.Events.Count, null, connection, 0);
             }
 
-            // 顺带发一次角色列表请求(类型 2):应答现在可能被封进 561 信封(E-358),拿到也只留在会话事件里,不依赖它选角。
+            // 顺带发一次角色列表请求(类型 2):应答现在可能被封进 561 信封(E-358)。不依赖它选角(没有应答也照常往下走),
+            // 但窗口里的帧留给调用方(早先是收了就丢),进城后交给 TownEntryParser 回填快照的等级、职业与成长类型。
             if (LoginReplyParse.TryGetAccountId(reply.Payload, out int accountId))
             {
                 var listRequest = new byte[3];
@@ -314,7 +343,7 @@ namespace Dnf.Net.Session
                 listRequest[1] = (byte)((accountId >> 8) & 0xff);
                 listRequest[2] = 2;
                 await session.SendAsync(PacketClass.Cmd, 8, listRequest, cancellationToken).ConfigureAwait(false);
-                await session.ReceiveAsync(ListWindow, stopAfterFrames: 12, cancellationToken).ConfigureAwait(false);
+                earlyFrames.AddRange(await session.ReceiveAsync(windows.CharacterList, stopAfterFrames: 12, cancellationToken).ConfigureAwait(false));
             }
             return null;
         }
@@ -342,9 +371,40 @@ namespace Dnf.Net.Session
             }
         }
 
-        private static OnlineEntryResult Fail(OnlineStage stage, OnlineFailure failure, byte? code, int slot, int framesSeen, GameClientSession session, TcpClient tcp, int mismatches)
+        private static OnlineEntryResult Fail(OnlineStage stage, OnlineFailure failure, byte? code, int slot, int framesSeen, GameClientSession session, IDisposable connection, int mismatches)
         {
-            return new OnlineEntryResult(stage, failure, code, slot, session, tcp, framesSeen, mismatches);
+            return new OnlineEntryResult(stage, failure, code, slot, session, connection, framesSeen, mismatches);
         }
+    }
+
+    /// <summary>
+    /// 联网进城里"启动包之后"各收帧窗口的长度:登录、角色列表、选角、尾窗口。线上用 <see cref="Default"/>(实测定下的一组:8、2、10、3 秒);
+    /// 合成测试换一组很短的,免得每个用例白等十几秒。窗口只决定"最多等多久",收帧数的上限(登录 8、列表 12、选角 64)不变。
+    /// </summary>
+    internal sealed class OnlineTownWindows
+    {
+        /// <summary>线上用的一组。</summary>
+        public static readonly OnlineTownWindows Default = new OnlineTownWindows(
+            TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(3));
+
+        public OnlineTownWindows(TimeSpan login, TimeSpan characterList, TimeSpan slot, TimeSpan tail)
+        {
+            Login = login;
+            CharacterList = characterList;
+            Slot = slot;
+            Tail = tail;
+        }
+
+        /// <summary>等游戏登录回包的窗口。</summary>
+        public TimeSpan Login { get; }
+
+        /// <summary>发出角色列表请求后收应答的窗口。</summary>
+        public TimeSpan CharacterList { get; }
+
+        /// <summary>发出选角命令后收回程的窗口。</summary>
+        public TimeSpan Slot { get; }
+
+        /// <summary>判定进城后再收尾巴的窗口。</summary>
+        public TimeSpan Tail { get; }
     }
 }
