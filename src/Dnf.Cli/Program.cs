@@ -371,6 +371,10 @@ namespace Dnf.Cli
             "  dnf equip-check [--level N] [--seed N]\n" +
             "      装备栏与穿脱(证据 E-118):整库扫描能掉落的装备,检查类型、可用职业与穿戴规则的结构,剑魂能穿的武器有没有外观图层与每个攻击动作的动画,\n" +
             "      再让一个 --level 级的剑魂把每个部位随机一件穿得上的穿上、全部脱下,核对装备栏、背包与面板加成的账(数值、物品名与件数来自本机的数据,只打印在终端,不要抄进入库的文件;通过与否只看结构)。\n" +
+            "  dnf enhance-check [--seed N]\n" +
+            "      强化、附魔、套装、品级(r15-enhance):读强化表(Etc/upgrade.etc、Etc/amplifyupgrade.etc)、品级样本与整份物品清单,检查结构(表读得进来、惩罚类型与概率在服务端的取值范围、每个稀有度总是成功能升到封顶、\n" +
+            "      总是失败时惩罚与表一致、失败频率落在期望附近;套装穿齐才生效、少一件不生效;附魔卡有部位表;真实装备穿上后汇总等于各件加叠加项之和)。环境变量 DNF_ENHANCE_DUMP 给了目录就把表、物品、品级、抽档的规范文本写进去,\n" +
+            "      用 tools/py/enhance_ref.py compare 与独立的 Python 实现逐行比对(只报计数;数值与编号来自本机的数据,只打印在终端,不要抄进入库的文件)。\n" +
             "  dnf shop-check [--level N]\n" +
             "      NPC 商店(证据 E-119):整库读 itemshop.lst 与每家店的脚本、npc.lst 与每个 NPC 的 [role]、城镇区域里摆着的 NPC、价格倍率表,检查结构(每家店读得出来、商品都认得、NPC 与商店编号互相指回、\n" +
             "      走到商店 NPC 身边总在交互范围内);再对每家店的每件商品演习买一件卖回去、买三件卖三件,核对钱与背包的账,检查商店窗口的光标滚动、无人值守探针与画面\n" +
@@ -834,6 +838,8 @@ namespace Dnf.Cli
                     return ItemCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "equip-check":
                     return EquipCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "enhance-check":
+                    return EnhanceCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "bag-shot":
                     return BagShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "shop-check":
