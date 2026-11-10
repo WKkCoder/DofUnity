@@ -8,7 +8,7 @@ namespace Dnf.Game
     /// </summary>
     public readonly struct MonsterAlertCandidate
     {
-        public MonsterAlertCandidate(int team, int x, int y, bool alive, bool approaching, bool isCaller = false)
+        public MonsterAlertCandidate(int team, int x, int y, bool alive, bool approaching, bool isCaller = false, bool flagged = false)
         {
             Team = team;
             X = x;
@@ -16,6 +16,7 @@ namespace Dnf.Game
             Alive = alive;
             Approaching = approaching;
             IsCaller = isCaller;
+            Flagged = flagged;
         }
 
         /// <summary>队伍号(客户端虚槽 0x22c;怪物队默认 100,E-166)。</summary>
@@ -33,6 +34,12 @@ namespace Dnf.Game
 
         /// <summary>这一份就是被打中的那只怪物自己(收集时排除)。</summary>
         public bool IsCaller { get; }
+
+        /// <summary>
+        /// 收集时被排除的标志(客户端虚槽 +0x670;对象里 +0x3528 处的受保护整数,由槽 +0x674 写入;收集函数 0x0088efb0 在 0x0088f10f 之后遇到它为 1 就不收)。
+        /// 这个标志的含义没有读定,所以只按"为真就不收、也不占名额"建模;宿主眼下没有任何对应的状态,恒为假。
+        /// </summary>
+        public bool Flagged { get; }
     }
 
     /// <summary>
@@ -40,10 +47,12 @@ namespace Dnf.Game
     /// 静态读码(DNF.exe 普通代码段,观察,非 REA;本轮读,待入册;靠近本身见 E-148,难度读取函数 0x004382a0 的辨认见 E-134 的调用点 0x010b6e77):
     /// ① 受击回调里靠近(0x0089dd20)返回真之后,掷 rand() % 100,小于 70 才叫;
     /// ② 收集:房间对象表(出生序)里的怪物,不是自己、与自己同队、被自己的有效目标判定认可(<see cref="MonsterMoveRules.IsValidTarget"/>,视野取呼叫者此刻的视野,
-    ///    靠近模式里已经放大到 1.5 倍)、没死;
+    ///    靠近模式里已经放大到 1.5 倍)、<see cref="MonsterAlertCandidate.Flagged"/> 为假、没死;
     /// ③ 名额按副本难度 0 到 4 取 1、3、4、5、5;
     /// ④ 按收集的顺序逐个:已经在靠近模式的跳过(不占名额);其余的叫它去靠近,名额减一(不管它靠近成没成),减到 0 为止。
-    /// 都是本机分支(怪物在本机算,沿用 E-148 的假设);客户端另有非本机的分支(发网络包),没读。
+    /// 都是本机分支(怪物在本机算,沿用 E-148 的假设)。r14 补读:客户端另有非本机的分支——"本机"由 0x007f9eb0 判(某个全局状态为真,或怪物的控制者槽 +0x1b0 就是本机英雄);
+    /// 判为非本机的怪物不直接调靠近,而是(控制者非空、且 0x008a8500 认可时)发一个网络包,类型 0x1d、子类 2,带被叫怪物与攻击者的编号和模式号 12,同样占名额;
+    /// 这一支没有实现(网络包不在本线范围)。调用点只有受击回调一处(0x0089cef6),调用前还有 <see cref="AttackerOpensTheAlert"/> 那道门。
     /// </summary>
     public static class MonsterAlertRules
     {
@@ -83,8 +92,27 @@ namespace Dnf.Game
         {
             return !c.IsCaller
                 && c.Team == caller.Team
+                && !c.Flagged
                 && c.Alive
                 && MonsterMoveRules.IsValidTarget(callerSight, caller.X, caller.Y, c.X, c.Y);
+        }
+
+        /// <summary>
+        /// 对象种类字段(客户端对象 +0x90)里"AI 角色一族"的两位:各类构造函数写进去的种类值里,怪物是 0x211,AI 角色类是 0x111(推断英雄属于它),
+        /// 别的一些对象(种类值 0x21、0x121、0x221、0x421、0x821 等)没有第 4 位。受击回调的门用基类槽 +0x220 判它:<c>(种类 &amp; 0x11) == 0x11</c>(0x00442c80 经槽 +0x30,
+        /// 槽 +0x30 的基类实现是 0x007f9d90:种类字段与参数按位与后等于参数)。有 8 个类把槽 +0x220 覆盖成恒真(0x005983b0),没有逐个辨认是哪几个类。
+        /// </summary>
+        public const int AiCharacterKindMask = 0x11;
+
+        /// <summary>
+        /// 受击回调里"靠近并叫同伴"的攻击者门(0x0089cea4 起,0x0089ceba 处):攻击者对象要有"负责的角色"(虚槽 +0x32c 不为空),
+        /// 而且它的种类不属于 AI 角色一族(槽 +0x220 为假)。不通过就连靠近(槽 +0x7a0)带叫同伴一起跳过。
+        /// 推断:这样只有投射物、被动物件一类、带着主人的攻击对象打中怪物才引出靠近与叫人,AI 角色本体(种类含两位)与别的怪物都不会;
+        /// 没有核对"英雄近战命中时传进来的攻击者是英雄本体还是攻击对象",所以这个门没有接进宿主(见笔记)。
+        /// </summary>
+        public static bool AttackerOpensTheAlert(bool hasResponsibleActor, int attackerKind)
+        {
+            return hasResponsibleActor && (attackerKind & AiCharacterKindMask) != AiCharacterKindMask;
         }
 
         /// <summary>
