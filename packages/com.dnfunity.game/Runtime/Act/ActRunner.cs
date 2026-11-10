@@ -461,6 +461,9 @@ namespace Dnf.Game.Act
         /// <summary>正在处理的这一击的元素标志(位 0 火、1 水、2 暗、3 光);不在 [ON DAMAGE] 的唤醒里是 -1(没有"这一击",元素条件一律通过,E-166)。</summary>
         private int _damageElements = -1;
 
+        /// <summary>正在处理的这一击的 stuck 标志(.atk 的 [stuck] 概率掷中,E-057);只有 [ON DAMAGE] / [ON ATTACKSUCCESS] 的唤醒期间有意义,宿主不给就是否。</summary>
+        private bool _stuck;
+
         /// <summary>
         /// <paramref name="sharedEnabled"/>:触发器开关的持久副本(长度要等于触发器个数,用 <see cref="NewEnabledState"/> 建)。
         /// 客户端里 [TRIGGER] n [ON]/[OFF] 改的是这一招的触发器条目上的开关字节(+0x1c),那个条目属于怪物、跨出招保留,
@@ -646,11 +649,22 @@ namespace Dnf.Game.Act
             RunCast();
         }
 
-        /// <summary>主角被此对象的攻击命中(<paramref name="victim"/>);唤醒带 [ON ATTACKSUCCESS] 的触发器。</summary>
-        public void OnAttackSuccess(IActEntity victim)
+        /// <summary>
+        /// 主角被此对象的攻击命中(<paramref name="victim"/>);唤醒带 [ON ATTACKSUCCESS] 的触发器。
+        /// <paramref name="stuck"/> 是这一击的 stuck 标志(.atk 的 [stuck] 概率掷中,E-057),只供 [CHECK STUCK] 判定;宿主没有这个概念就不给,按否。
+        /// </summary>
+        public void OnAttackSuccess(IActEntity victim, bool stuck = false)
         {
             _victim = victim;
-            Dispatch(ActRecordKind.OnAttackSuccess);
+            _stuck = stuck;
+            try
+            {
+                Dispatch(ActRecordKind.OnAttackSuccess);
+            }
+            finally
+            {
+                _stuck = false;
+            }
         }
 
         /// <summary>此对象受到了 <paramref name="attacker"/> 的攻击;唤醒带 [ON DAMAGE] 的触发器。不带这一击的元素,元素条件([IS FIRE DAMAGE] 等)一律通过。</summary>
@@ -664,10 +678,11 @@ namespace Dnf.Game.Act
         /// 同上,另外带上这一击的元素标志(<paramref name="elementMask"/>:位 0 火、1 水、2 暗、3 光,没有元素是 0),
         /// 唤醒期间元素条件([IS FIRE DAMAGE]、[IS WATER DAMAGE]、[IS DARK DAMAGE]、[IS LIGHT DAMAGE]、[IS NONE DAMAGE])按它判定(E-166)。
         /// </summary>
-        public void OnDamage(IActEntity attacker, int elementMask)
+        public void OnDamage(IActEntity attacker, int elementMask, bool stuck = false)
         {
             _attacker = attacker;
             _damageElements = elementMask & 0xF;
+            _stuck = stuck;
             try
             {
                 Dispatch(ActRecordKind.OnDamage);
@@ -675,6 +690,7 @@ namespace Dnf.Game.Act
             finally
             {
                 _damageElements = -1;
+                _stuck = false;
             }
         }
 
@@ -825,6 +841,12 @@ namespace Dnf.Game.Act
                         break;
                     case ActRecordKind.ElementDamage:
                         if (!ElementDamagePasses(rec.Number))
+                        {
+                            return;
+                        }
+                        break;
+                    case ActRecordKind.CheckStuck:
+                        if (!CheckStuckPasses(rec.Number, evt))
                         {
                             return;
                         }
@@ -1139,6 +1161,20 @@ namespace Dnf.Game.Act
                 return true;
             }
             return element == 4 ? _damageElements == 0 : (_damageElements & (1 << element)) != 0;
+        }
+
+        /// <summary>
+        /// [CHECK STUCK] n(记录类型号 8;客户端受击运行器 0x010a9460、攻击成功运行器 0x010af3ef,两处写法相同,r14 读码):
+        /// "n 非 0"要等于这一击的 stuck 标志,不等就放弃触发器(<c>setne al; cmp [ebp+0x10], al; jne 放弃</c>)。
+        /// 不在这两个事件的唤醒里(逐帧、[ON SET ACTION] 等):别的运行器与通用条件求值函数 0x010d3630 的比较链里都没有类型 8 的分支,按放弃(推断)。
+        /// </summary>
+        private bool CheckStuckPasses(int n, ActRecordKind evt)
+        {
+            if (evt != ActRecordKind.OnDamage && evt != ActRecordKind.OnAttackSuccess)
+            {
+                return false;
+            }
+            return (n != 0) == _stuck;
         }
 
         private void Reselect(ActRecord rec)

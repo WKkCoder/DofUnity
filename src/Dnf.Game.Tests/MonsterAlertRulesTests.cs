@@ -196,4 +196,75 @@ public class MonsterAlertRulesTests
         Assert.Equal(new[] { 0 }, MonsterAlertRules.Pick(Caller(), 200, room, 5));      // 上限 280
         Assert.Equal(new[] { 0, 1 }, MonsterAlertRules.Pick(Caller(), 220, room, 5));   // 上限 308
     }
+
+    // ------------------------------------------------------------------ r14:收集里的排除标志(槽 +0x670)
+
+    private static MonsterAlertCandidate Flagged(int x, int y = 0) =>
+        new MonsterAlertCandidate(Team, x, y, true, false, flagged: true);
+
+    [Fact]
+    public void AFlaggedMonsterIsNotCollectedEvenWhenEverythingElseQualifies()
+    {
+        Assert.False(MonsterAlertRules.IsCollected(Caller(), 200, Flagged(10)));
+        Assert.True(MonsterAlertRules.IsCollected(Caller(), 200, Ally(10)));
+    }
+
+    [Fact]
+    public void AFlaggedMonsterDoesNotUseUpASlot()
+    {
+        // 名额 2:房间里 Flagged 排在最前面,被它占去名额就只能挑到一个
+        var room = new List<MonsterAlertCandidate> { Caller(), Flagged(10), Ally(20), Ally(30), Ally(40) };
+        Assert.Equal(new[] { 2, 3 }, MonsterAlertRules.Pick(Caller(), 200, room, 2));
+    }
+
+    [Fact]
+    public void TheFlagDefaultsToFalseSoExistingHostsAreUnaffected()
+    {
+        Assert.False(new MonsterAlertCandidate(Team, 0, 0, true, false).Flagged);
+        Assert.False(new MonsterAlertCandidate(Team, 0, 0, true, false, true).Flagged);     // 第六个参数是"自己"
+        Assert.True(new MonsterAlertCandidate(Team, 0, 0, true, false, false, true).Flagged);
+    }
+
+    // ------------------------------------------------------------------ r14:受击回调里的攻击者门(0x0089cea4)
+
+    [Theory]
+    [InlineData(0x211)]     // 怪物本体
+    [InlineData(0x111)]     // AI 角色类
+    [InlineData(0x11)]
+    [InlineData(0x1211)]
+    [InlineData(0x1111)]
+    public void AttackersWithBothAiCharacterBitsNeverOpenTheAlert(int kind)
+    {
+        Assert.False(MonsterAlertRules.AttackerOpensTheAlert(true, kind));
+    }
+
+    [Theory]
+    [InlineData(0x21)]
+    [InlineData(0x121)]
+    [InlineData(0x221)]
+    [InlineData(0x421)]
+    [InlineData(0x821)]
+    [InlineData(0x1)]       // 只有第 0 位
+    [InlineData(0x10)]      // 只有第 4 位:两位要同时在才算 AI 角色一族
+    public void AttackersMissingEitherBitOpenTheAlertWhenTheyHaveAnOwner(int kind)
+    {
+        Assert.True(MonsterAlertRules.AttackerOpensTheAlert(true, kind));
+    }
+
+    [Theory]
+    [InlineData(0x21)]
+    [InlineData(0x211)]
+    [InlineData(0)]
+    public void WithoutAResponsibleActorTheAlertNeverOpens(int kind)
+    {
+        Assert.False(MonsterAlertRules.AttackerOpensTheAlert(false, kind));
+    }
+
+    [Fact]
+    public void TheKindMaskIsTheTwoLowBitsOfTheMonsterKindAndTheAiCharacterKind()
+    {
+        Assert.Equal(0x11, MonsterAlertRules.AiCharacterKindMask);
+        Assert.Equal(0x11, 0x211 & MonsterAlertRules.AiCharacterKindMask);
+        Assert.Equal(0x11, 0x111 & MonsterAlertRules.AiCharacterKindMask);
+    }
 }

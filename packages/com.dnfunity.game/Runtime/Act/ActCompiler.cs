@@ -562,6 +562,13 @@ namespace Dnf.Game.Act
                     case "[ON DAMAGE]":
                         records.Add(new ActRecord { Kind = ActRecordKind.OnDamage, Tag = tag });
                         break;
+                    case "[CHECK STUCK]":
+                    {
+                        // 客户端读第 0 个参数,越界给 -1(0x0107b2e0),所以没写数字按 -1(非 0);只取第一个整数
+                        int[] stuckArgs = cur.Ints();
+                        records.Add(new ActRecord { Kind = ActRecordKind.CheckStuck, Tag = tag, Number = stuckArgs.Length > 0 ? stuckArgs[0] : -1 });
+                        break;
+                    }
                     case "[ON CREATE OBJECT]":
                     case "[ON DESTROY OBJECT]":
                     case "[ON DESTROY ME]":

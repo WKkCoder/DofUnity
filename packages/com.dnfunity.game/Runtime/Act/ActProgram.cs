@@ -420,6 +420,14 @@ namespace Dnf.Game.Act
 
         /// <summary>[CHECK PARTY SLOT] 槽 标志:整体真假(条件码 0x1b)。</summary>
         CheckPartySlot,
+
+        /// <summary>
+        /// [CHECK STUCK] n:整体真假(记录类型号 8)。客户端只有两处给它求值:受击运行器 0x010a8c30 的 0x010a9460 与攻击成功运行器 0x010aefc0 的 0x010af3ef,
+        /// 写法相同——读第 0 个参数 n(没写是 -1),"n 非 0"必须等于事件带来的 stuck 标志,不等就放弃这个触发器。
+        /// 参数放在 <see cref="ActRecord.Number"/>;不在 [ON DAMAGE] / [ON ATTACKSUCCESS] 的唤醒里不通过(别的运行器与逐帧运行器没有这一类型的分支,推断为放弃)。
+        /// stuck 标志是 .atk 里 [stuck] 概率的命中掷骰结果(E-057),由宿主随事件给出,没给按否。
+        /// </summary>
+        CheckStuck,
     }
 
     /// <summary>

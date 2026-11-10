@@ -5,7 +5,8 @@ namespace Dnf.Game
     /// <summary>
     /// 怪物默认 AI(客户端旧式模式机,见 docs/monster-ai.md)里与走位有关的模式,枚举值就是客户端的模式号。
     /// 客户端一共有三十来个模式,这里收游荡、敌对(近战、远程)、绕背、追击、迟疑、受击后的靠近与站定;
-    /// 以及被挡住之后的反向;其余(停步 5 到 7、跟随 24、巡逻 27 与 28、脚本指挥的 25 与 26 等)罕见或由脚本指挥,没有接。
+    /// 以及被挡住之后的反向;巡逻 27 与 28 只有纯规则(<see cref="MonsterPatrolRules"/>),宿主那边没有接(字段来源没读到);
+    /// 其余(停步 5 到 7、跟随 24、脚本指挥的 25 与 26 等)罕见或由脚本指挥,没有接。
     /// </summary>
     public enum MonsterMoveMode
     {
@@ -35,6 +36,12 @@ namespace Dnf.Game
 
         /// <summary>反向(模式 21):走路的动作里位置一秒没变(被挡住)之后进入,朝原方向的反方向走,501 毫秒后转追击(4)。</summary>
         Reverse = 21,
+
+        /// <summary>点巡逻(模式 27):朝怪物对象里记的一个点走,整数坐标完全相等才算到,到了转站桩(15)。规则见 <see cref="MonsterPatrolRules"/>。</summary>
+        PatrolPoint = 27,
+
+        /// <summary>路线巡逻(模式 28):沿路点表走;只有进入与追击两条规则读定,路线跟随没有读定(见 <see cref="MonsterPatrolRules"/>)。</summary>
+        PatrolRoute = 28,
     }
 
     /// <summary>一个模式的移动节拍:怪物"在走"与"站着"两种情形下,到下一次重新选方向的间隔 = 基数 + 随机数 % 范围(毫秒)。</summary>
@@ -168,6 +175,10 @@ namespace Dnf.Game
                 case MonsterMoveMode.Flank:
                 case MonsterMoveMode.Approach:
                     return HostileTempo;
+                case MonsterMoveMode.PatrolPoint:
+                case MonsterMoveMode.PatrolRoute:
+                    // 表里模式 27、28 的两行与游荡、站桩完全相同(r14 读 0x015ce7c0 + 模式 × 16 的整行)
+                    return WanderTempo;
                 default:
                     return WanderTempo;
             }
