@@ -1,7 +1,8 @@
 namespace Dnf.Net.Session
 {
     /// <summary>
-    /// MARS 128 位块；mars_setkey 取 key32 前 16 字节（位长 0x80）。余量 Seattos。
+    /// MARS（修订版）128 位分组；密钥取 GenKey 结果的前 16 字节（位长 0x80）。
+    /// 整块做 ECB，不足 16 字节的余量交给 Seattos。
     /// </summary>
     internal static class AntibotMars
     {
@@ -12,37 +13,21 @@ namespace Dnf.Net.Session
                 return;
             }
 
-            AntibotMarsCore.PrepareKey(key32);
-            int off = 0;
+            AntibotMarsCore core = new AntibotMarsCore(key32);
             int aligned = buf.Length & ~0xF;
-            while (off < aligned)
+            for (int off = 0; off < aligned; off += 16)
             {
                 if (encrypt)
                 {
-                    AntibotMarsCore.EncryptBlock(buf, off);
+                    core.EncryptBlock(buf, off);
                 }
                 else
                 {
-                    AntibotMarsCore.DecryptBlock(buf, off);
+                    core.DecryptBlock(buf, off);
                 }
-
-                off += 16;
             }
 
-            int rest = buf.Length - off;
-            if (rest > 0)
-            {
-                ApplySeattosSuffix(key32, encrypt, buf, off, rest);
-            }
-        }
-
-        private static void ApplySeattosSuffix(byte[] key32, bool encrypt, byte[] buf, int offset, int count)
-        {
-            byte[] tail = new byte[count];
-            System.Buffer.BlockCopy(buf, offset, tail, 0, count);
-            AntibotSeattos.Transform(key32, encrypt, tail);
-            System.Buffer.BlockCopy(tail, 0, buf, offset, count);
+            AntibotRc6.ApplySeattosSuffix(key32, encrypt, buf);
         }
     }
-
 }

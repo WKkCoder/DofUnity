@@ -1,7 +1,8 @@
 namespace Dnf.Net.Session
 {
     /// <summary>
-    /// Square 128 位、8 轮；密钥前 16 字节。余量 Seattos（非 AntibotTail / ResidualEight）。
+    /// Square 128 位、8 轮；密钥取 GenKey 结果的前 16 字节。
+    /// 整块做 ECB，不足 16 字节的余量交给 Seattos（不是 AntibotTail / ResidualEight）。
     /// </summary>
     internal static class AntibotSquare
     {
@@ -12,36 +13,21 @@ namespace Dnf.Net.Session
                 return;
             }
 
-            AntibotSquareCore.PrepareKey(key32);
-            int off = 0;
+            AntibotSquareCore core = new AntibotSquareCore(key32);
             int aligned = buf.Length & ~0xF;
-            while (off < aligned)
+            for (int off = 0; off < aligned; off += 16)
             {
                 if (encrypt)
                 {
-                    AntibotSquareCore.EncryptBlock(buf, off);
+                    core.EncryptBlock(buf, off);
                 }
                 else
                 {
-                    AntibotSquareCore.DecryptBlock(buf, off);
+                    core.DecryptBlock(buf, off);
                 }
-
-                off += 16;
             }
 
-            int rest = buf.Length - off;
-            if (rest > 0)
-            {
-                ApplySeattosSuffix(key32, encrypt, buf, off, rest);
-            }
-        }
-
-        private static void ApplySeattosSuffix(byte[] key32, bool encrypt, byte[] buf, int offset, int count)
-        {
-            byte[] tail = new byte[count];
-            System.Buffer.BlockCopy(buf, offset, tail, 0, count);
-            AntibotSeattos.Transform(key32, encrypt, tail);
-            System.Buffer.BlockCopy(tail, 0, buf, offset, count);
+            AntibotRc6.ApplySeattosSuffix(key32, encrypt, buf);
         }
     }
 }

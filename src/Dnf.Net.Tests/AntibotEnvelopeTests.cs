@@ -195,15 +195,31 @@ public class AntibotEnvelopeTests
         }
     }
 
+    // 偏移 +4(首字段恰为载荷全长)已是合法的第二种口径,改由 TheLengthPrefixMayAlsoBeTheFullPayloadLength 覆盖
     [Theory]
     [InlineData(1)]
     [InlineData(-1)]
-    [InlineData(4)]
     [InlineData(-4)]
     [InlineData(0x01000000)]
     public void AWrongLengthPrefixIsRejected(int delta)
     {
         AssertRejected(new Spec { Plain = StandardPlain(), PrefixDelta = delta }.ToBytes(), AntibotEnvelopeStatus.LengthPrefixMismatch);
+    }
+
+    // 真实帧里首字段有两种口径:多数等于其后的字节数,个别大帧等于载荷全长且密文区之后没有尾巴。
+    // 两种都接受(首字段只作参考,界定密文区的是偏移 4 的 total);紧邻全长的两侧仍然拒绝。
+    [Fact]
+    public void TheLengthPrefixMayAlsoBeTheFullPayloadLength()
+    {
+        byte[] plain = StandardPlain();
+        byte[] payload = new Spec { Plain = plain, PrefixDelta = 4 }.ToBytes();
+        Assert.Equal(21 + plain.Length, payload.Length);                  // 其后没有尾巴
+        Assert.Equal((uint)payload.Length, ReadBigEndian32(payload, 0));  // 首字段等于全长
+        AssertUnwraps(payload, StandardInner());
+        foreach (int delta in new[] { 3, 5 })
+        {
+            AssertRejected(new Spec { Plain = plain, PrefixDelta = delta }.ToBytes(), AntibotEnvelopeStatus.LengthPrefixMismatch);
+        }
     }
 
     [Fact]

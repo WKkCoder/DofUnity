@@ -14,7 +14,7 @@ namespace Dnf.Net.Session
         /// <summary>载荷不足 21 字节(固定头长度)。</summary>
         TooShort,
 
-        /// <summary>开头的 4 字节长度与其后的实际字节数不符。</summary>
+        /// <summary>开头的 4 字节长度既不等于其后的字节数,也不等于载荷全长。</summary>
         LengthPrefixMismatch,
 
         /// <summary>头长字段不是 17。</summary>
@@ -49,7 +49,8 @@ namespace Dnf.Net.Session
     /// 561 号信封(类 0、包号 <see cref="PacketId"/>)的拆包:把外部反作弊库封进信封的内层完整包还原出来。
     /// <para>
     /// 载荷结构(全部大端,偏移自载荷第一个字节):
-    /// <c>[0..4)</c> u32 = 其后的字节数(必须与实际相符);<c>[4..6)</c> u16 <c>total</c> = 17 + 密文长度;<c>[6..8)</c> u16 头长,必须是 17;
+    /// <c>[0..4)</c> u32 = 其后的字节数,或载荷全长(真实帧里两种口径并存,多数是前者,个别大帧是后者且密文区之后没有尾巴;
+    /// 两种都接受,别的值拒绝;它只作参考,真正界定密文区长度的是 <c>total</c>);<c>[4..6)</c> u16 <c>total</c> = 17 + 密文长度;<c>[6..8)</c> u16 头长,必须是 17;
     /// <c>[8]</c> 标志字节(不解释);<c>[9..13)</c> u32 <c>seq</c>;<c>[13..17)</c> u32 <c>algo</c>(1 到 19);<c>[17..21)</c> u32 CRC32(IEEE,与 zlib 的 crc32 同);
     /// 其后 <c>total - 17</c> 字节密文区;密文区之后允许有一个可选的 4 字节尾巴,忽略不看(载荷短于"21 + 密文长度"则拒绝)。
     /// </para>
@@ -97,7 +98,8 @@ namespace Dnf.Net.Session
                 return false;
             }
 
-            if (ReadUInt32(payload, 0) != (uint)(payload.Length - 4))
+            uint prefix = ReadUInt32(payload, 0);
+            if (prefix != (uint)(payload.Length - 4) && prefix != (uint)payload.Length)
             {
                 status = AntibotEnvelopeStatus.LengthPrefixMismatch;
                 return false;

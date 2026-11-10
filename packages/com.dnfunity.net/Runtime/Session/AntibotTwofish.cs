@@ -3,11 +3,18 @@ using System;
 namespace Dnf.Net.Session
 {
     /// <summary>
-    /// 原 TenTwofish32/24/16:Counterpane CTwofish(reKey 0x1b8de0, blockEncrypt 0x1ba1d0, BuildMDS 0x1b8b60)。
-    /// 密钥:ParseHexDword(小端字再 swap16)、RS_MDS_Encode(两 swap 字)、h 的 Me/Mo 亦为 swap 字且 q 链级数 k(2/3/4);
-    /// S 存 s[k-1-i]=RS(sw[2i],sw[2i+1]);g 预算表链用 s[k-1-stage]。reKey 在加密方向(dir=0)末调用 ReverseRoundSubkeys,轮密钥 8..39 反序存。
-    /// 单块轮函数仍为标准 16 轮 Feistel(与 blockEncrypt 优化查表路径尚在对照中)。
-    /// 整块 16 字节;余 <c>len%16</c> 走 <see cref="AntibotRc6.ApplySeattosSuffix"/>。
+    /// 算法 7/8/11:Twofish(原 TenTwofish32/24/16,取派生密钥的前 32/24/16 字节,即 256/192/128 位密钥),ECB,块长 16 字节;
+    /// 整块之后剩下的 <c>len % 16</c> 个字节走 SEATTOS 流变换(与 RC6 等 16 字节块算法共用 <see cref="AntibotRc6.ApplySeattosSuffix"/>)。
+    /// <para>
+    /// 与公开 Twofish(16 轮、q 置换、MDS 与 RS 矩阵、g 函数四张密钥相关的 S 表、PHT、轮子密钥、输入输出白化)逐字相同,
+    /// 只有一处偏差:原库把密钥字节装成 32 位字时,每个字先按小端取、再把每个 16 位半内的两个字节对调(第 0、1 字节互换,第 2、3 字节互换)。
+    /// 之后一切(RS 编码、Me/Mo 拆分、轮子密钥、S 表)都用这些对调后的字。块字本身仍按小端装配。
+    /// </para>
+    /// <para>
+    /// 密钥长度的选法按公开规格:k = 密钥位数 / 64(256 位为 4、192 位为 3、128 位为 2)个 64 位密钥字,
+    /// h 函数里"异或密钥字再过 q 置换"的级数就是 k 级——级数少于 4 时是<b>跳过开头的级</b>(取 q 置换计划表的第 4-k 到第 3 列,最后一级仍是第 4 列),
+    /// 而不是补零凑满 4 级。k=4 时与旧写法逐位相同。
+    /// </para>
     /// </summary>
     internal static class AntibotTwofish
     {
@@ -39,12 +46,14 @@ namespace Dnf.Net.Session
         }
     }
 
+    /// <summary>Twofish 的密钥扩展与单块加解密(见 <see cref="AntibotTwofish"/>)。</summary>
     internal sealed class AntibotTwofishCore
     {
         private const int Rounds = 16;
         private const int MdsPoly = 0x169;
         private const int RsPoly = 0x14D;
 
+        // q0、q1 置换的 4 位小表(公开规格附录 A 的 t0..t3),BuildQ 把它们按规格拼成 256 项的置换表。
         private static readonly int[][] Q0Tables =
         {
             new[] { 0x8, 0x1, 0x7, 0xD, 0x6, 0xF, 0x3, 0x2, 0x0, 0xB, 0x5, 0x9, 0xE, 0xC, 0xA, 0x4 },
@@ -77,6 +86,10 @@ namespace Dnf.Net.Session
             new[] { 0xA4, 0x55, 0x87, 0x5A, 0x58, 0xDB, 0x9E, 0x03 },
         };
 
+        /// <summary>
+        /// h 函数每个字节通道(0 到 3)在 5 个位置各用 q0(0)还是 q1(1):列 0 到 3 是异或密钥字之前的 q 置换,列 4 是最后一级。
+        /// 密钥字只有 k 个时,用的是第 4-k 到第 3 列(跳过开头的列),不是第 0 到 k-1 列。
+        /// </summary>
         private static readonly int[][] QPlan =
         {
             new[] { 1, 1, 0, 0, 1 },
@@ -99,46 +112,38 @@ namespace Dnf.Net.Session
 
         private void Init(byte[] key, int keyBytes)
         {
-            int bits = keyBytes * 8;
-            int k = bits >> 6;
-            int nWords = (bits + 31) >> 5;
-            uint[] sw = new uint[8];
-            for (int i = 0; i < nWords; i++)
+            int k = keyBytes / 8;
+            uint[] words = new uint[2 * k];
+            for (int i = 0; i < words.Length; i++)
             {
-                sw[i] = Swap16(LoadLe(key, i * 4));
+                words[i] = SwapHalfBytes(LoadLe(key, i * 4));
             }
 
-            uint[] s = new uint[4];
+            // Me、Mo:偶数位与奇数位的密钥字;S 向量按规格排成 (S_{k-1}, ..., S_0),h 的链从最后一项开始用。
+            uint[] me = new uint[k];
+            uint[] mo = new uint[k];
+            uint[] sVector = new uint[k];
             for (int i = 0; i < k; i++)
             {
-                s[k - 1 - i] = RsMdsEncode(sw[2 * i], sw[2 * i + 1]);
-            }
-
-            int hStages = k < 4 ? 4 : k;
-            uint[] me = new uint[hStages];
-            uint[] mo = new uint[hStages];
-            for (int i = 0; i < k; i++)
-            {
-                me[i] = sw[2 * i];
-                mo[i] = sw[2 * i + 1];
+                me[i] = words[2 * i];
+                mo[i] = words[2 * i + 1];
+                sVector[k - 1 - i] = RsMdsEncode(words[2 * i], words[2 * i + 1]);
             }
 
             for (int i = 0; i < 8 + 2 * Rounds; i += 2)
             {
                 uint rho = 0x01010101u;
-                uint a = HSubkey((uint)i * rho, me, hStages);
-                uint b = RotL(HSubkey((uint)(i + 1) * rho, mo, hStages), 8);
+                uint a = H((uint)i * rho, me, k);
+                uint b = RotL(H((uint)(i + 1) * rho, mo, k), 8);
                 _subKeys[i] = a + b;
                 _subKeys[i + 1] = RotL(a + 2u * b, 9);
             }
 
-            ReverseRoundSubkeys(_subKeys);
-
-            for (int j = 0; j < 4; j++)
+            for (int lane = 0; lane < 4; lane++)
             {
                 for (int x = 0; x < 256; x++)
                 {
-                    _sbox[j][x] = MdsColumn(j, ChainSbox(j, x, s, k));
+                    _sbox[lane][x] = MdsColumn(lane, ChainByte(lane, x, sVector, k));
                 }
             }
         }
@@ -171,18 +176,16 @@ namespace Dnf.Net.Session
 
         internal void DecryptBlock(byte[] buf, int off)
         {
-            uint[] sk = (uint[])_subKeys.Clone();
-            ReverseRoundSubkeys(sk);
-            uint r2 = LoadLe(buf, off) ^ sk[4];
-            uint r3 = LoadLe(buf, off + 4) ^ sk[5];
-            uint r0 = LoadLe(buf, off + 8) ^ sk[6];
-            uint r1 = LoadLe(buf, off + 12) ^ sk[7];
+            uint r2 = LoadLe(buf, off) ^ _subKeys[4];
+            uint r3 = LoadLe(buf, off + 4) ^ _subKeys[5];
+            uint r0 = LoadLe(buf, off + 8) ^ _subKeys[6];
+            uint r1 = LoadLe(buf, off + 12) ^ _subKeys[7];
             for (int r = Rounds - 1; r >= 0; r--)
             {
                 uint t0 = G(r2);
                 uint t1 = G(RotL(r3, 8));
-                uint f0 = t0 + t1 + sk[2 * r + 8];
-                uint f1 = t0 + 2u * t1 + sk[2 * r + 9];
+                uint f0 = t0 + t1 + _subKeys[2 * r + 8];
+                uint f1 = t0 + 2u * t1 + _subKeys[2 * r + 9];
                 uint p2 = RotL(r0, 1) ^ f0;
                 uint p3 = RotR(r1 ^ f1, 1);
                 r0 = r2;
@@ -191,10 +194,10 @@ namespace Dnf.Net.Session
                 r3 = p3;
             }
 
-            StoreLe(buf, off, r0 ^ sk[0]);
-            StoreLe(buf, off + 4, r1 ^ sk[1]);
-            StoreLe(buf, off + 8, r2 ^ sk[2]);
-            StoreLe(buf, off + 12, r3 ^ sk[3]);
+            StoreLe(buf, off, r0 ^ _subKeys[0]);
+            StoreLe(buf, off + 4, r1 ^ _subKeys[1]);
+            StoreLe(buf, off + 8, r2 ^ _subKeys[2]);
+            StoreLe(buf, off + 12, r3 ^ _subKeys[3]);
         }
 
         private uint G(uint x)
@@ -202,88 +205,67 @@ namespace Dnf.Net.Session
             return _sbox[0][x & 0xFF] ^ _sbox[1][(x >> 8) & 0xFF] ^ _sbox[2][(x >> 16) & 0xFF] ^ _sbox[3][x >> 24];
         }
 
-        private static uint HSubkey(uint x, uint[] words, int k)
+        /// <summary>规格里的 h(x, L):四个字节通道各过一条 q 链,再乘 MDS 矩阵合成一个字;<paramref name="list"/> 共 <paramref name="k"/> 个字。</summary>
+        private static uint H(uint x, uint[] list, int k)
         {
             uint z = 0;
-            for (int j = 0; j < 4; j++)
+            for (int lane = 0; lane < 4; lane++)
             {
-                z ^= MdsColumn(j, ChainSubkey(j, (int)((x >> (8 * j)) & 0xFF), words, k));
+                z ^= MdsColumn(lane, ChainByte(lane, (int)((x >> (8 * lane)) & 0xFF), list, k));
             }
 
             return z;
         }
 
-        private static int ChainSubkey(int j, int x, uint[] words, int k)
+        /// <summary>
+        /// 一个字节通道的 q 链:k 级"q 置换后异或密钥字(从列表最后一项起)",然后是列 4 的最后一级 q 置换。
+        /// 第 stage 级用 QPlan 的第 (4-k+stage) 列,所以 k=2、3 时是跳过开头的列,而不是补零凑满 4 级。
+        /// </summary>
+        private static int ChainByte(int lane, int x, uint[] list, int k)
         {
+            int first = 4 - k;
             int y = x;
             for (int stage = 0; stage < k; stage++)
             {
-                uint word = words[k - 1 - stage];
-                y = Q[QPlan[j][stage]][y] ^ (int)((word >> (8 * j)) & 0xFF);
+                uint word = list[k - 1 - stage];
+                y = Q[QPlan[lane][first + stage]][y] ^ (int)((word >> (8 * lane)) & 0xFF);
             }
 
-            return Q[QPlan[j][k]][y];
+            return Q[QPlan[lane][4]][y];
         }
 
-        private static int ChainSbox(int j, int x, uint[] s, int stages)
-        {
-            int y = x;
-            for (int stage = 0; stage < stages; stage++)
-            {
-                int si = stages - 1 - stage;
-                uint word = si < s.Length ? s[si] : 0;
-                y = Q[QPlan[j][stage]][y] ^ (int)((word >> (8 * j)) & 0xFF);
-            }
-
-            return Q[QPlan[j][stages]][y];
-        }
-
-        /// <summary>与 0x1b8d70 ReverseRoundSubkeys 一致:交换轮密钥对 8..39。</summary>
-        private static void ReverseRoundSubkeys(uint[] subKeys)
-        {
-            for (int i = 0; i < 16; i++)
-            {
-                int lo = 8 + 2 * i;
-                int hi = 8 + 2 * (15 - i);
-                uint a0 = subKeys[lo];
-                uint a1 = subKeys[lo + 1];
-                subKeys[lo] = subKeys[hi];
-                subKeys[lo + 1] = subKeys[hi + 1];
-                subKeys[hi] = a0;
-                subKeys[hi + 1] = a1;
-            }
-        }
-
-        /// <summary>RS_MDS_Encode:对 swap 后两 32 位字按行 RS 矩阵乘 8 字节(与 0x1b8e7f 一致)。</summary>
+        /// <summary>RS 编码:把两个 32 位密钥字(共 8 字节)乘 GF(2^8) 上的 RS 矩阵,得到一个 S 向量字。</summary>
         private static uint RsMdsEncode(uint k0, uint k1)
         {
-            int[] acc = new int[4];
-            for (int j = 0; j < 4; j++)
+            uint word = 0;
+            for (int row = 0; row < 4; row++)
             {
                 int sum = 0;
-                for (int r = 0; r < 8; r++)
+                for (int col = 0; col < 8; col++)
                 {
-                    int kb = r < 4 ? (int)((k0 >> (8 * r)) & 0xFF) : (int)((k1 >> (8 * (r - 4))) & 0xFF);
-                    sum ^= GfMul(Rs[j][r], kb, RsPoly);
+                    int keyByte = col < 4 ? (int)((k0 >> (8 * col)) & 0xFF) : (int)((k1 >> (8 * (col - 4))) & 0xFF);
+                    sum ^= GfMul(Rs[row][col], keyByte, RsPoly);
                 }
 
-                acc[j] = sum;
+                word |= (uint)sum << (8 * row);
             }
 
-            return (uint)(acc[0] | (acc[1] << 8) | (acc[2] << 16) | (acc[3] << 24));
+            return word;
         }
 
-        private static uint Swap16(uint w)
+        /// <summary>把每个 16 位半内的两个字节对调:字节序 0,1,2,3 变成 1,0,3,2。</summary>
+        private static uint SwapHalfBytes(uint w)
         {
             return ((w & 0x00FF00FFu) << 8) | ((w & 0xFF00FF00u) >> 8);
         }
 
-        private static uint MdsColumn(int j, int y)
+        /// <summary>MDS 矩阵的第 <paramref name="lane"/> 列乘一个字节,得到 32 位字(四个行结果按字节 0 到 3 排)。</summary>
+        private static uint MdsColumn(int lane, int y)
         {
             uint word = 0;
-            for (int i = 0; i < 4; i++)
+            for (int row = 0; row < 4; row++)
             {
-                word |= (uint)GfMul(Mds[i][j], y, MdsPoly) << (8 * i);
+                word |= (uint)GfMul(Mds[row][lane], y, MdsPoly) << (8 * row);
             }
 
             return word;
