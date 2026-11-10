@@ -223,6 +223,7 @@ namespace Dnf.Play
             {
                 sb.Append("worn ").Append(worn.Part.ToString(Inv)).Append(' ').Append(worn.Code.ToString(Inv)).Append('\n');
             }
+            TitleSaveFormat.Write(this, sb);
             foreach (SavedQuick quick in Quick)
             {
                 sb.Append("quick ").Append(quick.Slot.ToString(Inv)).Append(' ').Append(quick.Code.ToString(Inv)).Append('\n');
@@ -322,6 +323,10 @@ namespace Dnf.Play
         {
             error = null;
             string key = f[0];
+            if (TitleSaveFormat.Handles(key))
+            {
+                return TitleSaveFormat.Parse(r, key, f, no, out error);
+            }
             if (key == "quest")
             {
                 return ParseQuest(r, f, no, out error);
