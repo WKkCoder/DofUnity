@@ -15,7 +15,10 @@ namespace Dnf.Play
     /// <see cref="Stats"/> 是它加上穿着的装备的基础属性(<see cref="WornStats"/>、<see cref="EquipmentSlots.TotalStatBlock"/>:穿上加、脱下扣、换穿即换)。
     /// 一个对象跟着主角走完整个流程:副本里每个房间的战斗会话共用同一个(房间换了、副本换了,等级与经验都留着)。
     /// 技能(M35,证据 E-127):<see cref="Skills"/> 是学会的技能、技能点余额与快捷栏;升级给的点数进它的余额,学技能花、退技能还。
-    /// 没做:觉醒转职(<see cref="Awakening"/> 恒为 0,50 级以后用成长类型本身的块)、属性点、强化增幅附魔套装品级对属性的加成、任务与道具另给的技能点。
+    /// 疲劳(r15-growth,证据见 Dnf.Game 的 Fatigue):<see cref="Fatigue"/> 记已耗点数、上限与上次玩的时刻,每日恢复与进副本的门槛都按它判断,时间走可注入的 <see cref="Clock"/>;
+    /// 扣疲劳在 <see cref="DungeonSession"/> 里(进副本与每换一次房间)。被动属性:<see cref="PassiveRegistry"/> 里登记的规则按已学技能折成 <see cref="PassiveStatBlock"/>,叠在等级与装备之后。
+    /// 没做:觉醒转职(<see cref="Awakening"/> 恒为 0,50 级以后用成长类型本身的块)、强化增幅附魔套装品级对属性的加成、任务与道具另给的技能点、会员与活动的疲劳加成。
+    /// 没有属性点:服务端读码里升级只给技能点(CUser::_onLevelUp 0x0866311a 里没有属性点的发放;属性由职业基础块、等级成长块与任务药剂组成,CUser::calc_lev_stat 0x08664ae8),不虚构加点。
     /// </summary>
     public sealed class HeroProgress
     {
@@ -70,10 +73,11 @@ namespace Dnf.Play
         private int _levelVersion;
 
         /// <summary>
-        /// 属性出口(<see cref="Stats"/>)的变化次数:等级与经验的变化(升级、转职、设等级、读档)加上装备栏的变化(<see cref="EquipVersion"/>:穿、脱、换穿、读档),只增不减。
+        /// 属性出口(<see cref="Stats"/>)的变化次数:等级与经验的变化(升级、转职、设等级、读档)加上装备栏的变化(<see cref="EquipVersion"/>:穿、脱、换穿、读档)
+        /// 再加上被动属性叠加量真的变了的次数(学、退、重置技能、登记规则变化,只算折出来的属性块变了的),只增不减。
         /// 各个房间的战斗会话据此发现"别的房间里升了级或穿脱了装备",把自己的生命上限、防御与攻击面板换成现在 <see cref="Stats"/> 的。
         /// </summary>
-        public int Version => _levelVersion + Worn.Version;
+        public int Version => _levelVersion + Worn.Version + PassiveVersion;
 
         /// <summary>身上的金币(拾取地上的金币、向商店卖东西加上来,在商店买东西花掉;证据 E-116、E-119)。副本里各房间的战斗会话共用同一个对象。</summary>
         public long Gold { get; private set; }
@@ -202,10 +206,11 @@ namespace Dnf.Play
         public EquipStats WornStats => Worn.TotalStats();
 
         /// <summary>
-        /// 主角现在的属性(十分之一单位的整数):<see cref="BaseStats"/> 加上穿着的装备折成的属性块(<see cref="EquipmentSlots.TotalStatBlock"/>)。
-        /// 穿上装备加上去,脱下就扣掉,同槽换穿只剩新的那件;<see cref="Version"/> 随装备栏一起变,战斗会话据此换面板。
+        /// 主角现在的属性(十分之一单位的整数):<see cref="BaseStats"/> 加上穿着的装备折成的属性块(<see cref="EquipmentSlots.TotalStatBlock"/>),
+        /// 再加上已学被动技能折成的属性块(<see cref="PassiveStatBlock"/>)。
+        /// 穿上装备加上去,脱下就扣掉,同槽换穿只剩新的那件;学、退被动技能即时重算;<see cref="Version"/> 随它们一起变,战斗会话据此换面板。
         /// </summary>
-        public StatBlock Stats => BaseStats + Worn.TotalStatBlock();
+        public StatBlock Stats => BaseStats + Worn.TotalStatBlock() + PassiveStatBlock;
 
         /// <summary>
         /// 加经验并按服务端的循环升级。返回这一次的结果(涨了几级、给了多少点)。
@@ -480,6 +485,110 @@ namespace Dnf.Play
             Skills.Restore(levels, quick, sp, sfp);
         }
 
+        // ---------------- 疲劳(r15-growth,证据见 Dnf.Game 的 Fatigue 与 DungeonFatigueRules) ----------------
+
+        /// <summary>疲劳:已耗点数、上限与上次玩的时刻(规则可用 <see cref="ConfigureFatigue"/> 换)。进副本扣、每日恢复、进副本的门槛都在它上面;存进存档。</summary>
+        public FatigueState Fatigue { get; private set; } = new FatigueState(FatigueRules.Default);
+
+        /// <summary>取"现在"的时钟(本地时间):疲劳的每日恢复按它判断。宿主不设就用系统时钟,测试给固定时刻。</summary>
+        public Func<DateTime> Clock { get; set; } = () => DateTime.Now;
+
+        /// <summary>疲劳已耗点数、上限与剩余的变化次数(宿主层不引用 Dnf.Game,HUD 据此决定要不要重画;不影响 <see cref="Version"/>)。</summary>
+        public int FatigueVersion => Fatigue.Version;
+
+        public int FatigueConsumed => Fatigue.Consumed;
+
+        public int FatigueMax => Fatigue.Max;
+
+        public int FatigueRemaining => Fatigue.Remaining;
+
+        /// <summary>疲劳条此刻的数(剩余、上限;条本身没画,见 <see cref="HudFatigue"/>)。读它不刷新,每日恢复要先 <see cref="RefreshFatigue"/>。</summary>
+        public HudFatigue FatigueHud => new HudFatigue(Fatigue.Remaining, Fatigue.Max);
+
+        /// <summary>
+        /// 换疲劳的规则(上限、每日恢复的整点):已耗点数按新上限夹住,上次玩的时刻保留,状态对象换成新的。
+        /// 之前拿到的 <see cref="Fatigue"/> 引用作废。
+        /// </summary>
+        public void ConfigureFatigue(FatigueRules rules)
+        {
+            var next = new FatigueState(rules);
+            next.Restore(Fatigue.Consumed, Fatigue.LastPlay);
+            Fatigue = next;
+        }
+
+        private DateTime FatigueNow()
+        {
+            return (Clock ?? (() => DateTime.Now))();
+        }
+
+        /// <summary>按时钟刷新疲劳:过了恢复点就完全恢复,并记下"现在"为上次玩的时刻。返回这次有没有恢复。</summary>
+        public bool RefreshFatigue()
+        {
+            return Fatigue.Refresh(FatigueNow());
+        }
+
+        /// <summary>进副本的疲劳门槛:先刷新,再看已耗是否小于上限(剩 1 点够、剩 0 点不够)。免疲劳副本不走这里,见 <see cref="FatigueGate"/>。</summary>
+        public bool CanEnterByFatigue()
+        {
+            RefreshFatigue();
+            return Fatigue.CanEnter;
+        }
+
+        /// <summary>扣 <paramref name="amount"/> 点疲劳:先刷新(跨过恢复点的先恢复),再扣、封顶到上限;返回实际扣掉的点数。</summary>
+        public int ChargeFatigue(int amount)
+        {
+            RefreshFatigue();
+            return Fatigue.Use(amount);
+        }
+
+        // ---------------- 被动属性(r15-growth,证据与边界见 Dnf.Game 的 PassiveStatBonus) ----------------
+
+        /// <summary>被动属性规则的登记表(默认是空的:没有证据的映射不编造);宿主或后续线往里登记,已学技能的变化即时反映到 <see cref="Stats"/>。</summary>
+        public PassiveStatRegistry PassiveRegistry { get; } = new PassiveStatRegistry();
+
+        private StatBlock _passiveBlock;
+        private SkillBook _passiveBook;
+        private int _passiveBookVersion;
+        private int _passiveRegistryVersion;
+        private int _passiveVersion;
+
+        /// <summary>已学被动技能折成的属性块(十分之一单位;登记表为空时全是 0)。</summary>
+        public StatBlock PassiveStatBlock
+        {
+            get
+            {
+                EnsurePassive();
+                return _passiveBlock;
+            }
+        }
+
+        private int PassiveVersion
+        {
+            get
+            {
+                EnsurePassive();
+                return _passiveVersion;
+            }
+        }
+
+        /// <summary>技能簿(对象或版本)或登记表变了就重算被动属性块;块真的变了才让 <see cref="Version"/> 加一。直接动 <see cref="Skills"/> 的调用方也不会漏。</summary>
+        private void EnsurePassive()
+        {
+            if (ReferenceEquals(_passiveBook, Skills) && _passiveBookVersion == Skills.Version && _passiveRegistryVersion == PassiveRegistry.Version)
+            {
+                return;
+            }
+            StatBlock next = PassiveStatBonus.Compute(PassiveRegistry, Skills.Catalog.Find, Skills.LevelOf);
+            if (!next.Equals(_passiveBlock))
+            {
+                _passiveBlock = next;
+                _passiveVersion++;
+            }
+            _passiveBook = Skills;
+            _passiveBookVersion = Skills.Version;
+            _passiveRegistryVersion = PassiveRegistry.Version;
+        }
+
         /// <summary>
         /// 现在的进度拍成存档快照(M26,<see cref="HeroSave"/>):等级、经验、点数、金币、背包每一格(物品编号与数量)、装备栏每一件。
         /// 只有数字与物品编号,不含物品本身的任何内容。
@@ -499,6 +608,8 @@ namespace Dnf.Play
                 Gold = Gold,
                 GoldGained = GoldGained,
                 ItemsGained = ItemsGained,
+                FatigueConsumed = Fatigue.Consumed,
+                FatigueLastPlay = Fatigue.LastPlay.HasValue ? new DateTime(Fatigue.LastPlay.Value.Ticks - Fatigue.LastPlay.Value.Ticks % TimeSpan.TicksPerSecond) : (DateTime?)null,
             };
             for (int t = 0; t < Inventory.TabCount; t++)
             {
@@ -575,6 +686,7 @@ namespace Dnf.Play
             Gold = Math.Max(0L, save.Gold);
             GoldGained = Math.Max(Gold, save.GoldGained);
             ItemsGained = Math.Max(0, save.ItemsGained);
+            Fatigue.Restore(save.FatigueConsumed, save.FatigueLastPlay);
             _levelVersion++;
             Bag.Clear();
             Worn.Clear();
