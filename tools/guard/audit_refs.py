@@ -38,14 +38,9 @@ import secretscan  # noqa: E402
 PASS, SCRUB, FAIL = "PASS", "SCRUB", "FAIL"
 HIDDEN = "(路径里含有取值,已隐藏)"   # 路径本身含取值时不能原样打印,否则报告自己就泄露了
 
-# 本机绝对路径:用户目录名属于个人信息,不该出现在公开历史里
-LOCAL_PATH_RE = re.compile(r"(?:/Users/[A-Za-z0-9._-]+|/home/[A-Za-z0-9._-]+|[A-Za-z]:\\Users\\[A-Za-z0-9._-]+)")
-# 私钥块与常见访问令牌
-CREDENTIAL_RE = re.compile(
-    r"-----BEGIN [A-Z ]*PRIVATE KEY-----"
-    r"|\bgh[pousr]_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{30,}\b"
-    r"|\bAKIA[0-9A-Z]{16}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}\b|\bsk-[A-Za-z0-9]{20,}\b"
-)
+# 本机绝对路径、私钥块与访问令牌的识别与提交守卫共用(定义在 secretscan.py)
+LOCAL_PATH_RE = secretscan.LOCAL_PATH_RE
+CREDENTIAL_RE = secretscan.CREDENTIAL_RE
 
 
 class AuditError(Exception):

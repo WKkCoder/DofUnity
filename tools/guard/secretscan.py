@@ -22,6 +22,15 @@ import os
 import re
 import subprocess
 
+# 不依赖取值文件、任何环境下都该拦的两类内容(守卫与审计共用):
+# 本机绝对路径(用户目录名属于个人信息,不该出现在公开历史里),以及私钥块与常见访问令牌。
+LOCAL_PATH_RE = re.compile(r"(?:/Users/[A-Za-z0-9._-]+|/home/[A-Za-z0-9._-]+|[A-Za-z]:\\Users\\[A-Za-z0-9._-]+)")
+CREDENTIAL_RE = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r"|\bgh[pousr]_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{30,}\b"
+    r"|\bAKIA[0-9A-Z]{16}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}\b|\bsk-[A-Za-z0-9]{20,}\b"
+)
+
 SECRETS_NAME = "local.secrets.env"
 MIN_ENCODED_BYTES = 4          # 取值短于这个字节数时只做原样匹配
 WINDOW = 6                     # 十六进制取值的片段窗口(字节)

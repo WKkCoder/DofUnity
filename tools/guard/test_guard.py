@@ -251,6 +251,14 @@ class PrecommitTests(unittest.TestCase):
         self.assertNotIn(hexs(ACCOUNT, upper=True), err)
         self.rejected({"src/k.cs": "new byte[] { %s };\n" % ", ".join("0x%02x" % b for b in bytes.fromhex(KEYHEX)[:6])}, "SYN_KEY_HEX")
 
+    def test_local_path_and_credential_material(self):
+        err = self.rejected({"docs/a.md": local_path_text()}, "本机绝对路径")
+        self.assertIn("/Us" + "ers/zzuser", err)   # 路径本身是要给作者看的,取值才不能出现
+        self.rejected({"docs/b.md": token_text()}, "私钥或访问令牌")
+        self.rejected({"docs/c.md": private_key_text()}, "私钥或访问令牌")
+        p = self.stage({"docs/ok.md": "相对路径 docs/ok.md 与 ~/.ssh/id_x 都没问题\n"})
+        self.assertEqual(p.returncode, 0, p.stderr.decode())
+
     def test_missing_secrets_file_only_warns(self):
         p = self.stage({"src/a.cs": "class A {}\n"}, secrets=False)
         self.assertEqual(p.returncode, 0)

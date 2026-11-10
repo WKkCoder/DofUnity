@@ -9,6 +9,7 @@
   5. 文本里出现反编译器输出的特征(Ghidra 自动生成的名字与类型)
   6. 凭据:local.secrets.env 本身,或任何被暂存的文本里出现了该文件里的取值(账号、口令、服务器地址等),
      包括它们的常见编码写法(十六进制、Base64、UTF-16、摘要……,规则见 secretscan.py)
+  7. 本机绝对路径(/Users/名字、/home/名字、C:\\Users\\名字),以及私钥块与常见访问令牌
 
 取值文件的位置:环境变量 DNF_SECRETS_FILE;否则当前工作区根目录;再否则主工作区(各 worktree 里没有这个被忽略的文件)。
 找不到取值文件时只提示、不拦截,因为没有取值可比对。
@@ -87,6 +88,16 @@ def main():
         if m:
             line = text.count("\n", 0, m.start()) + 1
             problems.append((n, "第 %d 行像反编译器输出(%r);请改写成自己的描述,函数用地址与自拟名称" % (line, m.group())))
+            continue
+        m = secretscan.LOCAL_PATH_RE.search(text)
+        if m:
+            line = text.count("\n", 0, m.start()) + 1
+            problems.append((n, "第 %d 行含有本机绝对路径(%s);个人目录名不该进公开历史,请改成相对路径或占位写法" % (line, m.group()[:40])))
+            continue
+        m = secretscan.CREDENTIAL_RE.search(text)
+        if m:
+            line = text.count("\n", 0, m.start()) + 1
+            problems.append((n, "第 %d 行像私钥或访问令牌;请删掉,并且该令牌应当视为已泄露、立即作废" % line))
     if problems:
         print("提交被守卫拒绝:", file=sys.stderr)
         for n, why in problems:
