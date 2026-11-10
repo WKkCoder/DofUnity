@@ -26,7 +26,8 @@ namespace Dnf.Client
     /// 带 -dnfnet 时先真联网(开发版:网关登录一路跑到选角进城,凭据从仓库根本地配置读,-dnfnetroot 指仓库根,-dnfnetport 改频道端口),
     /// 进城成功后按城镇流程继续(角色本体数据先用本地占位);联网阶段与结果只打不含凭据的 DNF_NET 日志。
     /// 再带 -dnfnetdungeon &lt;副本编号&gt; &lt;模式 0 到 4&gt;(要同时带 -dnfnet)时,进城后在同一个会话上接着走联网进副本(开始游戏 → 选副本 → 收到起始地图,<see cref="OnlineDungeonRunner"/>),
-    /// 阶段与结局只打 DNF_NET stage=dungeon 日志(阶段名、失败原因与计数,不含载荷内容),进城快照里的角色等级、职业、成长类型打一行 DNF_NET snapshot;
+    /// 阶段与结局只打 DNF_NET stage=dungeon 日志(阶段名、失败原因与计数,不含载荷内容),进城快照里的角色等级、职业、成长类型打一行 DNF_NET snapshot,
+    /// 进城阶段的会话事件(信封拆开几个、列表应答怎么来的)汇总成一行 DNF_NET session;
     /// 进副本这一步有结局后才继续城镇流程,心跳保活在进副本之后接上、照旧跑到退出;没有怪物、没有战斗。不带这个参数时联网流程与以前一字不变。
     /// 带 -dnfflow 时玩整条流程(<see cref="GameFlow"/>,证据 E-093):从选角(-dnfflowfrom char,证据 E-096:方向键移动选中、回车或空格开始游戏、Esc 或点"结束游戏"退出,点角色格子选中)、
     /// 城镇(town,默认)、副本选择(select)或副本(dungeon)开始;
@@ -691,6 +692,7 @@ namespace Dnf.Client
                     // 带 -dnfnetdungeon:会话由进副本独占(它不回心跳,不能与心跳泵同时收同一个会话),
                     // 所以这里不立刻起心跳;进副本之后由 OnlineDungeonRunner 接上同一个心跳泵,日志同文。
                     Debug.Log(OnlineNetLog.Snapshot(result.Snapshot));
+                    Debug.Log(OnlineNetLog.SessionDigest(result.Session.Events));
                     yield return RunOnlineDungeon(result.Session);
                     done(true);
                     yield break;

@@ -473,6 +473,68 @@ public class OnlineDungeonRunnerTests
         Assert.Contains(" unopened=1 ", log.Lines.Last());
     }
 
+    // ======== 会话事件汇总行 ========
+
+    /// <summary>
+    /// 真会话上走通:汇总行在收帧记录之后、完成行之前(完成行仍是进副本的最后一行),数的是整个会话到此刻的累计:
+    /// 收到 7 个(启动包、三个信封帧、各带一个内层帧)、发出 2 个(两条命令),共 9 个事件。
+    /// </summary>
+    [Fact]
+    public async Task A_real_session_run_logs_the_session_digest_between_the_frames_and_the_done_line()
+    {
+        (GameClientSession session, DungeonEntryPipe pipe) = await HostTestKit.ReadySession();
+        pipe.Script = HostTestKit.DungeonChain(
+            HostTestKit.Frames(HostTestKit.RealEnvelope(0, 27, DungeonEntryWire.Loading27())),
+            HostTestKit.Frames(HostTestKit.RealEnvelope(0, 28, DungeonEntryWire.Info28()), HostTestKit.RealEnvelope(0, 29, DungeonEntryWire.Map29())));
+        var log = new HostTestKit.LogSink();
+
+        OnlineDungeonResult result = await Enter(new OnlineDungeonRunner(session), 901, 3, log);
+
+        Assert.True(result.Entered);
+        string[] lines = log.Lines;
+        Assert.StartsWith(Line("done step=Done "), lines[lines.Length - 1]);
+        Assert.Equal(
+            Line("session events=9 received=7 envelopes=3 opened=3 unwrapFailed=0 unwrapReasons=- innerShort=0 innerIds=27,28,29 id2Direct=0 id2Inner=0"),
+            lines[lines.Length - 2]);
+        Assert.StartsWith(Line("frame n="), lines[lines.Length - 3]);
+    }
+
+    /// <summary>
+    /// 失败时也有汇总行,位置同样在失败行之前:超时的典型症状("信封到了没拆开所以永远等不到 27")能在里面直接看到原因。
+    /// 合成的垃圾信封载荷头四个字节对不上长度,拆包状态是 LengthPrefixMismatch。
+    /// </summary>
+    [Fact]
+    public async Task A_failed_real_session_run_logs_the_digest_too_and_shows_why_an_envelope_stayed_closed()
+    {
+        (GameClientSession session, DungeonEntryPipe pipe) = await HostTestKit.ReadySession();
+        pipe.Script = HostTestKit.DungeonChain(HostTestKit.Frames(DungeonEntryWire.Envelope(GatewayTestSupport.Pattern(40, 0x55))), HostTestKit.Frames());
+        var log = new HostTestKit.LogSink();
+
+        OnlineDungeonResult result = await Enter(new OnlineDungeonRunner(session), 901, 3, log, loading: Quick);
+
+        Assert.Equal(OnlineDungeonFailure.Timeout, result.Failure);
+        string[] lines = log.Lines;
+        Assert.StartsWith(Line("failed step=WaitLoadingNotice failure=Timeout "), lines[lines.Length - 1]);
+        Assert.Contains(" unopened=1 ", lines[lines.Length - 1]);
+        Assert.Equal(
+            Line("session events=4 received=3 envelopes=1 opened=0 unwrapFailed=1 unwrapReasons=LengthPrefixMismatch:1 innerShort=0 innerIds=- id2Direct=0 id2Inner=0"),
+            lines[lines.Length - 2]);
+    }
+
+    /// <summary>不合规的入参根本没进副本:没有汇总行,日志只有开头与失败两行。</summary>
+    [Fact]
+    public async Task A_refused_request_logs_no_session_digest()
+    {
+        (GameClientSession session, DungeonEntryPipe pipe) = await HostTestKit.ReadySession();
+        var log = new HostTestKit.LogSink();
+
+        await Enter(new OnlineDungeonRunner(session), 901, 9, log);
+
+        Assert.Equal(2, log.Lines.Length);
+        Assert.DoesNotContain(log.Lines, l => l.Contains(" session "));
+        Assert.Empty(pipe.ClientFrames);
+    }
+
     // ======== 保活的先后次序与取舍 ========
 
     /// <summary>

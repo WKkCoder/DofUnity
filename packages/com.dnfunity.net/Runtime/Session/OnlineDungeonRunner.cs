@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using System.Threading;
@@ -31,6 +32,7 @@ namespace Dnf.Net.Session
         private readonly OnlineDungeonEntry _entry;
         private readonly Func<string> _unusableReason;
         private readonly Func<CancellationToken, Task<int>> _keepAlive;
+        private readonly Func<IReadOnlyList<SessionEvent>> _events;     // 真会话才有事件表;接缝替身没有,不打汇总行
 
         /// <summary>在已进城的真会话上创建;进副本之后用 <see cref="OnlineHeartbeat"/> 保活。</summary>
         public OnlineDungeonRunner(GameClientSession session)
@@ -48,6 +50,7 @@ namespace Dnf.Net.Session
             _entry = new OnlineDungeonEntry(session, UnwrapEnvelope);
             _unusableReason = () => session.PeerClosed ? "ConnectionClosed" : (session.LastFrameError != FrameError.None ? "FramingFault" : null);
             _keepAlive = keepAlive;
+            _events = () => session.Events;
         }
 
         /// <summary>
@@ -137,6 +140,7 @@ namespace Dnf.Net.Session
             log?.Invoke(OnlineNetLog.DungeonBegin(dungeonId, mode));
 
             OnlineDungeonResult result;
+            bool ran = false;
             if (!IsValidRequest(dungeonId, mode))
             {
                 result = new OnlineDungeonResult(OnlineDungeonStage.SendStartGame, OnlineDungeonFailure.BadRequest, null, null, null,
@@ -144,6 +148,7 @@ namespace Dnf.Net.Session
             }
             else
             {
+                ran = true;
                 result = await _entry.EnterAsync(
                     (ushort)dungeonId,
                     (byte)mode,
@@ -166,6 +171,11 @@ namespace Dnf.Net.Session
                 if (result.Frames.Count > shown)
                 {
                     log(OnlineNetLog.DungeonFramesOmitted(result.Frames.Count - shown));
+                }
+                if (ran && _events != null)
+                {
+                    // 此刻进副本刚结束、保活还没起,会话没有别的线程在写事件表,可以直接读;放在完成/失败行之前,让那一行仍是进副本的最后一行
+                    log(OnlineNetLog.DungeonSessionDigest(_events()));
                 }
                 log(result.Entered ? OnlineNetLog.DungeonDone(result) : OnlineNetLog.DungeonFailed(result));
             }
@@ -304,6 +314,137 @@ namespace Dnf.Net.Session
                 + " seen=" + Number(snapshot.FramesSeen)
                 + " parsed=" + Number(snapshot.FramesParsed)
                 + " malformed=" + Number(snapshot.FramesMalformed);
+        }
+
+        /// <summary>汇总行里最多列出多少个不同的内层包号(再多的只记一个"+N")。</summary>
+        public const int MaxDigestIds = 32;
+
+        // 与 GameClientSession 写进事件备注的字样一致(见它的 AppendAntibotInner);测试用真会话核对,改一边忘了另一边会被抓到
+        private const string InnerOpenedNote = "信封内层";
+        private const string UnwrapFailedNote = "信封拆包失败";
+
+        /// <summary>
+        /// 会话事件的一行汇总(进城阶段结束时打一次):收了多少帧、其中 561 信封几个、拆开了几个(内层带了哪些包号)、没拆开几个(按失败原因分),
+        /// 以及角色列表应答(类 0、包号 2)是直接来的还是封在信封里来的。快照行里等级、职业、成长类型取不到时看这一行分辨原因:
+        /// 应答根本没来(<c>id2Direct</c> 与 <c>id2Inner</c> 都是 0)、信封没拆开(<c>unwrapFailed</c> 大于 0,原因在 <c>unwrapReasons</c>)、
+        /// 还是来了但读不通(看快照行的 <c>malformed</c>)。只有计数、包号与失败原因的枚举名,没有载荷内容。
+        /// </summary>
+        public static string SessionDigest(IReadOnlyList<SessionEvent> events)
+        {
+            return Digest("DNF_NET", events);
+        }
+
+        /// <summary>
+        /// 同一份汇总,打在进副本这一步结束时(行首带 <see cref="DungeonPrefix"/>):数的是整个会话到此刻的累计,
+        /// 与进城那一行相减就是进副本这几步新增的信封(拆开几个、没拆开的原因)。
+        /// </summary>
+        internal static string DungeonSessionDigest(IReadOnlyList<SessionEvent> events)
+        {
+            return Digest(DungeonPrefix, events);
+        }
+
+        private static string Digest(string prefix, IReadOnlyList<SessionEvent> events)
+        {
+            if (events == null)
+            {
+                return prefix + " session none";
+            }
+            int received = 0;
+            int opened = 0;
+            int unwrapFailed = 0;
+            int innerShort = 0;
+            int id2Direct = 0;
+            int id2Inner = 0;
+            var innerIds = new List<int>();
+            var reasons = new Dictionary<string, int>();
+            for (int i = 0; i < events.Count; i++)
+            {
+                SessionEvent e = events[i];
+                if (e == null || e.Outbound)
+                {
+                    continue;
+                }
+                received++;
+                string note = e.Note ?? string.Empty;
+                bool listNotice = e.PacketClass == PacketClass.Noti && e.PacketId == 2;
+                if (note == InnerOpenedNote)
+                {
+                    opened++;
+                    if (!innerIds.Contains(e.PacketId))
+                    {
+                        innerIds.Add(e.PacketId);
+                    }
+                    if (listNotice)
+                    {
+                        id2Inner++;
+                    }
+                }
+                else if (note.StartsWith(UnwrapFailedNote, StringComparison.Ordinal))
+                {
+                    unwrapFailed++;
+                    string reason = UnwrapReason(note);
+                    reasons.TryGetValue(reason, out int seen);
+                    reasons[reason] = seen + 1;
+                }
+                else if (note.StartsWith(InnerOpenedNote, StringComparison.Ordinal))
+                {
+                    innerShort++;           // "信封内层(帧头不足,未展开)":拆开了,但内层不成一个完整的帧
+                }
+                else if (listNotice)
+                {
+                    id2Direct++;
+                }
+            }
+            innerIds.Sort();
+
+            var ids = new StringBuilder();
+            int listed = Math.Min(innerIds.Count, MaxDigestIds);
+            for (int i = 0; i < listed; i++)
+            {
+                if (i > 0)
+                {
+                    ids.Append(',');
+                }
+                ids.Append(Number(innerIds[i]));
+            }
+            if (innerIds.Count > listed)
+            {
+                ids.Append(",+").Append(Number(innerIds.Count - listed));
+            }
+
+            var reasonNames = new List<string>(reasons.Keys);
+            reasonNames.Sort(StringComparer.Ordinal);
+            var reasonText = new StringBuilder();
+            foreach (string name in reasonNames)
+            {
+                if (reasonText.Length > 0)
+                {
+                    reasonText.Append(',');
+                }
+                reasonText.Append(name).Append(':').Append(Number(reasons[name]));
+            }
+
+            return prefix + " session events=" + Number(events.Count)
+                + " received=" + Number(received)
+                + " envelopes=" + Number(opened + unwrapFailed + innerShort)
+                + " opened=" + Number(opened)
+                + " unwrapFailed=" + Number(unwrapFailed)
+                + " unwrapReasons=" + (reasonText.Length == 0 ? "-" : reasonText.ToString())
+                + " innerShort=" + Number(innerShort)
+                + " innerIds=" + (ids.Length == 0 ? "-" : ids.ToString())
+                + " id2Direct=" + Number(id2Direct)
+                + " id2Inner=" + Number(id2Inner);
+        }
+
+        // 拆包失败事件的备注是 "信封拆包失败:" 加 AntibotEnvelopeStatus 的枚举名;只认枚举名(其余一律记 Unknown),不把备注里的任何别的文字写进日志
+        private static string UnwrapReason(string note)
+        {
+            int colon = note.IndexOf(':');
+            string text = colon >= 0 ? note.Substring(colon + 1) : string.Empty;
+            bool known = Enum.TryParse(text, false, out AntibotEnvelopeStatus status)
+                && Enum.IsDefined(typeof(AntibotEnvelopeStatus), status)
+                && status.ToString() == text;           // 挡掉 "5"、"99" 这类数字写法(未定义的数值 ToString 也是数字本身)
+            return known ? text : "Unknown";
         }
 
         internal static string DungeonBegin(int dungeonId, int mode)

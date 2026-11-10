@@ -56,6 +56,178 @@ public class OnlineNetLogTests
         Assert.Equal(new[] { "slot", "level", "job", "growType", "enterComplete", "seen", "parsed", "malformed" }, keys);
     }
 
+    // ======== 进城会话事件汇总行 ========
+
+    private static SessionEvent In(PacketClass cls, int id, string note)
+    {
+        return new SessionEvent(false, cls, id, 40, 20, note);
+    }
+
+    /// <summary>
+    /// 汇总行逐项数:信封 = 拆开的 + 没拆开的 + 内层不成帧的;内层包号去重升序;角色列表应答(类 0、包号 2)分直接来的与信封内层带的;
+    /// 发出去的事件、别的类的包号 2 不计。
+    /// </summary>
+    [Fact]
+    public void The_session_digest_counts_envelopes_inner_ids_and_list_notices()
+    {
+        var events = new List<SessionEvent>
+        {
+            new SessionEvent(true, PacketClass.Cmd, 1, 40, 20, string.Empty),                  // 发出去的:不计
+            new SessionEvent(true, PacketClass.Noti, 2, 40, 20, string.Empty),                 // 发出去的包号 2:不计
+            In(PacketClass.Cmd, 1, "Session"),
+            In(PacketClass.Noti, 561, "Plain"),                                                // 信封帧本身:只算收到
+            In(PacketClass.Noti, 2, "信封内层"),                                               // 列表应答,封在信封里
+            In(PacketClass.Noti, 561, "Plain"),
+            In(PacketClass.Noti, 124, "信封内层"),
+            In(PacketClass.Noti, 561, "Plain"),
+            In(PacketClass.Noti, 124, "信封内层"),                                             // 重复的内层包号只列一次
+            In(PacketClass.Noti, 561, "Plain"),
+            In(PacketClass.Noti, 561, "信封拆包失败:CrcMismatch"),                            // 没拆开
+            In(PacketClass.Noti, 561, "Plain"),
+            In(PacketClass.Noti, 561, "信封内层(帧头不足,未展开)"),                            // 拆开了,内层不成帧
+            In(PacketClass.Noti, 2, "Plain,压缩"),                                            // 直接来的列表应答
+            In(PacketClass.Cmd, 2, "Session"),                                                 // 类 1 的包号 2:不是列表应答
+        };
+
+        Assert.Equal(
+            "DNF_NET session events=15 received=13 envelopes=5 opened=3 unwrapFailed=1 unwrapReasons=CrcMismatch:1 innerShort=1 innerIds=2,124 id2Direct=1 id2Inner=1",
+            OnlineNetLog.SessionDigest(events));
+    }
+
+    [Fact]
+    public void The_session_digest_of_nothing_is_stable()
+    {
+        Assert.Equal(
+            "DNF_NET session events=0 received=0 envelopes=0 opened=0 unwrapFailed=0 unwrapReasons=- innerShort=0 innerIds=- id2Direct=0 id2Inner=0",
+            OnlineNetLog.SessionDigest(new List<SessionEvent>()));
+        Assert.Equal("DNF_NET session none", OnlineNetLog.SessionDigest(null));
+    }
+
+    /// <summary>
+    /// 拆包失败按原因分:原因是 <see cref="AntibotEnvelopeStatus"/> 的枚举名,升序排、各记次数;
+    /// 备注里不是枚举名的文字(没有冒号、自由文本、数字写法、未定义的数值)一律记 Unknown,绝不把别的文字写进日志。
+    /// </summary>
+    [Fact]
+    public void The_session_digest_breaks_unwrap_failures_down_by_status_name_only()
+    {
+        var events = new List<SessionEvent>
+        {
+            In(PacketClass.Noti, 561, "信封拆包失败:TooShort"),
+            In(PacketClass.Noti, 561, "信封拆包失败:CrcMismatch"),
+            In(PacketClass.Noti, 561, "信封拆包失败:LengthPrefixMismatch"),
+            In(PacketClass.Noti, 561, "信封拆包失败:CrcMismatch"),
+            In(PacketClass.Noti, 561, "信封拆包失败"),                                  // 没有冒号
+            In(PacketClass.Noti, 561, "信封拆包失败:SECRET-905 载荷内容"),              // 自由文本
+            In(PacketClass.Noti, 561, "信封拆包失败:5"),                                // 数字写法(5 恰是个已定义的值,但不是它的名字)
+            In(PacketClass.Noti, 561, "信封拆包失败:99"),                               // 未定义的数值
+            In(PacketClass.Noti, 561, "信封拆包失败:crcmismatch"),                      // 大小写不符
+        };
+
+        string line = OnlineNetLog.SessionDigest(events);
+
+        Assert.Equal(
+            "DNF_NET session events=9 received=9 envelopes=9 opened=0 unwrapFailed=9 unwrapReasons=CrcMismatch:2,LengthPrefixMismatch:1,TooShort:1,Unknown:5 innerShort=0 innerIds=- id2Direct=0 id2Inner=0",
+            line);
+        Assert.DoesNotContain("SECRET", line);
+    }
+
+    /// <summary>进副本那一行与进城那一行同一份汇总,只是行首换成 DNF_NET stage=dungeon;没有事件表时写 none。</summary>
+    [Fact]
+    public void The_dungeon_session_digest_is_the_same_summary_under_the_dungeon_prefix()
+    {
+        var events = new List<SessionEvent>
+        {
+            In(PacketClass.Noti, 561, "Plain"),
+            In(PacketClass.Noti, 27, "信封内层"),
+            In(PacketClass.Noti, 561, "信封拆包失败:TooShort"),
+        };
+
+        string town = OnlineNetLog.SessionDigest(events);
+        string dungeon = OnlineNetLog.DungeonSessionDigest(events);
+
+        Assert.StartsWith("DNF_NET session ", town);
+        Assert.Equal(Prefix + " session " + town.Substring("DNF_NET session ".Length), dungeon);
+        Assert.Contains(" opened=1 unwrapFailed=1 unwrapReasons=TooShort:1 ", dungeon);
+        Assert.Equal(Prefix + " session none", OnlineNetLog.DungeonSessionDigest(null));
+    }
+
+    /// <summary>内层包号太多时只列前 32 个(升序),其余记个数,行长有界。</summary>
+    [Fact]
+    public void The_session_digest_caps_the_inner_id_list()
+    {
+        var events = new List<SessionEvent>();
+        for (int id = 900; id > 900 - 40; id--)                     // 40 个不同的包号,故意倒序给
+        {
+            events.Add(In(PacketClass.Noti, id, "信封内层"));
+        }
+
+        string line = OnlineNetLog.SessionDigest(events);
+
+        string ids = line.Split(' ').Single(kv => kv.StartsWith("innerIds=")).Substring("innerIds=".Length);
+        string[] parts = ids.Split(',');
+        Assert.Equal(OnlineNetLog.MaxDigestIds + 1, parts.Length);
+        Assert.Equal("861", parts[0]);
+        Assert.Equal("892", parts[OnlineNetLog.MaxDigestIds - 1]);
+        Assert.Equal("+8", parts[OnlineNetLog.MaxDigestIds]);
+        Assert.Contains(" opened=40 ", line);
+    }
+
+    /// <summary>事件列表里夹着空条目也不抛(只当它不存在)。</summary>
+    [Fact]
+    public void The_session_digest_skips_null_entries()
+    {
+        var events = new List<SessionEvent> { null, In(PacketClass.Noti, 2, "Plain,压缩") };
+
+        Assert.Equal(
+            "DNF_NET session events=2 received=1 envelopes=0 opened=0 unwrapFailed=0 unwrapReasons=- innerShort=0 innerIds=- id2Direct=1 id2Inner=0",
+            OnlineNetLog.SessionDigest(events));
+    }
+
+    /// <summary>
+    /// 汇总行靠会话写进事件的备注字样认信封内层与拆包失败:这里用真会话钉住这份约定。
+    /// 一个能拆开的信封封着包号 2、一个拆不开的信封、一个直接来的包号 2。
+    /// </summary>
+    [Fact]
+    public async Task The_session_digest_reads_the_notes_a_real_session_writes()
+    {
+        (GameClientSession session, DungeonEntryPipe pipe) = await HostTestKit.ReadySession();
+        pipe.Push(HostTestKit.RealEnvelope(0, 2, HostTestKit.ListPayload()));
+        pipe.Push(DungeonEntryWire.Envelope(GatewayTestSupport.Pattern(40, 0x55)));           // 合成的垃圾载荷:拆不开
+        pipe.Push(HostTestKit.DirectListNotice());
+        pipe.CloseServer();
+
+        await GatewayTestSupport.Bounded(session.ReceiveAsync(TimeSpan.FromSeconds(1)), 10);
+
+        // 第一个事件是启动包,之后:信封帧、信封内层、信封帧、拆包失败、直接来的包号 2;
+        // 合成垃圾载荷的头四个字节(0x55 起的递增字节)既不等于其后的字节数也不等于全长,拆包状态是 LengthPrefixMismatch
+        Assert.Equal(
+            "DNF_NET session events=6 received=6 envelopes=2 opened=1 unwrapFailed=1 unwrapReasons=LengthPrefixMismatch:1 innerShort=0 innerIds=2 id2Direct=1 id2Inner=1",
+            OnlineNetLog.SessionDigest(session.Events));
+    }
+
+    /// <summary>
+    /// 内层自称总长 10 字节(自洽,信封解包认),但不够一个 15 字节的帧头:会话只记事件("信封内层(帧头不足,未展开)")不交付内层帧;
+    /// 汇总行把它记在 innerShort,不进 opened、不列包号。
+    /// </summary>
+    [Fact]
+    public async Task The_session_digest_counts_an_inner_frame_too_short_to_open()
+    {
+        (GameClientSession session, DungeonEntryPipe pipe) = await HostTestKit.ReadySession();
+        byte[] inner = new byte[10];
+        inner[1] = 0x84;                                            // 包号 900(小端 0x0384)
+        inner[2] = 0x03;
+        DungeonEntryWire.PutU32(inner, 3, 10);
+        byte[] plain = AntibotTestSupport.Concat(AntibotTestSupport.AlgorithmPacket(8), inner);
+        pipe.Push(DungeonEntryWire.Envelope(AntibotTestSupport.ValidEnvelope(16, AntibotTestSupport.SeqA, plain)));
+        pipe.CloseServer();
+
+        await GatewayTestSupport.Bounded(session.ReceiveAsync(TimeSpan.FromSeconds(1)), 10);
+
+        Assert.Equal(
+            "DNF_NET session events=3 received=3 envelopes=1 opened=0 unwrapFailed=0 unwrapReasons=- innerShort=1 innerIds=- id2Direct=0 id2Inner=0",
+            OnlineNetLog.SessionDigest(session.Events));
+    }
+
     // ======== 进副本各行 ========
 
     [Fact]
