@@ -1,14 +1,12 @@
 namespace Dnf.Net.Session
 {
     /// <summary>
-    /// 算法 6:RC2(ECB,64 位块);密钥 16 字节、有效位按包装传入 128 位;尾部 keylen=16。
-    /// PITABLE 与 RFC 2268 附录一致。
+    /// 算法 6:RC2(ECB,64 位块);取 key32 前 16 字节;密钥扩展同 0x1f5a30;
+    /// 块核同 0x1f5490/0x1f5640(16 轮、mash 于加密轮 4/10 后、解密轮 5/11 后);解密先逆旋再减子密钥;字序 r0..r3 小端。
+    /// 余量 <c>len%8</c> 走 <see cref="AntibotSeattos"/>(TenRc2 虚表 +0xc),非 BOX3D。
     /// </summary>
     internal static class AntibotRc2
     {
-        private const int TailKeyBytes = 16;
-        private const int EffectiveBits = 128;
-
         internal static void Transform(byte[] key32, bool encrypt, byte[] buf)
         {
             if (buf.Length == 0)
@@ -16,7 +14,7 @@ namespace Dnf.Net.Session
                 return;
             }
 
-            ushort[] words = ExpandKey(key32, 16, EffectiveBits);
+            ushort[] words = ExpandKey(key32, 16);
             int blocks = buf.Length >> 3;
             for (int b = 0; b < blocks; b++)
             {
@@ -31,7 +29,15 @@ namespace Dnf.Net.Session
                 }
             }
 
-            AntibotTail.ProcessLastBytes(key32, TailKeyBytes, encrypt, buf);
+            int rest = buf.Length & 7;
+            if (rest != 0)
+            {
+                int off = buf.Length - rest;
+                byte[] tail = new byte[rest];
+                System.Buffer.BlockCopy(buf, off, tail, 0, rest);
+                AntibotSeattos.Transform(key32, encrypt, tail);
+                System.Buffer.BlockCopy(tail, 0, buf, off, rest);
+            }
         }
 
         private static void EncryptBlock(byte[] buf, int o, ushort[] k)
@@ -49,19 +55,19 @@ namespace Dnf.Net.Session
                 r3 = Rotl16((ushort)(r3 + k[j++] + (r2 & r1) + ((ushort)~r2 & r0)), 5);
                 if (i == 4 || i == 10)
                 {
-                    r0 = (ushort)(r0 + k[r0 & 0x3F]);
-                    r1 = (ushort)(r1 + k[r1 & 0x3F]);
-                    r2 = (ushort)(r2 + k[r2 & 0x3F]);
-                    r3 = (ushort)(r3 + k[r3 & 0x3F]);
+                    r0 = (ushort)(r0 + k[r3 & 0x3F]);
+                    r1 = (ushort)(r1 + k[r0 & 0x3F]);
+                    r2 = (ushort)(r2 + k[r1 & 0x3F]);
+                    r3 = (ushort)(r3 + k[r2 & 0x3F]);
                 }
             }
 
             buf[o] = (byte)r0;
             buf[o + 1] = (byte)(r0 >> 8);
-            buf[o + 2] = (byte)r2;
-            buf[o + 3] = (byte)(r2 >> 8);
-            buf[o + 4] = (byte)r1;
-            buf[o + 5] = (byte)(r1 >> 8);
+            buf[o + 2] = (byte)r1;
+            buf[o + 3] = (byte)(r1 >> 8);
+            buf[o + 4] = (byte)r2;
+            buf[o + 5] = (byte)(r2 >> 8);
             buf[o + 6] = (byte)r3;
             buf[o + 7] = (byte)(r3 >> 8);
         }
@@ -69,37 +75,40 @@ namespace Dnf.Net.Session
         private static void DecryptBlock(byte[] buf, int o, ushort[] k)
         {
             ushort r0 = (ushort)(buf[o] + (buf[o + 1] << 8));
-            ushort r2 = (ushort)(buf[o + 2] + (buf[o + 3] << 8));
-            ushort r1 = (ushort)(buf[o + 4] + (buf[o + 5] << 8));
+            ushort r1 = (ushort)(buf[o + 2] + (buf[o + 3] << 8));
+            ushort r2 = (ushort)(buf[o + 4] + (buf[o + 5] << 8));
             ushort r3 = (ushort)(buf[o + 6] + (buf[o + 7] << 8));
-            int j = 63;
-            for (int i = 0; i < 16; i++)
+            for (int c = 15; c >= 0; c--)
             {
-                if (i == 5 || i == 11)
+                int b = c * 4;
+                r3 = InverseRotR3(r3);
+                r3 = (ushort)(r3 - k[b + 3] - (r2 & r1) - ((ushort)~r2 & r0));
+                r2 = InverseRotR2(r2);
+                r2 = (ushort)(r2 - k[b + 2] - (r1 & r0) - ((ushort)~r1 & r3));
+                r1 = InverseRotR1(r1);
+                r1 = (ushort)(r1 - k[b + 1] - (r0 & r3) - ((ushort)~r0 & r2));
+                r0 = InverseRotR0(r0);
+                r0 = (ushort)(r0 - k[b] - (r3 & r2) - ((ushort)~r3 & r1));
+                if (c == 5 || c == 11)
                 {
-                    r3 = (ushort)(r3 - k[r3 & 0x3F]);
-                    r2 = (ushort)(r2 - k[r2 & 0x3F]);
-                    r1 = (ushort)(r1 - k[r1 & 0x3F]);
-                    r0 = (ushort)(r0 - k[r0 & 0x3F]);
+                    r3 = (ushort)(r3 - k[r2 & 0x3F]);
+                    r2 = (ushort)(r2 - k[r1 & 0x3F]);
+                    r1 = (ushort)(r1 - k[r0 & 0x3F]);
+                    r0 = (ushort)(r0 - k[r3 & 0x3F]);
                 }
-
-                r3 = Rotr16((ushort)(r3 - k[j--] - (r2 & r1) - ((ushort)~r2 & r0)), 5);
-                r2 = Rotr16((ushort)(r2 - k[j--] - (r1 & r0) - ((ushort)~r1 & r3)), 3);
-                r1 = Rotr16((ushort)(r1 - k[j--] - (r0 & r3) - ((ushort)~r0 & r2)), 2);
-                r0 = Rotr16((ushort)(r0 - k[j--] - (r3 & r2) - ((ushort)~r3 & r1)), 1);
             }
 
             buf[o] = (byte)r0;
             buf[o + 1] = (byte)(r0 >> 8);
-            buf[o + 2] = (byte)r2;
-            buf[o + 3] = (byte)(r2 >> 8);
-            buf[o + 4] = (byte)r1;
-            buf[o + 5] = (byte)(r1 >> 8);
+            buf[o + 2] = (byte)r1;
+            buf[o + 3] = (byte)(r1 >> 8);
+            buf[o + 4] = (byte)r2;
+            buf[o + 5] = (byte)(r2 >> 8);
             buf[o + 6] = (byte)r3;
             buf[o + 7] = (byte)(r3 >> 8);
         }
 
-        private static ushort[] ExpandKey(byte[] key, int keyLen, int bits)
+        private static ushort[] ExpandKey(byte[] key, int keyLen)
         {
             byte[] l = new byte[128];
             for (int i = 0; i < keyLen; i++)
@@ -112,15 +121,17 @@ namespace Dnf.Net.Session
                 l[i] = Pi[(l[i - 1] + l[i - keyLen]) & 0xFF];
             }
 
-            int t8 = (bits + 7) >> 3;
-            int tm = 0xFF >> ((t8 << 3) - bits);
-            int i0 = 128 - t8;
-            for (int i = 127; i > i0; i--)
-            {
-                l[i] = Pi[(l[i - 1] + l[i - t8]) & 0xFF];
-            }
+            l[0] = Pi[l[0]];
 
-            l[i0] = (byte)(Pi[l[i0]] & tm);
+            int esi = 0;
+            while (esi >= -63)
+            {
+                int off = 0x7E + esi * 2;
+                ushort packed = (ushort)(l[off] + (l[off + 1] << 8));
+                l[off] = (byte)packed;
+                l[off + 1] = (byte)(packed >> 8);
+                esi--;
+            }
 
             ushort[] w = new ushort[64];
             for (int n = 0; n < 64; n++)
@@ -136,12 +147,26 @@ namespace Dnf.Net.Session
             return (ushort)((v << n) | (v >> (16 - n)));
         }
 
-        private static ushort Rotr16(ushort v, int n)
+        private static ushort InverseRotR0(ushort v)
         {
-            return (ushort)((v >> n) | (v << (16 - n)));
+            return (ushort)((v << 15) + (v >> 1));
         }
 
-        // RFC 2268 附录 A
+        private static ushort InverseRotR1(ushort v)
+        {
+            return (ushort)((v << 14) + (v >> 2));
+        }
+
+        private static ushort InverseRotR2(ushort v)
+        {
+            return (ushort)((v << 13) + (v >> 3));
+        }
+
+        private static ushort InverseRotR3(ushort v)
+        {
+            return (ushort)((v << 11) + (v >> 5));
+        }
+
         private static readonly byte[] Pi =
         {
             0xD9, 0x78, 0xF9, 0xC4, 0x19, 0xDD, 0xB5, 0xED, 0x28, 0xE9, 0xFD, 0x79, 0x4A, 0xA0, 0xD8, 0x9D,

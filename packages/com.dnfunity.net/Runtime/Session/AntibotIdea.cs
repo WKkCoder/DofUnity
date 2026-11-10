@@ -1,11 +1,14 @@
 namespace Dnf.Net.Session
 {
     /// <summary>
-    /// 算法 1:IDEA(64 位块、128 位密钥、8.5 轮);块内 16 位字自缓冲按大端拼装、按小端写回;尾部 keylen=16。
+    /// 算法 1:IDEA(64 位块、128 位密钥);块内 16 位字自缓冲按大端读入、按小端写出,
+    /// 写出时中间两字 x1/x2 交换位置(与 0x1e5680 末置换一致);密钥扩展为 0x1e53b0 滑动窗口语义;
+    /// 解密密钥 0x1e5420 子表排列。尾部 keylen=16。
     /// </summary>
     internal static class AntibotIdea
     {
         private const int TailKeyBytes = 16;
+        private const int Modulus = 0x10001;
 
         internal static void Transform(byte[] key32, bool encrypt, byte[] buf)
         {
@@ -15,32 +18,57 @@ namespace Dnf.Net.Session
             }
 
             ushort[] encSub = new ushort[52];
-            ushort[] sub;
-            if (encrypt)
-            {
-                ExpandKey(key32, encSub);
-                sub = encSub;
-            }
-            else
+            ExpandKey(key32, encSub);
+            ushort[] sub = encSub;
+            if (!encrypt)
             {
                 ushort[] decSub = new ushort[52];
-                ExpandKey(key32, encSub);
                 InvertSubkeys(encSub, decSub);
                 sub = decSub;
             }
+
             int blocks = buf.Length >> 3;
             for (int b = 0; b < blocks; b++)
             {
                 int o = b * 8;
-                ushort x0 = (ushort)((buf[o] << 8) | buf[o + 1]);
-                ushort x1 = (ushort)((buf[o + 2] << 8) | buf[o + 3]);
-                ushort x2 = (ushort)((buf[o + 4] << 8) | buf[o + 5]);
-                ushort x3 = (ushort)((buf[o + 6] << 8) | buf[o + 7]);
+                ushort x0;
+                ushort x1;
+                ushort x2;
+                ushort x3;
+                if (encrypt)
+                {
+                    x0 = (ushort)((buf[o] << 8) | buf[o + 1]);
+                    x1 = (ushort)((buf[o + 2] << 8) | buf[o + 3]);
+                    x2 = (ushort)((buf[o + 4] << 8) | buf[o + 5]);
+                    x3 = (ushort)((buf[o + 6] << 8) | buf[o + 7]);
+                }
+                else
+                {
+                    x0 = (ushort)(buf[o] | (buf[o + 1] << 8));
+                    x1 = (ushort)(buf[o + 2] | (buf[o + 3] << 8));
+                    x2 = (ushort)(buf[o + 4] | (buf[o + 5] << 8));
+                    x3 = (ushort)(buf[o + 6] | (buf[o + 7] << 8));
+                }
+
                 CipherBlock(ref x0, ref x1, ref x2, ref x3, sub);
-                StoreLe16(buf, o, x0);
-                StoreLe16(buf, o + 2, x1);
-                StoreLe16(buf, o + 4, x2);
-                StoreLe16(buf, o + 6, x3);
+                if (encrypt)
+                {
+                    StoreLe16(buf, o, x0);
+                    StoreLe16(buf, o + 2, x2);
+                    StoreLe16(buf, o + 4, x1);
+                    StoreLe16(buf, o + 6, x3);
+                }
+                else
+                {
+                    buf[o] = (byte)(x0 >> 8);
+                    buf[o + 1] = (byte)x0;
+                    buf[o + 2] = (byte)(x2 >> 8);
+                    buf[o + 3] = (byte)x2;
+                    buf[o + 4] = (byte)(x1 >> 8);
+                    buf[o + 5] = (byte)x1;
+                    buf[o + 6] = (byte)(x3 >> 8);
+                    buf[o + 7] = (byte)x3;
+                }
             }
 
             AntibotTail.ProcessLastBytes(key32, TailKeyBytes, encrypt, buf);
@@ -84,34 +112,58 @@ namespace Dnf.Net.Session
             }
 
             int eax = 0;
-            int idx = 8;
-            while (idx < 52)
+            for (int idx = 8; idx < 52; idx++)
             {
                 int ecx = eax + 1;
-                int t0 = idx < 16 ? (eax + 2) & 7 : (eax + 2) % 52;
-                int t1 = idx < 16 ? ecx & 7 : ecx % 52;
+                int t0;
+                int t1;
+                if (idx < 16)
+                {
+                    t0 = (eax + 2) & 7;
+                    t1 = ecx & 7;
+                }
+                else if (idx < 22)
+                {
+                    t0 = (eax + 2) % 52;
+                    t1 = ecx % 52;
+                }
+                else
+                {
+                    int baseIdx = 8 * (1 + (idx - 16) / 8);
+                    t0 = baseIdx + ((eax + 2) & 7);
+                    t1 = baseIdx + (ecx & 7);
+                }
+
                 ek[idx] = (ushort)(((ek[t0] >> 7) | (ek[t1] << 9)) & 0xFFFF);
-                idx++;
                 eax = ecx;
             }
         }
 
         private static void InvertSubkeys(ushort[] ek, ushort[] dk)
         {
-            int p = 51;
-            dk[p--] = InvMul(ek[48]);
-            dk[p--] = (ushort)(-ek[49]);
-            dk[p--] = (ushort)(-ek[50]);
-            dk[p--] = InvMul(ek[51]);
-
-            for (int r = 7; r >= 0; r--)
+            dk[0] = InvMul(ek[48]);
+            dk[1] = (ushort)-ek[49];
+            dk[2] = (ushort)-ek[50];
+            dk[3] = InvMul(ek[51]);
+            for (int k = 0; k < 8; k++)
             {
-                dk[p--] = ek[r * 6 + 5];
-                dk[p--] = ek[r * 6 + 4];
-                dk[p--] = InvMul(ek[r * 6 + 3]);
-                dk[p--] = (ushort)(-ek[r * 6 + 2]);
-                dk[p--] = (ushort)(-ek[r * 6 + 1]);
-                dk[p--] = InvMul(ek[r * 6]);
+                int b = 4 + k * 6;
+                int o = 46 - 6 * k;
+                dk[b] = ek[o];
+                dk[b + 1] = ek[o + 1];
+                dk[b + 2] = InvMul(ek[o - 4]);
+                if (k == 7)
+                {
+                    dk[b + 3] = (ushort)-ek[o - 3];
+                    dk[b + 4] = (ushort)-ek[o - 2];
+                }
+                else
+                {
+                    dk[b + 3] = (ushort)-ek[o - 2];
+                    dk[b + 4] = (ushort)-ek[o - 3];
+                }
+
+                dk[b + 5] = InvMul(ek[o - 1]);
             }
         }
 
@@ -135,45 +187,32 @@ namespace Dnf.Net.Session
                 return x;
             }
 
-            ushort t0 = 1;
-            ushort a = x;
-            ushort t1 = (ushort)(0x10001 / a);
-            ushort rem = (ushort)(0x10001 % a);
-            if (rem == 1)
+            int t = 0;
+            int newT = 1;
+            int r = Modulus;
+            int newR = x & 0xFFFF;
+            while (newR != 0)
             {
-                return (ushort)(0x10001 - t1);
+                int q = r / newR;
+                int tmpT = newT;
+                newT = t - q * newT;
+                t = tmpT;
+                int tmpR = newR;
+                newR = r - q * newR;
+                r = tmpR;
             }
 
-            while (true)
+            if (r > 1)
             {
-                if (rem == 0)
-                {
-                    return 0;
-                }
-
-                ushort q = (ushort)(a / rem);
-                a = rem;
-                rem = (ushort)(a - (q * rem));
-                t0 = (ushort)(t0 + (q * t1));
-                if (rem == 1)
-                {
-                    return (ushort)(0x10001 - t0);
-                }
-
-                if (rem == 0)
-                {
-                    return (ushort)(0x10001 - t0);
-                }
-
-                q = (ushort)(a / rem);
-                a = rem;
-                rem = (ushort)(a - (q * rem));
-                t1 = (ushort)(t1 + (q * t0));
-                if (rem == 1)
-                {
-                    return (ushort)(0x10001 - t1);
-                }
+                return 0;
             }
+
+            if (t < 0)
+            {
+                t += Modulus;
+            }
+
+            return (ushort)t;
         }
 
         private static void StoreLe16(byte[] buf, int o, ushort v)

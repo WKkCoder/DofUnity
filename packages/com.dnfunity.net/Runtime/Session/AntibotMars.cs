@@ -45,18 +45,4 @@ namespace Dnf.Net.Session
         }
     }
 
-    internal static class AntibotMarsCore
-    {
-        internal static void PrepareKey(byte[] key32)
-        {
-        }
-
-        internal static void EncryptBlock(byte[] buf, int offset)
-        {
-        }
-
-        internal static void DecryptBlock(byte[] buf, int offset)
-        {
-        }
-    }
 }

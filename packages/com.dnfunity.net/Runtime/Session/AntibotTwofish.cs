@@ -3,8 +3,11 @@ using System;
 namespace Dnf.Net.Session
 {
     /// <summary>
-    /// 原 TenTwofish32/24/16:标准 Twofish-128/192/256(ECB),小端字;makeKey 位长 0x80/0xc0/0x100。
-    /// 整块按 16 字节循环;余 <c>len%16</c> 走 <see cref="AntibotSeattos"/>(<c>CTsLocalImp</c> 尾路径)。
+    /// 原 TenTwofish32/24/16:Counterpane CTwofish(reKey 0x1b8de0, blockEncrypt 0x1ba1d0, BuildMDS 0x1b8b60)。
+    /// 密钥:ParseHexDword(小端字再 swap16)、RS_MDS_Encode(两 swap 字)、h 的 Me/Mo 亦为 swap 字且 q 链级数 k(2/3/4);
+    /// S 存 s[k-1-i]=RS(sw[2i],sw[2i+1]);g 预算表链用 s[k-1-stage]。reKey 在加密方向(dir=0)末调用 ReverseRoundSubkeys,轮密钥 8..39 反序存。
+    /// 单块轮函数仍为标准 16 轮 Feistel(与 blockEncrypt 优化查表路径尚在对照中)。
+    /// 整块 16 字节;余 <c>len%16</c> 走 <see cref="AntibotRc6.ApplySeattosSuffix"/>。
     /// </summary>
     internal static class AntibotTwofish
     {
@@ -96,58 +99,48 @@ namespace Dnf.Net.Session
 
         private void Init(byte[] key, int keyBytes)
         {
-            int k = keyBytes >> 3;
-            uint[] m = new uint[8];
-            for (int i = 0; i < 8; i++)
+            int bits = keyBytes * 8;
+            int k = bits >> 6;
+            int nWords = (bits + 31) >> 5;
+            uint[] sw = new uint[8];
+            for (int i = 0; i < nWords; i++)
             {
-                if (i * 4 + 4 <= keyBytes)
-                {
-                    m[i] = LoadLe(key, i * 4);
-                }
+                sw[i] = Swap16(LoadLe(key, i * 4));
             }
-
-            uint[] me = { m[0], m[2], m[4], m[6] };
-            uint[] mo = { m[1], m[3], m[5], m[7] };
 
             uint[] s = new uint[4];
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < k; i++)
             {
-                uint word = 0;
-                for (int j = 0; j < 4; j++)
-                {
-                    int acc = 0;
-                    for (int r = 0; r < 8; r++)
-                    {
-                        int idx = 8 * i + r;
-                        int kb = idx < keyBytes ? key[idx] : 0;
-                        acc ^= GfMul(Rs[j][r], kb, RsPoly);
-                    }
-
-                    word |= (uint)acc << (8 * j);
-                }
-
-                s[i] = word;
+                s[k - 1 - i] = RsMdsEncode(sw[2 * i], sw[2 * i + 1]);
             }
 
-            uint[] sList = { s[3], s[2], s[1], s[0] };
+            int hStages = k < 4 ? 4 : k;
+            uint[] me = new uint[hStages];
+            uint[] mo = new uint[hStages];
+            for (int i = 0; i < k; i++)
+            {
+                me[i] = sw[2 * i];
+                mo[i] = sw[2 * i + 1];
+            }
 
             for (int i = 0; i < 8 + 2 * Rounds; i += 2)
             {
                 uint rho = 0x01010101u;
-                uint a = H((uint)i * rho, me);
-                uint b = RotL(H((uint)(i + 1) * rho, mo), 8);
+                uint a = HSubkey((uint)i * rho, me, hStages);
+                uint b = RotL(HSubkey((uint)(i + 1) * rho, mo, hStages), 8);
                 _subKeys[i] = a + b;
                 _subKeys[i + 1] = RotL(a + 2u * b, 9);
             }
+
+            ReverseRoundSubkeys(_subKeys);
 
             for (int j = 0; j < 4; j++)
             {
                 for (int x = 0; x < 256; x++)
                 {
-                    _sbox[j][x] = MdsColumn(j, ChainByte(j, x, sList));
+                    _sbox[j][x] = MdsColumn(j, ChainSbox(j, x, s, k));
                 }
             }
-
         }
 
         internal void EncryptBlock(byte[] buf, int off)
@@ -178,16 +171,18 @@ namespace Dnf.Net.Session
 
         internal void DecryptBlock(byte[] buf, int off)
         {
-            uint r2 = LoadLe(buf, off) ^ _subKeys[4];
-            uint r3 = LoadLe(buf, off + 4) ^ _subKeys[5];
-            uint r0 = LoadLe(buf, off + 8) ^ _subKeys[6];
-            uint r1 = LoadLe(buf, off + 12) ^ _subKeys[7];
+            uint[] sk = (uint[])_subKeys.Clone();
+            ReverseRoundSubkeys(sk);
+            uint r2 = LoadLe(buf, off) ^ sk[4];
+            uint r3 = LoadLe(buf, off + 4) ^ sk[5];
+            uint r0 = LoadLe(buf, off + 8) ^ sk[6];
+            uint r1 = LoadLe(buf, off + 12) ^ sk[7];
             for (int r = Rounds - 1; r >= 0; r--)
             {
                 uint t0 = G(r2);
                 uint t1 = G(RotL(r3, 8));
-                uint f0 = t0 + t1 + _subKeys[2 * r + 8];
-                uint f1 = t0 + 2u * t1 + _subKeys[2 * r + 9];
+                uint f0 = t0 + t1 + sk[2 * r + 8];
+                uint f1 = t0 + 2u * t1 + sk[2 * r + 9];
                 uint p2 = RotL(r0, 1) ^ f0;
                 uint p3 = RotR(r1 ^ f1, 1);
                 r0 = r2;
@@ -196,10 +191,10 @@ namespace Dnf.Net.Session
                 r3 = p3;
             }
 
-            StoreLe(buf, off, r0 ^ _subKeys[0]);
-            StoreLe(buf, off + 4, r1 ^ _subKeys[1]);
-            StoreLe(buf, off + 8, r2 ^ _subKeys[2]);
-            StoreLe(buf, off + 12, r3 ^ _subKeys[3]);
+            StoreLe(buf, off, r0 ^ sk[0]);
+            StoreLe(buf, off + 4, r1 ^ sk[1]);
+            StoreLe(buf, off + 8, r2 ^ sk[2]);
+            StoreLe(buf, off + 12, r3 ^ sk[3]);
         }
 
         private uint G(uint x)
@@ -207,27 +202,80 @@ namespace Dnf.Net.Session
             return _sbox[0][x & 0xFF] ^ _sbox[1][(x >> 8) & 0xFF] ^ _sbox[2][(x >> 16) & 0xFF] ^ _sbox[3][x >> 24];
         }
 
-        private static uint H(uint x, uint[] l)
+        private static uint HSubkey(uint x, uint[] words, int k)
         {
             uint z = 0;
             for (int j = 0; j < 4; j++)
             {
-                z ^= MdsColumn(j, ChainByte(j, (int)((x >> (8 * j)) & 0xFF), l));
+                z ^= MdsColumn(j, ChainSubkey(j, (int)((x >> (8 * j)) & 0xFF), words, k));
             }
 
             return z;
         }
 
-        private static int ChainByte(int j, int x, uint[] l)
+        private static int ChainSubkey(int j, int x, uint[] words, int k)
         {
             int y = x;
-            for (int stage = 0; stage < 4; stage++)
+            for (int stage = 0; stage < k; stage++)
             {
-                uint word = l[3 - stage];
+                uint word = words[k - 1 - stage];
                 y = Q[QPlan[j][stage]][y] ^ (int)((word >> (8 * j)) & 0xFF);
             }
 
-            return Q[QPlan[j][4]][y];
+            return Q[QPlan[j][k]][y];
+        }
+
+        private static int ChainSbox(int j, int x, uint[] s, int stages)
+        {
+            int y = x;
+            for (int stage = 0; stage < stages; stage++)
+            {
+                int si = stages - 1 - stage;
+                uint word = si < s.Length ? s[si] : 0;
+                y = Q[QPlan[j][stage]][y] ^ (int)((word >> (8 * j)) & 0xFF);
+            }
+
+            return Q[QPlan[j][stages]][y];
+        }
+
+        /// <summary>与 0x1b8d70 ReverseRoundSubkeys 一致:交换轮密钥对 8..39。</summary>
+        private static void ReverseRoundSubkeys(uint[] subKeys)
+        {
+            for (int i = 0; i < 16; i++)
+            {
+                int lo = 8 + 2 * i;
+                int hi = 8 + 2 * (15 - i);
+                uint a0 = subKeys[lo];
+                uint a1 = subKeys[lo + 1];
+                subKeys[lo] = subKeys[hi];
+                subKeys[lo + 1] = subKeys[hi + 1];
+                subKeys[hi] = a0;
+                subKeys[hi + 1] = a1;
+            }
+        }
+
+        /// <summary>RS_MDS_Encode:对 swap 后两 32 位字按行 RS 矩阵乘 8 字节(与 0x1b8e7f 一致)。</summary>
+        private static uint RsMdsEncode(uint k0, uint k1)
+        {
+            int[] acc = new int[4];
+            for (int j = 0; j < 4; j++)
+            {
+                int sum = 0;
+                for (int r = 0; r < 8; r++)
+                {
+                    int kb = r < 4 ? (int)((k0 >> (8 * r)) & 0xFF) : (int)((k1 >> (8 * (r - 4))) & 0xFF);
+                    sum ^= GfMul(Rs[j][r], kb, RsPoly);
+                }
+
+                acc[j] = sum;
+            }
+
+            return (uint)(acc[0] | (acc[1] << 8) | (acc[2] << 16) | (acc[3] << 24));
+        }
+
+        private static uint Swap16(uint w)
+        {
+            return ((w & 0x00FF00FFu) << 8) | ((w & 0xFF00FF00u) >> 8);
         }
 
         private static uint MdsColumn(int j, int y)

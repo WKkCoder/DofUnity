@@ -44,19 +44,4 @@ namespace Dnf.Net.Session
             System.Buffer.BlockCopy(tail, 0, buf, offset, count);
         }
     }
-
-    internal static class AntibotSquareCore
-    {
-        internal static void PrepareKey(byte[] key32)
-        {
-        }
-
-        internal static void EncryptBlock(byte[] buf, int offset)
-        {
-        }
-
-        internal static void DecryptBlock(byte[] buf, int offset)
-        {
-        }
-    }
 }
