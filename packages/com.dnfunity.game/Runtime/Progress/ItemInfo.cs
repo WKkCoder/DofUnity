@@ -120,7 +120,8 @@ namespace Dnf.Game
 
     /// <summary>
     /// 一件物品的头部信息(.equ / .stk 里掉落、拾取、摆放要用的那些标签):编号与路径来自 <c>equipment.lst</c> / <c>stackable.lst</c>。
-    /// 只留这一层要用的字段;装备的属性(攻击、防御、动画层等)以后装备生效时再读。数值是原版数据,不入库。
+    /// 只留这一层要用的字段;装备的基础属性读进 <see cref="Stats"/>(攻击、防御、生命魔法、速度、元素、抗性等,深度 0 的数值标签),
+    /// 武器的外观图层读进 <see cref="Look"/>。强化、增幅、附魔、套装、品级的块不读。数值是原版数据,不入库。
     /// </summary>
     public sealed class ItemInfo
     {
@@ -134,6 +135,21 @@ namespace Dnf.Game
             UsableJobs = new List<string>();
             TextKind = -1;
         }
+
+        private EquipStats _stats = EquipStats.Empty;
+
+        /// <summary>
+        /// 装备的基础属性(<see cref="EquipStats"/>:.equ 里深度 0 的数值标签,块里的同名标签不算);可叠加物品,
+        /// 以及没写任何属性项的装备,是 <see cref="EquipStats.Empty"/>(不为 null,给 null 也当作没有)。穿上后经 HeroProgress 汇总进主角属性。
+        /// </summary>
+        public EquipStats Stats
+        {
+            get => _stats;
+            set => _stats = value ?? EquipStats.Empty;
+        }
+
+        /// <summary>武器的外观图层数据(<see cref="EquipLook"/>,只给数据,渲染层自己决定怎么用);不是武器(含可叠加物品)为 null。</summary>
+        public EquipLook Look { get; set; }
 
         /// <summary>物品编号(.lst 里的编号;装备与可叠加物品的编号不重叠)。</summary>
         public int Code { get; }
@@ -597,6 +613,15 @@ namespace Dnf.Game
                             }
                         }
                         break;
+                }
+            }
+            if (kind == ItemKind.Equipment)
+            {
+                // 属性与外观各自按块规则再扫一遍标记流(上面那一遍不分深度,别的字段的读法不动)
+                info.Stats = EquipStats.Read(tokens, strings);
+                if (info.Part == EquipmentParts.Weapon)
+                {
+                    info.Look = EquipLook.Read(tokens, strings);
                 }
             }
             return info;

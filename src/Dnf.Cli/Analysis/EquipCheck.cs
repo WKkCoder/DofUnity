@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Text;
+using Dnf.Data;
 using Dnf.Game;
 using Dnf.Play;
 using Dnf.Render;
@@ -11,6 +14,12 @@ namespace Dnf.Cli.Analysis;
 /// 每件装备的类型都认得、按自己的类型放槽不会"类型不符"、可用职业的写法都能解成职业下标;再看剑魂能穿的武器——主角画面上的外观图层与
 /// 每个攻击动作的动画(<see cref="HeroLook.RequiredWeaponMotions"/>)有没有;最后让一个等级 --level 的剑魂把背包里每个部位随机一件能穿的都穿上,
 /// 核对装备栏、背包与面板加成的账。数值、物品名与件数是用户自己的数据,只打印在本机的终端上(不要抄进入库的文件);通过与否只看结构。
+/// <para>
+/// 装备属性与外观:穿戴演习里再核对属性出口(穿着的属性汇总、主角属性、版本号);<see cref="CheckStatsAndLook"/> 对整份装备清单
+/// (不是只有能掉落的)核对读出的属性与外观的结构不变量,与旧的平读读法对照(只数个数),在真实数据上核对"汇总等于各件之和"。
+/// 环境变量 <c>DNF_EQUIP_DUMP</c> 给了路径就把整库逐件转储成文本(<c>编号\t属性\t外观</c>,格式与 <c>tools/py/equip_stats_ref.py dump</c> 相同),
+/// 再用那个脚本的 <c>compare</c> 逐字段比对两个独立实现(只报计数)。转储只写在被 git 忽略的 out/ 下,不入库。
+/// </para>
 /// </summary>
 internal static class EquipCheck
 {
@@ -142,6 +151,8 @@ internal static class EquipCheck
             Report(progress.AddItem(item), "部位 " + part + " 的候选放进背包");
         }
         int before = progress.Bag.Tab(InventoryTab.Equipment).Count;
+        int versionBefore = progress.Version;
+        StatBlock baseBefore = progress.BaseStats;
         int worn = 0;
         while (progress.Bag.Tab(InventoryTab.Equipment).Count > 0)
         {
@@ -156,6 +167,18 @@ internal static class EquipCheck
         Report(worn == before && progress.EquippedCount == picked.Count, "挑出的 " + picked.Count + " 件都穿上了,装备栏 " + progress.EquippedCount + " 件,背包装备页剩 "
             + progress.Bag.Tab(InventoryTab.Equipment).Count + " 件");
         Report(progress.EquipVersion == worn, "装备栏的变化次数等于穿上的件数");
+
+        // 属性出口:穿着装备的基础属性汇总进主角属性(穿上加);版本号随装备栏一起走,战斗会话据此换面板
+        EquipStats wornExpected = EquipStats.Sum(picked.Select(i => i.Stats));
+        Report(progress.WornStats.Equals(wornExpected), "穿着装备的属性汇总等于挑出各件之和(" + progress.WornStats.Count + " 项)");
+        StatBlock statsExpected = progress.BaseStats;
+        foreach (ItemInfo item in picked)
+        {
+            statsExpected += item.Stats.ToStatBlock();
+        }
+        Report(SameBlock(progress.Stats, statsExpected), "主角属性等于等级属性加各件折算之和");
+        Report(SameBlock(progress.BaseStats, baseBefore), "穿装备没有动等级属性");
+        Report(progress.Version == versionBefore + worn, "属性出口的版本号随穿脱一起变(加了 " + (progress.Version - versionBefore) + ",穿了 " + worn + " 件)");
         EquipmentStats expected = picked.Aggregate(default(EquipmentStats), (sum, item) => sum.Plus(EquipmentStats.Read(assets, item.Path)));
         EquipmentStats panel = HeroPanel.WornEquipment(assets, null, progress);
         Report(panel.PhysicalAttack == expected.PhysicalAttack && panel.MagicalAttack == expected.MagicalAttack,
@@ -179,6 +202,7 @@ internal static class EquipCheck
             Report(restored.Snapshot().ToText() == saveText, "还原之后再拍的快照与原来逐字节相同(等级 " + restored.Level + "、金币 " + restored.Gold + "、穿着 " + restored.EquippedCount
                 + " 件、背包 " + restored.BagItems + " 件占 " + restored.BagSlots + " 格)");
             Report(restored.WeaponPath == progress.WeaponPath && restored.EquippedCount == progress.EquippedCount, "穿着的件数与武器的路径一致");
+            Report(restored.WornStats.Equals(progress.WornStats), "读档还原之后穿着装备的属性汇总与存档前相同");
         }
 
         // 再脱下来
@@ -191,6 +215,329 @@ internal static class EquipCheck
             }
         }
         Report(off == worn && progress.EquippedCount == 0 && progress.Bag.Tab(InventoryTab.Equipment).Count == before, "全部脱下:脱了 " + off + " 件,背包装备页回到 " + before + " 件");
+        Report(progress.WornStats.IsEmpty && SameBlock(progress.Stats, progress.BaseStats), "全部脱下之后属性回到只有等级的那份(脱下扣掉)");
+
+        // 6. 装备属性与外观:整份装备清单
+        bad += CheckStatsAndLook(assets, catalog, opts);
         return bad == 0 ? 0 : 1;
+    }
+
+    private static bool SameBlock(StatBlock a, StatBlock b)
+    {
+        return a.HpMax == b.HpMax && a.MpMax == b.MpMax && a.PhysicalAttack == b.PhysicalAttack && a.PhysicalDefense == b.PhysicalDefense
+            && a.MagicalAttack == b.MagicalAttack && a.MagicalDefense == b.MagicalDefense && a.InventoryLimit == b.InventoryLimit
+            && a.MpRegenSpeed == b.MpRegenSpeed && a.HitRecovery == b.HitRecovery;
+    }
+
+    /// <summary>
+    /// 整份装备清单(equipment.lst 里的全部,不只是能掉落的)的属性与外观:读不出的个数、结构不变量(属性项按项次序排好不重复、武器都有外观而别的都没有)、
+    /// 与旧的平读读法对照(<see cref="EquipmentStats"/> 的四项、<see cref="AvatarItem"/> 的剑魂外观;只数一致与不一致的件数)、
+    /// 在真实数据上随机拼装备栏核对"汇总等于各件之和"。返回失败项数。
+    /// </summary>
+    private static int CheckStatsAndLook(DnfAssets assets, ItemCatalog catalog, Options opts)
+    {
+        int bad = 0;
+
+        void Report(bool ok, string text)
+        {
+            Console.WriteLine((ok ? "  [通过] " : "  [失败] ") + text);
+            if (!ok)
+            {
+                bad++;
+            }
+        }
+
+        Console.WriteLine("  装备属性与外观(整份装备清单):");
+        IReadOnlyList<int> codes = catalog.EquipmentCodes();
+        var items = new List<ItemInfo>(codes.Count);
+        int unreadable = 0;
+        foreach (int code in codes)
+        {
+            ItemInfo info = catalog.Get(code);
+            items.Add(info);
+            if (info == null)
+            {
+                unreadable++;
+            }
+        }
+        Report(codes.Count > 0 && unreadable == 0, "清单里 " + codes.Count + " 件装备都读得出来(读不出 " + unreadable + " 件)");
+
+        // 结构不变量
+        var perTag = new int[EquipStats.StatCount];
+        int withStats = 0, entries = 0, withSecond = 0, disordered = 0, weapons = 0, lookWrong = 0, segments = 0, nestedFiles = 0, noSegment = 0;
+        foreach (ItemInfo info in items.Where(i => i != null))
+        {
+            EquipStats stats = info.Stats;
+            if (!stats.IsEmpty)
+            {
+                withStats++;
+            }
+            int last = -1;
+            foreach (EquipStatEntry entry in stats.Entries)
+            {
+                entries++;
+                perTag[(int)entry.Stat]++;
+                if (entry.HasSecond)
+                {
+                    withSecond++;
+                }
+                if ((int)entry.Stat <= last)
+                {
+                    disordered++;
+                }
+                last = (int)entry.Stat;
+            }
+            bool isWeapon = info.Part == EquipmentParts.Weapon;
+            if (isWeapon != (info.Look != null))
+            {
+                lookWrong++;
+            }
+            if (isWeapon && info.Look != null)
+            {
+                weapons++;
+                segments += info.Look.Segments.Count;
+                if (info.Look.Segments.Count == 0)
+                {
+                    noSegment++;
+                }
+                if (info.Look.NestedTagCount > 0)
+                {
+                    nestedFiles++;
+                }
+            }
+        }
+        Console.WriteLine("  有属性项的 " + withStats + " 件,共 " + entries + " 项(带第二个数的 " + withSecond + " 项);武器 " + weapons + " 件,职业段共 " + segments
+            + " 段,没有职业段的 " + noSegment + " 件,块里还有备选外观标签的 " + nestedFiles + " 件");
+        Console.WriteLine("  各属性项的件数:" + string.Join("、", Enumerable.Range(0, EquipStats.StatCount).Where(k => perTag[k] > 0)
+            .Select(k => EquipStats.TagOf((EquipStat)k).Trim('[', ']') + " " + perTag[k])));
+        Report(disordered == 0, "每件装备的属性项都按项次序排好、没有重复(乱序 " + disordered + " 项)");
+        Report(lookWrong == 0, "武器都有外观数据、不是武器的都没有(不符 " + lookWrong + " 件)");
+
+        string? dump = Environment.GetEnvironmentVariable("DNF_EQUIP_DUMP");
+        if (!string.IsNullOrEmpty(dump))
+        {
+            WriteDump(dump, codes, items);
+            Console.WriteLine("  逐件转储已写出:" + dump + "(用 tools/py/equip_stats_ref.py compare 与独立的 Python 实现逐字段比对)");
+        }
+
+        // 旧读法对照:平读(任意深度第一次出现)与新读法(深度 0)有几件不同,只数个数
+        int legacyOk = 0, legacyDiff = 0, legacyMissing = 0;
+        foreach (ItemInfo info in items.Where(i => i != null))
+        {
+            ScriptLine[]? doc = ReadUncached(assets, info.Path);
+            if (doc == null)
+            {
+                legacyMissing++;
+                continue;
+            }
+            EquipmentStats old = EquipmentStats.From(new TagTable(doc));
+            EquipStats s = info.Stats;
+            bool same = old.PhysicalAttack == (int)s[EquipStat.EquipmentPhysicalAttack] && old.MagicalAttack == (int)s[EquipStat.EquipmentMagicalAttack]
+                && old.PhysicalCritical == (float)s[EquipStat.PhysicalCriticalHit] && old.MagicalCritical == (float)s[EquipStat.MagicalCriticalHit];
+            if (same)
+            {
+                legacyOk++;
+            }
+            else
+            {
+                legacyDiff++;
+            }
+        }
+        Console.WriteLine("  对照旧读法 EquipmentStats(装备攻击与暴击四项,平读第一次出现):一致 " + legacyOk + " / 不一致 " + legacyDiff + " / 读不到 " + legacyMissing);
+
+        AvatarClass cls = AvatarClass.FromChr(assets, DemoHero.SwordmanChrPath, DemoHero.SwordmanJobTag);
+        int lookOk = 0, lookDiff = 0, lookDiffNested = 0, lookCompared = 0;
+        foreach (ItemInfo info in items.Where(i => i != null && i.Look != null))
+        {
+            LookSegment seg = info.Look.ForJob(cls.JobTag);
+            if (seg == null)
+            {
+                continue;
+            }
+            lookCompared++;
+            AvatarItem? old = AvatarItem.Read(assets, cls, info.Path);
+            bool same = old != null && old.HasVariation == seg.HasVariation && old.VariationA == seg.VariationA && old.VariationB == seg.VariationB
+                && old.SubType == info.Look.SubType;
+            if (old != null && same && old.HasVariation)
+            {
+                same = old.Layers.Count == seg.Layers.Count;
+                for (int k = 0; same && k < seg.Layers.Count; k++)
+                {
+                    same = old.Layers[k].Key == seg.Layers[k].Order && old.Layers[k].Name == seg.Layers[k].Name;
+                }
+            }
+            if (same)
+            {
+                lookOk++;
+            }
+            else
+            {
+                lookDiff++;
+                if (info.Look.NestedTagCount > 0)
+                {
+                    lookDiffNested++;
+                }
+            }
+        }
+        Console.WriteLine("  对照旧读法 AvatarItem(剑魂的武器外观:变体、图层、子类型):比了 " + lookCompared + " 件,一致 " + lookOk + " / 不一致 " + lookDiff
+            + "(其中块里有备选外观标签的 " + lookDiffNested + " 件,旧读法会把备选图层并进来)");
+
+        // 真实数据上的"汇总等于各件之和":随机拼装备栏,装备栏的汇总与另一种求和(按标签名分桶)逐项相等
+        var byPart = new Dictionary<int, List<ItemInfo>>();
+        foreach (ItemInfo info in items.Where(i => i != null && EquipmentSlots.IsSlot(i.Part)))
+        {
+            if (!byPart.TryGetValue(info.Part, out List<ItemInfo>? list))
+            {
+                list = new List<ItemInfo>();
+                byPart[info.Part] = list;
+            }
+            list.Add(info);
+        }
+        var random = new Random(opts.Seed + 1);
+        int sets = 0, setsBad = 0, blocksBad = 0;
+        for (int n = 0; n < 500; n++)
+        {
+            var slots = new EquipmentSlots();
+            var parts = new List<ItemInfo>();
+            for (int part = EquipmentSlots.First; part <= EquipmentSlots.Last; part++)
+            {
+                if (!byPart.TryGetValue(part, out List<ItemInfo>? list) || random.Next(5) == 0)
+                {
+                    continue;
+                }
+                ItemInfo pick = list[random.Next(list.Count)];
+                slots.Restore(part, pick);
+                parts.Add(pick);
+            }
+            sets++;
+            if (!SumMatches(slots.TotalStats(), parts))
+            {
+                setsBad++;
+            }
+            StatBlock blocks = default;
+            foreach (ItemInfo part in parts)
+            {
+                blocks += part.Stats.ToStatBlock();
+            }
+            if (!SameBlock(slots.TotalStatBlock(), blocks))
+            {
+                blocksBad++;
+            }
+        }
+        Report(setsBad == 0, "真实装备随机拼 " + sets + " 套:装备栏属性汇总与按标签分桶的求和逐项相等(不等 " + setsBad + " 套)");
+        Report(blocksBad == 0, "真实装备随机拼 " + sets + " 套:属性块汇总等于各件折算之和(不等 " + blocksBad + " 套)");
+        return bad;
+    }
+
+    /// <summary>另一种求和:按标签名分桶累加各件的第一个数与第二个数,与装备栏的汇总逐项比对(与 <see cref="EquipStats.Plus"/> 的"有序合并"是两种写法)。</summary>
+    private static bool SumMatches(EquipStats total, List<ItemInfo> parts)
+    {
+        var first = new Dictionary<string, double>();
+        var second = new Dictionary<string, double>();
+        var hasSecond = new HashSet<string>();
+        foreach (ItemInfo item in parts)
+        {
+            foreach (EquipStatEntry entry in item.Stats.Entries)
+            {
+                string tag = EquipStats.TagOf(entry.Stat);
+                first[tag] = (first.TryGetValue(tag, out double f) ? f : 0.0) + entry.First;
+                second[tag] = (second.TryGetValue(tag, out double s) ? s : 0.0) + entry.Second;
+                if (entry.HasSecond)
+                {
+                    hasSecond.Add(tag);
+                }
+            }
+        }
+        if (first.Count != total.Count)
+        {
+            return false;
+        }
+        foreach (EquipStatEntry entry in total.Entries)
+        {
+            string tag = EquipStats.TagOf(entry.Stat);
+            if (!first.TryGetValue(tag, out double f) || !f.Equals(entry.First) || !second[tag].Equals(entry.Second) || hasSecond.Contains(tag) != entry.HasSecond)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>不进缓存地读一份脚本(整库对照时不能让 6 万份脚本都留在内存里);读不到或不是标记流返回 null。</summary>
+    private static ScriptLine[]? ReadUncached(DnfAssets assets, string path)
+    {
+        if (!assets.Pvf.TryGetEntry(PvfPath.Normalize(path), out PvfEntry entry))
+        {
+            return null;
+        }
+        byte[] raw = assets.Pvf.Read(entry);
+        return TokenScript.IsTokenScript(raw) ? ScriptDocument.Parse(raw, assets.Strings) : null;
+    }
+
+    /// <summary>逐件转储:每行 <c>编号\t属性\t外观</c>(按编号升序;读不出来的两列都是 &lt;none&gt;;外观列不是武器是 -)。</summary>
+    private static void WriteDump(string path, IReadOnlyList<int> codes, List<ItemInfo> items)
+    {
+        string full = Path.GetFullPath(path);
+        string? dir = Path.GetDirectoryName(full);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            Directory.CreateDirectory(dir);
+        }
+        using var writer = new StreamWriter(full, false, new UTF8Encoding(false)) { NewLine = "\n" };
+        for (int i = 0; i < codes.Count; i++)
+        {
+            ItemInfo info = items[i];
+            writer.Write(codes[i].ToString(CultureInfo.InvariantCulture));
+            writer.Write('\t');
+            if (info == null)
+            {
+                writer.Write("<none>\t<none>\n");
+                continue;
+            }
+            writer.Write(FormatStats(info.Stats));
+            writer.Write('\t');
+            writer.Write(info.Look == null ? "-" : FormatLook(info.Look));
+            writer.Write('\n');
+        }
+    }
+
+    private static string FormatNumber(double value)
+    {
+        return value.ToString("R", CultureInfo.InvariantCulture);
+    }
+
+    private static string FormatStats(EquipStats stats)
+    {
+        if (stats.IsEmpty)
+        {
+            return "-";
+        }
+        var parts = new List<KeyValuePair<string, string>>();
+        foreach (EquipStatEntry entry in stats.Entries)
+        {
+            string numbers = FormatNumber(entry.First) + (entry.HasSecond ? "," + FormatNumber(entry.Second) : string.Empty);
+            parts.Add(new KeyValuePair<string, string>(EquipStats.TagOf(entry.Stat), numbers));
+        }
+        parts.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
+        return string.Join(";", parts.Select(p => p.Key + "=" + p.Value));
+    }
+
+    private static string FormatLook(EquipLook look)
+    {
+        var text = new StringBuilder();
+        text.Append("sub=").Append(look.HasSubType ? look.SubType.ToString(CultureInfo.InvariantCulture) : "-");
+        text.Append(";nested=").Append(look.NestedTagCount.ToString(CultureInfo.InvariantCulture));
+        foreach (LookSegment seg in look.Segments)
+        {
+            text.Append("|J").Append(seg.Job ?? "-");
+            text.Append(";V").Append(seg.HasVariation
+                ? seg.VariationA.ToString(CultureInfo.InvariantCulture) + "," + seg.VariationB.ToString(CultureInfo.InvariantCulture)
+                : "-");
+            text.Append(";L").Append(seg.Layers.Count == 0
+                ? "-"
+                : string.Join(",", seg.Layers.Select(l => l.Order.ToString(CultureInfo.InvariantCulture) + ":" + l.Name)));
+            text.Append(";S").Append(seg.AniScripts.Count == 0 ? "-" : string.Join(",", seg.AniScripts));
+        }
+        return text.ToString();
     }
 }

@@ -41,6 +41,9 @@ internal sealed class TokenStreamBuilder
 
     public TokenStreamBuilder Int(int value) => Add(TokenType.Int, value);
 
+    /// <summary>无符号整数标记(类型 3;值按位存进 i32,读出来要按 uint 解释)。</summary>
+    public TokenStreamBuilder UInt(uint value) => Add(TokenType.UInt, unchecked((int)value));
+
     public TokenStreamBuilder Ints(params int[] values)
     {
         foreach (int v in values)

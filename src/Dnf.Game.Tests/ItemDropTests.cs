@@ -127,7 +127,7 @@ public class ItemDropTests
         b.Tag("[icon]").Str("Item/Icon/Shoes.img").Int(5);
         b.Tag("[price]").Int(900);
         b.Tag("[move wav]").Str("SHOES_TOUCH");
-        b.Tag("[physical attack]").Int(123);      // 不认识的标签原样跳过
+        b.Tag("[physical attack]").Int(123);      // 不是头部字段:头部的读法原样跳过(属性另由 EquipStats 读,见 EquipStatsTests)
 
         ItemInfo item = Parse(b, ItemKind.Equipment, 42, "equipment/shoes/a.equ");
 

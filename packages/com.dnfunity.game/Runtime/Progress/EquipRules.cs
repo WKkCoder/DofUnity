@@ -208,6 +208,40 @@ namespace Dnf.Game
             }
         }
 
+        /// <summary>
+        /// 穿着的全部装备的基础属性逐项相加(每次现算,所以脱下、换穿之后自然只剩还穿着的那几件)。
+        /// 每件的属性是 <see cref="ItemInfo.Stats"/>(深度 0 的数值标签);汇总 = 各件之和,没有穿装备是 <see cref="EquipStats.Empty"/>。
+        /// </summary>
+        public EquipStats TotalStats()
+        {
+            EquipStats total = EquipStats.Empty;
+            foreach (ItemInfo item in _items)
+            {
+                if (item != null)
+                {
+                    total = total.Plus(item.Stats);
+                }
+            }
+            return total;
+        }
+
+        /// <summary>
+        /// 穿着的全部装备折成角色属性块后相加(<see cref="EquipStats.ToStatBlock"/> 按件折、再相加:
+        /// 折算是整数运算,汇总恒等于各件分项之和,不受浮点取整的影响)。没有穿装备是全 0。
+        /// </summary>
+        public StatBlock TotalStatBlock()
+        {
+            StatBlock total = default;
+            foreach (ItemInfo item in _items)
+            {
+                if (item != null)
+                {
+                    total = total + item.Stats.ToStatBlock();
+                }
+            }
+            return total;
+        }
+
         /// <summary>存档还原用:清空全部格子(有东西才算一次变化)。</summary>
         public void Clear()
         {
