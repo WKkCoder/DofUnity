@@ -1,12 +1,14 @@
 using System.Reflection;
 using Dnf.Net.Frame;
 using Dnf.Net.Session;
+using static Dnf.Net.Tests.UserInfoTestData;
 
 namespace Dnf.Net.Tests;
 
 /// <summary>
 /// 进城明文帧解析器(纯函数,E-358/E-359)。每一帧都是手工拼的合成字节:15 字节头(类、包号、整帧长度、两个相同的 crc32N)
 /// 加载荷,再经 <see cref="ServerFrameDecoder"/>(不加密的替身密码)解码成 <see cref="DecodedFrame"/>,走的是真实的解码路径。
+/// 包号 2(用户信息通知)是压缩包号:它的帧经 zlib 压缩上线,由解码器在解密之后解压,见 <see cref="UserInfoFrame"/>。
 /// 不读任何真实帧文件;时、分与载荷字节全是合成值,不含真实角色名、地图名或数值表。
 /// </summary>
 public class TownEntryParserTests
@@ -14,6 +16,7 @@ public class TownEntryParserTests
     // 规则里的包号在这里写成字面量,不引用产品常量:产品常量被改动时,测试要能发现。
     private const ushort EnterCompleteId = 124;
     private const ushort TimeSyncId = 300;
+    private const ushort UserInfoId = 2;
     private const byte Noti = 0;
     private const byte Cmd = 1;
 
@@ -32,7 +35,10 @@ public class TownEntryParserTests
         return f;
     }
 
-    /// <summary>拼一帧并解码。别用包号 1(启动包)、2、9、87(压缩包)与类 1 的 21 字节包号 1(拒绝帧),它们走特殊解码路径。</summary>
+    /// <summary>
+    /// 拼一帧并解码。别用包号 1(启动包)、2、9、87(压缩包)与类 1 的 21 字节包号 1(拒绝帧),它们走特殊解码路径;
+    /// 包号 2 用 <see cref="UserInfoFrame"/>。
+    /// </summary>
     private static DecodedFrame Frame(byte cls, ushort id, params byte[] body)
     {
         ServerFrameDecoder decoder = new ServerFrameDecoder { Cipher = new NullPayloadCipher() };
@@ -51,7 +57,16 @@ public class TownEntryParserTests
         return TownEntryParser.Parse(frames);
     }
 
-    /// <summary>没有任何明文字段被填上(槽号不在此列:它来自参数)。</summary>
+    /// <summary>
+    /// 用户信息通知帧(类 cls、包号 2):载荷明文经 zlib 压缩上线,走真实解码器(会话解密之后解压)得到解码帧,
+    /// 所以交给解析器的载荷就是既有管线给出的形态——已解压、从模式字节起。
+    /// </summary>
+    private static DecodedFrame UserInfoFrame(byte[] plaintext, byte cls = Noti)
+    {
+        return DecodedFrameOf(plaintext, cls);
+    }
+
+    /// <summary>没有任何明文字段被填上(槽号不在此列:它来自参数;等级、职业、成长类型只在没有可用的用户信息通知时为空)。</summary>
     private static void AssertNoFieldsFilled(TownEntrySnapshot s)
     {
         Assert.False(s.EnterComplete);
@@ -96,6 +111,7 @@ public class TownEntryParserTests
     {
         Assert.Equal(124, SlotJudge.EnterCompletePacketId);
         Assert.Equal(300, TownEntryParser.TimeSyncPacketId);
+        Assert.Equal(2, UserInfoParser.PacketId);
     }
 
     // ---- 进城完成(类 0、包号 124) ----
@@ -367,12 +383,13 @@ public class TownEntryParserTests
         Assert.Equal((int?)2, TownEntryParser.Parse(new[] { Frame(Noti, 3) }, 2).Slot);
     }
 
-    // ---- 缺口字段:明文里没有承载帧,恒为空 ----
+    // ---- 缺口字段:没有承载帧时为空 ----
 
     [Fact]
     public void Fields_without_plaintext_evidence_stay_empty_whatever_the_frames_say()
     {
-        // 等级、职业、成长类型、区域编号:明文帧里没有承载包,给什么形态的帧都不许"猜"出值
+        // 区域编号恒为空(明文里没有承载包);等级、职业、成长类型只来自包号 2 的角色列表,
+        // 这里没有包号 2,给什么形态的别种帧都不许"猜"出值
         TownEntrySnapshot s = TownEntryParser.Parse(new[]
         {
             Frame(Noti, 561, 1, 2, 3, 4, 5, 6),
@@ -432,6 +449,365 @@ public class TownEntryParserTests
                 }
             }
         }
+    }
+
+    // ---- 用户信息通知(类 0、包号 2):选中槽位那一条回填等级、职业、成长类型 ----
+
+    /// <summary>
+    /// 三个互不相同的角色:uid 故意与列表位置不一致(7、3、9);等级、职业、成长类型字节各异
+    /// (成长类型字节 0x12 = 一转 2 加二转 1;0x00;0x23 = 一转 3 加二转 2)。
+    /// 位置 0、1、2 对应 (等级, 职业, 一转) = (61, 4, 2)、(33, 1, 0)、(99, 6, 3)。
+    /// </summary>
+    private static EntrySpec[] ThreeCharacters()
+    {
+        EntrySpec first = Standard(0, 5, 1);
+        first.Uid = 7;
+        first.Level = 61;
+        first.Job = 4;
+        first.GrowType = 0x12;
+
+        EntrySpec second = Standard(1, 7, 0);
+        second.Uid = 3;
+        second.Level = 33;
+        second.Job = 1;
+        second.GrowType = 0x00;
+
+        EntrySpec third = Standard(2, 4, 2);
+        third.Uid = 9;
+        third.Level = 99;
+        third.Job = 6;
+        third.GrowType = 0x23;
+
+        return new[] { first, second, third };
+    }
+
+    private static byte[] WithMode(byte[] payload, int mode)
+    {
+        byte[] copy = (byte[])payload.Clone();
+        copy[0] = (byte)mode;
+        return copy;
+    }
+
+    private static void AssertThreeFieldsNull(TownEntrySnapshot s)
+    {
+        Assert.Null(s.Level);
+        Assert.Null(s.Job);
+        Assert.Null(s.GrowType);
+    }
+
+    [Theory]
+    [InlineData(0, 61, 4, 2)]
+    [InlineData(1, 33, 1, 0)]
+    [InlineData(2, 99, 6, 3)]
+    public void The_selected_slot_picks_that_character_by_list_position(int slot, int level, int job, int growType)
+    {
+        TownEntrySnapshot s = TownEntryParser.Parse(new[] { UserInfoFrame(Packet(ThreeCharacters())) }, slot);
+
+        Assert.Equal((int?)slot, s.Slot);
+        Assert.Equal((int?)level, s.Level);
+        Assert.Equal((int?)job, s.Job);
+        Assert.Equal((int?)growType, s.GrowType);
+        Assert.False(s.EnterComplete);
+        Assert.Null(s.AreaId);
+        AssertCounts(s, 1, 1, 0);
+    }
+
+    [Theory]
+    [InlineData(3)]
+    [InlineData(7)]
+    [InlineData(9)]
+    public void The_slot_is_never_matched_against_the_uid_inside_the_entries(int slot)
+    {
+        // uid 是服务端的运行序号、不回传;槽位按列表位置取。位置 3、7、9 都不在三条的列表里,
+        // 哪怕有条目的 uid 恰好等于这个数(uid 3 在位置 1,uid 7 在位置 0,uid 9 在位置 2)
+        TownEntrySnapshot s = TownEntryParser.Parse(new[] { UserInfoFrame(Packet(ThreeCharacters())) }, slot);
+        AssertThreeFieldsNull(s);
+        AssertCounts(s, 1, 0, 1);
+    }
+
+    [Fact]
+    public void Grow_type_in_the_snapshot_is_the_low_four_bits_of_the_byte_for_every_value()
+    {
+        // 整字节在二转非 0 时会得到 16 以上的值;快照给的是转职方向的下标,即低 4 位
+        for (int value = 0; value < 256; value++)
+        {
+            EntrySpec target = Standard(0, 3, 0);
+            target.GrowType = value;
+
+            TownEntrySnapshot s = TownEntryParser.Parse(new[] { UserInfoFrame(Packet(Standard(5, 2, 0), target)) }, 1);
+
+            Assert.Equal((int?)(value & 0x0F), s.GrowType);
+            Assert.Equal((int?)target.Level, s.Level);
+            Assert.Equal((int?)target.Job, s.Job);
+            AssertCounts(s, 1, 1, 0);
+        }
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(-2)]
+    [InlineData(int.MinValue)]
+    public void No_selected_slot_keeps_the_three_fields_null_and_counts_the_frame_as_malformed(int slot)
+    {
+        TownEntrySnapshot s = TownEntryParser.Parse(new[] { UserInfoFrame(Packet(ThreeCharacters())) }, slot);
+
+        Assert.Null(s.Slot);
+        AssertThreeFieldsNull(s);
+        AssertCounts(s, 1, 0, 1);
+    }
+
+    [Fact]
+    public void Leaving_out_the_slot_argument_means_no_selected_slot()
+    {
+        TownEntrySnapshot s = Parse(UserInfoFrame(Packet(ThreeCharacters())));
+
+        Assert.Null(s.Slot);
+        AssertThreeFieldsNull(s);
+        AssertCounts(s, 1, 0, 1);
+    }
+
+    [Theory]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(255)]
+    [InlineData(65535)]
+    [InlineData(int.MaxValue)]
+    public void A_slot_beyond_the_list_keeps_the_three_fields_null_and_counts_malformed(int slot)
+    {
+        TownEntrySnapshot s = TownEntryParser.Parse(new[] { UserInfoFrame(Packet(ThreeCharacters())) }, slot);
+
+        Assert.Equal((int?)slot, s.Slot);
+        AssertThreeFieldsNull(s);
+        AssertCounts(s, 1, 0, 1);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(5)]
+    public void A_list_without_entries_gives_nothing_for_any_slot(int slot)
+    {
+        TownEntrySnapshot s = TownEntryParser.Parse(new[] { UserInfoFrame(Packet()) }, slot);
+
+        AssertThreeFieldsNull(s);
+        AssertCounts(s, 1, 0, 1);
+    }
+
+    [Fact]
+    public void Unreadable_or_unsupported_user_info_payloads_keep_the_fields_null_and_count_malformed()
+    {
+        byte[] valid = Packet(ThreeCharacters());
+
+        EntrySpec[] wrongBlob = ThreeCharacters();
+        wrongBlob[0].Equips[0].BlobLength = 5;
+        wrongBlob[0].Equips[0].Blob = new byte[5];
+
+        var unusable = new List<(string Why, byte[] Payload)>
+        {
+            ("空载荷", new byte[0]),
+            ("只有模式字节", new byte[] { 2 }),
+            ("头被截断", valid.Take(9).ToArray()),
+            ("最后一个字节被截掉", valid.Take(valid.Length - 1).ToArray()),
+            ("截掉一半", valid.Take(valid.Length / 2).ToArray()),
+            ("条目个数多报一个", PacketWithCount(HeaderA, HeaderB, HeaderC, HeaderD, 4, ThreeCharacters())),
+            ("装备 blobLen 不是 4", Packet(wrongBlob)),
+            ("模式 0", WithMode(valid, 0)),
+            ("模式 1", WithMode(valid, 1)),
+            ("模式 3", WithMode(valid, 3)),
+            ("模式 255", WithMode(valid, 255)),
+            ("仍是压缩字节(解码器给出的不是明文)", Zlib(valid)),
+        };
+
+        foreach ((string why, byte[] payload) in unusable)
+        {
+            foreach (int slot in new[] { 0, 1, 2 })
+            {
+                TownEntrySnapshot s = TownEntryParser.Parse(new[] { UserInfoFrame(payload) }, slot);
+                Assert.True(s.Level is null && s.Job is null && s.GrowType is null, why + ":等级、职业、成长类型必须保持为空");
+                Assert.True(s.FramesSeen == 1 && s.FramesParsed == 0 && s.FramesMalformed == 1, why + ":必须计 1 帧错位");
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(255)]
+    public void User_info_frames_of_other_classes_are_ignored(int cls)
+    {
+        TownEntrySnapshot s = TownEntryParser.Parse(new[] { UserInfoFrame(Packet(ThreeCharacters()), (byte)cls) }, 1);
+
+        AssertNoFieldsFilled(s);
+        AssertCounts(s, 1, 0, 0);
+    }
+
+    [Fact]
+    public void A_later_valid_list_replaces_an_earlier_one_and_a_bad_one_does_not_clear_the_values()
+    {
+        EntrySpec early = Standard(0, 3, 0);
+        early.Level = 20;
+        early.Job = 2;
+        early.GrowType = 0x01;
+        EntrySpec late = Standard(0, 3, 0);
+        late.Level = 21;
+        late.Job = 3;
+        late.GrowType = 0x02;
+
+        DecodedFrame a = UserInfoFrame(Packet(Standard(9, 1, 0), early));
+        DecodedFrame b = UserInfoFrame(Packet(Standard(8, 1, 0), late));
+        DecodedFrame truncated = UserInfoFrame(new byte[] { 2, 1, 2, 3 });
+        DecodedFrame tooShortForTheSlot = UserInfoFrame(Packet(Standard(7, 1, 0)));
+
+        TownEntrySnapshot replaced = TownEntryParser.Parse(new[] { a, b }, 1);
+        Assert.Equal((int?)21, replaced.Level);
+        Assert.Equal((int?)3, replaced.Job);
+        Assert.Equal((int?)2, replaced.GrowType);
+        AssertCounts(replaced, 2, 2, 0);
+
+        foreach (DecodedFrame bad in new[] { truncated, tooShortForTheSlot })
+        {
+            TownEntrySnapshot badAfter = TownEntryParser.Parse(new[] { a, bad }, 1);
+            Assert.Equal((int?)20, badAfter.Level);
+            Assert.Equal((int?)2, badAfter.Job);
+            Assert.Equal((int?)1, badAfter.GrowType);
+            AssertCounts(badAfter, 2, 1, 1);
+
+            TownEntrySnapshot badBefore = TownEntryParser.Parse(new[] { bad, a }, 1);
+            Assert.Equal((int?)20, badBefore.Level);
+            Assert.Equal((int?)2, badBefore.Job);
+            Assert.Equal((int?)1, badBefore.GrowType);
+            AssertCounts(badBefore, 2, 1, 1);
+        }
+    }
+
+    [Theory]
+    [InlineData(0, 0, 0x00)]
+    [InlineData(255, 255, 0xFF)]
+    [InlineData(1, 254, 0x7F)]
+    [InlineData(254, 1, 0x80)]
+    public void Level_and_job_pass_through_unchanged_at_the_byte_boundaries(int level, int job, int growTypeByte)
+    {
+        EntrySpec e = Standard(0, 2, 0);
+        e.Level = level;
+        e.Job = job;
+        e.GrowType = growTypeByte;
+
+        TownEntrySnapshot s = TownEntryParser.Parse(new[] { UserInfoFrame(Packet(e)) }, 0);
+
+        Assert.Equal((int?)level, s.Level);
+        Assert.Equal((int?)job, s.Job);
+        Assert.Equal((int?)(growTypeByte & 0x0F), s.GrowType);
+    }
+
+    [Fact]
+    public void A_character_list_among_the_other_frames_is_picked_out_and_the_rest_still_parse()
+    {
+        // 形态仿照"选角窗口 + 尾窗口"的明文回程,再加上拉列表得到的角色列表通知;内容全是合成值
+        DecodedFrame[] frames =
+        {
+            Frame(Noti, 561, 0x11, 0x22, 0x33, 0x44),
+            UserInfoFrame(Packet(ThreeCharacters())),
+            Frame(Cmd, 4, 1, 7, 7, 7),
+            Frame(Noti, 355, 2, 0, 0, 0, 1, 0),
+            Frame(Noti, TimeSyncId, TimeBody(5, 6)),
+            Frame(Noti, EnterCompleteId),
+        };
+
+        TownEntrySnapshot s = TownEntryParser.Parse(frames, 2);
+
+        Assert.Equal((int?)2, s.Slot);
+        Assert.Equal((int?)99, s.Level);
+        Assert.Equal((int?)6, s.Job);
+        Assert.Equal((int?)3, s.GrowType);
+        Assert.True(s.EnterComplete);
+        Assert.Equal((int?)5, s.ServerHour);
+        Assert.Equal((int?)6, s.ServerMinute);
+        Assert.Null(s.AreaId);
+        AssertCounts(s, 6, 3, 0);
+    }
+
+    [Fact]
+    public void Parsing_a_character_list_does_not_modify_the_input_frame_and_is_repeatable()
+    {
+        DecodedFrame list = UserInfoFrame(Packet(ThreeCharacters()));
+        byte[] before = (byte[])list.Payload.Clone();
+
+        TownEntrySnapshot first = TownEntryParser.Parse(new[] { list }, 1);
+        TownEntrySnapshot second = TownEntryParser.Parse(new[] { list }, 1);
+
+        Assert.Equal(before, list.Payload);
+        Assert.Equal(first.Level, second.Level);
+        Assert.Equal(first.Job, second.Job);
+        Assert.Equal(first.GrowType, second.GrowType);
+        Assert.Equal(first.FramesParsed, second.FramesParsed);
+        Assert.Equal((int?)33, first.Level);
+    }
+
+    [Fact]
+    public void Arbitrary_user_info_payloads_never_throw_and_counters_stay_consistent()
+    {
+        // 确定性伪随机(固定种子):三种载荷来源 × 槽位 -1 到 3。
+        // 纯随机字节几乎读不通(名字长度是随机 u32、装备 blobLen 要恰为 4),所以另有两种来源让解析真的走到成功路径:
+        // 合法的随机角色列表,以及被随机改字节、截断过的合法列表。
+        var rng = new Lcg(0x31415926);
+        int parsedFrames = 0;
+        int malformedFrames = 0;
+        for (int round = 0; round < 600; round++)
+        {
+            byte[] payload;
+            int source = rng.Next(3);
+            if (source == 0)
+            {
+                payload = rng.Bytes(rng.Next(120));
+                if (payload.Length > 0 && rng.Next(4) != 0)
+                {
+                    payload[0] = 2;
+                }
+                if (payload.Length > 9 && rng.Next(2) == 0)
+                {
+                    payload[8] = (byte)rng.Next(3);
+                    payload[9] = 0;
+                }
+            }
+            else
+            {
+                EntrySpec[] specs = new EntrySpec[1 + rng.Next(3)];
+                for (int i = 0; i < specs.Length; i++)
+                {
+                    specs[i] = RandomEntry(rng);
+                }
+                payload = Packet(specs);
+                if (source == 2)
+                {
+                    int flips = 1 + rng.Next(3);
+                    for (int f = 0; f < flips; f++)
+                    {
+                        payload[rng.Next(payload.Length)] = rng.NextByte();
+                    }
+                    if (rng.Next(3) == 0)
+                    {
+                        Array.Resize(ref payload, rng.Next(payload.Length + 1));
+                    }
+                }
+            }
+            int slot = rng.Next(5) - 1;
+            DecodedFrame frame = UserInfoFrame(payload);
+
+            TownEntrySnapshot s = null;
+            Exception ex = Record.Exception(() => { s = TownEntryParser.Parse(new[] { frame }, slot); });
+            Assert.Null(ex);
+            Assert.Equal(1, s.FramesSeen);
+            Assert.Equal(1, s.FramesParsed + s.FramesMalformed);
+            Assert.Equal(s.FramesParsed == 1, s.Level.HasValue);
+            Assert.Equal(s.Level.HasValue, s.Job.HasValue);
+            Assert.Equal(s.Level.HasValue, s.GrowType.HasValue);
+            parsedFrames += s.FramesParsed;
+            malformedFrames += s.FramesMalformed;
+        }
+
+        // 两种结局都真的出现过,免得这个测试空转
+        Assert.True(parsedFrames > 20, "成功回填的次数太少:" + parsedFrames);
+        Assert.True(malformedFrames > 200, "被计为错位的次数太少:" + malformedFrames);
     }
 
     // ---- 快照本身 ----

@@ -35,6 +35,20 @@ internal sealed class NoticePayloadBuilder
         return this;
     }
 
+    /// <summary>追加小端无符号 32 位整数(0..4294967295);用 long 接收,免得调用方为了大于 int.MaxValue 的取值去强转。</summary>
+    public NoticePayloadBuilder U32(long value)
+    {
+        if (value < 0 || value > 0xFFFFFFFFL)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value));
+        }
+        _bytes.Add((byte)value);
+        _bytes.Add((byte)(value >> 8));
+        _bytes.Add((byte)(value >> 16));
+        _bytes.Add((byte)(value >> 24));
+        return this;
+    }
+
     /// <summary>追加小端有符号 32 位整数。</summary>
     public NoticePayloadBuilder I32(int value)
     {

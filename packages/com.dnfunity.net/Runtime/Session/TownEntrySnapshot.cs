@@ -8,13 +8,16 @@ namespace Dnf.Net.Session
     public sealed class TownEntrySnapshot
     {
         /// <summary>什么也没解出来的快照(没有帧、全是未知帧号或全部错位时:各字段为空/假/0)。</summary>
-        public static readonly TownEntrySnapshot Empty = new TownEntrySnapshot(null, false, null, null, 0, 0, 0);
+        public static readonly TownEntrySnapshot Empty = new TownEntrySnapshot(null, false, null, null, null, null, null, 0, 0, 0);
 
-        internal TownEntrySnapshot(int? slot, bool enterComplete, int? serverHour, int? serverMinute,
+        internal TownEntrySnapshot(int? slot, bool enterComplete, int? level, int? job, int? growType, int? serverHour, int? serverMinute,
             int framesSeen, int framesParsed, int framesMalformed)
         {
             Slot = slot;
             EnterComplete = enterComplete;
+            Level = level;
+            Job = job;
+            GrowType = growType;
             ServerHour = serverHour;
             ServerMinute = serverMinute;
             FramesSeen = framesSeen;
@@ -27,28 +30,36 @@ namespace Dnf.Net.Session
         /// <summary>
         /// 进城用的槽号。<b>不是从明文帧里解析出来的</b>:选角成功回包被封进 561 信封,明文回程里没有任何一帧回显槽号,
         /// 所以这个值就是调用方给 <see cref="TownEntryParser.Parse"/> 的选角请求槽号(没给就是 null)。
+        /// 下面的等级、职业、成长类型正是用它去角色列表里挑"当前选中"的那一条。
         /// </summary>
         public int? Slot { get; }
 
-        // ---- 目标字段二到五:明文里没有承载帧(缺口,恒为 null) ----
+        // ---- 目标字段二到四:用户信息通知(类 0、包号 2,模式 2 角色选择列表)里选中槽位那一条 ----
 
         /// <summary>
-        /// 角色等级。<b>缺口,本版恒为 null。</b>据服务端静态读码,等级在用户信息通知(类 0、包号 2)类型 0 的 u8 里,
-        /// 角色列表条目里也有;这几类包在进城流里全部走 561 信封,明文帧逐帧核对没有任何一帧带本人等级。
+        /// 角色等级(0 到 255)。来自用户信息通知(类 0、包号 2,模式 2 的角色选择列表,见 <see cref="UserInfoParser"/>)里
+        /// <b>选中槽位</b>(<see cref="Slot"/>,按条目在列表里的位置取)对应条目的 level 字节;服务端的等级是 u16,包里只写低字节。
+        /// 下面三种情况保持 null,不猜:没收到这个包;没有选中槽位(<see cref="Slot"/> 为 null)或槽位不在列表里;这一帧读不通(错位,计入 <see cref="FramesMalformed"/>)。
         /// 容易读错的一处:类 0、包号 182 的条目里有形似等级、职业的 u8,但那是排行榜里别人的角色(条目名字互异),不能当本人字段。
-        /// 信封内层读通之前保持为空。
+        /// 在线流程的现状:该包的应答在真实进城流里可能被封进 561 信封(E-358),而 <see cref="OnlineTownEntry"/> 目前只把选角窗口与尾窗口的帧交给解析器,
+        /// 登录后拉角色列表那一步收到的帧不在其中,所以那条流程里这三项暂时仍是 null,要等信封打开且列表应答送进解析器。
         /// </summary>
-        public int? Level => null;
+        public int? Level { get; }
 
         /// <summary>
-        /// 职业(角色信息偏移 0 的那一项,E-046)。<b>缺口,本版恒为 null。</b>同 <see cref="Level"/>:承载包被封进信封。
+        /// 职业编号(角色信息偏移 0 的那一项,E-046;0 到 255)。来源、取法与保持 null 的情形同 <see cref="Level"/>。
         /// </summary>
-        public int? Job => null;
+        public int? Job { get; }
 
         /// <summary>
-        /// 成长类型(转职方向,0 是转职前;角色信息偏移 0xc 的那一项,E-046)。<b>缺口,本版恒为 null。</b>同 <see cref="Level"/>。
+        /// 成长类型(转职方向,0 是转职前;角色信息偏移 0xc 的那一项,E-046)。来源与保持 null 的情形同 <see cref="Level"/>。
+        /// 取的是条目里成长类型字节的<b>低 4 位</b>(一转),不是整个字节:客户端把这个字节拆成低 4 位与 bit4 到 bit6 两段、丢弃 bit7,
+        /// 本仓库里"成长类型"一贯指转职方向(0 是转职前),对应第一段;第二段(二转)在客户端的消费者没读到,不并进这一项,
+        /// 记录里保留着(<see cref="UserInfoEntry.SecondGrowType"/>、<see cref="UserInfoEntry.GrowTypeByte"/>)。依据见 <see cref="TownEntryParser"/> 的说明。
         /// </summary>
-        public int? GrowType => null;
+        public int? GrowType { get; }
+
+        // ---- 缺口:明文里没有承载帧(恒为 null) ----
 
         /// <summary>
         /// 区域编号(进城落脚的村庄/区域)。<b>缺口,本版恒为 null。</b>据服务端静态读码,选角成功回包(类 1、包号 4)里有一个村庄字节,
@@ -80,7 +91,10 @@ namespace Dnf.Net.Session
         /// <summary>被认出并成功读出字段的帧数。</summary>
         public int FramesParsed { get; }
 
-        /// <summary>包号认得但载荷太短或取值不合(错位)、被跳过的帧数;持续非 0 说明布局与实测不一致。</summary>
+        /// <summary>
+        /// 包号认得但载荷太短或取值不合(错位)、被跳过的帧数;持续非 0 说明布局与实测不一致。
+        /// 用户信息通知(包号 2)在这里还包括:没有选中槽位、槽位不在列表里、模式不是 2(本版只实现模式 2)。
+        /// </summary>
         public int FramesMalformed { get; }
     }
 }
