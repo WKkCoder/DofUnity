@@ -227,6 +227,7 @@ namespace Dnf.Play
             {
                 sb.Append("quick ").Append(quick.Slot.ToString(Inv)).Append(' ').Append(quick.Code.ToString(Inv)).Append('\n');
             }
+            EnhanceSaveFormat.Write(this, sb);
             PetSaveFormat.Write(this, sb);
             foreach (SavedQuest quest in Quests)
             {
@@ -325,6 +326,10 @@ namespace Dnf.Play
             if (key == "quest")
             {
                 return ParseQuest(r, f, no, out error);
+            }
+            if (EnhanceSaveFormat.Handles(key))
+            {
+                return EnhanceSaveFormat.Parse(r, key, f, no, out error);
             }
             if (PetSaveFormat.Handles(key))
             {
