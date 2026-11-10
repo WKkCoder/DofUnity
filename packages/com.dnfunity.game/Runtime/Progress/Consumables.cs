@@ -31,8 +31,17 @@ namespace Dnf.Game
 
         WrongJob,
 
-        /// <summary>现在用不了(没有战斗中的生命魔法值:在城镇里,或主角已倒下)。</summary>
+        /// <summary>现在用不了(没有战斗中的生命魔法值:在城镇里,或主角已倒下;开启类与传送类不在城镇)。</summary>
         Unavailable,
+
+        /// <summary>开启类:背包放不下要发的全部物品(先拿走这一件、再放下全部奖励,试过放不下)。没扣、没发、没起冷却。</summary>
+        BagFull,
+
+        /// <summary>这一类使用本地还没做(派发表里是登记或未读,见 <see cref="ItemUseStatus"/>),或开启类的内容这个版本发不了(商城币、宠物、读不出的编号、数据有坏)。</summary>
+        NotYet,
+
+        /// <summary>传送类的桩:使用记下来了,去向要等城镇线接上(<see cref="TeleportDesk"/>);没扣物品、没起冷却。</summary>
+        Pending,
     }
 
     /// <summary>
@@ -296,11 +305,12 @@ namespace Dnf.Game
         }
 
         /// <summary>
-        /// 能不能自动进快捷栏:服务端只认 [waste] 与 [throw] 两种(<c>quickslot_priority</c>);这个版本再加一条"有生命或魔法回复"(别的效果还没做,放进去也用不了)。
+        /// 能不能自动进快捷栏:服务端只认 [waste] 与 [throw] 两种(<c>quickslot_priority</c>),也就是派发表里的回复药类(<see cref="ItemUseTable.QuickSlotClass"/>);
+        /// 这个版本再加一条"有生命或魔法回复"(别的效果还没做,放进去也用不了)。开启类、传送类与登记类不进快捷栏。
         /// </summary>
         public static bool Eligible(ItemInfo item)
         {
-            return ConsumableRules.IsConsumableType(item) && ConsumableRules.HasRecovery(item);
+            return ItemUseTable.QuickSlotClass(item) && ConsumableRules.HasRecovery(item);
         }
 
         /// <summary>这件物品在第几格(按编号找,没有返回 −1)。</summary>
@@ -380,10 +390,10 @@ namespace Dnf.Game
     /// <summary>消耗品的使用检查(纯规则,不看背包与冷却;背包与冷却在 <c>HeroProgress.UseConsumable</c> 里按服务端次序接上)。</summary>
     public static class ConsumableRules
     {
-        /// <summary>种类是 [waste] 或 [throw](服务端 <c>quickslot_priority</c> 的条件,证据 E-120)。</summary>
+        /// <summary>种类是 [waste] 或 [throw](服务端 <c>quickslot_priority</c> 的条件,证据 E-120),即派发表里的回复药类。</summary>
         public static bool IsConsumableType(ItemInfo item)
         {
-            return item != null && item.IsStackable && (item.StackableType == StackableTypes.Waste || item.StackableType == StackableTypes.Throw);
+            return ItemUseTable.QuickSlotClass(item);
         }
 
         /// <summary>有生命或魔法回复。</summary>
@@ -406,6 +416,15 @@ namespace Dnf.Game
             {
                 return UseResult.NoEffect;
             }
+            return CheckUser(item, job, level);
+        }
+
+        /// <summary>
+        /// 等级与职业这两道检查,回复药与开启类共用(先等级、后职业,次序同 <see cref="Check"/>):<c>[minimum level]</c> 高于主角等级是 <see cref="UseResult.LevelTooLow"/>,
+        /// <c>[usable job]</c> 写了职业而主角不在其中是 <see cref="UseResult.WrongJob"/>,否则 <see cref="UseResult.Ok"/>。不看种类、背包、冷却。
+        /// </summary>
+        public static UseResult CheckUser(ItemInfo item, int job, int level)
+        {
             if (item.MinimumLevel > level)
             {
                 return UseResult.LevelTooLow;
