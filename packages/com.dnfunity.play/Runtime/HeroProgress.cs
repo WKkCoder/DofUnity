@@ -11,10 +11,11 @@ namespace Dnf.Play
     /// <summary>
     /// 主角的等级与经验(证据 E-111):升级经验表、技能点表、倍率表、基础经验表与角色成长表都是只读的数据,
     /// 变的只有等级、累计经验与升级得到的点数。<see cref="Gain"/> 走服务端的升级循环(<see cref="Leveling"/>),
-    /// <see cref="Stats"/> 给出这个等级的属性(<see cref="CharacterGrowth"/>:初始值加上每升一级的增量;单位是十分之一)。
+    /// <see cref="BaseStats"/> 给出这个等级的属性(<see cref="CharacterGrowth"/>:初始值加上每升一级的增量;单位是十分之一),
+    /// <see cref="Stats"/> 是它加上穿着的装备的基础属性(<see cref="WornStats"/>、<see cref="EquipmentSlots.TotalStatBlock"/>:穿上加、脱下扣、换穿即换)。
     /// 一个对象跟着主角走完整个流程:副本里每个房间的战斗会话共用同一个(房间换了、副本换了,等级与经验都留着)。
     /// 技能(M35,证据 E-127):<see cref="Skills"/> 是学会的技能、技能点余额与快捷栏;升级给的点数进它的余额,学技能花、退技能还。
-    /// 没做:觉醒转职(<see cref="Awakening"/> 恒为 0,50 级以后用成长类型本身的块)、属性点与装备对属性的其余加成、任务与道具另给的技能点。
+    /// 没做:觉醒转职(<see cref="Awakening"/> 恒为 0,50 级以后用成长类型本身的块)、属性点、强化增幅附魔套装品级对属性的加成、任务与道具另给的技能点。
     /// </summary>
     public sealed class HeroProgress
     {
@@ -65,8 +66,14 @@ namespace Dnf.Play
         /// <summary>白送技能的来源(.chr 的脚本行);<see cref="AttachSkills"/> 给。</summary>
         private ScriptLine[] _chrLines;
 
-        /// <summary>等级与经验的变化次数:各个房间的战斗会话据此发现"别的房间里升了级",把自己的生命上限与攻击面板换成新等级的。</summary>
-        public int Version { get; private set; }
+        /// <summary>等级、经验、成长类型与读档(<see cref="Version"/> 的前一半)的变化次数。</summary>
+        private int _levelVersion;
+
+        /// <summary>
+        /// 属性出口(<see cref="Stats"/>)的变化次数:等级与经验的变化(升级、转职、设等级、读档)加上装备栏的变化(<see cref="EquipVersion"/>:穿、脱、换穿、读档),只增不减。
+        /// 各个房间的战斗会话据此发现"别的房间里升了级或穿脱了装备",把自己的生命上限、防御与攻击面板换成现在 <see cref="Stats"/> 的。
+        /// </summary>
+        public int Version => _levelVersion + Worn.Version;
 
         /// <summary>身上的金币(拾取地上的金币、向商店卖东西加上来,在商店买东西花掉;证据 E-116、E-119)。副本里各房间的战斗会话共用同一个对象。</summary>
         public long Gold { get; private set; }
@@ -185,8 +192,20 @@ namespace Dnf.Play
         /// <summary>本级一共要攒的经验(下一级的门槛减去本级的门槛;经验条的分母,推断);表走到头时不大于 0。</summary>
         public int LevelSpan => Table.Section(Level);
 
-        /// <summary>这个等级的属性(十分之一单位的整数,<see cref="CharacterGrowth.StatsAt"/>)。</summary>
-        public StatBlock Stats => Growth.StatsAt(Level, Growtype, Awakening);
+        /// <summary>这个等级(与成长类型)的属性,不含装备(十分之一单位的整数,<see cref="CharacterGrowth.StatsAt"/>)。</summary>
+        public StatBlock BaseStats => Growth.StatsAt(Level, Growtype, Awakening);
+
+        /// <summary>
+        /// 穿着的全部装备的基础属性逐项相加(<see cref="EquipmentSlots.TotalStats"/>):全部 51 项都在,装备栏变了就跟着变;
+        /// 其中同名的九项(生命魔法上限、物理魔法攻击与防御……)折进 <see cref="Stats"/>,其余项(速度、暴击、元素、抗性、装备自带攻击……)由宿主按需来取。
+        /// </summary>
+        public EquipStats WornStats => Worn.TotalStats();
+
+        /// <summary>
+        /// 主角现在的属性(十分之一单位的整数):<see cref="BaseStats"/> 加上穿着的装备折成的属性块(<see cref="EquipmentSlots.TotalStatBlock"/>)。
+        /// 穿上装备加上去,脱下就扣掉,同槽换穿只剩新的那件;<see cref="Version"/> 随装备栏一起变,战斗会话据此换面板。
+        /// </summary>
+        public StatBlock Stats => BaseStats + Worn.TotalStatBlock();
 
         /// <summary>
         /// 加经验并按服务端的循环升级。返回这一次的结果(涨了几级、给了多少点)。
@@ -202,7 +221,7 @@ namespace Dnf.Play
             TotalGained += exp;
             if (r.Level != Level || r.Exp != Exp)
             {
-                Version++;
+                _levelVersion++;
             }
             Level = r.Level;
             Exp = r.Exp;
@@ -369,7 +388,7 @@ namespace Dnf.Play
             }
             Level = clamped;
             Exp = Table.LevelExp(clamped);
-            Version++;
+            _levelVersion++;
         }
 
         // ---------------- 技能(M35,证据 E-127) ----------------
@@ -432,7 +451,7 @@ namespace Dnf.Play
             }
             Growtype = growtype;
             ResetSkills();
-            Version++;
+            _levelVersion++;
             return true;
         }
 
@@ -556,7 +575,7 @@ namespace Dnf.Play
             Gold = Math.Max(0L, save.Gold);
             GoldGained = Math.Max(Gold, save.GoldGained);
             ItemsGained = Math.Max(0, save.ItemsGained);
-            Version++;
+            _levelVersion++;
             Bag.Clear();
             Worn.Clear();
             int stacks = 0;

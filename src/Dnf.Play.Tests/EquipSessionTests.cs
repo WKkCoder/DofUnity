@@ -267,7 +267,9 @@ public class EquipSessionTests
 
     private static Arena ArenaWith(HeroProgress progress)
     {
-        var panel = new HeroPanel(1, 100, 50, new EquipmentStats(AvatarFixture.WeaponStartPhysical, AvatarFixture.WeaponStartMagical));
+        // 面板的攻击力取自进度的属性出口(与生产路径 RoomCombat 建会话时一致);穿脱之后进度的属性出口变了,会话据 Version 重新派生面板,
+        // 夹具若手写一个与进度对不上的攻击力,穿一件没有属性的装备也会"变"(装备栏的变化原先不计入 Version,所以这个不一致没有暴露)
+        HeroPanel panel = HeroPanel.FromStats(progress.Level, progress.Stats, new EquipmentStats(AvatarFixture.WeaponStartPhysical, AvatarFixture.WeaponStartMagical));
         return new Arena(new[] { (340, 100) }, hp: 1000, heroPanel: panel, damageConstants: Constants(), progress: progress,
             vitals: HeroVitals.FromStats(progress.Level, progress.Stats));
     }
@@ -279,12 +281,13 @@ public class EquipSessionTests
         using Arena arena = ArenaWith(progress);
         RoomCombatSession s = arena.Session;
         Assert.Equal((10, 4), Pair(s.Panel.Equipment));
+        Assert.Equal((50, 40, 1), (s.Panel.PhysicalAttack, s.Panel.MagicalAttack, s.Panel.Level));   // 1 级的面板攻击力:成长表的物攻 50、魔攻 40(进度的属性出口是十分之一单位的 500、400)
         progress.AddItem(Gear(1, SecondPath));
         progress.Equip(0);
         Assert.Equal((10, 4), Pair(s.Panel.Equipment));                                // 还没更新:没变
         s.Update(10, 0, 0, false);
         Assert.Equal((AvatarFixture.SecondWeaponPhysical, AvatarFixture.SecondWeaponMagical), Pair(s.Panel.Equipment));
-        Assert.Equal((100, 50, 1), (s.Panel.PhysicalAttack, s.Panel.MagicalAttack, s.Panel.Level));          // 面板本身的攻击力不变
+        Assert.Equal((50, 40, 1), (s.Panel.PhysicalAttack, s.Panel.MagicalAttack, s.Panel.Level));          // 面板本身的攻击力不变(这件武器脚本没有基础属性)
         Assert.True(HeroLook.SameEquipPath(SecondPath, HeroLook.WeaponPathOf(s.Hero.Outfit)));
         Assert.True(s.UsesFormulaDamage);
     }
