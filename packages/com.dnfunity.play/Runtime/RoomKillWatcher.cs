@@ -16,9 +16,12 @@ namespace Dnf.Play
     /// 推断,E-134),它们的序号接在出生点怪之后,报上去也对不上表,所以不交。
     /// </para>
     /// <para>
-    /// 序号的含义:出生点怪在房间里的 <see cref="MonsterActor.Index"/> 就是它们在 <see cref="RoomCombatSession.Monsters"/> 里的位置(地图 [monster] 的顺序,
-    /// 造不出来的怪被跳过、后面的序号前移)。这与联网起始地图的怪记录顺序是否一一对应,取决于宿主用什么地图建房间——宿主拿服务端记录建本地怪时才有语义上的对应(这一版还没做),
-    /// 现在只是"按位置对号"。
+    /// 序号的含义:默认(房间用地图自己的 [monster] 造怪)时,出生点怪的 <see cref="MonsterActor.Index"/> 就是它们在 <see cref="RoomCombatSession.Monsters"/> 里的位置
+    /// (地图 [monster] 的顺序,造不出来的怪被跳过、后面的序号前移),这时与联网起始地图的怪记录之间只是"按位置对号"。
+    /// 联网副本宿主给 <see cref="RoomCombatSession.Create"/> 传出生点计划(<c>spawnPlan</c>,见 <see cref="RoomSpawnPlan"/>)时,
+    /// 第 i 项造出来的怪序号恒为 i,也就是联网起始地图第 i 条怪记录的本地序号;造不出来的项只是缺席、后面的序号<b>不</b>前移,
+    /// 所以此时序号可以大于怪在 <see cref="RoomCombatSession.Monsters"/> 里的位置。观察者只认 Index,不看位置。
+    /// 把观察到的序号接到联网击杀口的是 <see cref="HostedRoomRun"/>。
     /// </para>
     /// 一个观察者盯一个房间;同一间房可以随时新建观察者(它会把房间里已经死了的怪也交一遍,联网层按"每只怪只报一次"去重)。不是线程安全的,与房间会话一样在宿主的主线程用。
     /// </summary>
