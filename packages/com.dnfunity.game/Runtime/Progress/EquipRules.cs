@@ -163,9 +163,33 @@ namespace Dnf.Game
         public const int Count = Last - First + 1;
 
         private readonly ItemInfo[] _items = new ItemInfo[Count];
+        private IEquipOverlay _overlay;
 
-        /// <summary>槽的变化次数(穿上、脱下、换穿各算一次)。</summary>
+        /// <summary>槽的变化次数(穿上、脱下、换穿各算一次;换附加来源与 <see cref="Refresh"/> 也算一次)。</summary>
         public int Version { get; private set; }
+
+        /// <summary>
+        /// 叠在基础属性之上的附加来源(强化、附魔、套装,见 <see cref="IEquipOverlay"/>);默认没有,汇总就只是各件装备的基础属性之和。
+        /// 换了来源会让 <see cref="Version"/> 加一。
+        /// </summary>
+        public IEquipOverlay Overlay
+        {
+            get => _overlay;
+            set
+            {
+                if (!ReferenceEquals(_overlay, value))
+                {
+                    _overlay = value;
+                    Version++;
+                }
+            }
+        }
+
+        /// <summary>附加来源的依据变了(例如套装表重新载入)时让版本加一,宿主据此重算。</summary>
+        public void Refresh()
+        {
+            Version++;
+        }
 
         /// <summary>部位号有没有格子。</summary>
         public static bool IsSlot(int part) => part >= First && part <= Last;
@@ -211,6 +235,7 @@ namespace Dnf.Game
         /// <summary>
         /// 穿着的全部装备的基础属性逐项相加(每次现算,所以脱下、换穿之后自然只剩还穿着的那几件)。
         /// 每件的属性是 <see cref="ItemInfo.Stats"/>(深度 0 的数值标签);汇总 = 各件之和,没有穿装备是 <see cref="EquipStats.Empty"/>。
+        /// 装了 <see cref="Overlay"/> 时再加上它给的各项(强化、附魔、套装),没装就完全是原来的口径。
         /// </summary>
         public EquipStats TotalStats()
         {
@@ -222,12 +247,20 @@ namespace Dnf.Game
                     total = total.Plus(item.Stats);
                 }
             }
+            if (_overlay != null)
+            {
+                foreach (EquipStats term in _overlay.Terms(this))
+                {
+                    total = total.Plus(term);
+                }
+            }
             return total;
         }
 
         /// <summary>
         /// 穿着的全部装备折成角色属性块后相加(<see cref="EquipStats.ToStatBlock"/> 按件折、再相加:
         /// 折算是整数运算,汇总恒等于各件分项之和,不受浮点取整的影响)。没有穿装备是全 0。
+        /// 装了 <see cref="Overlay"/> 时,它给的每一项也像一件装备那样先折算再相加。
         /// </summary>
         public StatBlock TotalStatBlock()
         {
@@ -239,7 +272,30 @@ namespace Dnf.Game
                     total = total + item.Stats.ToStatBlock();
                 }
             }
+            if (_overlay != null)
+            {
+                foreach (EquipStats term in _overlay.Terms(this))
+                {
+                    total = total + term.ToStatBlock();
+                }
+            }
             return total;
+        }
+
+        /// <summary>
+        /// 把某个部位上穿着的东西直接拿掉(强化失败装备被销毁时用,不放回背包);返回被拿掉的那件,部位没有格子或格子是空的返回 null,
+        /// 拿掉算一次变化(<see cref="Version"/> 加一)。
+        /// </summary>
+        public ItemInfo Take(int part)
+        {
+            if (!IsSlot(part) || _items[part - First] == null)
+            {
+                return null;
+            }
+            ItemInfo old = _items[part - First];
+            _items[part - First] = null;
+            Version++;
+            return old;
         }
 
         /// <summary>存档还原用:清空全部格子(有东西才算一次变化)。</summary>

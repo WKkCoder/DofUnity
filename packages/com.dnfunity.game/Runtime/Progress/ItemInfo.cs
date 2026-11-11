@@ -121,7 +121,7 @@ namespace Dnf.Game
     /// <summary>
     /// 一件物品的头部信息(.equ / .stk 里掉落、拾取、摆放要用的那些标签):编号与路径来自 <c>equipment.lst</c> / <c>stackable.lst</c>。
     /// 只留这一层要用的字段;装备的基础属性读进 <see cref="Stats"/>(攻击、防御、生命魔法、速度、元素、抗性等,深度 0 的数值标签),
-    /// 武器的外观图层读进 <see cref="Look"/>。强化、增幅、附魔、套装、品级的块不读。数值是原版数据,不入库。
+    /// 武器的外观图层读进 <see cref="Look"/>。强化券、附魔卡的属性块、套装定义与强化等级区间读进 <see cref="Enhance"/>(<see cref="EnhanceData"/>);强化表、增幅、品级不在物品脚本里。数值是原版数据,不入库。
     /// </summary>
     public sealed class ItemInfo
     {
@@ -253,6 +253,51 @@ namespace Dnf.Game
         public bool IsEquipment => Kind == ItemKind.Equipment;
 
         public bool IsStackable => Kind == ItemKind.Stackable;
+
+        private ItemInfo _definition;
+
+        /// <summary>
+        /// 强化、套装、附魔卡、强化券这些"周边"标签读出来的数据(见 <see cref="EnhanceData"/>);没写任何这类标签的物品为 null。
+        /// 属于定义(同编号共享),个体拷贝继承它。
+        /// </summary>
+        public EnhanceData Enhance { get; set; }
+
+        /// <summary>
+        /// 这件装备身上"会变"的状态(强化等级、增幅、附魔、品级、耐久,见 <see cref="EquipInstance"/>);共享的定义为 null。
+        /// 状态跟着个体拷贝走,换状态要换一份新拷贝(<see cref="WithInstance"/>),同一份拷贝里的状态不要原地改。
+        /// </summary>
+        public EquipInstance Instance { get; private set; }
+
+        /// <summary>按物品编号共享的定义:个体拷贝指回它的来源,定义自己就是定义。</summary>
+        public ItemInfo Definition => _definition ?? this;
+
+        /// <summary>这一份是带个体状态的拷贝。</summary>
+        public bool IsInstance => _definition != null;
+
+        /// <summary>这件装备当前的个体状态;没有个体状态时是初始值(一份新对象,改它不影响任何东西)。</summary>
+        public EquipInstance StateOrDefault => Instance != null ? Instance.Clone() : new EquipInstance();
+
+        /// <summary>
+        /// 同一件装备换一份个体状态:返回新的拷贝(其余字段与定义相同,<see cref="Stats"/> 还是定义的基础属性,
+        /// 强化、附魔、套装的加成由 <see cref="EquipmentSlots.Overlay"/> 叠在汇总上);<paramref name="state"/> 为 null
+        /// 或是初始值时回到共享的定义(没有个体状态的装备就是定义本身,和以前完全一样)。只对装备有意义,可叠加物品原样返回。
+        /// </summary>
+        public ItemInfo WithInstance(EquipInstance state)
+        {
+            ItemInfo definition = Definition;
+            if (!IsEquipment)
+            {
+                return this;
+            }
+            if (state == null || state.IsDefault)
+            {
+                return definition;
+            }
+            var copy = (ItemInfo)definition.MemberwiseClone();
+            copy._definition = definition;
+            copy.Instance = state.Clone();
+            return copy;
+        }
 
         /// <summary>宠物与宠物装备(服务端 <c>IsCreatureItem</c>);只对装备有意义。</summary>
         public bool IsCreature => IsEquipment && EquipmentParts.IsCreature(Part);
@@ -624,6 +669,7 @@ namespace Dnf.Game
                     info.Look = EquipLook.Read(tokens, strings);
                 }
             }
+            info.Enhance = EnhanceData.Read(tokens, strings);
             return info;
         }
 
