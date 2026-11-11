@@ -110,6 +110,7 @@ public class EnhanceSaveTests
     [InlineData("equipstate x 0 900 3 0 0 0")]              // 不是整数
     [InlineData("equipstate 0 0 900 3.5 0 0 0")]            // 小数
     [InlineData("equipstate 2 0 900 3 0 0 0")]              // 位置只有 0 与 1
+    [InlineData("equipstate 2 10 900 3 0 0 0")]             // 位置 2 配上合法的部位号也不行(不能靠序号范围挡住)
     [InlineData("equipstate -1 0 900 3 0 0 0")]
     [InlineData("equipstate 0 -1 900 3 0 0 0")]             // 背包序号不能是负的
     [InlineData("equipstate 1 9 900 3 0 0 0")]              // 身上的部位号只有 10 到 21

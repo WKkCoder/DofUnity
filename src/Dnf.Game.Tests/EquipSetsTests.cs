@@ -288,6 +288,31 @@ public class EquipSetsTests
     }
 
     [Fact]
+    public void ARepeatedTierKeyIsReportedOnlyOnce()
+    {
+        var twice = new EnhanceData(
+            setMembers: new[] { 995 },
+            setPieceBonuses: new[] { new SetPieceBonus(1, Stats(EquipStat.HpMax, 1)), new SetPieceBonus(1, Stats(EquipStat.HpMax, 2)) });
+        ItemInfo only = Gear(995, EquipmentParts.Coat, enhance: twice);
+        EquipSetState state = Assert.Single(EquipSets.Evaluate(new List<ItemInfo> { only }, c => c == 995 ? only : null));
+        Assert.Equal(new[] { 1 }, state.ActiveTiers);
+    }
+
+    [Fact]
+    public void WithoutAMemberListOnlyTheWornPiecesPointingAtTheMasterCount()
+    {
+        var tierOnly = new EnhanceData(setPieceBonuses: new[] { new SetPieceBonus(2, Stats(EquipStat.HpMax, 1)) });
+        ItemInfo master = Gear(984, enhance: tierOnly);
+        ItemInfo pointing = Gear(985, EquipmentParts.Coat, enhance: new EnhanceData(setMaster: 984));
+        ItemInfo stranger = Gear(986, EquipmentParts.Pants);                                                        // 没有任何套装数据
+        ItemInfo elsewhere = Gear(987, EquipmentParts.Shoes, enhance: new EnhanceData(setMaster: 988));             // 指向别的(没有数据的)主件
+        EquipSetState state = Assert.Single(EquipSets.Evaluate(
+            new List<ItemInfo> { pointing, stranger, elsewhere }, code => code == 984 ? master : null));
+        Assert.Equal(1, state.Worn);
+        Assert.Empty(state.ActiveTiers);
+    }
+
+    [Fact]
     public void ASingleMemberSetIsFullWithOnePiece()
     {
         var one = new EnhanceData(setMembers: new[] { 993 }, setFullBonus: Stats(EquipStat.HpMax, 5));

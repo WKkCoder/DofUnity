@@ -58,7 +58,7 @@ public class EquipOverlayTests
 
     private static Dictionary<int, ItemInfo> BuildDefs()
     {
-        var defs = new Dictionary<int, ItemInfo> { [931] = Card };
+        var defs = new Dictionary<int, ItemInfo> { [931] = Card, [932] = Stack(932, new EnhanceData(enchantStats: EquipStats.Empty)) };
         var master = new EnhanceData(
             setMembers: new[] { 940, 941, 942 },
             setFullBonus: Stats(EquipStat.HpMax, 100),
@@ -345,9 +345,24 @@ public class EquipOverlayTests
         slots.Restore(EquipmentParts.Coat, Defs[940]);
         slots.Restore(EquipmentParts.Shoulder, Defs[941]);
         slots.Restore(EquipmentParts.Pants, Defs[942]);
+        Assert.False(slots.TotalStats().IsEmpty);      // 先算一遍,缓存里有了套装项
+        int v = slots.Version;
         overlay.SetsEnabled = false;
+        Assert.True(slots.Version > v);                // 开关一变就丢缓存、升版本
         Assert.True(slots.TotalStats().IsEmpty);
         Assert.False(overlay.SetsEnabled);
+        overlay.SetsEnabled = true;
+        Assert.False(slots.TotalStats().IsEmpty);
+    }
+
+    [Fact]
+    public void AnEnchantCardWithAnEmptyBlockAddsNoTerm()
+    {
+        (EquipmentSlots slots, EquipBonusOverlay overlay) = Rig();
+        ItemInfo weapon = With(Gear(900, EquipmentParts.Weapon), 0, enchant: 932);
+        slots.Restore(EquipmentParts.Weapon, weapon);
+        Assert.NotNull(overlay.EnchantOf(weapon));      // 卡有 [enchant] 块,只是空的
+        Assert.Empty(overlay.Terms(slots));
     }
 
     [Fact]
@@ -447,6 +462,8 @@ public class EquipOverlayTests
         var a = new EquipmentSlots();
         var b = new EquipmentSlots();
         a.Restore(EquipmentParts.Weapon, With(Gear(900, EquipmentParts.Weapon), 0, enchant: 931));
+        b.Restore(EquipmentParts.Ring, Gear(901, EquipmentParts.Ring));
+        Assert.Equal(a.Version, b.Version);               // 两个栏的版本号相同,只能靠"是不是同一个栏"区分缓存
         Assert.Single(overlay.Terms(a));
         Assert.Empty(overlay.Terms(b));
         Assert.Single(overlay.Terms(a));

@@ -643,6 +643,30 @@ public class EnhanceSessionTests
     }
 
     [Fact]
+    public void EveryWornPartFromTheFirstToTheLastKeepsItsStateAcrossASave()
+    {
+        Rig r = Make();
+        for (int part = EquipmentSlots.First; part <= EquipmentSlots.Last; part++)
+        {
+            r.Defs[1000 + part] = Gear(1000 + part, part);
+            Assert.True(r.Hero.Worn.Restore(part, r.Def(1000 + part).WithInstance(new EquipInstance(part - 9))));
+        }
+        HeroSave save = r.Hero.Snapshot();
+        r.Session.Capture(save);
+        Assert.Equal(EquipmentSlots.Count, save.EquipStates.Count);
+
+        HeroSave back = Reparse(save);
+        Rig n = Fresh(r);
+        n.Hero.Restore(back, n.Lookup);
+        EquipStateReport report = n.Session.Restore(back);
+        Assert.Equal((EquipmentSlots.Count, 0), (report.Applied, report.Dropped));
+        for (int part = EquipmentSlots.First; part <= EquipmentSlots.Last; part++)
+        {
+            Assert.Equal(new EquipInstance(part - 9), n.Hero.Worn.Get(part).Instance);
+        }
+    }
+
+    [Fact]
     public void BagAndWornRowsKeepOnlyCodesSoOldProgramsReadTheSameSave()
     {
         Rig r = Make();

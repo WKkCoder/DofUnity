@@ -254,6 +254,22 @@ public class UpgradeTableTests
     }
 
     [Fact]
+    public void TheFirstStepRoundsToNearestWhileTheLastStepOnlyTruncates()
+    {
+        // 第一步([type] 部位权重)先加 0.5 再截断:100 × 0.499 = 49.9 → 50;100 × 0.494 = 49.4 → 49
+        // 第三步(按强化等级权重)不加 0.5:0.499 × 100 = 49.9 → 49;0.506 × 100 = 50.6 → 50(不是 51)
+        UpgradeTable table = new TableBuilder().Rows(8, 1, 1, 1, 1, 1)
+            .FlatCost(100)
+            .Line("[type]", Floats(0.499f, 0.494f, 1f, 1f, 1f, 1f, 1f, 1f, 1f, 1f, 1f, 1f))
+            .Line("[cost weight by upgrade level]", Floats(5f, 0.499f, 6f, 0.506f))
+            .Build();
+        Assert.Equal(50, table.GetInfo(0, 1, 0, 10).GoldCost);
+        Assert.Equal(49, table.GetInfo(0, 1, 0, 11).GoldCost);
+        Assert.Equal(49, table.GetInfo(0, 1, 5, 12).GoldCost);
+        Assert.Equal(50, table.GetInfo(0, 1, 6, 12).GoldCost);
+    }
+
+    [Fact]
     public void TheLevelCostWeightUsesLevelEighteenForEverythingAbove()
     {
         UpgradeTable table = new TableBuilder().Rows(30, 1, 1, 1, 1, 1)

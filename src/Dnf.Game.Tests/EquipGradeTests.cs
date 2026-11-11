@@ -151,6 +151,17 @@ public class EquipGradeTests
     }
 
     [Fact]
+    public void ALevelEqualToTheFirstKeyDoesNotTakeTheFirstBranch()
+    {
+        // 第一项的键"小于"等级才直接取第一项;键相等时走后面的分支(有重复键取最后一个)
+        var duplicated = new KeyValuePair<int, float>[] { new(30, 4f), new(30, 6f), new(10, 2f) };
+        Assert.Equal(6f, EquipGradeGenerator.MultiplierFor(duplicated, 30));
+        // 不是从大到小排的表:等级等于第一项的键、又小于最后一项的键,取最后一项
+        var ascending = new KeyValuePair<int, float>[] { new(10, 2f), new(20, 3f) };
+        Assert.Equal(3f, EquipGradeGenerator.MultiplierFor(ascending, 10));
+    }
+
+    [Fact]
     public void ASingleEntryTableUsesItsValueAboveAndBelowAndOneOnlyWhenEqual()
     {
         var table = new KeyValuePair<int, float>[] { new(10, 2.5f) };

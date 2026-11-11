@@ -752,11 +752,27 @@ public class ItemUpgradeTests
     [InlineData(2, 1, 2, 0)]    // n 不小于等级:归零(哪怕标志只有 1)
     [InlineData(3, 1, 2, 2)]
     [InlineData(6, -1, 2, 0)]   // 标志为负:失败归零
+    [InlineData(3, 5, 2, 0)]    // 标志比等级还大:减出负数,夹到 0(强化等级是无符号字节,不能为负)
+    [InlineData(3, 3, 2, 0)]    // 标志正好等于等级:恰好降到 0
     public void ATicketWithAFlagDowngradesByTheFlag(int level, int flag, int n, int expected)
     {
         UpgradeSettings s = TicketSettings(new ScriptedRandom(0), new UpgradeTicketDef(0, 31, flag), penaltyLevels: n);
         UpgradeResult r = Run(s, WithTicket(With(Coat, level)));
         Assert.Equal((UpgradeOutcome.Failure, 2, expected), (r.Outcome, r.Penalty, r.NewLevel));
+    }
+
+    [Fact]
+    public void ATicketWithoutAMaterialOverrideKeepsTheRowsMaterialCount()
+    {
+        // 登记项里的"材料数量"写 0 就是不覆盖:仍然按表行要的 3 个收,少一个也不行
+        UpgradeSettings s = TicketSettings(new ScriptedRandom(100000, 100000), new UpgradeTicketDef(0, 31, 0));
+        UpgradeRequest few = WithTicket(Coat);
+        few.MaterialCount = 2;
+        Assert.Equal(UpgradeCodes.Material, Run(s, few).Code);
+        UpgradeRequest enough = WithTicket(Coat);
+        enough.MaterialCount = 3;
+        UpgradeResult r = Run(s, enough);
+        Assert.Equal((UpgradeOutcome.Success, 3), (r.Outcome, r.MaterialSpent));
     }
 
     [Fact]
@@ -841,12 +857,34 @@ public class ItemUpgradeTests
     }
 
     [Fact]
+    public void AnIncreaseThatLandsExactlyOnTheDenominatorKeepsItAndDoesNotWrapToZero()
+    {
+        // 95000 + 5000 = 100000,不大于分母,阈值就是 100000:抽到 99999 仍算失败,只有抽到上界 100000 才成功
+        UpgradeSettings s = Settings(PlainTable(fail: 95000), new ScriptedRandom(99999, 100000));
+        s.HasTitleItem = true;
+        s.TitleProbIncrease = -5000;
+        UpgradeResult fail = Run(s, Request(Coat));
+        Assert.Equal((UpgradeOutcome.Failure, 100000L), (fail.Outcome, fail.Threshold));
+        Assert.Equal(UpgradeOutcome.Success, Run(s, Request(Coat)).Outcome);
+    }
+
+    [Fact]
     public void ATitleIncreaseDoesNotTouchAZeroThreshold()
     {
         UpgradeSettings s = Settings(PlainTable(fail: 0), new ScriptedRandom());
         s.HasTitleItem = true;
         s.TitleProbIncrease = -5000;
         Assert.Equal(0L, Run(s, Request(Coat)).Threshold);
+    }
+
+    [Fact]
+    public void ACostDiscountWithoutATitleItemIsIgnored()
+    {
+        UpgradeSettings s = Settings(PlainTable(), new ScriptedRandom(100000));
+        s.HasTitleItem = false;
+        s.TitleCostDiscount = 50f;
+        Assert.Equal(100, ItemUpgrade.PayableGold(s, 100, false));
+        Assert.Equal(100, Run(s, Request(Coat, gold: 1000)).GoldSpent);
     }
 
     [Fact]

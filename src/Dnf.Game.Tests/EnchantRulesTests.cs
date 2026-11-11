@@ -166,6 +166,10 @@ public class EnchantRulesTests
         Assert.Equal(EnchantCodes.Invalid, EnchantRules.ApplyBead(Weapon, null, Lookup).Code);
         Assert.Equal(EnchantCodes.Invalid, EnchantRules.ApplyBead(Stack(940), Bead, Lookup).Code);      // 装备格里不是装备
         Assert.Equal(EnchantCodes.Invalid, EnchantRules.ApplyBead(Weapon, Gear(941), Lookup).Code);     // 宝珠格里不是可叠加物品
+        // 即使它带着有效的换卡编号,不是可叠加物品照样拒绝(只有"可叠加"这一关能拦住它)
+        ItemInfo gearWithCardId = Gear(947, enhance: new EnhanceData(monsterCardId: 931));
+        Assert.Equal(EnchantCodes.Invalid, EnchantRules.ApplyBead(Weapon, gearWithCardId, Lookup).Code);
+        Assert.True(EnchantRules.ApplyBead(Weapon, Bead, Lookup).Success);
     }
 
     [Fact]
