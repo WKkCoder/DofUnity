@@ -176,6 +176,13 @@ namespace Dnf.Play
         /// <summary>自动存档的检查间隔(秒)。</summary>
         public double IntervalSeconds { get; set; } = 10.0;
 
+        /// <summary>
+        /// 每次拍好存档快照(<see cref="HeroProgress.Snapshot"/>)之后、与上次存的内容比较之前调一下,让 <see cref="HeroProgress"/> 之外的状态把自己写进快照
+        /// (装扮栏用 <see cref="AvatarSession.Capture"/>)。是多播委托,几路状态可以各自 <c>+=</c> 一个;在比较之前调,所以只有这类状态变了也会被存下来。
+        /// 读档时没接上的话,存档里那一部分会被下一次存档抹掉——宿主要在造存档员的同时接上。
+        /// </summary>
+        public Action<HeroSave> Capture { get; set; }
+
         /// <summary>写成功过几次。</summary>
         public int Saves { get; private set; }
 
@@ -187,6 +194,7 @@ namespace Dnf.Play
         {
             _lastCheck = nowSeconds;
             HeroSave save = _progress.Snapshot();
+            Capture?.Invoke(save);
             string text = save.ToText();
             if (text == _lastText)
             {

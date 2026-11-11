@@ -49,6 +49,7 @@ namespace Dnf.Play
         /// 标签:<c>bag-dim</c>、<c>bag-frame</c>、<c>bag-panel</c>、<c>bag-title</c>、<c>bag-gold</c>、<c>bag-caption</c>、
         /// <c>bag-tab</c>/<c>bag-tab-selected</c>/<c>bag-tab-label</c>、<c>bag-cell</c>/<c>bag-cell-selected</c>、<c>bag-icon</c>/<c>bag-icon-block</c>/<c>bag-icon-dim</c>、
         /// <c>bag-rarity</c>、<c>bag-count</c>、<c>bag-slot</c>/<c>bag-slot-selected</c>/<c>bag-slot-label</c>/<c>bag-slot-icon</c>/<c>bag-slot-rarity</c>、<c>bag-stat</c>、<c>bag-item-name</c>/<c>bag-item-explain</c>(有字体与文字表时)、<c>bag-info</c>、<c>bag-message</c>、<c>bag-hint</c>。
+        /// 接了装扮页时标题条里多一个切页按钮(<c>bag-page-button</c> 等);窗口在装扮页上时,标题条以下改画装扮页(<see cref="BagAvatarArt"/>,标签见那里)。
         /// </summary>
         public static void Build(List<SceneSprite> into, ref int order, BagWindow window, HeroProgress progress, ISpriteSource sprites, OverlayArt art,
             EquipmentStats worn = default, ItemTexts texts = null)
@@ -71,6 +72,12 @@ namespace Dnf.Play
             into.Add(OverlayArt.Place(title, x + 16, y + (BagWindow.TitleHeight - title.Height) / 2, order++, "bag-title"));
             SpriteFrame gold = art.Text("GOLD " + progress.Gold.ToString(CultureInfo.InvariantCulture), 2, OverlayArt.Yellow);
             into.Add(OverlayArt.Place(gold, x + w - 16 - gold.Width, y + (BagWindow.TitleHeight - gold.Height) / 2, order++, "bag-gold"));
+            BagAvatarArt.PlacePageButton(into, ref order, art, window);
+            if (window.Page == BagPage.Avatars && window.Avatars != null)
+            {
+                BagAvatarArt.Build(into, ref order, window, sprites, art, texts);   // 装扮页:外壳以下整页另画
+                return;
+            }
 
             // ---- 装备栏
             SpriteFrame caption = art.Text("EQUIPMENT", 2, OverlayArt.White);

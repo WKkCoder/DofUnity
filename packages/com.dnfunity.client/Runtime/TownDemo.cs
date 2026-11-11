@@ -134,6 +134,7 @@ namespace Dnf.Client
         private FileHeroSaveStore _saveStore;
         private HeroSave _loadedSave;
         private HeroSaver _saver;
+        private AvatarSession _avatars;                    // 装扮会话(r15-avatarhost):装扮栏、衣柜与存档;跟着主角进度一起造,城镇世界、背包装扮页、存档员都接它
         private string _saveError;
         private bool _noteSaveLook;
         private int _savedLevel = 1;                       // 选角界面上画的等级:存档里的(没有存档是 1)
@@ -960,9 +961,28 @@ namespace Dnf.Client
             if (_progress == null)
             {
                 _progress = HeroProgress.CreateForLocalHero(_assets, _heroLevel);
+                CreateAvatars();
                 RestoreSave();
             }
             return _progress;
+        }
+
+        /// <summary>
+        /// 装扮会话(r15-avatarhost):在存档还原之前造好,读档时装扮栏跟着还原。衣柜的底座读不出来(角色脚本不在)时会话照样造,只是 Ready 为 false,背包里没有装扮页;
+        /// 造的时候出了别的问题就记一行日志、这次运行没有装扮功能(存档里的装扮行在还原时会被备份成 .dropped,见 <see cref="RestoreSave"/>)。
+        /// </summary>
+        private void CreateAvatars()
+        {
+            try
+            {
+                _avatars = new AvatarSession(_assets, _progress);
+                Debug.Log("DNF_AVATAR session ready=" + _avatars.Ready);
+            }
+            catch (Exception e)
+            {
+                _avatars = null;
+                Debug.Log("DNF_AVATAR problem " + e.GetType().Name + ": " + e.Message);
+            }
         }
 
         /// <summary>
@@ -1057,12 +1077,28 @@ namespace Dnf.Client
                 }
                 Debug.Log("DNF_SAVE loaded level=" + _progress.Level + " exp=" + _progress.Exp + " gold=" + _progress.Gold + " bag=" + _progress.BagItems
                     + " equipped=" + _progress.EquippedCount + " stacks=" + report.BagStacks + " moved=" + report.Moved + " dropped=" + report.Dropped);
-                if (report.Dropped > 0)
+                int avatarDropped = 0;
+                if (_avatars != null)
+                {
+                    // 装扮栏在背包、等级(含 -dnflevel 的覆盖)都还原好之后再还原:穿不回去的放回背包,找不到的丢掉
+                    AvatarRestoreReport avatarReport = _avatars.RestoreFromData(_loadedSave);
+                    avatarDropped = avatarReport.Dropped;
+                    Debug.Log("DNF_AVATAR loaded worn=" + avatarReport.Worn + " moved=" + avatarReport.Moved + " dropped=" + avatarReport.Dropped);
+                }
+                else if (_loadedSave.Avatars.Count > 0)
+                {
+                    avatarDropped = _loadedSave.Avatars.Count;      // 没有装扮会话:存档里的装扮行下一次存档会被抹掉,先备份
+                }
+                if (report.Dropped > 0 || avatarDropped > 0)
                 {
                     BackupSave(".dropped");
                 }
             }
             _saver = new HeroSaver(_saveStore, _progress, _loadedSave);
+            if (_avatars != null)
+            {
+                _saver.Capture += _avatars.Capture;                 // 每次存档前把装扮栏写进快照(只有装扮变了也会存)
+            }
         }
 
         private void BackupSave(string suffix)
@@ -1971,14 +2007,16 @@ namespace Dnf.Client
             {
                 _bagWornVersion = _progress.EquipVersion;
                 _bagWornHero = hero;
-                _bagWorn = HeroPanel.WornEquipment(_assets, hero, _progress);
+                // 装扮进了主角的外观,面板读外观里每一件的脚本;装扮的属性加成这个版本不做,所以装扮件按 0 算(AvatarSession.WornStats)
+                _bagWorn = _avatars != null ? _avatars.WornStats(hero) : HeroPanel.WornEquipment(_assets, hero, _progress);
             }
             return _bagWorn;
         }
 
         /// <summary>
-        /// 背包里穿脱了装备:城镇里的主角立刻换上装备栏里的武器(外观是会话外的共用状态,城镇会话没有自己的同步);
+        /// 背包里穿脱了装备或装扮:城镇里的主角立刻换上装备栏里的武器与装扮栏里的时装(外观是会话外的共用状态,城镇会话没有自己的同步);
         /// 副本里的战斗会话下一步更新时自己同步(换外观、换武器常量、重算攻击面板),所以这里只管城镇。
+        /// 装扮会话可用时由它同步(<see cref="AvatarSession.Sync"/>:武器经衣柜换底座,装扮保留),否则退回只换武器的老路(<see cref="HeroLook.Apply"/>)。
         /// </summary>
         private void SyncHeroLook()
         {
@@ -1986,7 +2024,13 @@ namespace Dnf.Client
             {
                 return;
             }
-            HeroLook.Apply(_assets, _flow.Session?.Hero, _progress);
+            TownHero hero = _flow.Session?.Hero;
+            if (_avatars != null && _avatars.Ready && !_legacyTown)
+            {
+                _avatars.Sync(hero);
+                return;
+            }
+            HeroLook.Apply(_assets, hero, _progress);
         }
 
         /// <summary>
@@ -2232,10 +2276,9 @@ namespace Dnf.Client
         private void StartFlow()
         {
             OpenSave();
-            if (_saveStore != null)
-            {
-                HeroProgressForRun();                // 城镇里就要按存档里穿的武器造主角,所以进度在流程之前就造好
-            }
+            // 城镇里就要按存档里穿的武器造主角,装扮会话也要在进城之前包进城镇世界,所以进度(与装扮会话)在流程之前就造好;
+            // 没有存档时这里造出来的与之后第一次造出来的是同一个(HeroProgressForRun 只造一次),只是早了一点
+            HeroProgressForRun();
             string dungeon = string.IsNullOrEmpty(_dungeonPath) ? DefaultDungeon : _dungeonPath;
             // 副本选择界面:读得到世界地图就画原版的世界地图界面(E-094),读不到(数据不全、-dnfworldmap none)退回占位名单
             WorldMapSet world = string.Equals(_worldMapPath, "none", StringComparison.OrdinalIgnoreCase) ? null : WorldMapCatalog.Load(_assets, _worldMapPath);
@@ -2245,6 +2288,11 @@ namespace Dnf.Client
             ITownWorld townWorld = _legacyTown
                 ? new LegacyTownWorld(() => DemoHero.CreateSession(_assets, DefaultMap, DemoHero.SeriaRoom))
                 : (ITownWorld)new AtlasTownWorld(_assets, TownAtlas.Open(_assets), 1, withSplashes: !_noSplash, weaponPath: () => _progress?.WeaponPath);
+            bool avatarsOn = !_legacyTown && _avatars != null && _avatars.Ready;   // 老城镇只有一张图、没有装扮;装扮底座读不出来也没有
+            if (avatarsOn)
+            {
+                townWorld = new AvatarTownWorld(townWorld, _avatars);   // 进城、换区域、副本回城造出来的主角都按装扮栏穿(r15-avatarhost)
+            }
             Func<string, SplashScene> dungeonSplash = _legacyTown || _noSplash ? (Func<string, SplashScene>)null : path => SplashCatalog.ForDungeon(_assets, path);
             // 选角界面(E-096):原版图包与鬼剑士头像;名册是本地存档占位(一个 1 级的默认鬼剑士)
             CharacterSelectScene characterScene = CharacterSelectScene.From(_assets);
@@ -2258,6 +2306,10 @@ namespace Dnf.Client
                 (path, run, difficulty) => CreateDungeon(path, _seed + run, difficulty));
             _flow.DifficultyLimit = DifficultyGate.For(() => _progress, _assets);   // 选择界面左右键能选到哪一档:按主角的通关记录(M33,E-125)
             _flow.Bag.UseAssets(_assets);            // 背包里穿武器前先问"画面上穿得出来吗"(HeroLook.CanShow)
+            if (avatarsOn)
+            {
+                _flow.Bag.UseAvatars(_avatars);      // 背包的装扮页(r15-avatarhost):V 键或标题条上的页签切换,穿脱的结果立刻反映在城镇主角身上
+            }
             _flow.Shop.UseAssets(_assets);           // NPC 商店(E-119):商店目录、物品目录、收购价倍率表都按需从 PVF 读
             _flow.UseShopNpcs(TownShopNpcs.FromAssets(_assets));
             QuestBook quests = QuestBookForRun();
@@ -2671,7 +2723,7 @@ namespace Dnf.Client
         }
 
         /// <summary>
-        /// 背包窗口开着时的输入(开着就独占):方向键移动光标(格子最左一列再按左键进装备栏),Q / E 或 Tab 换页,回车或 X 穿脱,I 或 Esc 关上,鼠标点格子(再点一下穿脱)。
+        /// 背包窗口开着时的输入(开着就独占):方向键移动光标(格子最左一列再按左键进装备栏),Q / E 或 Tab 换页,V 在物品页与装扮页之间切换,回车或 X 穿脱,I 或 Esc 关上,鼠标点格子(再点一下穿脱)。
         /// 键位是本项目自己的占位设计(原版背包界面没有读到)。
         /// </summary>
         private void HandleBagInput(Event e)
@@ -2706,6 +2758,9 @@ namespace Dnf.Client
                     case KeyCode.E:
                     case KeyCode.Tab:
                         bag.NextTab(1);
+                        break;
+                    case KeyCode.V:
+                        bag.TogglePage();            // 物品页 ⇄ 装扮页(没接装扮会话时什么也不做)
                         break;
                     case KeyCode.Return:
                     case KeyCode.KeypadEnter:

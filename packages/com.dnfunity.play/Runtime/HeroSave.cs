@@ -226,6 +226,7 @@ namespace Dnf.Play
             {
                 sb.Append("bag ").Append(stack.Code.ToString(Inv)).Append(' ').Append(stack.Count.ToString(Inv)).Append('\n');
             }
+            AvatarSaveFormat.Write(this, sb);
             foreach (SavedWorn worn in Worn)
             {
                 sb.Append("worn ").Append(worn.Part.ToString(Inv)).Append(' ').Append(worn.Code.ToString(Inv)).Append('\n');
@@ -359,6 +360,10 @@ namespace Dnf.Play
                 return GrowthSaveFormat.Parse(r, key, f, no, out error);
             }
             int arity;
+            if (AvatarSaveFormat.Handles(key))
+            {
+                return AvatarSaveFormat.Parse(r, key, f, no, out error);
+            }
             switch (key)
             {
                 case "cleared":

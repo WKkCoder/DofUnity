@@ -50,6 +50,12 @@ namespace Dnf.Play
         public const int SlotY = 124;
         public const int CaptionY = 86;
 
+        /// <summary>标题条里切页的按钮(接了装扮页才有):左上角与大小。</summary>
+        public const int PageButtonX = 330;
+        public const int PageButtonY = 38;
+        public const int PageButtonWidth = 132;
+        public const int PageButtonHeight = 28;
+
         /// <summary>开着。</summary>
         public bool Open { get; private set; }
 
@@ -65,8 +71,14 @@ namespace Dnf.Play
         /// <summary>装备栏上的光标(0 到 11,对应部位 <see cref="EquipmentSlots.First"/> 起)。</summary>
         public int EquipCursor { get; private set; }
 
-        /// <summary>最近一次操作的结果文字(占位英文;显示在窗口底部)。</summary>
-        public string Message { get; private set; } = string.Empty;
+        private string _message = string.Empty;
+
+        /// <summary>最近一次操作的结果文字(占位英文;显示在窗口底部)。在装扮页上是装扮页自己的那一条(<see cref="BagAvatarPage.Message"/>)。</summary>
+        public string Message
+        {
+            get => Page == BagPage.Avatars && Avatars != null ? Avatars.Message : _message;
+            private set => _message = value;
+        }
 
         /// <summary>最近一次穿装备的结果(没穿过是 <see cref="EquipResult.NoItem"/>;日志与探针用)。</summary>
         public EquipResult LastResult { get; private set; } = EquipResult.NoItem;
@@ -123,7 +135,58 @@ namespace Dnf.Play
             Opener = new ItemOpener(catalog.Get, ItemOpener.RollFrom(new Random()));
         }
 
-        /// <summary>按阶段打开:只有城镇与副本里有背包窗口;返回有没有打开。每次打开都回到装备页、光标在第一格。</summary>
+        /// <summary>当前是哪一页(物品页或装扮页);每次打开都回到物品页。</summary>
+        public BagPage Page { get; private set; }
+
+        /// <summary>装扮页(宿主用 <see cref="UseAvatars"/> 接上;没接是 null,窗口就只有物品页,与原来一样)。</summary>
+        public BagAvatarPage Avatars { get; private set; }
+
+        private GameStage _stage;
+
+        /// <summary>
+        /// 接上装扮会话:窗口多出装扮页(标题条里的按钮或 V 键切过去,见 <see cref="TogglePage"/>);传 null 拆掉。回到物品页。
+        /// 装扮页只管光标与点击,穿脱与规则都在 <see cref="AvatarSession"/> 里(规则层的结论,这里不重判)。
+        /// </summary>
+        public void UseAvatars(AvatarSession session)
+        {
+            Avatars = session == null ? null : new BagAvatarPage(session);
+            Page = BagPage.Items;
+        }
+
+        /// <summary>切页按钮的矩形(x、y、宽、高;标题条里)。</summary>
+        public static (int X, int Y, int W, int H) PageButtonRect => (PageButtonX, PageButtonY, PageButtonWidth, PageButtonHeight);
+
+        /// <summary>
+        /// 切页:物品页与装扮页之间来回。窗口没开、没接装扮页时不动;去装扮页还要装扮功能可用(<see cref="AvatarSession.Ready"/>)、而且是在城镇里开的窗口
+        /// (装扮只有城镇里的主角看得到,副本里的外观这个版本不做),不行就留在物品页、原因写在 <see cref="Message"/>。回物品页总是可以。返回有没有切换。
+        /// </summary>
+        public bool TogglePage()
+        {
+            if (!Open || Avatars == null)
+            {
+                return false;
+            }
+            if (Page == BagPage.Avatars)
+            {
+                Page = BagPage.Items;
+                return true;
+            }
+            if (!Avatars.Session.Ready)
+            {
+                Message = "AVATARS UNAVAILABLE";
+                return false;
+            }
+            if (_stage != GameStage.Town)
+            {
+                Message = "AVATARS: TOWN ONLY";
+                return false;
+            }
+            Page = BagPage.Avatars;
+            Avatars.Reset();
+            return true;
+        }
+
+        /// <summary>按阶段打开:只有城镇与副本里有背包窗口;返回有没有打开。每次打开都回到物品页的装备页、光标在第一格。</summary>
         public bool Show(GameStage stage)
         {
             if (stage != GameStage.Town && stage != GameStage.Dungeon)
@@ -132,6 +195,9 @@ namespace Dnf.Play
             }
             Stage = stage;
             Open = true;
+            _stage = stage;
+            Page = BagPage.Items;
+            Avatars?.Reset();
             Tab = InventoryTab.Equipment;
             Cursor = 0;
             OnEquipment = false;
@@ -377,6 +443,11 @@ namespace Dnf.Play
             {
                 return;
             }
+            if (Page == BagPage.Avatars)
+            {
+                Avatars.Move(dx, dy);
+                return;
+            }
             if (OnEquipment)
             {
                 int col = EquipCursor % SlotColumns, row = EquipCursor / SlotColumns;
@@ -408,7 +479,7 @@ namespace Dnf.Play
         /// <summary>换页(+1 下一页、−1 上一页,循环);光标回到第一格。</summary>
         public void NextTab(int delta)
         {
-            if (!Open)
+            if (!Open || Page == BagPage.Avatars)
             {
                 return;
             }
@@ -436,6 +507,15 @@ namespace Dnf.Play
             if (!Open || progress == null)
             {
                 return false;
+            }
+            if (Page == BagPage.Avatars)
+            {
+                bool done = Avatars.Activate();
+                if (done)
+                {
+                    Changes++;
+                }
+                return done;
             }
             if (OnEquipment)
             {
@@ -485,6 +565,7 @@ namespace Dnf.Play
             {
                 return false;
             }
+            Page = BagPage.Items;
             SelectTab(InventoryTab.Equipment);
             int count = progress.Bag.Tab(InventoryTab.Equipment).Count;
             for (int i = 0; i < count; i++)
@@ -500,14 +581,26 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 鼠标点击(画布坐标):点页签换页,点物品格或装备格先选中、再点一下已选中的等于回车。返回点中的是不是窗口里的某个控件
-        /// (点在别处返回 false,窗口不关)。
+        /// 鼠标点击(画布坐标):点页签换页,点物品格或装备格先选中、再点一下已选中的等于回车;接了装扮页时标题条里的切页按钮在两页上都点得到,
+        /// 装扮页上的格子点击交给装扮页(<see cref="BagAvatarPage.Click"/>)。返回点中的是不是窗口里的某个控件(点在别处返回 false,窗口不关)。
         /// </summary>
         public bool Click(int x, int y, HeroProgress progress)
         {
             if (!Open)
             {
                 return false;
+            }
+            if (Avatars != null && Inside(PageButtonRect, x, y))
+            {
+                TogglePage();
+                return true;
+            }
+            if (Page == BagPage.Avatars)
+            {
+                int before = Avatars.Changes;
+                bool hit = Avatars.Click(x, y);
+                Changes += Avatars.Changes - before;
+                return hit;
             }
             int tab = HitTab(x, y);
             if (tab >= 0)
