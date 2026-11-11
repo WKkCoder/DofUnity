@@ -1003,9 +1003,10 @@ namespace Dnf.Play
                 // 升空段:动画第 0 帧(带攻击框)停到升空时间结束(动画时间 = 墙钟 × 播放倍率,向上取整保证墙钟不短于升空时间),之后接着播剩下的帧
                 hold = (int)Math.Ceiling(rise.DurationMs * (hero.AttackAnimationRate > 0.0 ? hero.AttackAnimationRate : 1.0));
             }
+            SkillLeapPlan leap = LeapPlanOf(slot, spec);
             bool began = chain
-                ? hero.ChainSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame, rearmWindows: multiHitWindows, rise: rise)
-                : hero.BeginSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame, multiHitWindows, rise);
+                ? hero.ChainSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame, rearmWindows: multiHitWindows, rise: rise, leap: leap)
+                : hero.BeginSkillMotion(slot.SkillId, spec.MotionIndex, speed, accel, hold, spec.EndFrame, multiHitWindows, rise, leap);
             if (began && spec.Warp != null)
             {
                 ApplyWarp(slot, spec.Warp, hero);

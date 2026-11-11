@@ -12,7 +12,7 @@ namespace Dnf.Cli.Analysis;
 /// `dnf sound-check [--bot [--dungeon …] [--seconds N] [--seed N]] [--json &lt;文件&gt;]`:声音数据与触发的检查(证据 E-089、E-090)。
 ///   1. audio.xml 的各类条目数、文件是否在 SoundPacks / Music 里、是不是 Ogg(头四个字节 OggS)、RANDOM 与 GROUP 能不能展开到文件、没被引用的文件数;
 ///   2. 全库脚本里的声音引用:.map 的 [sound]、.mob 的五种声音标签、.atk 的 [hit wav]、.chr 的 [weapon wav]、.ani 帧上的声音,各自能不能在 audio.xml 里找到;
-///   3. 代码里写死的鬼剑士语音等标签是否在 audio.xml 里;
+///   3. 代码里写死的鬼剑士语音等标签、配方里按名字放的开始/落地声音是否在 audio.xml 里;
 ///   4. 带 --bot:让自动机打一座副本,按时间顺序收集战斗会话发出的声音提示,统计各种类的次数、每个提示能不能解析到存在的文件。
 /// 只输出数量与标签名(标识符),不输出任何声音内容;没有任何录音可对照,所以这里验证的是"数据对得上、触发有发出",不是"听起来对"。
 /// </summary>
@@ -491,8 +491,8 @@ internal static class SoundCheck
     private static void CheckConstants(AudioCatalog catalog, SortedDictionary<string, object> summary)
     {
         Console.WriteLine();
-        Console.WriteLine("== 代码里写死的标签(鬼剑士的语音与技能音效、冷却完成提示) ==");
-        var keys = new (string Name, string Key)[]
+        Console.WriteLine("== 代码里写死的标签(鬼剑士的语音与技能音效、冷却完成提示、配方里的开始/落地声音) ==");
+        var keys = new List<(string Name, string Key)>
         {
             ("Attack", SwordmanVoice.Attack), ("JumpAttack", SwordmanVoice.JumpAttack), ("Hurt", SwordmanVoice.Hurt), ("Die", SwordmanVoice.Die),
             ("Jump", SwordmanVoice.Jump), ("Backstep", SwordmanVoice.Backstep), ("Thrust", SwordmanVoice.Thrust), ("NoMana", SwordmanVoice.NoMana),
@@ -500,6 +500,34 @@ internal static class SoundCheck
             ("UpperSlash", SwordmanVoice.UpperSlash), ("JumpStart", SwordmanVoice.JumpStart), ("JumpEnd", SwordmanVoice.JumpEnd), ("AirSword", SwordmanVoice.AirSword),
             ("CooldownEnd", RoomCombatSession.CooldownEndSound),
         };
+        // 配方里按名字放的声音(脚本前冲技能每段开始的声音与落地块的声音,R14):名字是客户端写死的常量,拼错了游戏里就是静音,所以逐个核对;名字里不带技能号,按配方表里的位置记
+        int recipeNo = 0;
+        foreach (SkillRecipe recipe in SkillRecipes.Default.All)
+        {
+            recipeNo++;
+            for (int i = 0; i < recipe.Stages.Count; i++)
+            {
+                foreach (string tag in recipe.Stages[i].StartSounds)
+                {
+                    if (tag.Length > 0)
+                    {
+                        keys.Add(("配方#" + recipeNo + " 第" + (i + 1) + "段开始声音", tag));
+                    }
+                }
+                SkillLeapLanding? landing = recipe.Stages[i].Leap?.Landing;
+                if (landing == null)
+                {
+                    continue;
+                }
+                foreach (string tag in landing.Sounds)
+                {
+                    if (tag.Length > 0)
+                    {
+                        keys.Add(("配方#" + recipeNo + " 第" + (i + 1) + "段落地声音", tag));
+                    }
+                }
+            }
+        }
         int found = 0;
         foreach ((string name, string key) in keys)
         {
@@ -508,8 +536,8 @@ internal static class SoundCheck
             string kind = ok && catalog.TryGet(key, out AudioEntry? e) ? e!.Kind.ToString() : "-";
             Console.WriteLine("    " + (ok ? "有 " : "缺 ") + key.PadRight(18) + kind.PadRight(8) + name);
         }
-        Console.WriteLine("共 " + keys.Length + " 个,audio.xml 里有 " + found + " 个");
-        summary["constants_total"] = keys.Length;
+        Console.WriteLine("共 " + keys.Count + " 个,audio.xml 里有 " + found + " 个");
+        summary["constants_total"] = keys.Count;
         summary["constants_found"] = found;
     }
 

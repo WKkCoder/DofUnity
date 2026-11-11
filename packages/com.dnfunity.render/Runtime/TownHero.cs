@@ -437,6 +437,12 @@ namespace Dnf.Render
         // 升空出招类技能(M65,证据 E-163):脚本升空的计划与出发点;关键帧标志:已读到的帧号、这一步读到的标志
         private SkillRisePlan _rise;
         private double _riseStartX;
+
+        // 脚本前冲(状态 0x2d 的模式 1,见 SkillLeapPlan):计划、这一段开头的横坐标、落地时刻(墙钟毫秒)、已落地
+        private SkillLeapPlan _leap;
+        private double _leapStartX;
+        private int _leapLandMs;
+        private bool _leapLanded;
         private int _flagFrame = -1;
         private readonly List<SkillKeyFlag> _keyFlags = new List<SkillKeyFlag>();
 
@@ -736,6 +742,17 @@ namespace Dnf.Render
 
         /// <summary>正在放脚本跳跃的技能而且还没落地。</summary>
         public bool HopAirborne => Motion == HeroMotion.Skill && _hop != null && !_hopLanded;
+
+        /// <summary>脚本前冲(<see cref="SkillLeapPlan"/>)的落地计数(每落地一次加 1,永远递增);会话据此办落地块里的事(震屏、声音、特效)。</summary>
+        public int LeapLandings { get; private set; }
+
+        /// <summary>最近一次前冲落地时放的技能号与所在段(落地那一步技能可能同时结束,所以单独记一份)。</summary>
+        public int LeapLandingSkillId { get; private set; }
+
+        public int LeapLandingStage { get; private set; }
+
+        /// <summary>正在放脚本前冲的技能而且还没落地(空中)。</summary>
+        public bool LeapAirborne => Motion == HeroMotion.Skill && _leap != null && !_leapLanded;
 
         /// <summary>正在放腾空悬停俯冲类技能的空中部分(悬停或俯冲,还没落地;证据 E-149)。</summary>
         public bool DiveAirborne => Motion == HeroMotion.Skill && _dive != null;
@@ -1232,9 +1249,10 @@ namespace Dnf.Render
         /// <paramref name="rearmWindows"/> 大于 0 时开多段命中计时器(证据 E-139):间隔 = 整段动画时长(按播放倍率折算)/ 这个数,最多响这么多次,
         /// 每次响就让命中名单重新武装(<see cref="HitRearmNumber"/> 加 1);0 表示没有。
         /// <paramref name="rise"/> 不为空时这一段是脚本升空(证据 E-163,见 <see cref="SkillRisePlan"/>)。
+        /// <paramref name="leap"/> 不为空时这一段是脚本前冲(状态 0x2d 模式 1,见 <see cref="SkillLeapPlan"/>)。
         /// </summary>
         public bool BeginSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel, int holdFirstFrameMs = -1, int endFrame = -1,
-            int rearmWindows = 0, SkillRisePlan rise = null)
+            int rearmWindows = 0, SkillRisePlan rise = null, SkillLeapPlan leap = null)
         {
             if (!CanBeginSkill)
             {
@@ -1249,6 +1267,7 @@ namespace Dnf.Render
             _skillEndMs = EndMsOf(m, endFrame);
             StartStageRearm(m, rearmWindows);
             StartRise(rise);
+            StartLeap(m, leap);
             return true;
         }
 
@@ -1342,6 +1361,22 @@ namespace Dnf.Render
         {
             _rise = rise;
             _riseStartX = X;
+        }
+
+        /// <summary>
+        /// 开始(或清除)脚本前冲(状态 0x2d 模式 1 的进入块 0x00cd4e1e 起):记下这一段开头的横坐标(0x00cd4e58)、清"已落地"(0x00cd4e8d),
+        /// 把动画第 <see cref="SkillLeapPlan.LandFrame"/> 帧开头的时刻按这一段的播放倍率折成墙钟毫秒(0x01090600,与脚本跳跃的 <see cref="HopFrameMs"/> 同一个公式)。
+        /// </summary>
+        private void StartLeap(EtcMotion m, SkillLeapPlan leap)
+        {
+            _leap = leap;
+            _leapLanded = false;
+            if (leap == null)
+            {
+                return;
+            }
+            _leapStartX = X;
+            _leapLandMs = HopFrameMs(m, leap.LandFrame, SkillRate);
         }
 
         /// <summary>
@@ -1450,9 +1485,10 @@ namespace Dnf.Render
         /// <paramref name="hop"/> 不为空时这一段是脚本跳跃(蓄力跳跃类技能,证据 E-138):位移由动画时间脚本化,命中窗口由计时器重武装;
         /// <paramref name="rateScale"/> 是这一段动画的变速系数(乘在攻击速度的播放倍率上),技能结束或换段时恢复 1。
         /// <paramref name="rise"/> 不为空时这一段是脚本升空(M65,证据 E-163,见 <see cref="SkillRisePlan"/>)。
+        /// <paramref name="leap"/> 不为空时这一段是脚本前冲(状态 0x2d 模式 1,见 <see cref="SkillLeapPlan"/>):水平与高度都由动画时间脚本化,落地计入 <see cref="LeapLandings"/>。
         /// </summary>
         public bool ChainSkillMotion(int skillId, int etcIndex, double slideSpeed, double slideAccel, int holdFirstFrameMs = -1, int endFrame = -1,
-            SkillHopPlan hop = null, double rateScale = 1.0, int rearmWindows = 0, SkillRisePlan rise = null)
+            SkillHopPlan hop = null, double rateScale = 1.0, int rearmWindows = 0, SkillRisePlan rise = null, SkillLeapPlan leap = null)
         {
             if (Motion != HeroMotion.Skill || SkillId != skillId || _skillWindupStage >= 0 || _skillMotion == null)
             {
@@ -1477,6 +1513,7 @@ namespace Dnf.Render
             StartHop(m, hop);
             StartStageRearm(m, rearmWindows);
             StartRise(rise);
+            StartLeap(m, leap);
             return true;
         }
 
@@ -1805,6 +1842,8 @@ namespace Dnf.Render
         private void ClearDive()
         {
             _rise = null;
+            _leap = null;            // 脚本前冲的计划同样只在一次放技能期间有效(落地计数保留)
+            _leapLanded = false;
             _flagFrame = -1;
             _dive = null;
             _diveMs = 0.0;
@@ -1920,6 +1959,10 @@ namespace Dnf.Render
             if (_hop != null)
             {
                 StepHop((int)_motionMs);
+            }
+            if (_leap != null)
+            {
+                StepLeap((int)_motionMs);
             }
             if (_stageRearmMax > 0)
             {
@@ -2051,6 +2094,33 @@ namespace Dnf.Render
             Z = z;
         }
 
+        /// <summary>
+        /// 脚本前冲这一步(状态 0x2d 模式 1 的逐帧块 0x00cbd4d2),<paramref name="e"/> 是这一段动画已经过去的墙钟毫秒(0x005b7250):
+        /// 还在空中(<see cref="SkillLeapPlan.InFlight"/>)就把横坐标设成"起点 ± 整数线性插值"——取带碰撞的位置(0x00871250 逐像素问可站立,
+        /// 碰到不能站的像素就停在上一个能站的,与 <see cref="MoveAxis"/> 一致),朝向为左取减(虚槽 +0xf8 为 0 取减,0x00cbd545)——再设高度弧(0x00cbd5b7);
+        /// 到了落地时刻(含)就高度归 0、记一次落地(0x00cbd64a)并不再摆位置:落地块不写水平位置,不补满距离。
+        /// </summary>
+        private void StepLeap(int e)
+        {
+            if (_leapLanded)
+            {
+                return;
+            }
+            if (SkillLeapPlan.InFlight(e, _leapLandMs))
+            {
+                int dx = SkillLeapPlan.OffsetAt(_leap.Distance, e, _leapLandMs);
+                double target = _leapStartX + (FacingLeft ? -dx : dx);
+                X = MoveAxis(X, target - X, true);
+                Z = SkillLeapPlan.HeightAt(_leap.Height, e, _leapLandMs);
+                return;
+            }
+            Z = 0;
+            _leapLanded = true;
+            LeapLandingSkillId = SkillId;
+            LeapLandingStage = _skillStage;
+            LeapLandings++;
+        }
+
         private double EtcDurationMs(EtcMotion m)
         {
             return Math.Ceiling(m.Timeline.TotalMilliseconds / SkillRate);
@@ -2062,11 +2132,16 @@ namespace Dnf.Render
         private void FinishSkill()
         {
             // 技能在空中结束(脚本跳跃与俯冲另有自己的落地保险):主角从当时的高度落下来,而不是凭空站到地上(升空出招类技能,M65,证据 E-163)
-            bool falling = _hop == null && _dive == null && Z > 0.0;
+            bool falling = _hop == null && _dive == null && _leap == null && Z > 0.0;
             if (_hop != null)
             {
                 Z = 0;               // 脚本跳跃的技能结束时一定落回地面(状态提前结束的保险)
                 _hop = null;
+            }
+            if (_leap != null)
+            {
+                Z = 0;               // 脚本前冲在空中被提前结束时同样落回地面(保险:不让主角悬在半空;客户端被打断时高度怎么处理没读,这里直接落地)
+                _leap = null;
             }
             if (_dive != null)
             {
