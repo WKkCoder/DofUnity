@@ -15,9 +15,10 @@ namespace Dnf.Play
     /// <see cref="Stats"/> 是它加上穿着的装备的基础属性(<see cref="WornStats"/>、<see cref="EquipmentSlots.TotalStatBlock"/>:穿上加、脱下扣、换穿即换)。
     /// 一个对象跟着主角走完整个流程:副本里每个房间的战斗会话共用同一个(房间换了、副本换了,等级与经验都留着)。
     /// 技能(M35,证据 E-127):<see cref="Skills"/> 是学会的技能、技能点余额与快捷栏;升级给的点数进它的余额,学技能花、退技能还。
-    /// 没做:觉醒转职(<see cref="Awakening"/> 恒为 0,50 级以后用成长类型本身的块)、属性点、强化增幅附魔套装品级对属性的加成、任务与道具另给的技能点。
+    /// 觉醒(r15-awaken,<see cref="Awakening"/> = 第二成长类型,<see cref="Awaken"/>;见 HeroProgress.Awakening.cs):50 级以后换用觉醒块的增量、白送觉醒技能、觉醒后的技能最高级。
+    /// 没做:属性点、强化增幅附魔套装品级对属性的加成、任务与道具另给的技能点。
     /// </summary>
-    public sealed class HeroProgress
+    public sealed partial class HeroProgress
     {
         /// <summary>新角色的成长类型(服务端缺省 0;转职前一直用第一个成长类型的增量)。</summary>
         public const int DefaultGrowtype = 0;
@@ -31,8 +32,8 @@ namespace Dnf.Play
         /// <summary>成长类型(下标 0 到 5,0 是转职前;<see cref="ChangeGrowtype"/> 转职时改)。</summary>
         public int Growtype { get; private set; }
 
-        /// <summary>觉醒下标(0 = 没觉醒;1、2 对应 [awakening 1]、[awakening 2] 块)。</summary>
-        public int Awakening { get; }
+        /// <summary>觉醒下标(服务端的"第二成长类型":0 = 没觉醒;1、2 对应 [awakening 1]、[awakening 2] 块;<see cref="Awaken"/> 觉醒、读档时改)。</summary>
+        public int Awakening { get; private set; }
 
         public int Level { get; private set; }
 
@@ -404,7 +405,7 @@ namespace Dnf.Play
             int sfp = Skills.Sfp;
             _chrLines = chrLines;
             Skills = new SkillBook(catalog ?? SkillCatalog.Empty);
-            Skills.SetGiven(SkillGrants.Read(_chrLines, Growtype));
+            Skills.SetGiven(GivenSkills());
             if (grantTotalPoints)
             {
                 sp = SkillRules.TotalSp(Sp, Level);
@@ -422,7 +423,7 @@ namespace Dnf.Play
         /// </summary>
         public SkillOpResult LearnSkill(int skillId, int delta, out int spent)
         {
-            return Skills.Learn(skillId, Level, Growtype, delta, out spent);
+            return Skills.Learn(skillId, Level, Growtype, Awakening, delta, out spent);
         }
 
         /// <summary>把技能 <paramref name="skillId"/> 退掉 <paramref name="delta"/> 级(规则见 <see cref="SkillBook.Refund"/>);<paramref name="refunded"/> 是还回的点数。</summary>
@@ -436,12 +437,13 @@ namespace Dnf.Play
         /// </summary>
         public void ResetSkills()
         {
-            Skills.Reset(SkillGrants.Read(_chrLines, Growtype), SkillRules.TotalSp(Sp, Level), SkillRules.TotalSfp(Level));
+            Skills.Reset(GivenSkills(), SkillRules.TotalSp(Sp, Level), SkillRules.TotalSfp(Level));
         }
 
         /// <summary>
         /// 转职:换成长类型(服务端 set_grow_type 对"从转职前转出去"的处理):技能清空后重新给开局的与新成长类型白送的技能,点数回到总额;
         /// 属性按新成长类型的增量重算(<see cref="Version"/> 加一,战斗会话据此换面板)。<paramref name="growtype"/> 越界或没变返回 false。
+        /// 觉醒(<see cref="Awakening"/>)保持原样,只是白送的觉醒技能按新成长类型重读(服务端 quest_reward 对转职奖励只换第一成长类型);回到转职前(0)则一并清掉觉醒。
         /// </summary>
         public bool ChangeGrowtype(int growtype)
         {
@@ -450,6 +452,10 @@ namespace Dnf.Play
                 return false;
             }
             Growtype = growtype;
+            if (growtype == 0)
+            {
+                Awakening = 0;
+            }
             ResetSkills();
             _levelVersion++;
             return true;
@@ -458,7 +464,7 @@ namespace Dnf.Play
         /// <summary>读档时还原技能:旧存档(没有技能行)只留白送的技能,余额就是存档里的点数;新存档整个换成存档里的。</summary>
         private void RestoreSkills(HeroSave save)
         {
-            List<SkillGrant> given = SkillGrants.Read(_chrLines, Growtype);
+            List<SkillGrant> given = GivenSkills();
             int sp = Math.Max(0, save.SkillPoints);
             int sfp = Math.Max(0, save.AwakeningPoints);
             Skills.SetGiven(given);
@@ -492,6 +498,7 @@ namespace Dnf.Play
                 Level = Level,
                 Exp = Exp,
                 Growtype = Growtype,
+                Awakening = Awakening,
                 SkillPoints = SkillPoints,
                 AwakeningPoints = AwakeningPoints,
                 LevelUps = LevelUps,
@@ -569,6 +576,7 @@ namespace Dnf.Play
             int floor = Table.LevelExp(Level);
             Exp = save.Exp > floor ? save.Exp : floor;
             Growtype = Math.Max(0, Math.Min(save.Growtype, SkillRules.GrowtypeCount - 1));
+            Awakening = Growtype >= 1 ? Math.Max(0, Math.Min(save.Awakening, AwakeningRules.Count)) : 0;     // 没转职的不会有觉醒(觉醒块只在转职后的成长类型之下)
             RestoreSkills(save);
             LevelUps = Math.Max(0, save.LevelUps);
             TotalGained = Math.Max(0L, save.TotalGained);

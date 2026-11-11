@@ -102,7 +102,7 @@ namespace Dnf.Play
         /// <summary>检查能不能把技能学高 <paramref name="levels"/> 级,不动任何状态;<paramref name="cost"/> 是要花的点数(不成为 0)。规则见 <see cref="SkillBook.CheckLearn"/>。</summary>
         public SkillOpResult CheckLearn(int skillId, int levels, out int cost)
         {
-            return _hero.Skills.CheckLearn(skillId, _hero.Level, _hero.Growtype, levels, out cost);
+            return _hero.Skills.CheckLearn(skillId, _hero.Level, _hero.Growtype, _hero.Awakening, levels, out cost);
         }
 
         /// <summary>学高 <paramref name="levels"/> 级(规则见 <see cref="HeroProgress.LearnSkill"/>);<see cref="CommandAware"/> 开着时学成之后整理快捷栏。</summary>
@@ -200,7 +200,7 @@ namespace Dnf.Play
                 SkillStep step = steps[i];
                 int moved;
                 SkillOpResult result = learning
-                    ? after.Learn(step.SkillId, _hero.Level, _hero.Growtype, step.Levels, out moved)
+                    ? after.Learn(step.SkillId, _hero.Level, _hero.Growtype, _hero.Awakening, step.Levels, out moved)
                     : after.Refund(step.SkillId, step.Levels, out moved);
                 if (result != SkillOpResult.Ok)
                 {
@@ -275,11 +275,11 @@ namespace Dnf.Play
             {
                 return 0;
             }
-            int room = SkillRules.TypeMaxLevel(def, _hero.Growtype) - book.LevelOf(skillId);
+            int room = SkillRules.TypeMaxLevel(def, _hero.Growtype, _hero.Awakening) - book.LevelOf(skillId);
             int best = 0;
             for (int levels = 1; levels <= room; levels++)
             {
-                if (book.CheckLearn(skillId, _hero.Level, _hero.Growtype, levels, out _) != SkillOpResult.Ok)
+                if (book.CheckLearn(skillId, _hero.Level, _hero.Growtype, _hero.Awakening, levels, out _) != SkillOpResult.Ok)
                 {
                     break;
                 }

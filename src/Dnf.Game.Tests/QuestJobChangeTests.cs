@@ -212,9 +212,7 @@ public class QuestJobChangeTests
     {
         QuestDef q = JobQuest(1, 2);
         q.JobChange = 0;
-        q.RewardType = "[awakening type]";               // 觉醒(第二成长类型)没做
-        Assert.Equal("reward-type", QuestRules.UnsupportedReason(q));
-        q.RewardType = "[title]";
+        q.RewardType = "[title]";                        // 觉醒奖励([awakening type])已经支持,见 AwakeningQuestTests
         Assert.Equal("reward-type", QuestRules.UnsupportedReason(q));
     }
 

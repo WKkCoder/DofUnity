@@ -24,20 +24,34 @@ namespace Dnf.Game
     /// [growtype N] 块里的 [skill] 是转到第 N−1 号成长类型时再给的(下标 0 是转职前,没有这一份)。
     /// 一个成长类型拥有的白送技能 = 开局的并上自己那一块,同一个技能取较高的等级、次序是先开局后转职。
     /// 白送的等级就是退技能的下限(<see cref="SkillBook"/>:技能不能低于白送的等级)。
+    /// 觉醒(第二成长类型)给的是 [growtype N] 块里 [awakening 1]、[awakening 2] 各自的 [awakening skill] 列表("编号 等级"成对,以 [/awakening skill] 收尾):
+    /// 觉醒到 a 时给第 a 份,不累加前一次觉醒的(服务端 get_give_skill_secondGrowtype 0x08348694 只取"第二成长类型"那一份;get_give_skill 的模式 0 是第一成长类型的并上这一份,
+    /// 重置技能 SkillSlot::InitSkill 0x08608120 用的就是模式 0)。
     /// </summary>
     public static class SkillGrants
     {
-        /// <summary>读 <paramref name="chrLines"/> 里成长类型 <paramref name="growtype"/> 拥有的白送技能;<paramref name="chrLines"/> 为 null 得到空表。</summary>
+        /// <summary>读 <paramref name="chrLines"/> 里成长类型 <paramref name="growtype"/> 拥有的白送技能(没觉醒);<paramref name="chrLines"/> 为 null 得到空表。</summary>
         public static List<SkillGrant> Read(ScriptLine[] chrLines, int growtype)
+        {
+            return Read(chrLines, growtype, 0);
+        }
+
+        /// <summary>
+        /// 读成长类型 <paramref name="growtype"/>、觉醒到 <paramref name="awakening"/> 的角色拥有的白送技能:没觉醒(0)就是 <see cref="Read(ScriptLine[], int)"/>;
+        /// 1 或 2 时在后面并上这个成长类型那一块里对应 [awakening a] 的 [awakening skill] 列表(同一个技能取较高的等级)。觉醒号越界按没觉醒。
+        /// </summary>
+        public static List<SkillGrant> Read(ScriptLine[] chrLines, int growtype, int awakening)
         {
             var result = new List<SkillGrant>();
             if (chrLines == null)
             {
                 return result;
             }
-            // 当前块:0 = 还没遇到块,1 = 初始值,2 = 成长类型 N,3 = 觉醒块(不读)
+            // 当前块:0 = 还没遇到块,1 = 初始值,2 = 成长类型 N,3 = 觉醒块(里面的 [skill] 不读)
             int mode = 0;
             int block = -1;
+            // 当前觉醒块的号(遇到 [awakening 1]、[awakening 2] 才有,换成长类型块时清零)
+            int awakeBlock = 0;
             foreach (ScriptLine line in chrLines)
             {
                 string tag = line.Tag;
@@ -48,6 +62,7 @@ namespace Dnf.Game
                 if (line.TagIs("[initial value]"))
                 {
                     mode = 1;
+                    awakeBlock = 0;
                     continue;
                 }
                 if (tag.StartsWith("[growtype ", StringComparison.OrdinalIgnoreCase) && tag.EndsWith("]", StringComparison.Ordinal))
@@ -55,24 +70,51 @@ namespace Dnf.Game
                     string number = tag.Substring("[growtype ".Length, tag.Length - "[growtype ".Length - 1);
                     mode = int.TryParse(number, out int n) && n >= 1 ? 2 : 0;
                     block = mode == 2 ? n - 1 : -1;
+                    awakeBlock = 0;
+                    continue;
+                }
+                if (line.TagIs("[awakening skill]"))
+                {
+                    // 觉醒块里的列表:只有 mode 为觉醒块、成长类型与觉醒号都对得上才读
+                    if (mode == 3 && block == growtype && awakening >= 1 && awakeBlock == awakening)
+                    {
+                        AddPairs(result, line.Ints());
+                    }
                     continue;
                 }
                 if (tag.StartsWith("[awakening ", StringComparison.OrdinalIgnoreCase))
                 {
                     mode = 3;
+                    awakeBlock = AwakeningBlockNumber(tag);
                     continue;
                 }
                 if (!line.TagIs("[skill]") || (mode != 1 && !(mode == 2 && block == growtype)))
                 {
                     continue;
                 }
-                List<int> pairs = line.Ints();
-                for (int i = 0; i + 1 < pairs.Count; i += 2)
-                {
-                    Add(result, pairs[i], pairs[i + 1]);
-                }
+                AddPairs(result, line.Ints());
             }
             return result;
+        }
+
+        /// <summary>"[awakening 2]" → 2;"[awakening name]" 这类不是块头的返回 0(觉醒块的号只认 1 到 <see cref="CharacterGrowth.AwakeningCount"/>)。</summary>
+        private static int AwakeningBlockNumber(string tag)
+        {
+            const string prefix = "[awakening ";
+            if (!tag.EndsWith("]", StringComparison.Ordinal))
+            {
+                return 0;
+            }
+            string number = tag.Substring(prefix.Length, tag.Length - prefix.Length - 1);
+            return int.TryParse(number, out int a) && a >= 1 && a <= CharacterGrowth.AwakeningCount ? a : 0;
+        }
+
+        private static void AddPairs(List<SkillGrant> list, List<int> pairs)
+        {
+            for (int i = 0; i + 1 < pairs.Count; i += 2)
+            {
+                Add(list, pairs[i], pairs[i + 1]);
+            }
         }
 
         private static void Add(List<SkillGrant> list, int skillId, int level)

@@ -85,10 +85,16 @@ namespace Dnf.Game
         /// <summary>某个成长类型学得了的技能(该成长类型的最高级大于 0),按编号从小到大。</summary>
         public List<SkillDef> ForGrowtype(int growtype)
         {
+            return ForGrowtype(growtype, 0);
+        }
+
+        /// <summary>某个成长类型觉醒到 <paramref name="awakening"/> 以后学得了的技能(觉醒后的最高级大于 0,<see cref="SkillRules.TypeMaxLevel(SkillDef, int, int)"/>),按编号从小到大。</summary>
+        public List<SkillDef> ForGrowtype(int growtype, int awakening)
+        {
             var result = new List<SkillDef>();
             foreach (SkillDef def in _skills)
             {
-                if (SkillRules.TypeMaxLevel(def, growtype) > 0)
+                if (SkillRules.TypeMaxLevel(def, growtype, awakening) > 0)
                 {
                     result.Add(def);
                 }

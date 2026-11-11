@@ -624,7 +624,7 @@ namespace Dnf.Play
             SkillBook book = _hero.Skills;
             SkillCatalog catalog = book.Catalog;
             var defs = new List<SkillDef>();
-            foreach (SkillDef def in catalog.ForGrowtype(_hero.Growtype))
+            foreach (SkillDef def in catalog.ForGrowtype(_hero.Growtype, _hero.Awakening))
             {
                 if (SkillRules.UiGroup(def) == Page)
                 {
@@ -681,8 +681,8 @@ namespace Dnf.Play
         private SkillRow MakeRow(SkillDef def, SkillBook book)
         {
             int level = book.LevelOf(def.Id);
-            int cap = SkillRules.TypeMaxLevel(def, _hero.Growtype);
-            SkillOpResult reason = book.CheckLearn(def.Id, _hero.Level, _hero.Growtype, 1, out int _);
+            int cap = SkillRules.TypeMaxLevel(def, _hero.Growtype, _hero.Awakening);
+            SkillOpResult reason = book.CheckLearn(def.Id, _hero.Level, _hero.Growtype, _hero.Awakening, 1, out int _);
             bool maxed = level >= cap;
             var prereqs = new List<SkillPrereqRow>();
             foreach (SkillPrereq pre in def.PreRequired)
@@ -702,7 +702,7 @@ namespace Dnf.Play
                 Name = TextOf(def.Name),
                 Level = level,
                 Cap = cap,
-                MaxNow = SkillRules.MaxLearnable(def, _hero.Level, _hero.Growtype),
+                MaxNow = SkillRules.MaxLearnable(def, _hero.Level, _hero.Growtype, _hero.Awakening),
                 NextCost = maxed ? -1 : SkillRules.CostOfLevel(def, level + 1),
                 NextHeroLevel = maxed ? 0 : SkillRules.RequiredHeroLevel(def, level + 1),
                 Special = def.IsSpecial,

@@ -15,11 +15,17 @@ namespace Dnf.Play
         /// <summary>一轮里技能的次序:主动技能在前,其次按要求等级,最后按编号。</summary>
         public static List<SkillDef> Order(SkillCatalog catalog, int growtype)
         {
+            return Order(catalog, growtype, 0);
+        }
+
+        /// <summary>同 <see cref="Order(SkillCatalog, int)"/>,技能范围按觉醒 <paramref name="awakening"/> 以后的算(觉醒后新开放的技能也在里面)。</summary>
+        public static List<SkillDef> Order(SkillCatalog catalog, int growtype, int awakening)
+        {
             if (catalog == null)
             {
                 throw new ArgumentNullException(nameof(catalog));
             }
-            List<SkillDef> list = catalog.ForGrowtype(growtype);
+            List<SkillDef> list = catalog.ForGrowtype(growtype, awakening);
             list.Sort((a, b) =>
             {
                 int byActive = b.IsActive.CompareTo(a.IsActive);
@@ -47,7 +53,7 @@ namespace Dnf.Play
             {
                 return 0;
             }
-            List<SkillDef> order = Order(hero.Skills.Catalog, hero.Growtype);
+            List<SkillDef> order = Order(hero.Skills.Catalog, hero.Growtype, hero.Awakening);
             int levels = 0;
             bool progress = true;
             while (progress)

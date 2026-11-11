@@ -359,6 +359,10 @@ namespace Dnf.Cli
             "  dnf skill-check [--level N]\n" +
             "      学技能(M35,证据 E-127):读主角职业的技能目录与六个成长类型的白送技能,检查每个技能到最高级都有花费(补齐规则)、前置技能都在且没有环;再对每个成长类型给无限点数从白送状态学到当前等级的上限,\n" +
             "      核对点数守恒、全部退回白送等级后点数完全还回、重置后与新建的一致;再检查本地主角的进度(点数是该级总额、快捷栏与旧的初始技能表排法一致、存档往返不变);最后让自动机策略(SkillPlanner)把点数花光,核对花费守恒、停下时再没有能学的、再跑一遍不再加、快捷栏排满。--level N 指定主角等级(默认 85;数字来自本机的数据,只打印在终端,不要抄进入库的文件)。\n" +
+            "  dnf awaken-check [--dump <文件>]\n" +
+            "      觉醒(r15-awaken):用 Dnf.Game 的既有读法读全库角色脚本的成长块(含觉醒块)与白送技能、技能脚本的第二成长类型最高级、任务脚本的觉醒链与觉醒奖励,\n" +
+            "      --dump 写出每个脚本读到的字段,可与 tools/py/awaken_ref.py --dump(或 --against)逐行对拍;再对每个职业每个转职方向在真数据上走一遍觉醒(49 级拒绝、次序、白送技能、点数不动、面板换块、重置、存档往返、旧存档),\n" +
+            "      并检查每个技能在每个 (成长类型、觉醒) 下的学习上限互相一致。数量与数值来自本机的数据,只打印在终端,不要抄进入库的文件。\n" +
             "  dnf gate-body-check [--trace]   各副本房间的出口与墙的碰撞体挡掉了多少可走区域(只打聚合;--trace 列出被挡大块的房间)\n" +
             "      可破坏物件与物件掉物品(M34,证据 E-126):读物件掉落表(Etc/ItemDropInfo_Object.etc)并建池;全部地图的 [special passive object] 文法(与 RoomMap 读出的项数一致、没读完的值只停在关键字上)\n" +
             "      以及每座副本里 [item] 动作的掉落项下标是否都在 .dgn 的 [special passive object item] 范围内;再在 --dungeon(没有就依次换别的副本)的布局里挑 --rooms 个有可破坏物件的房间,\n" +
@@ -852,6 +856,8 @@ namespace Dnf.Cli
                     return BreakableCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "skill-check":
                     return SkillCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "awaken-check":
+                    return AwakenCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "gate-body-check":
                     return GateBodyCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "status-check":
