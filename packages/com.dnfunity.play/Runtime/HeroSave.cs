@@ -228,6 +228,7 @@ namespace Dnf.Play
                 sb.Append("quick ").Append(quick.Slot.ToString(Inv)).Append(' ').Append(quick.Code.ToString(Inv)).Append('\n');
             }
             PetSaveFormat.Write(this, sb);
+            GrowthSaveFormat.Write(this, sb);
             foreach (SavedQuest quest in Quests)
             {
                 sb.Append("quest ").Append(quest.Id.ToString(Inv));
@@ -334,6 +335,10 @@ namespace Dnf.Play
             if (CraftSaveFormat.Handles(key))
             {
                 return CraftSaveFormat.Parse(r, f, no, out error);
+            }
+            if (GrowthSaveFormat.Handles(key))
+            {
+                return GrowthSaveFormat.Parse(r, key, f, no, out error);
             }
             int arity;
             switch (key)

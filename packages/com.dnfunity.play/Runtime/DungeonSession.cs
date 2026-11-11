@@ -201,6 +201,45 @@ namespace Dnf.Play
             _clearRecording = true;
         }
 
+        private HeroProgress _fatigueHero;
+        private DungeonFatigueRules _fatigueRules = DungeonFatigueRules.Default;
+
+        /// <summary>这一局从主角身上扣掉的疲劳点数(进副本那一次加每换一次房间一次;已经封顶扣不动的部分不算)。</summary>
+        public int FatigueCharged { get; private set; }
+
+        /// <summary>
+        /// 接上疲劳(r15-growth,证据见 Dnf.Game 的 DungeonFatigueRules):<paramref name="chargeStart"/> 为真时立刻扣"进副本"的那一次
+        /// (<see cref="DungeonFatigueRules.StartCost"/>),之后每换一次房间(<see cref="Transitions"/> 加一;走回去过的房间也算)扣
+        /// <see cref="DungeonFatigueRules.MoveCost"/>。扣不动不拦路:疲劳已经封顶只是不再增加,副本照常打完;进副本的门槛在流程那一层(<see cref="FatigueGate"/>)。
+        /// <paramref name="hero"/> 为 null 就是取消。
+        /// </summary>
+        public void UseFatigue(HeroProgress hero, DungeonFatigueRules rules, bool chargeStart = true)
+        {
+            _fatigueHero = hero;
+            _fatigueRules = rules ?? DungeonFatigueRules.Default;
+            if (chargeStart)
+            {
+                ChargeFatigue(_fatigueRules.StartCost);
+            }
+        }
+
+        private void ChargeFatigue(int cost)
+        {
+            if (_fatigueHero != null && cost > 0)
+            {
+                FatigueCharged += _fatigueHero.ChargeFatigue(cost);
+            }
+        }
+
+        /// <summary><see cref="Create"/> 的接线:给了主角进度就按副本定义(<paramref name="dungeonScript"/>,可为 null)里的标签接上疲劳并扣进副本那一次;没给什么也不做。</summary>
+        internal static void AttachFatigue(DungeonSession session, HeroProgress progress, ScriptLine[] dungeonScript)
+        {
+            if (progress != null)
+            {
+                session.UseFatigue(progress, DungeonFatigueRules.Parse(dungeonScript));
+            }
+        }
+
         /// <summary>整座副本里最高的连击数(各房间取最大)。</summary>
         public int MaxCombo
         {
@@ -696,6 +735,8 @@ namespace Dnf.Play
             session.UseRanking(RankSystem.Parse(assets.ReadScript(RankSystem.Path)), dungeonId, GoldDrop.StandardLevel(dungeonScript), difficulty);
             // 通关记录(M33,E-125):最低等级读 .dgn,有没有难度 3 看 etc/ultimatedungeonlist.etc
             session.UseClearRecord(DungeonClears.MinimumLevel(dungeonScript), UltimateDungeonList.Parse(assets.ReadScript(UltimateDungeonList.Path)).Contains(dungeonId));
+            // 疲劳(r15-growth):给了主角进度就扣——进副本一次、之后每换一次房间一次;免疲劳等标签读 .dgn
+            AttachFatigue(session, progress, dungeonScript);
             return session;
         }
 
@@ -1010,6 +1051,7 @@ namespace Dnf.Play
                 Current.Vitals.CopyStateFrom(carriedVitals);   // 生命与魔法也跟着人走
             }
             Transitions++;
+            ChargeFatigue(_fatigueRules.MoveCost);          // 换一次房间扣一次疲劳(服务端 changePartyMemberInfo → canFatigueUp → FatigueUp(0);走回去的也扣)
         }
 
         private void Enter(int x, int y, bool viaGate, GateSide entry, bool carryFacingLeft)

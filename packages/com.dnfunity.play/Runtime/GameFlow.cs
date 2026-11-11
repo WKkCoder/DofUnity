@@ -190,6 +190,20 @@ namespace Dnf.Play
         /// </summary>
         public Func<DungeonEntry, int> DifficultyLimit { get; set; }
 
+        /// <summary>
+        /// 进副本的门槛(r15-growth):宿主接到主角的疲劳上(<see cref="FatigueGate.For"/>);不设就不拦。副本选择界面确认进入与结算菜单选"再次挑战"时各问一次(参数是副本路径),
+        /// 结论不是 <see cref="EntryVerdict.Allowed"/> 就不开局:选择界面的确认退回选择界面(重新打开,停在原来选的副本与难度上),再次挑战改去副本选择界面
+        /// (结算菜单的选定不能撤回,留在原地会卡死);两种都记进 <see cref="EntryBlocks"/> 与 <see cref="LastBlock"/>,阶段切换的原因里写 "blocked"。
+        /// 直接调 <see cref="StartDungeon"/>(命令行与测试)不问。
+        /// </summary>
+        public Func<string, EntryVerdict> EntryGate { get; set; }
+
+        /// <summary>被 <see cref="EntryGate"/> 挡下过多少次。</summary>
+        public int EntryBlocks { get; private set; }
+
+        /// <summary>最近一次被挡下的结论(没被挡过是 <see cref="EntryVerdict.Allowed"/>)。</summary>
+        public EntryVerdict LastBlock { get; private set; }
+
         /// <summary>开过多少局副本(含"再次挑战")。</summary>
         public int Runs { get; private set; }
 
@@ -199,7 +213,10 @@ namespace Dnf.Play
         /// <summary>副本失败(主角死后没复活、失败计时走完)回城的次数(证据 E-115);不计入 <see cref="Settlements"/>。</summary>
         public int Failures { get; private set; }
 
-        /// <summary>从系统菜单主动放弃副本回城的次数(原版放弃有疲劳惩罚,这里没做);不计入 <see cref="Settlements"/> 与 <see cref="Failures"/>。</summary>
+        /// <summary>
+        /// 从系统菜单主动放弃副本回城的次数;不计入 <see cref="Settlements"/> 与 <see cref="Failures"/>。
+        /// 放弃不动疲劳(服务端 CParty::giveup_game 0x085b2baa 没有疲劳写入;CUser::giveup_panalty 0x086786be 改的是另一个体力值 Stamina,本项目没有它)。
+        /// </summary>
         public int GiveUps { get; private set; }
 
         /// <summary>
@@ -816,6 +833,11 @@ namespace Dnf.Play
             {
                 case SettlementChoice.Retry:
                     Settlements++;
+                    if (!Admit(DungeonPath))
+                    {
+                        EnterSelect("choice " + choice + " blocked " + LastBlock);   // 挡下:结算的选定撤不回,改去选择界面(那里确认时还会再问一次)
+                        return true;
+                    }
                     StartDungeon(DungeonPath, "choice " + choice, Difficulty);
                     return true;
                 case SettlementChoice.SelectDungeon:
@@ -831,13 +853,47 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>问 <see cref="EntryGate"/> 这座副本能不能进;不设门槛就放行。挡下时记数并返回 false。</summary>
+        private bool Admit(string dungeonPath)
+        {
+            EntryVerdict verdict = EntryGate?.Invoke(dungeonPath) ?? EntryVerdict.Allowed;
+            if (verdict == EntryVerdict.Allowed)
+            {
+                return true;
+            }
+            EntryBlocks++;
+            LastBlock = verdict;
+            return false;
+        }
+
+        /// <summary>副本选择界面重新打开,选中 <paramref name="entry"/>、难度 <paramref name="difficulty"/>(门槛挡下之后用;和 <see cref="EnterSelect"/> 的区别是停在刚才选的那座)。</summary>
+        private void ReopenSelect(DungeonEntry entry, int difficulty, string reason)
+        {
+            int index = 0;
+            for (int i = 0; i < _entries.Count; i++)
+            {
+                if (ReferenceEquals(_entries[i], entry))
+                {
+                    index = i;
+                    break;
+                }
+            }
+            Switch(GameStage.DungeonSelect, reason, null, new DungeonSelectScreen(_entries, index, _world, DifficultyLimit, difficulty));
+        }
+
         private bool PollSelect()
         {
             switch (Select.Outcome)
             {
                 case SelectOutcome.Enter:
                     DungeonEntry entry = Select.Selected;
-                    StartDungeon(entry.Path, "select " + entry.Name, Select.Difficulty);
+                    int difficulty = Select.Difficulty;
+                    if (!Admit(entry.Path))
+                    {
+                        ReopenSelect(entry, difficulty, "select " + entry.Name + " blocked " + LastBlock);   // 挡下:选择界面重新打开,停在原来选的副本与难度上
+                        return true;
+                    }
+                    StartDungeon(entry.Path, "select " + entry.Name, difficulty);
                     return true;
                 case SelectOutcome.Back:
                     GoTown(_townWorld.Return, Place, "select Back");     // 从世界地图返回:来源是城镇里的入口区域,同一块区域不加载

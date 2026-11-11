@@ -99,7 +99,8 @@ namespace Dnf.Play
     /// 热键字母最后画、不受遮罩影响;右球下方的 SP 框里画剩余技能点(<c>sp.img</c> 的数字,居中)。
     /// 物品快捷槽(证据 E-120):左边 6 个 28×28 的槽(<see cref="HudItemState"/>),图标取物品脚本的 [icon],右上角画件数(自己的点阵字),冷却遮罩同技能槽,
     /// 右下角的数字标签 1 到 6 来自同一张 hud.img 的 #45 条(位置与基线逐像素吻合;件数小字的位置是量出来的近似)。
-    /// 没做:疲劳条的数据、状态图标、鼠标悬停与点击、球上的高光。
+    /// 疲劳条:数据有了(<see cref="HudFatigue"/>,<see cref="HeroProgress.FatigueHud"/> 取),条的图与位置没有读,所以没画。
+    /// 没做:疲劳条的绘制、状态图标、鼠标悬停与点击、球上的高光。
     /// 取不到 hud.img 时 <see cref="TryCreate"/> 返回 null,调用方退回占位的色块血条。
     /// </summary>
     public sealed class HudArt
