@@ -71,6 +71,31 @@ internal sealed class TableBuilder
         return this;
     }
 
+    /// <summary>
+    /// 加一行并分别指定两组的各格(文件里的次序 A f1 f2 f3 f4 f5 | … | B g1 g2 g3 g4 g5);失败阈值 0、惩罚类型 1、材料 910 要 1 个。
+    /// 稀有度权重与档位默认都是 1,所以装备等级 0 时取行结果的 [0]=A [1]=f1 [5]=f2 [2]=f3 [6]=f4 [3]=f5 原样不变。
+    /// </summary>
+    public TableBuilder StatRow(int a, float f1, float f2, float f3, float f4, float f5, int b = 0, float g1 = 0f, float g2 = 0f, float g3 = 0f, float g4 = 0f, float g5 = 0f)
+    {
+        _rows.Add(I(a));
+        foreach (float f in new[] { f1, f2, f3, f4, f5 })
+        {
+            _rows.Add(F(f));
+        }
+        _rows.Add(I(0));
+        _rows.Add(I(1));
+        _rows.Add(I(0));
+        _rows.Add(I(910));
+        _rows.Add(I(1));
+        _rows.Add(I(b));
+        foreach (float g in new[] { g1, g2, g3, g4, g5 })
+        {
+            _rows.Add(F(g));
+        }
+        RowCount++;
+        return this;
+    }
+
     /// <summary>加 <paramref name="count"/> 行同样的。</summary>
     public TableBuilder Rows(int count, int fail, int penaltyType, int penaltyLevels, int materialCode, int materialCount)
     {

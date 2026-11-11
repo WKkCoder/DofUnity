@@ -16,7 +16,9 @@ namespace Dnf.Game
 
     /// <summary>
     /// 一件穿着的装备凭自己的个体状态(强化等级、品级值……)带来的额外属性。
-    /// 强化等级与品级换算成哪些角色属性,服务端不负责(没有读到、客户端受保护),所以默认没有实现:由宿主按已确认的数据提供。
+    /// 强化等级与品级值换算成角色属性,服务端不负责(它只存数);换算在客户端生成装备属性集的函数里,那是读得到的客户端代码(不是受保护区):
+    /// 默认实现是 <see cref="EquipInstanceBonus"/>(强化表按部位分路、品级值按 etc 里的浮动数据浮动;依据与没查明的部分见 <see cref="EquipUpgradeEffect"/>、
+    /// <see cref="EquipGradeVariation"/> 的文件头),宿主也可以换成自己的。
     /// </summary>
     public interface IEquipInstanceBonus
     {

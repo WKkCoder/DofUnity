@@ -134,6 +134,7 @@ namespace Dnf.Play
         /// <summary>
         /// 同上,再加上装备栏(<see cref="HeroProgress.Worn"/>,证据 E-118)里每一件的 .equ:外观那一套里的武器被装备栏里的武器顶掉(只算装备栏的那件),
         /// 其余外观件(默认的发型、上衣等)照旧算。没给进度就是只看外观。
+        /// 装备栏装了附加来源(<see cref="EquipmentSlots.Overlay"/>:强化等级、品级值、附魔、套装)时,再加上它给的装备攻击与暴击。
         /// </summary>
         public static EquipmentStats WornEquipment(DnfAssets assets, TownHero hero, HeroProgress progress)
         {
@@ -166,6 +167,27 @@ namespace Dnf.Play
                 {
                     total = total.Plus(read(worn.Path));
                 }
+                total = total.Plus(OverlayEquipment(progress.Worn));
+            }
+            return total;
+        }
+
+        /// <summary>
+        /// 装备栏上的附加来源(<see cref="EquipmentSlots.Overlay"/>:强化等级、品级值、附魔、套装)给的攻击与暴击:每一项取第一个数,攻击向零取整。
+        /// 武器的强化物理攻击与魔法攻击就是这样进到"附加基础值"里的;没装附加来源时是 0。
+        /// </summary>
+        private static EquipmentStats OverlayEquipment(EquipmentSlots slots)
+        {
+            IEquipOverlay overlay = slots.Overlay;
+            var total = default(EquipmentStats);
+            if (overlay == null)
+            {
+                return total;
+            }
+            foreach (EquipStats term in overlay.Terms(slots))
+            {
+                total = total.Plus(new EquipmentStats(Truncate(term[EquipStat.EquipmentPhysicalAttack]), Truncate(term[EquipStat.EquipmentMagicalAttack]),
+                    (float)term[EquipStat.PhysicalCriticalHit], (float)term[EquipStat.MagicalCriticalHit]));
             }
             return total;
         }
