@@ -86,11 +86,30 @@ namespace Dnf.Play
         /// <summary>最近一次在背包里用消耗品的结果(没用过是 <see cref="UseResult.Ok"/>;日志与探针用)。</summary>
         public UseResult LastUse { get; private set; }
 
-        /// <summary>累计在背包里成功用掉的件数。</summary>
+        /// <summary>累计在背包里成功用掉的件数(药水与开启类都算)。</summary>
         public int Uses { get; private set; }
 
+        /// <summary>最近一次打开窗口时的阶段(城镇或副本);开启类与传送类只在城镇能用,按它判断。没打开过是城镇。</summary>
+        public GameStage Stage { get; private set; }
+
         /// <summary>
-        /// 用游戏数据做 <see cref="CanShow"/>(<see cref="HeroLook.CanShow"/>):武器要能造出外观、各个动作的动画都在。
+        /// 开启类(随机箱、固定礼包)的开箱器:物品编号怎么找、随机源是什么(<see cref="ItemOpener"/>)。
+        /// <see cref="UseAssets"/> 会接上游戏数据;测试里直接赋值。没接时开启类提示"还不能用"、什么也不动。
+        /// </summary>
+        public ItemOpener Opener { get; set; }
+
+        /// <summary>最近一次开启类的尝试结果:成功时是发出了什么,被拒绝时 <see cref="OpenResult.Ok"/> 为假、<see cref="OpenResult.Grants"/> 为空(不会残留上一次成功的发放);没试过为 null。</summary>
+        public OpenResult LastOpen { get; private set; }
+
+        /// <summary>累计成功开了几件。</summary>
+        public int Opens { get; private set; }
+
+        /// <summary>传送类的桩:用传送道具只是记下请求,去向与真正扣除等城镇线接上(见 <see cref="TeleportDesk"/>)。</summary>
+        public TeleportDesk Teleports { get; } = new TeleportDesk();
+
+        /// <summary>
+        /// 用游戏数据做 <see cref="CanShow"/>(<see cref="HeroLook.CanShow"/>):武器要能造出外观、各个动作的动画都在;
+        /// 同时接上开启类的物品目录(<see cref="Opener"/>,按编号到 PVF 里读物品)。
         /// 宿主(客户端)只认识渲染层的类型,所以从这里接,不直接写 <see cref="Func{T, TResult}"/>。
         /// </summary>
         public void UseAssets(Dnf.Render.DnfAssets assets)
@@ -100,6 +119,8 @@ namespace Dnf.Play
                 throw new ArgumentNullException(nameof(assets));
             }
             CanShow = item => HeroLook.CanShow(assets, item);
+            var catalog = new ItemCatalog(new GameData(new Dnf.Script.PvfScriptSource(assets.Pvf)));
+            Opener = new ItemOpener(catalog.Get, ItemOpener.RollFrom(new Random()));
         }
 
         /// <summary>按阶段打开:只有城镇与副本里有背包窗口;返回有没有打开。每次打开都回到装备页、光标在第一格。</summary>
@@ -109,6 +130,7 @@ namespace Dnf.Play
             {
                 return false;
             }
+            Stage = stage;
             Open = true;
             Tab = InventoryTab.Equipment;
             Cursor = 0;
@@ -278,19 +300,64 @@ namespace Dnf.Play
                     return "CANNOT USE HERE";
                 case UseResult.NotInBag:
                     return "NONE LEFT";
+                case UseResult.BagFull:
+                    return "BAG FULL";
                 default:
-                    return MessageOf(EquipResult.NotEquipment);       // 不是消耗品、没有这个版本做了的效果:还不能用
+                    return MessageOf(EquipResult.NotEquipment);       // 不是消耗品、没有这个版本做了的效果、登记未做、传送桩:还不能用
             }
         }
 
-        private bool UseStackable(ItemInfo item)
+        /// <summary>
+        /// 在背包里用一件可叠加物品。按派发表(<see cref="ItemUseTable"/>)分类:回复药走原来的入口(<see cref="UseItem"/>,交给当前会话,药水的背包、冷却、快捷栏规则不变);
+        /// 随机箱与固定礼包在这里开(<see cref="Opener"/>,只在城镇,背包与冷却是药水用的同一套,放进背包走 <see cref="HeroProgress.AddItem"/>);
+        /// 传送道具只记请求(<see cref="Teleports"/>);其余登记或未读的类提示"还不能用"、什么也不动。
+        /// </summary>
+        private bool UseStackable(ItemInfo item, HeroProgress progress)
+        {
+            ItemPlaces place = Stage == GameStage.Dungeon ? ItemPlaces.Dungeon : ItemPlaces.Town;
+            switch (ItemUseTable.ClassOf(item))
+            {
+                case ItemUseClass.Recovery:
+                    return UseRecovery(item);
+                case ItemUseClass.OpenBox:
+                case ItemUseClass.OpenPackage:
+                    return Finish(OpenStackable(item, progress, place));
+                case ItemUseClass.Teleport:
+                    return Finish(Teleports.Request(progress.Bag, progress.Cooldowns, item, progress.Job, progress.Level, place));
+                default:
+                    return Finish(UseResult.NotYet);
+            }
+        }
+
+        private bool UseRecovery(ItemInfo item)
         {
             if (UseItem == null)
             {
                 Message = MessageOf(EquipResult.NotEquipment);
                 return false;
             }
-            UseResult result = UseItem(item);
+            return Finish(UseItem(item));
+        }
+
+        private UseResult OpenStackable(ItemInfo item, HeroProgress progress, ItemPlaces place)
+        {
+            if (Opener == null)
+            {
+                LastOpen = new OpenResult(UseResult.NotYet);
+                return UseResult.NotYet;
+            }
+            OpenResult opened = Opener.Open(progress.Bag, progress.Cooldowns, item, progress.Job, progress.Level, place,
+                (info, count) => progress.AddItem(info, count));
+            LastOpen = opened;
+            if (opened.Ok)
+            {
+                Opens++;
+            }
+            return opened.Result;
+        }
+
+        private bool Finish(UseResult result)
+        {
             LastUse = result;
             Message = MessageOf(result);
             if (result == UseResult.Ok)
@@ -394,7 +461,7 @@ namespace Dnf.Play
             }
             if (!stacks[Cursor].Info.IsEquipment)
             {
-                return UseStackable(stacks[Cursor].Info);
+                return UseStackable(stacks[Cursor].Info, progress);
             }
             EquipResult result = progress.Equip(Cursor, CanShow);
             LastResult = result;

@@ -250,6 +250,12 @@ namespace Dnf.Game
         /// <summary><c>[cooltime group]</c>:冷却的归类号,同组共用冷却(推断);没写为 −1(按物品编号各自冷却)。</summary>
         public int CoolGroup { get; set; } = -1;
 
+        /// <summary>
+        /// 开了会给东西的数据(<see cref="ItemContents"/>:<c>[booster info]</c> 的随机块与 <c>[package data]</c> 的固定礼包内容);
+        /// 没有这两块的物品(含全部装备)为 null。开启的流程见 <see cref="ItemOpener"/>。
+        /// </summary>
+        public ItemContents Contents { get; set; }
+
         public bool IsEquipment => Kind == ItemKind.Equipment;
 
         public bool IsStackable => Kind == ItemKind.Stackable;
@@ -670,6 +676,11 @@ namespace Dnf.Game
                 }
             }
             info.Enhance = EnhanceData.Read(tokens, strings);
+            if (kind != ItemKind.Equipment)
+            {
+                // 随机箱的 [booster info] 与礼包的 [package data] 也按块再扫一遍(只认这两个标签,别的字段的读法不动)
+                info.Contents = ItemContents.Read(tokens, strings);
+            }
             return info;
         }
 
