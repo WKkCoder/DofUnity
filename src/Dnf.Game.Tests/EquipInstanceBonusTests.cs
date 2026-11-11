@@ -228,6 +228,74 @@ public class EquipInstanceBonusTests
         }
     }
 
+    // 幅度 0、1 与 −1(W 取 1 或 3,a、b、c 都靠下限 1 撑着)× 五档 × 首抽为奇数的两颗种子(1 与 3):
+    // 上面一组的两颗种子首抽都是偶数,下限从 1 改成 2 之后"对 2 取余"恒为 0,看不出差别;奇数首抽才看得出。期望值来自 Python 参考实现
+    private static readonly (int Base, int Band, uint Seed, int Expected, uint NextState)[] OddDrawRanges =
+    {
+        (4, 0, 1u, 4, 0x2781e494u),
+        (4, 0, 3u, 4, 0x287d5dfeu),
+        (4, 1, 1u, 4, 0x2781e494u),
+        (4, 1, 3u, 4, 0x287d5dfeu),
+        (4, 2, 1u, 4, 0x2781e494u),
+        (4, 2, 3u, 4, 0x287d5dfeu),
+        (4, 3, 1u, 4, 0x2781e494u),
+        (4, 3, 3u, 4, 0x287d5dfeu),
+        (4, 4, 1u, 4, 0x2781e494u),
+        (4, 4, 3u, 4, 0x287d5dfeu),
+        (5, 0, 1u, 4, 0x2781e494u),
+        (5, 0, 3u, 4, 0x287d5dfeu),
+        (5, 1, 1u, 5, 0x2781e494u),
+        (5, 1, 3u, 5, 0x287d5dfeu),
+        (5, 2, 1u, 5, 0x2781e494u),
+        (5, 2, 3u, 5, 0x287d5dfeu),
+        (5, 3, 1u, 5, 0x2781e494u),
+        (5, 3, 3u, 5, 0x287d5dfeu),
+        (5, 4, 1u, 6, 0x2781e494u),
+        (5, 4, 3u, 6, 0x287d5dfeu),
+        (11, 0, 1u, 10, 0x2781e494u),
+        (11, 0, 3u, 10, 0x287d5dfeu),
+        (11, 1, 1u, 11, 0x2781e494u),
+        (11, 1, 3u, 11, 0x287d5dfeu),
+        (11, 2, 1u, 11, 0x2781e494u),
+        (11, 2, 3u, 11, 0x287d5dfeu),
+        (11, 3, 1u, 11, 0x2781e494u),
+        (11, 3, 3u, 11, 0x287d5dfeu),
+        (11, 4, 1u, 12, 0x2781e494u),
+        (11, 4, 3u, 12, 0x287d5dfeu),
+        (-4, 0, 1u, -4, 0x2781e494u),
+        (-4, 0, 3u, -4, 0x287d5dfeu),
+        (-4, 1, 1u, -4, 0x2781e494u),
+        (-4, 1, 3u, -4, 0x287d5dfeu),
+        (-4, 2, 1u, -4, 0x2781e494u),
+        (-4, 2, 3u, -4, 0x287d5dfeu),
+        (-4, 3, 1u, -4, 0x2781e494u),
+        (-4, 3, 3u, -4, 0x287d5dfeu),
+        (-4, 4, 1u, -4, 0x2781e494u),
+        (-4, 4, 3u, -4, 0x287d5dfeu),
+        (-5, 0, 1u, -4, 0x2781e494u),
+        (-5, 0, 3u, -4, 0x287d5dfeu),
+        (-5, 1, 1u, -5, 0x2781e494u),
+        (-5, 1, 3u, -5, 0x287d5dfeu),
+        (-5, 2, 1u, -5, 0x2781e494u),
+        (-5, 2, 3u, -5, 0x287d5dfeu),
+        (-5, 3, 1u, -5, 0x2781e494u),
+        (-5, 3, 3u, -5, 0x287d5dfeu),
+        (-5, 4, 1u, -6, 0x2781e494u),
+        (-5, 4, 3u, -6, 0x287d5dfeu),
+    };
+
+    [Fact]
+    public void SmallRangesWithAnOddFirstDrawStillFollowTheReference()
+    {
+        // 百分比 10、上限 50 固定
+        foreach (var row in OddDrawRanges)
+        {
+            uint state = row.Seed;
+            int got = EquipGradeVariation.Jitter(row.Base, 10, 50, row.Band, ref state);
+            Assert.True(row.Expected == got && row.NextState == state, $"base {row.Base} band {row.Band} seed {row.Seed}: {got}/{state:x8}");
+        }
+    }
+
     [Fact]
     public void ABaseOfZeroStaysZeroAndDrawsNothing()
     {
@@ -317,6 +385,26 @@ public class EquipInstanceBonusTests
         Assert.Equal(expected, EquipGradeVariation.Stats.Select(s => (int)delta[s]).ToArray());
     }
 
+    [Theory]
+    [InlineData(3, new[] { -2, -3, -2, -4, -7, -6, -6, -10, -8, -7 })]
+    [InlineData(8, new[] { -1, 0, 0, -1, 0, -3, -1, -3, 2, 4 })]
+    [InlineData(2, new[] { 2, 2, 4, 3, 4, 7, 9, 6, 10, 6 })]
+    [InlineData(5, new[] { 3, 5, 5, 8, 10, 12, 10, 12, 15, 20 })]
+    [InlineData(1, new[] { -3, -4, -6, -7, -10, -9, -15, -14, -14, -21 })]
+    [InlineData(7, new[] { -2, -2, -2, -3, -4, -7, -7, -5, -5, -10 })]
+    public void EachStatIsHeldByItsOwnUpperLimitNotTheFirstOnes(int seed, int[] expected)
+    {
+        // 十项基础值 1000 + 13i、百分比都是 50(幅度远大于上限,各项的幅度就是自己那一对的上限 3 + 2i);期望值来自 Python 实现
+        var variation = new EquipGradeVariation(Enumerable.Repeat(50, 17).ToArray(), Enumerable.Range(0, 17).Select(i => 3 + (2 * i)).ToArray());
+        var b = new EquipStats.Builder();
+        for (int i = 0; i < EquipGradeVariation.ModeledPairs; i++)
+        {
+            b.Set(EquipGradeVariation.Stats[i], 1000 + (13 * i));
+        }
+        EquipStats delta = variation.DeltaOf(b.Build(), EquipmentParts.Weapon, seed);
+        Assert.Equal(expected, EquipGradeVariation.Stats.Select(s => (int)delta[s]).ToArray());
+    }
+
     [Fact]
     public void TheStatsAreVariedInTheClientsOrderNotTheEnumsOrder()
     {
@@ -401,6 +489,16 @@ public class EquipInstanceBonusTests
         var floaty = new EquipStats.Builder().Set(EquipStat.HpMax, 1000.9).Build();
         var whole = new EquipStats.Builder().Set(EquipStat.HpMax, 1000).Build();
         Assert.Equal(Flat(10, 50).DeltaOf(whole, EquipmentParts.Coat, 7), Flat(10, 50).DeltaOf(floaty, EquipmentParts.Coat, 7));
+    }
+
+    [Fact]
+    public void ABaseStatJustBelowAWholeNumberIsCutDownNotRounded()
+    {
+        // 种子 5 落在 4 档。基础 4.9 先截成 4:幅度 round(0.4) = 0,没有变化;若四舍五入成 5,幅度是 1,4 档会 +1
+        EquipGradeVariation v = Flat(10, 50);
+        Assert.True(v.DeltaOf(Stats(EquipStat.HpMax, 4.9), EquipmentParts.Coat, 5).IsEmpty);
+        Assert.Equal(1.0, v.DeltaOf(Stats(EquipStat.HpMax, 5.0), EquipmentParts.Coat, 5)[EquipStat.HpMax]);
+        Assert.True(v.DeltaOf(Stats(EquipStat.HpMax, -4.9), EquipmentParts.Coat, 5).IsEmpty);
     }
 
     [Fact]
@@ -603,6 +701,34 @@ public class EquipInstanceBonusTests
         Assert.Throws<ArgumentNullException>(() => WeaponUpgradeRateTable.TryParse(null, out _));
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(119)]
+    [InlineData(121)]
+    [InlineData(131)]
+    [InlineData(133)]
+    [InlineData(240)]
+    public void TheRateTableTakesExactlyOneTwentyOrOneThirtyTwoCells(int count)
+    {
+        // 只认 120(十个职业)与 132(带第 11 个职业)两种个数;比 120 多但不是 132 的不收
+        Assert.Throws<ArgumentException>(() => new WeaponUpgradeRateTable(Counted(count)));
+        Assert.False(new WeaponUpgradeRateTable(Counted(120)).HasLastJob);
+        Assert.True(new WeaponUpgradeRateTable(Counted(132)).HasLastJob);
+    }
+
+    [Fact]
+    public void ARateTableTextAcceptsTabsAndSemicolonsAsSeparatorsToo()
+    {
+        var lines = new List<string>();
+        for (int row = 0; row < WeaponUpgradeRateTable.Jobs; row++)
+        {
+            string separator = row % 3 == 0 ? "\t" : row % 3 == 1 ? ";" : " \t ; , ";
+            lines.Add(string.Join(separator, Enumerable.Range(0, 12).Select(c => (row * 12) + c)));
+        }
+        Assert.True(WeaponUpgradeRateTable.TryParse(lines, out WeaponUpgradeRateTable table));
+        Assert.Equal(Counted(120).Select((v, i) => table.Cell(i / 12, (i % 12) / 2, i % 2 == 0)).ToArray(), Counted(120));
+    }
+
     [Fact]
     public void TheFlatRateIsTheSameForEveryWeapon()
     {
@@ -681,6 +807,18 @@ public class EquipInstanceBonusTests
         Assert.Equal((0, 50), (e.Alternate.PhysicalAttack, e.Alternate.MagicalAttack));
         ItemInfo negative = Worn(EquipmentParts.Weapon, 1, 0, (EquipStat.EquipmentPhysicalAttack, -3));
         Assert.Equal(150, EquipUpgradeEffect.Of(negative, ChannelTable(), new Rates()).Normal.PhysicalAttack);
+    }
+
+    [Fact]
+    public void AMagicalBaseAttackBelowOneOpensNoMagicalChannelEvenWithAPhysicalOne()
+    {
+        // 与上一条对称:物理 1.9(取整 1,有物理一路)、魔法 0.5(取整 0,没有魔法一路)
+        ItemInfo w = Worn(EquipmentParts.Weapon, 1, 0, (EquipStat.EquipmentPhysicalAttack, 1.9), (EquipStat.EquipmentMagicalAttack, 0.5));
+        EquipUpgradeEffect e = EquipUpgradeEffect.Of(w, ChannelTable(), new Rates());
+        Assert.Equal((150, 0), (e.Normal.PhysicalAttack, e.Normal.MagicalAttack));
+        Assert.Equal((300, 0), (e.Alternate.PhysicalAttack, e.Alternate.MagicalAttack));
+        ItemInfo negative = Worn(EquipmentParts.Weapon, 1, 0, (EquipStat.EquipmentMagicalAttack, -3));
+        Assert.Equal(25, EquipUpgradeEffect.Of(negative, ChannelTable(), new Rates()).Normal.MagicalAttack);
     }
 
     [Fact]
@@ -953,6 +1091,30 @@ public class EquipInstanceBonusTests
         bonus.GradeVariation = Flat(10, 50);
         Assert.Equal(200.0 + bonus.GradeDeltaOf(w)[EquipStat.EquipmentPhysicalAttack], bonus.BonusOf(w)[EquipStat.EquipmentPhysicalAttack]);
         Assert.NotEqual(0.0, bonus.GradeDeltaOf(w)[EquipStat.EquipmentPhysicalAttack]);
+    }
+
+    [Fact]
+    public void TheWeaponRateAndTheVariationGivenWhenBuildingAreUsed()
+    {
+        var rate = new Rates { Physical = 2f };
+        EquipGradeVariation variation = Flat(10, 50);
+        ItemInfo w = Worn(EquipmentParts.Weapon, 1, 7, (EquipStat.EquipmentPhysicalAttack, 1000));
+        // 强化格 100 × 倍率 2 = 200;品级差来自浮动数据
+        EquipInstanceBonus viaFactory = EquipInstanceBonus.For(ChannelTable(), variation, rate);
+        Assert.Same(rate, viaFactory.WeaponRate);
+        Assert.Same(variation, viaFactory.GradeVariation);
+        Assert.Equal(200.0, viaFactory.UpgradeOf(w).ToStats()[EquipStat.EquipmentPhysicalAttack]);
+        Assert.Equal(200.0 + variation.DeltaOf(w)[EquipStat.EquipmentPhysicalAttack], viaFactory.BonusOf(w)[EquipStat.EquipmentPhysicalAttack]);
+        UpgradeTable table = ChannelTable();
+        var viaConstructor = new EquipInstanceBonus(() => table, variation, rate);
+        Assert.Same(rate, viaConstructor.WeaponRate);
+        Assert.Same(variation, viaConstructor.GradeVariation);
+        Assert.Equal(viaFactory.BonusOf(w), viaConstructor.BonusOf(w));
+        // 不给倍率与浮动数据:倍率按 1,没有品级差
+        var bare = new EquipInstanceBonus(() => table);
+        Assert.Null(bare.WeaponRate);
+        Assert.Null(bare.GradeVariation);
+        Assert.Equal(100.0, bare.BonusOf(w)[EquipStat.EquipmentPhysicalAttack]);
     }
 
     // ------------------------------------------------------------------ 接进装备栏汇总
