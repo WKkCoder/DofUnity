@@ -14,10 +14,11 @@ namespace Dnf.Cli.Analysis;
 /// 每个稀有度能一路升到封顶、失败那一档的惩罚与表对得上、抽签的失败频率落在期望附近;套装"穿齐才生效、少一件不生效"、附魔卡有部位、
 /// 真实装备穿上去之后汇总等于各件加叠加项之和。数值、物品编号与件数是用户自己的数据,只打印在本机的终端上(不要抄进入库的文件)。
 /// <para>
-/// 环境变量 <c>DNF_ENHANCE_DUMP</c> 给了目录就把下面五份规范文本写进去:<c>upgrade_normal.txt</c>、<c>upgrade_amplify.txt</c>(表的原始行、惩罚档、
-/// 取行结果的网格)、<c>items.txt</c>(每件物品的套装、附魔、强化券、等级区间)、<c>grade.txt</c>(品级样本)、<c>pick.txt</c>(倍率与抽档的网格),
+/// 环境变量 <c>DNF_ENHANCE_DUMP</c> 给了目录就把下面七份规范文本写进去:<c>upgrade_normal.txt</c>、<c>upgrade_amplify.txt</c>(表的原始行、惩罚档、
+/// 取行结果的网格)、<c>items.txt</c>(每件物品的套装、附魔、强化券、等级区间)、<c>grade.txt</c>(品级样本)、<c>pick.txt</c>(倍率与抽档的网格)、
+/// <c>effect.txt</c>(每件装备在几个强化等级下换算出的属性,武器倍率用合成表)、<c>variation.txt</c>(每件装备在几颗品级值种子下的浮动差),
 /// 再用 <c>tools/py/enhance_ref.py compare</c> 与独立的 Python 实现逐行比对(只报计数)。转储只写在被 git 忽略的 out/ 下,不入库。
-/// 网格里取哪些稀有度、装备等级、强化等级、倍率、权重、随机数,与 enhance_ref.py 里的同名常数一一对应,改一边要改另一边。
+/// 网格里取哪些稀有度、装备等级、强化等级、倍率、权重、随机数、种子,与 enhance_ref.py、enhance_effect_ref.py 里的同名常数一一对应,改一边要改另一边。
 /// </para>
 /// </summary>
 internal static class EnhanceCheck
@@ -25,6 +26,7 @@ internal static class EnhanceCheck
     private const string UpgradePath = "Etc/upgrade.etc";
     private const string AmplifyPath = "Etc/amplifyupgrade.etc";
     private const string GradePath = "Etc/equipmentgradesample.etc";
+    private const string ParameterPath = "Etc/etcparameter.etc";
 
     // ---- 对拍网格(与 tools/py/enhance_ref.py 同名常数一致) ----
     private static readonly int[] FewLevels = { 0, 1, 7, 18, -1 };
@@ -41,6 +43,11 @@ internal static class EnhanceCheck
         new[] { 7 },
         new[] { 2000000000, 2000000000, 1, 1, 1 },
     };
+
+    // ---- 强化与品级换算的网格(与 tools/py/enhance_effect_ref.py 同名常数一致) ----
+    private static readonly int[] EffectLevels = { 1, 2, 5, 10, 18, 24 };
+    private static readonly int[] VariationSeeds = { 1, 2, 3, 7, 99, 12345, 999999998, 2147483647, -5, -2147483648 };
+    private const int SyntheticRateCells = WeaponUpgradeRateTable.CellsWithLastJob;
 
     private static readonly int[] Rolls = { 0, 1, 2, 499, 500, 999, 1000, 1001, 1500, 2000, 2999, 3000, 3001, 4000, 4999, 5000, 5001, 7000, 100000 };
 
@@ -146,6 +153,19 @@ internal static class EnhanceCheck
         if (normal != null)
         {
             bad += CheckRealGear(normal, items.Where(i => i != null).Select(i => i!).ToList());
+        }
+
+        // 5. 强化等级与品级值换算成属性
+        Console.WriteLine("强化与品级换算成属性(真实表、真实装备;武器倍率表是合成的 0.5 + i/128):");
+        ScriptLine[]? parameterLines = data.ReadScript(ParameterPath);
+        EquipGradeVariation? variation = null;
+        bool variationOk = parameterLines != null && EquipGradeVariation.TryParse(parameterLines, out variation);
+        List<ItemInfo> gearList = items.Where(i => i != null && i.IsEquipment).Select(i => i!).OrderBy(i => i.Code).ToList();
+        bad += CheckInstanceEffects(catalog, normal, variationOk ? variation : null, gearList, opts.Seed);
+        if (dumpDir != null)
+        {
+            WriteLines(Path.Combine(dumpDir, "effect.txt"), EffectLines(normal, gearList));
+            WriteLines(Path.Combine(dumpDir, "variation.txt"), VariationLines(variationOk ? variation : null, gearList));
         }
         return bad;
     }
@@ -934,6 +954,380 @@ internal static class EnhanceCheck
         Report(goldBad == 0, "预览出来的金币都是非负整数(不符 " + goldBad + " 件)");
         Report(titlesWrong == 0, "称号部位一律是\"不能强化\"(例外 " + titlesWrong + " 件)");
         return bad;
+    }
+
+    // ------------------------------------------------------------ 强化与品级换算成属性
+
+    private static float[] SyntheticRates()
+    {
+        var cells = new float[SyntheticRateCells];
+        for (int i = 0; i < cells.Length; i++)
+        {
+            cells[i] = (float)(0.5 + (i / 128.0));          // (64 + i) / 128,单精度下精确
+        }
+        return cells;
+    }
+
+    /// <summary>
+    /// 真实表与真实装备上的换算:读得到浮动数据;每件能强化的装备在每个强化等级都算得出(不抛错、浮点项有限、分路与部位一致、
+    /// 武器没有对应基础攻击就没有那一路);品级浮动在每个种子下都落在"幅度"里、不动值为 0 的项、同一个种子结果相同;
+    /// 随机穿一批真实装备、给每件随机的强化等级与品级值,汇总等于各件折算加各叠加项折算。只打印计数,不打印数值。
+    /// </summary>
+    private static int CheckInstanceEffects(ItemCatalog catalog, UpgradeTable? table, EquipGradeVariation? variation, List<ItemInfo> gear, int seed)
+    {
+        int bad = 0;
+
+        void Report(bool ok, string text)
+        {
+            Console.WriteLine((ok ? "  [通过] " : "  [失败] ") + text);
+            if (!ok)
+            {
+                bad++;
+            }
+        }
+
+        Report(variation != null, "品级浮动的百分比与上限读得进来(至少 " + EquipGradeVariation.ModeledPairs + " 对)");
+        Report(table != null, "强化表读得进来");
+        var rates = new WeaponUpgradeRateTable(SyntheticRates());
+
+        // 强化:每件、每个等级
+        if (table != null)
+        {
+            int rows = table.RowCount;
+            int items = 0, calls = 0, nonEmpty = 0, thrown = 0, levelWrong = 0, partWrong = 0, floatBad = 0, weaponGate = 0;
+            var byClass = new int[5];          // 武器、防具、首饰、辅助与魔法石、其它(称号)在最高等级有属性的件数
+            foreach (ItemInfo item in gear)
+            {
+                if (item.Part < UpgradeTable.FirstPart || item.Part > UpgradeTable.LastPart)
+                {
+                    continue;
+                }
+                items++;
+                for (int level = 1; level <= rows; level++)
+                {
+                    calls++;
+                    EquipUpgradeEffect effect;
+                    try
+                    {
+                        effect = EquipUpgradeEffect.Of(item.WithInstance(new EquipInstance(level)), table, rates);
+                    }
+                    catch (Exception)
+                    {
+                        thrown++;
+                        continue;
+                    }
+                    if (effect.IsEmpty)
+                    {
+                        continue;
+                    }
+                    nonEmpty++;
+                    if (effect.Level != level)
+                    {
+                        levelWrong++;
+                    }
+                    foreach (UpgradeChannels group in new[] { effect.Normal, effect.Alternate })
+                    {
+                        if (float.IsNaN(group.ArmorFloat) || float.IsInfinity(group.ArmorFloat) || float.IsNaN(group.AccessoryFloat) || float.IsInfinity(group.AccessoryFloat))
+                        {
+                            floatBad++;
+                        }
+                        bool weapon = item.Part == EquipmentParts.Weapon;
+                        bool armor = item.Part >= EquipmentParts.Coat && item.Part <= EquipmentParts.Waist;
+                        bool accessory = item.Part >= EquipmentParts.Amulet && item.Part <= EquipmentParts.Ring;
+                        bool aux = item.Part == EquipmentParts.Support || item.Part == EquipmentParts.MagicStone;
+                        bool onlyOwn = weapon ? group.PhysicalDefense == 0 && group.MagicalDefense == 0 && group.AllStats == 0 && group.ArmorFloat == 0f && group.AccessoryFloat == 0f
+                            : armor ? group.PhysicalAttack == 0 && group.MagicalAttack == 0 && group.MagicalDefense == 0 && group.AllStats == 0 && group.AccessoryFloat == 0f
+                            : accessory ? group.PhysicalAttack == 0 && group.MagicalAttack == 0 && group.PhysicalDefense == 0 && group.AllStats == 0 && group.ArmorFloat == 0f
+                            : aux && group.PhysicalAttack == 0 && group.MagicalAttack == 0 && group.PhysicalDefense == 0 && group.MagicalDefense == 0 && group.ArmorFloat == 0f && group.AccessoryFloat == 0f;
+                        if (!onlyOwn)
+                        {
+                            partWrong++;
+                        }
+                        if (weapon && ((int)item.Stats[EquipStat.EquipmentPhysicalAttack] == 0 && group.PhysicalAttack != 0
+                            || (int)item.Stats[EquipStat.EquipmentMagicalAttack] == 0 && group.MagicalAttack != 0))
+                        {
+                            weaponGate++;
+                        }
+                    }
+                }
+                EquipUpgradeEffect top = EquipUpgradeEffect.Of(item.WithInstance(new EquipInstance(rows)), table, rates);
+                if (!top.IsEmpty)
+                {
+                    byClass[item.Part == EquipmentParts.Weapon ? 0
+                        : item.Part >= EquipmentParts.Coat && item.Part <= EquipmentParts.Waist ? 1
+                        : item.Part >= EquipmentParts.Amulet && item.Part <= EquipmentParts.Ring ? 2
+                        : item.Part == EquipmentParts.Support || item.Part == EquipmentParts.MagicStone ? 3 : 4]++;
+                }
+            }
+            Console.WriteLine("  能强化的部位 10 到 21 共 " + items + " 件,按每件每级算了 " + calls + " 次,有属性的 " + nonEmpty + " 次;最高等级有属性的件数:武器 "
+                + byClass[0] + "、防具 " + byClass[1] + "、首饰 " + byClass[2] + "、辅助与魔法石 " + byClass[3] + "、称号 " + byClass[4]);
+            Report(thrown == 0, "每件每级都算得出,不抛错(抛错 " + thrown + " 次)");
+            Report(levelWrong == 0, "算出来的强化等级与给的一致(不符 " + levelWrong + " 次)");
+            Report(partWrong == 0, "每一路只落在自己部位的格子里(串路 " + partWrong + " 次)");
+            Report(floatBad == 0, "浮点项都是有限数(非有限 " + floatBad + " 次)");
+            Report(weaponGate == 0, "武器没有对应基础攻击就没有那一路(例外 " + weaponGate + " 次)");
+            Report(byClass[4] == 0, "称号在最高等级也没有强化属性(例外 " + byClass[4] + " 件)");
+        }
+
+        // 真实的武器倍率表(本机文件,不入库):只数计数,不打印数值
+        string? rateFile = Environment.GetEnvironmentVariable("DNF_WEAPON_RATE_FILE");
+        if (string.IsNullOrEmpty(rateFile) || !File.Exists(rateFile))
+        {
+            Console.WriteLine("  没给 DNF_WEAPON_RATE_FILE:跳过真实倍率表的检查(用 tools/py/weapon_rate_dump.py 在本机生成)");
+        }
+        else
+        {
+            bool loaded = WeaponUpgradeRateTable.TryParse(File.ReadAllLines(rateFile), out WeaponUpgradeRateTable? real);
+            Report(loaded, "本机的武器倍率表文本读得进来(" + WeaponUpgradeRateTable.Cells + " 或 " + WeaponUpgradeRateTable.CellsWithLastJob + " 个数)");
+            if (loaded && real != null)
+            {
+                int cells = 0, nonPositive = 0;
+                for (int job = 0; job < WeaponUpgradeRateTable.Jobs; job++)
+                {
+                    for (int sub = 0; sub < WeaponUpgradeRateTable.SubTypes; sub++)
+                    {
+                        foreach (bool physical in new[] { true, false })
+                        {
+                            cells++;
+                            float v = real.Cell(job, sub, physical);
+                            if (!(v > 0f) || float.IsInfinity(v))
+                            {
+                                nonPositive++;
+                            }
+                        }
+                    }
+                }
+                int weapons = 0, noJob = 0, subOut = 0, usable = 0, physicalBase = 0, physicalRated = 0, magicalBase = 0, magicalRated = 0, thief = 0;
+                foreach (ItemInfo item in gear)
+                {
+                    if (item.Part != EquipmentParts.Weapon)
+                    {
+                        continue;
+                    }
+                    weapons++;
+                    if (WeaponUpgradeRateTable.FirstJob(item) < 0)
+                    {
+                        noJob++;
+                    }
+                    else if ((uint)item.SubType >= WeaponUpgradeRateTable.SubTypes)
+                    {
+                        subOut++;
+                    }
+                    else
+                    {
+                        usable++;
+                        if (WeaponUpgradeRateTable.FirstJob(item) >= WeaponUpgradeRateTable.Jobs)
+                        {
+                            thief++;
+                        }
+                    }
+                    if ((int)item.Stats[EquipStat.EquipmentPhysicalAttack] != 0)
+                    {
+                        physicalBase++;
+                        if (real.RateOf(item, true) > 0f)
+                        {
+                            physicalRated++;
+                        }
+                    }
+                    if ((int)item.Stats[EquipStat.EquipmentMagicalAttack] != 0)
+                    {
+                        magicalBase++;
+                        if (real.RateOf(item, false) > 0f)
+                        {
+                            magicalRated++;
+                        }
+                    }
+                }
+                Console.WriteLine("  真实倍率表:武器 " + weapons + " 件;没写可用职业 " + noJob + " 件、武器种类不在 0 到 5 的 " + subOut + " 件、能查倍率的 " + usable
+                    + " 件(其中第一职业是第 11 个职业的 " + thief + " 件);带装备物理攻击的 " + physicalBase + " 件里倍率为正的 " + physicalRated
+                    + " 件,带装备魔法攻击的 " + magicalBase + " 件里倍率为正的 " + magicalRated + " 件");
+                Report(nonPositive == 0, "前 " + WeaponUpgradeRateTable.Jobs + " 个职业的 " + cells + " 格倍率都是正的有限数(不是 " + nonPositive + " 格)");
+            }
+        }
+
+        // 品级浮动:幅度、零值、确定性
+        if (variation != null)
+        {
+            int items = 0, calls = 0, varied = 0, outOfRange = 0, zeroMoved = 0, nondeterministic = 0, nonApplicableMoved = 0, gradeZeroMoved = 0;
+            foreach (ItemInfo item in gear)
+            {
+                bool applies = EquipGradeVariation.AppliesTo(item.Part);
+                if (!applies)
+                {
+                    if (!variation.DeltaOf(item.Stats, item.Part, 7).IsEmpty)
+                    {
+                        nonApplicableMoved++;
+                    }
+                    continue;
+                }
+                items++;
+                if (!variation.DeltaOf(item.Stats, item.Part, 0).IsEmpty)
+                {
+                    gradeZeroMoved++;
+                }
+                bool any = false;
+                foreach (int s in VariationSeeds)
+                {
+                    calls++;
+                    EquipStats a = variation.DeltaOf(item.Stats, item.Part, s);
+                    if (!a.Equals(variation.DeltaOf(item.Stats, item.Part, s)))
+                    {
+                        nondeterministic++;
+                    }
+                    any |= !a.IsEmpty;
+                    for (int i = 0; i < EquipGradeVariation.ModeledPairs; i++)
+                    {
+                        EquipStat stat = EquipGradeVariation.Stats[i];
+                        int baseValue = (int)item.Stats[stat];
+                        int delta = (int)a[stat];
+                        if (baseValue == 0)
+                        {
+                            if (delta != 0)
+                            {
+                                zeroMoved++;
+                            }
+                            continue;
+                        }
+                        int range = EquipGradeVariation.RoundHalfAway((float)variation.PercentOf(i) * (float)baseValue / 100f);
+                        int bound = Math.Max(Math.Abs(range), Math.Max(variation.CapOf(i), 0));
+                        if (Math.Abs(delta) > bound)
+                        {
+                            outOfRange++;
+                        }
+                    }
+                }
+                if (any)
+                {
+                    varied++;
+                }
+            }
+            Console.WriteLine("  品级浮动:适用的装备 " + items + " 件,每件 " + VariationSeeds.Length + " 颗种子共算了 " + calls + " 次,至少浮出一项的 " + varied + " 件");
+            Report(outOfRange == 0, "浮动差都不超过\"幅度与上限里较大的那个\"(越界 " + outOfRange + " 项)");
+            Report(zeroMoved == 0, "基础值为 0 的项不浮动(被动了 " + zeroMoved + " 项)");
+            Report(nondeterministic == 0, "同一颗种子结果相同(不同 " + nondeterministic + " 次)");
+            Report(nonApplicableMoved == 0, "称号、宠物、时装与未知部位不浮动(例外 " + nonApplicableMoved + " 件)");
+            Report(gradeZeroMoved == 0, "品级值 0(没有品级)不浮动(例外 " + gradeZeroMoved + " 件)");
+        }
+
+        // 随机穿一批真实装备:每件随机强化等级与品级值,汇总等于各件折算加叠加项折算
+        if (table != null)
+        {
+            var bonus = EquipInstanceBonus.For(table, variation, rates);
+            var perPart = new Dictionary<int, List<ItemInfo>>();
+            foreach (ItemInfo item in gear)
+            {
+                if (EquipmentSlots.IsSlot(item.Part))
+                {
+                    if (!perPart.TryGetValue(item.Part, out List<ItemInfo>? list))
+                    {
+                        list = new List<ItemInfo>();
+                        perPart[item.Part] = list;
+                    }
+                    list.Add(item);
+                }
+            }
+            var random = new Random(seed + 7);
+            int rounds = 0, mismatch = 0, statsMismatch = 0, withInstanceTerm = 0, termsChange = 0;
+            for (int n = 0; n < 300 && perPart.Count > 0; n++)
+            {
+                var slots = new EquipmentSlots();
+                var overlay = new EquipBonusOverlay(c => catalog.Get(c)!) { InstanceBonus = bonus };
+                overlay.Attach(slots);
+                var plain = new List<ItemInfo>();
+                foreach (KeyValuePair<int, List<ItemInfo>> pair in perPart)
+                {
+                    ItemInfo item = pair.Value[random.Next(pair.Value.Count)];
+                    int level = random.Next(0, table.RowCount + 1);
+                    int grade = random.Next(0, 3) == 0 ? 0 : random.Next(1, 32768);
+                    ItemInfo worn = item.WithInstance(new EquipInstance(level, gradeValue: grade));
+                    if (slots.Restore(item.Part, worn))
+                    {
+                        plain.Add(item);
+                    }
+                }
+                if (!SameBlock(slots.TotalStatBlock(), Expected(slots, overlay)))
+                {
+                    mismatch++;
+                }
+                var wornStats = EquipStats.Sum(slots.Items.Select(i => i.Stats));
+                EquipStats expectedStats = EquipStats.Sum(overlay.Terms(slots).Prepend(wornStats));
+                if (!slots.TotalStats().Equals(expectedStats))
+                {
+                    statsMismatch++;
+                }
+                if (slots.Items.Any(i => bonus.BonusOf(i) != null))
+                {
+                    withInstanceTerm++;
+                    if (!slots.TotalStats().Equals(EquipStats.Sum(plain.Select(i => i.Stats))))
+                    {
+                        termsChange++;
+                    }
+                }
+                rounds++;
+            }
+            Report(mismatch == 0, "随机穿真实装备 " + rounds + " 次(每件随机强化等级与品级值):属性块汇总等于各件折算加叠加项折算(不等 " + mismatch + " 次)");
+            Report(statsMismatch == 0, "同上,装备属性表汇总等于各件加各叠加项(不等 " + statsMismatch + " 次)");
+            Report(withInstanceTerm == 0 || termsChange > 0, "有个体加成的 " + withInstanceTerm + " 次里,汇总确实不同于没有个体状态时的(不同 " + termsChange + " 次)");
+        }
+        return bad;
+    }
+
+    private static string ChannelsLine(UpgradeChannels c)
+    {
+        return Ints(new[] { c.PhysicalAttack, c.MagicalAttack, c.PhysicalDefense, c.MagicalDefense, c.AllStats }) + "," + Bits(c.ArmorFloat) + "," + Bits(c.AccessoryFloat);
+    }
+
+    private static List<string> EffectLines(UpgradeTable? table, List<ItemInfo> gear)
+    {
+        var lines = new List<string>();
+        if (table == null)
+        {
+            lines.Add("V\tinvalid");
+            return lines;
+        }
+        var rates = new WeaponUpgradeRateTable(SyntheticRates());
+        var levels = new List<int>(EffectLevels) { table.RowCount, table.RowCount + 1 };
+        foreach (ItemInfo item in gear)
+        {
+            if (item.Part < UpgradeTable.FirstPart || item.Part > UpgradeTable.LastPart)
+            {
+                continue;
+            }
+            foreach (int level in levels)
+            {
+                // 个体状态的强化等级是一个字节(0 到 255,正常强化只到 MaxUpgrade);表有 255 行时的 rows + 1 不可能存在,按"没有效果"写,与 Python 一侧的越界行一致
+                EquipUpgradeEffect effect = level > byte.MaxValue
+                    ? EquipUpgradeEffect.None
+                    : EquipUpgradeEffect.Of(item.WithInstance(new EquipInstance(level)), table, rates);
+                lines.Add(item.Code.ToString(CultureInfo.InvariantCulture) + " " + level.ToString(CultureInfo.InvariantCulture) + "\t"
+                    + (effect.IsEmpty ? "-" : ChannelsLine(effect.Normal) + "|" + ChannelsLine(effect.Alternate)));
+            }
+        }
+        return lines;
+    }
+
+    private static List<string> VariationLines(EquipGradeVariation? variation, List<ItemInfo> gear)
+    {
+        var lines = new List<string>();
+        if (variation == null)
+        {
+            lines.Add("V\tinvalid");
+            return lines;
+        }
+        foreach (ItemInfo item in gear)
+        {
+            if (!EquipGradeVariation.AppliesTo(item.Part))
+            {
+                continue;
+            }
+            foreach (int seed in VariationSeeds)
+            {
+                EquipStats delta = variation.DeltaOf(item.Stats, item.Part, seed);
+                lines.Add(item.Code.ToString(CultureInfo.InvariantCulture) + " " + seed.ToString(CultureInfo.InvariantCulture) + "\t"
+                    + Ints(EquipGradeVariation.Stats.Select(stat => (int)delta[stat])));
+            }
+        }
+        return lines;
     }
 
     // ------------------------------------------------------------ 转储
