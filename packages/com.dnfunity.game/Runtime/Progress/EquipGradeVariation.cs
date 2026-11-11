@@ -4,7 +4,7 @@ using Dnf.Data;
 
 // 证据(客户端静态读码,函数地址见 out/enhance/NOTES.md;原版数值与代码原文都不入库):
 //  · 装备的"品级值"在客户端是一颗随机种子。复制一件装备的属性集时(0x0079a780),先用种子抽一个"档位"(0 到 4,见 BandOf,函数 0x00783bb0),
-//    再对每一项基础属性按"百分比、上限"一对(etc/etcparameter.etc 的 [stat random variation],两个数一对,共 17 对)做一次随机浮动(函数 0x0078cfb0)。
+//    再对每一项基础属性按"百分比、上限"一对(Etc/etcparameter.etc 的 [stat random variation],两个数一对,共 17 对)做一次随机浮动(函数 0x0078cfb0)。
 //  · 随机数是线性同余:每抽一次连走三步"乘 0x41c64e6d 加 0x3039",再把三步结果的高位按 10 位一段拼成一个数(NextRandom,函数 0x00e50e60)。
 //  · 浮动只作用于第一个数(普通那一档);第二个数(另一档)与强化带来的各项原样拷贝,不浮动。
 //  · 全部是 float 单精度运算(CVTSI2SS / MULSS / DIVSS / CVTTSS2SI),取整按"四舍五入、远离零"(函数 0x00767630),C# 的 float 运算逐步对得上。
@@ -18,7 +18,7 @@ namespace Dnf.Game
     /// 加在装备基础属性之上(<see cref="EquipInstanceBonus"/> 把它交给 <see cref="EquipBonusOverlay"/>),<see cref="EquipStats"/> 的折算本身不动。
     /// <para>
     /// 档位决定浮动的形状:0 档偏负、4 档偏正、2 档居中(<see cref="Jitter"/> 里逐档写明);浮动幅度 = 基础值 × 百分比 ÷ 100(四舍五入),再不超过上限。
-    /// 本类不带任何原版数值:百分比与上限从 <c>etc/etcparameter.etc</c> 读(<see cref="TryParse"/>),测试用合成的数。
+    /// 本类不带任何原版数值:百分比与上限从 <c>Etc/etcparameter.etc</c> 读(<see cref="TryParse"/>),测试用合成的数。
     /// </para>
     /// </summary>
     public sealed class EquipGradeVariation
@@ -82,7 +82,7 @@ namespace Dnf.Game
         public int CapOf(int pair) => _cap[pair];
 
         /// <summary>
-        /// 读 <c>etc/etcparameter.etc</c> 里的 <c>[stat random variation]</c>:一串整数,两个一对(百分比、上限)。至少要有 <see cref="ModeledPairs"/> 对,
+        /// 读 <c>Etc/etcparameter.etc</c> 里的 <c>[stat random variation]</c>:一串整数,两个一对(百分比、上限)。至少要有 <see cref="ModeledPairs"/> 对,
         /// 没有这个标签或不够返回 false;标签出现多次取最后一次(与其它表的读法一致,本机数据里只有一次)。
         /// </summary>
         public static bool TryParse(ScriptLine[] lines, out EquipGradeVariation variation)
