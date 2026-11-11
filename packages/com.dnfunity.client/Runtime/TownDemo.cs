@@ -28,11 +28,13 @@ namespace Dnf.Client
     /// 再带 -dnfnetdungeon &lt;副本编号&gt; &lt;模式 0 到 4&gt;(要同时带 -dnfnet)时,进城后在同一个会话上接着走联网进副本(开始游戏 → 选副本 → 收到起始地图,<see cref="OnlineDungeonRunner"/>),
     /// 阶段与结局只打 DNF_NET stage=dungeon 日志(阶段名、失败原因与计数,不含载荷内容),进城快照里的角色等级、职业、成长类型打一行 DNF_NET snapshot,
     /// 进城阶段的会话事件(信封拆开几个、列表应答怎么来的)汇总成一行 DNF_NET session;
-    /// 进副本这一步有结局后才继续城镇流程;进副本成功(拿到起始地图)之后在同一个会话上接着跑联网战斗(<see cref="OnlineDungeonCombatRunner"/>,它自己回心跳):
-    /// 离线副本(<see cref="DungeonSession"/>)起始房间里的怪死了,<see cref="RoomKillWatcher"/> 观察到后按位置(第 i 只本地怪 ↔ 起始地图第 i 条记录)把本地序号排给它,
-    /// 它查对应表、用记录第 3 项(服务端认的击杀编号)发击杀命令;服务端清图通知到后才发结算命令,两段结算通知收齐就是"可以回城"。
-    /// 战斗的阶段与事件只打 DNF_NET stage=combat 行(阶段名、枚举名与计数,不含载荷内容与服务端编号);战斗结束之后才接心跳保活、照旧跑到退出。
-    /// 联网的怪物不在画面上出现、没有 AI 表现(画面里打的仍是离线房间的本地怪,与服务端只是按位置对号),回城也只是打日志,缺口写在 HANDOFF。
+    /// 进副本这一步有结局后才继续城镇流程;进副本成功(拿到有怪的起始地图、战斗状态机就位)之后在同一个会话上接着跑联网战斗(<see cref="OnlineDungeonCombatRunner"/>,它自己回心跳),
+    /// 同时流程直接从联网房间起步(<see cref="OnlineDungeonRoom"/>,r15-dungeonhost):房间里按起始地图的怪记录数造本地怪(出生点与怪物编号取房间地图自己的 [monster],走 Play 层既有的房间战斗,不另造战斗),
+    /// 本地怪死了,<see cref="HostedRoomRun"/> 里的 <see cref="RoomKillWatcher"/> 观察到后把序号(第 i 只本地怪 ↔ 起始地图第 i 条记录)排给联网战斗,
+    /// 它查对应表、用记录第 3 项(服务端认的击杀编号)发击杀命令;服务端清图通知到后才发结算命令,两段结算通知收齐才回城镇(本地怪杀光不算)。
+    /// 起始地图里没有怪、状态机没就位、房间造不成时退回城镇,与以前一样。
+    /// 战斗的阶段与事件只打 DNF_NET stage=combat 行(阶段名、枚举名与计数,不含载荷内容与服务端编号),房间接线只打 DNF_NET stage=room 行(状态名与只数);战斗结束之后才接心跳保活、照旧跑到退出。
+    /// 联网房间里的怪是本地怪:出生点与怪物编号是推断(与服务端怪表只按记录顺序对号),没有复活窗口(主角死亡不会失败,真服核对时建议带 -dnfnodamage)。
     /// 不带这个参数时联网流程与以前一字不变。
     /// 带 -dnfflow 时玩整条流程(<see cref="GameFlow"/>,证据 E-093):从选角(-dnfflowfrom char,证据 E-096:方向键移动选中、回车或空格开始游戏、Esc 或点"结束游戏"退出,点角色格子选中)、
     /// 城镇(town,默认)、副本选择(select)或副本(dungeon)开始;
@@ -228,10 +230,13 @@ namespace Dnf.Client
         private int _netDungeonMode;                        // 联网进副本的模式(0 到 4)
         private volatile bool _netDungeonDone;              // 后台进副本这一步已有结局(成功或失败),主线程据此放行城镇流程
         private const float NetDungeonWaitLimitSeconds = 90f; // 等进副本有结局的兜底上限(后台三步各有超时,合计不过半分钟)
-        private OnlineDungeonCombatRunner _netCombat;       // -dnfnetdungeon:进副本成功后接着跑的联网战斗(为空 = 没有联网战斗,击杀桥接什么都不做)
-        private DungeonSession _netKillSource;              // 击杀桥接当前绑着的离线副本会话
-        private RoomKillWatcher _netKillWatcher;            // 盯着那局副本的起始房间(只读观察,不改战斗)
-        private readonly List<int> _netKillScratch = new List<int>(); // 每帧轮询复用的序号表
+        private const float NetMachineWaitSeconds = 2f;     // 进副本成功之后等联网战斗状态机就位的上限(它在进副本回调返回后马上由后台线程建,正常几毫秒)
+        private const string NetRoomFlowFrom = "netroom";   // 流程的内部起点:联网进副本成功、直接进联网房间(不是命令行取值,-dnfflowfrom 写它无效)
+        private OnlineDungeonCombatRunner _netCombat;       // -dnfnetdungeon:进副本成功后接着跑的联网战斗(为空 = 没有联网战斗)
+        private OnlineDungeonResult _netEntry;              // -dnfnetdungeon:进副本这一步的结局(后台回调写、_netDungeonDone 之后主线程读;成功时带起始地图)
+        private OnlineDungeonRoom _netRoom;                 // 联网副本房间的接线(进联网房间时造,见 PrepareNetRoom)
+        private HostedRoomRun _netRun;                      // 造好、还没被流程取走的联网房间这一局(流程的副本工厂取一次,见 TakeNetRun)
+        private bool _netRoomNoted;                         // 联网房间选定回城的那一刻已经写过 DNF_NET stage=room return
         private string _flowFrom = "town";
         private string _flowChoices = DefaultFlowChoices;
         private string _worldMapPath = DefaultWorldMap;
@@ -582,7 +587,8 @@ namespace Dnf.Client
                     yield break; // 失败已经在 RunOnlineEntry 里报进日志与提示屏了
                 }
                 _flowMode = true;
-                _flowFrom = "town";
+                // 联网进副本成功(拿到有怪的起始地图、战斗状态机就位):流程直接从联网房间起步(StartFlow 里造不出来会退回城镇);其余照旧进城镇
+                _flowFrom = NetRoomWanted ? NetRoomFlowFrom : "town";
             }
             else if (_netDungeon)
             {
@@ -738,21 +744,24 @@ namespace Dnf.Client
         /// 在后台线程里跑;主线程只等这一步有结局(成功或失败都算)就放行城镇流程。协议与日志都在 OnlineDungeonRunner 里:
         /// 阶段与结局只打 DNF_NET stage=dungeon 行(阶段名、失败原因与计数,不含载荷内容)。
         /// 进副本成功之后 OnlineDungeonRunner 接着在同一个会话上跑联网战斗(<see cref="OnlineDungeonCombatRunner"/>,自己回心跳;日志行首 DNF_NET stage=combat,
-        /// 与进副本的日志走同一个回调),离线副本里本地怪的死亡由 <see cref="PumpNetKills"/> 每帧轮询后排给它;战斗结束之后 OnlineDungeonRunner 才接上与以前同一个心跳泵
-        /// (日志同文 DNF_NET heartbeat …),一直跑到退出(OnDestroy 取消)。进副本没成功(没有起始地图)时不跑战斗,行为与以前一字不变。
+        /// 与进副本的日志走同一个回调);战斗结束之后 OnlineDungeonRunner 才接上与以前同一个心跳泵(日志同文 DNF_NET heartbeat …),一直跑到退出(OnDestroy 取消)。
+        /// 进副本成功(拿到有怪的起始地图)时,流程从联网房间起步:房间里按起始地图的怪记录造本地怪(<see cref="PrepareNetRoom"/>,走 Play 层既有的房间战斗),
+        /// 本地怪的死亡由 <see cref="HostedRoomRun"/> 在每帧推进房间时观察并排给战斗跑器(每只一次、带服务端编号),联网结算收齐之后流程回城镇。
+        /// 进副本没成功(没有起始地图)时不跑战斗、不进房间,行为与以前一字不变。
         /// </summary>
         private IEnumerator RunOnlineDungeon(GameClientSession session)
         {
             _message = "联网中:进副本…";
             _state = State.Loading;
             _netDungeonDone = false;
+            _netEntry = null;
             var runner = new OnlineDungeonRunner(session);
             _netCombat = runner.UseCombat();
             int dungeonId = _netDungeonId;
             int dungeonMode = _netDungeonMode;
             CancellationToken token = _netCancel.Token;
             _ = Task.Run(() => runner.RunAsync(
-                dungeonId, dungeonMode, line => Debug.Log(line), token, entered: _ => _netDungeonDone = true));
+                dungeonId, dungeonMode, line => Debug.Log(line), token, entered: r => { _netEntry = r; _netDungeonDone = true; }));
             float waitedSince = Time.realtimeSinceStartup;
             while (!_netDungeonDone)
             {
@@ -764,6 +773,110 @@ namespace Dnf.Client
                 }
                 yield return null;
             }
+            if (_netEntry != null && _netEntry.Entered && _netEntry.StartMap != null)
+            {
+                // 进副本成功:战斗状态机在回调返回之后马上由后台线程建好,这里最多再等两秒让它就位(造联网房间要读它的对应表)
+                float machineWaitedSince = Time.realtimeSinceStartup;
+                while (_netCombat.Machine == null && !_netCombat.Ended && Time.realtimeSinceStartup - machineWaitedSince < NetMachineWaitSeconds)
+                {
+                    yield return null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 进联网房间的条件:带 -dnfnetdungeon、进副本成功(拿到起始地图)、起始地图里有怪、联网战斗的状态机已就位。
+        /// 满足也只是"尝试进房间"(<see cref="PrepareNetRoom"/> 还可能造不成,那时退回城镇);不满足时流程与以前一字不变。
+        /// </summary>
+        private bool NetRoomWanted
+        {
+            get
+            {
+                return _netDungeon && _netEntry != null && _netEntry.Entered && _netEntry.StartMap != null && _netEntry.StartMap.Monsters.Count > 0
+                    && _netCombat != null && _netCombat.Machine != null;
+            }
+        }
+
+        /// <summary>
+        /// 造联网房间这一局(<see cref="OnlineDungeonRoom"/>):先按副本编号与起始地图的地图编号找到房间地图,再用房间自己的 [monster] 当出生点模板、按起始地图的怪记录数造本地怪
+        /// (走 <see cref="DemoCombat.CreateSession"/> 的出生点计划,与离线房间同一套怪物与战斗)。成功把这一局留在 <c>_netRun</c>(流程的副本工厂取走)、
+        /// 返回 true,<paramref name="dungeonPath"/> 是流程里记的副本路径;造不成(找不到房间地图、房间里一只对得上记录的怪都没有、造的时候出了意外)
+        /// 写一行 DNF_NET stage=room 日志、返回 false,宿主退回城镇,与没带 -dnfnetdungeon 时一样。日志行只有状态名与只数。
+        /// 注意:起始地图的怪记录里除了服务端怪编号,其余各项含义没读通,所以出生点位置与怪物编号取自房间地图自己的 [monster],只数与顺序按记录——
+        /// 记录与房间地图 [monster] 的逐条对应是推断,没有真服核对(见 <see cref="RoomSpawnPlan"/>)。
+        /// </summary>
+        private bool PrepareNetRoom(string fallbackDungeon, out string dungeonPath)
+        {
+            dungeonPath = fallbackDungeon;
+            _netRun = null;
+            try
+            {
+                Dictionary<int, string> dungeons = WorldMapDef.ParseList(_assets.ReadScript(DungeonRoomPool.DungeonListPath), "dungeon/");
+                if (dungeons.TryGetValue(_netDungeonId, out string listed))
+                {
+                    dungeonPath = listed;
+                }
+                DungeonRoomPool pool = DungeonRoomPool.ReadFor(_assets, dungeonPath);
+                string roomMap = OnlineDungeonRoom.PickRoomMap(pool.Rooms, _netEntry.StartMap.MapId, CountRoomMonsters, out bool exact);
+                if (roomMap == null)
+                {
+                    Debug.Log(OnlineDungeonRoom.LogPrefix + " status=NoRoomMap rooms=" + pool.Rooms.Count + " fallback=town");
+                    return false;
+                }
+                HeroProgress progress = HeroProgressForRun();
+                _netRoom = new OnlineDungeonRoom(_netCombat);
+                _netRun = _netRoom.CreateRun(
+                    plan => DemoCombat.CreateSession(_assets, roomMap, DemoHero.StarterWeapon, _seed, !_noDamage, progress, plan),
+                    DungeonSession.SettlementDelayMs);
+                Debug.Log(_netRoom.LogLine() + " mapMatched=" + exact + (_netRun == null ? " fallback=town" : string.Empty));
+                if (_netRun == null)
+                {
+                    return false;
+                }
+                _heroInput = true;
+                return true;
+            }
+            catch (Exception e)
+            {
+                _netRun = null;
+                Debug.Log(OnlineDungeonRoom.LogPrefix + " failed exception=" + e.GetType().Name + " fallback=town");
+                return false;
+            }
+        }
+
+        /// <summary>房间地图自己的 [monster] 有几项(出生点模板数);读不出来(缺脚本、不是房间地图)返回 -1。</summary>
+        private int CountRoomMonsters(string mapPath)
+        {
+            try
+            {
+                return RoomMap.Read(_assets, mapPath).Monsters.Count;
+            }
+            catch (Exception)
+            {
+                return -1;
+            }
+        }
+
+        /// <summary>流程的副本工厂先问这里:有造好的联网房间就交出去(只交一次),否则返回 null,工厂照旧造离线副本。</summary>
+        private IRunSession TakeNetRun()
+        {
+            HostedRoomRun run = _netRun;
+            _netRun = null;
+            return run;
+        }
+
+        /// <summary>
+        /// 联网房间选定回城的那一刻写一行 DNF_NET stage=room return(这一局交了几只击杀、几只被拒收),无人值守的检查读它;只写一次。
+        /// 在推进会话之后、流程 Poll 之前调(Poll 一应用回城,当前阶段就不是副本了)。
+        /// </summary>
+        private void NoteNetRoom(HostedRoomRun run)
+        {
+            if (_netRoomNoted || run.Choice == SettlementChoice.None)
+            {
+                return;
+            }
+            _netRoomNoted = true;
+            Debug.Log(OnlineDungeonRoom.LogPrefix + " return choice=" + run.Choice + " reported=" + run.Reported + " dropped=" + run.Dropped);
         }
 
         private static string StageText(int stage) => (OnlineStage)stage switch
@@ -1233,7 +1346,7 @@ namespace Dnf.Client
             return " hero=(" + h.X.ToString("F1", inv) + "," + h.Y.ToString("F1", inv) + ") facing=" + (h.FacingLeft ? "left" : "right")
                 + " motion=" + h.Motion + " cameraX=" + _session.Camera.IntX + " leftEdge=" + (h.Area.Count > 0 && h.X <= minX)
                 + (IsRoomSession ? " room=true" : "")
-                + (_session is RoomCombatSession fight
+                + (FightSession() is RoomCombatSession fight
                     ? " monsters=" + fight.AliveCount + "/" + fight.Monsters.Count + " hits=" + fight.Hits + " kills=" + fight.Kills + " combo=" + fight.Combo
                         + " casts=" + fight.SkillCasts + " stage=" + (h.IsAttacking ? h.AttackStage + 1 : 0)
                         + (fight.Vitals != null ? " heroHits=" + fight.HeroHits + " heroHp=" + fight.Vitals.Hp + "/" + fight.Vitals.HpMax + " heroMp=" + fight.Vitals.Mp + "/" + fight.Vitals.MpMax : string.Empty)
@@ -1253,7 +1366,16 @@ namespace Dnf.Client
         /// <summary>副本房间(无论带不带怪物)。</summary>
         private bool IsRoomSession
         {
-            get { return _session is RoomSession || _session is RoomCombatSession || _session is DungeonSession; }
+            get { return _session is RoomSession || _session is RoomCombatSession || _session is DungeonSession || _session is HostedRoomRun; }
+        }
+
+        /// <summary>
+        /// 当前会话里的房间战斗会话:离线的房间战斗本身,或联网副本房间(<see cref="HostedRoomRun"/>)托管着的那一间(画面、底栏、日志与离线房间同一套);
+        /// 其余会话(城镇、离线副本、无怪房间)返回 null。
+        /// </summary>
+        private RoomCombatSession FightSession()
+        {
+            return _session as RoomCombatSession ?? (_session as HostedRoomRun)?.Room;
         }
 
         private void SaveShotAndQuit()
@@ -2083,6 +2205,10 @@ namespace Dnf.Client
                     _session.Update(deltaMs, dirX, dirY);
                 }
             }
+            if (_session is HostedRoomRun hostedRun)
+            {
+                NoteNetRoom(hostedRun);   // 联网房间这一局选定回城的那一刻写一行日志(其余会话恒不进这里)
+            }
         }
 
         /// <summary>
@@ -2298,12 +2424,12 @@ namespace Dnf.Client
             CharacterSelectScene characterScene = CharacterSelectScene.From(_assets);
             _flow = new GameFlow(
                 townWorld,
-                (path, run) => CreateDungeon(path, _seed + run, _difficulty),
+                (path, run) => TakeNetRun() ?? CreateDungeon(path, _seed + run, _difficulty),   // 有造好的联网房间就先交它(只交一次);没有联网房间时 TakeNetRun 恒为 null,与以前一样
                 realSelect ? (System.Collections.Generic.IEnumerable<DungeonEntry>)world.Entries : new[] { new DungeonEntry(dungeon, null) },
                 realSelect ? world.Scene : null,
                 dungeonSplash,
                 () => new CharacterSelectScreen(CharacterRoster.Local(_progress != null ? _progress.Level : _savedLevel), characterScene),
-                (path, run, difficulty) => CreateDungeon(path, _seed + run, difficulty));
+                (path, run, difficulty) => TakeNetRun() ?? CreateDungeon(path, _seed + run, difficulty));
             _flow.DifficultyLimit = DifficultyGate.For(() => _progress, _assets);   // 选择界面左右键能选到哪一档:按主角的通关记录(M33,E-125)
             _flow.Bag.UseAssets(_assets);            // 背包里穿武器前先问"画面上穿得出来吗"(HeroLook.CanShow)
             if (avatarsOn)
@@ -2341,6 +2467,16 @@ namespace Dnf.Client
                     break;
                 case "dungeon":
                     _flow.StartDungeon(dungeon, "start", _difficulty);
+                    break;
+                case NetRoomFlowFrom:
+                    if (PrepareNetRoom(dungeon, out string netDungeonPath))
+                    {
+                        _flow.StartDungeon(netDungeonPath, "net room", _difficulty);   // 副本工厂这一次交出 PrepareNetRoom 造好的联网房间
+                    }
+                    else
+                    {
+                        _flow.EnterTown("start");   // 联网房间造不成:退回城镇,与没带联网进副本时一样(原因在上面 DNF_NET stage=room 那行)
+                    }
                     break;
                 default:
                     _flow.EnterTown("start");
@@ -3492,16 +3628,21 @@ namespace Dnf.Client
                         + "monsters alive " + dungeon.Current.AliveCount + "/" + dungeon.Current.Monsters.Count + "  hits " + dungeon.Hits + "  kills " + dungeon.Kills
                         + "  damage " + dungeon.TotalDamage + "\n";
                 }
-                else if (_session is RoomCombatSession fight)
+                else if (FightSession() is RoomCombatSession fight)
                 {
                     hero += "monsters alive " + fight.AliveCount + "/" + fight.Monsters.Count + "  hits " + fight.Hits + "  kills " + fight.Kills
                         + "  combo " + fight.Combo + "  damage " + fight.TotalDamage + "\n";
+                    if (_session is HostedRoomRun online)
+                    {
+                        hero += "online room: kills reported " + online.Reported + "  refused " + online.Dropped
+                            + (online.Choice != SettlementChoice.None ? "   SETTLED: back to town" : online.Finished ? "   SETTLED" : "   waiting for the server's clear and settlement") + "\n";
+                    }
                 }
                 if (_session is DungeonSession skillDungeon)
                 {
                     hero += SkillsText(skillDungeon.Current.Skills);
                 }
-                else if (_session is RoomCombatSession skillFight)
+                else if (FightSession() is RoomCombatSession skillFight)
                 {
                     hero += SkillsText(skillFight.Skills);
                 }
@@ -3517,7 +3658,7 @@ namespace Dnf.Client
                 }
                 else
                 {
-                    help = _session is RoomCombatSession
+                    help = FightSession() != null
                         ? "Arrow keys: walk (double-tap Left/Right: run)   X: attack (again to chain; while running: dash attack)   C: jump (X in the air: jump attack)   A: Hard Attack   S: Upper Slash   D: Back Step   Space: pause (then Left/Right step 50 ms)   F1: hide text   Esc: quit   (placeholder damage; skills cost MP; monsters hit back unless -dnfnodamage)"
                         : "Arrow keys: walk   Space: pause (then Left/Right step 50 ms)   F1: hide text   Esc: quit   (no UI, no combat)";
                 }

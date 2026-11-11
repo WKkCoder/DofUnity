@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    客户端宿主里"联网战斗 ↔ Play 层房间会话"那一段接线的测试(r15-dungeonhost):内存里的假会话 + 假服务端,不连任何真实服务,数据全是合成的。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Dnf.Data\Dnf.Data.csproj" />
+    <ProjectReference Include="..\Dnf.Script\Dnf.Script.csproj" />
+    <ProjectReference Include="..\Dnf.Game\Dnf.Game.csproj" />
+    <ProjectReference Include="..\Dnf.Render\Dnf.Render.csproj" />
+    <ProjectReference Include="..\Dnf.Play\Dnf.Play.csproj" />
+    <ProjectReference Include="..\Dnf.Net\Dnf.Net.csproj" />
+    <ProjectReference Include="..\Dnf.Client\Dnf.Client.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 联网战斗的合成数据与假会话/假服务端(与联网层测试共用,internal,直接编译进来) -->
+    <Compile Include="..\Dnf.Net.Tests\CombatTestKit.cs" Link="CombatTestKit.cs" />
+    <Compile Include="..\Dnf.Net.Tests\OnlineDungeonEntryDoubles.cs" Link="OnlineDungeonEntryDoubles.cs" />
+    <Compile Include="..\Dnf.Net.Tests\FrameVectorFile.cs" Link="FrameVectorFile.cs" />
+    <Compile Include="..\Dnf.Net.Tests\FrameCipherDoubles.cs" Link="FrameCipherDoubles.cs" />
+    <Compile Include="..\Dnf.Net.Tests\NoticePayloadBuilder.cs" Link="NoticePayloadBuilder.cs" />
+    <Compile Include="..\Dnf.Net.Tests\GatewayTestSupport.cs" Link="GatewayTestSupport.cs" />
+    <!-- 合成数据构造器与"迷你职业 + 迷你怪物"夹具,以及联网副本房间的夹具(与 Play 层测试共用) -->
+    <Compile Include="..\Dnf.Data.Tests\TestData.cs" Link="TestData.cs" />
+    <Compile Include="..\Dnf.Render.Tests\AvatarFixture.cs" Link="AvatarFixture.cs" />
+    <Compile Include="..\Dnf.Play.Tests\HostedRoomFixture.cs" Link="HostedRoomFixture.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>
