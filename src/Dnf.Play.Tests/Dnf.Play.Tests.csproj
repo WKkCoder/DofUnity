@@ -30,6 +30,8 @@
     <Compile Include="..\Dnf.Render.Tests\WardrobeFixture.cs" Link="WardrobeFixture.cs" />
     <!-- 合成的方块字体(文字系统的测试用,不含真实字形) -->
     <Compile Include="..\Dnf.Render.Tests\BlockFont.cs" Link="BlockFont.cs" />
+    <!-- 副职业的合成数据与脚本化随机数(副职业会话的测试用,与规则层测试共用) -->
+    <Compile Include="..\Dnf.Game.Tests\ExpertJobTestData.cs" Link="ExpertJobTestData.cs" />
     <!-- 手工拼令牌脚本的构造器(金币掉落表的合成数据用) -->
     <Compile Include="..\Dnf.Game.Tests\TokenStreamBuilder.cs" Link="TokenStreamBuilder.cs" />
     <!-- 合成的脚本文件集合(任务目录的合成数据用) -->

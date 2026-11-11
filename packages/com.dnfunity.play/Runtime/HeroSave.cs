@@ -254,6 +254,7 @@ namespace Dnf.Play
             {
                 sb.Append("dclear ").Append(clear.DungeonId.ToString(Inv)).Append(' ').Append(clear.Opened.ToString(Inv)).Append('\n');
             }
+            ExpertJobSaveFormat.Write(this, sb);
             foreach (SavedSkill skill in Skills)
             {
                 sb.Append("skill ").Append(skill.Id.ToString(Inv)).Append(' ').Append(skill.Level.ToString(Inv)).Append('\n');
@@ -379,6 +380,10 @@ namespace Dnf.Play
                     arity = 3;
                     break;
                 default:
+                    if (ExpertJobSaveFormat.Handles(key))
+                    {
+                        return ExpertJobSaveFormat.Parse(r, key, f, no, out error);
+                    }
                     return true;              // 不认得的键忽略(以后加字段旧版本还能读)
             }
             if (f.Length != arity)
