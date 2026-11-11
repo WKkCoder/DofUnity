@@ -198,16 +198,18 @@ public class OnlineTownEntrySessionTests
     }
 
     /// <summary>
-    /// 封进信封的内层列表帧仍是压缩态(会话层不解压内层帧,压缩字节的首字节不是模式 2):按错位计数,字段保持 null,不去猜着解压。
-    /// 这是已知的待实测点:真服的内层包号 2 帧到底压不压缩,要看真服实测的快照行里 malformed 是否非 0。
+    /// 封进信封的内层列表帧仍是压缩态、会话层也解不开它(zlib 流缺了尾巴:会话层认得出 zlib 头,严格解压不通过,原样交付压缩字节,首字节不是模式 2):
+    /// 解析器读不通,按错位计数,字段保持 null,不去猜着解压,也不丢帧。内层帧能解开的情形见 <see cref="InnerFrameInflateTests"/>:快照照样回填。
     /// </summary>
     [Fact]
     public async Task An_inner_list_frame_that_is_still_compressed_is_counted_malformed_and_never_guessed()
     {
         (GameClientSession session, DungeonEntryPipe pipe) = await HostTestKit.ReadySession();
+        byte[] stream = UserInfoTestData.Zlib(HostTestKit.ListPayload());
+        byte[] withoutItsTail = stream.Take(stream.Length - 6).ToArray();
         pipe.Script = HostTestKit.TownScript(
             HostTestKit.LoginOk(),
-            HostTestKit.Frames(HostTestKit.RealEnvelope(0, 2, UserInfoTestData.Zlib(HostTestKit.ListPayload()))),
+            HostTestKit.Frames(HostTestKit.RealEnvelope(0, 2, withoutItsTail)),
             slot => HostTestKit.EnterComplete());
 
         OnlineEntryResult result = await HostTestKit.EnterTown(session);
