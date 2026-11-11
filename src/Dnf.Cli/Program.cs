@@ -322,6 +322,8 @@ namespace Dnf.Cli
             "      用 Dnf.Game 的 .atk 加载器读全库 .atk(证据 E-047),统计不规整情况;--dump 写出每个文件读到的字段,可与 tools/py/atk_ref.py --dump 逐行对拍。\n" +
             "  dnf pet-check [--dump <文件>]\n" +
             "      用 Dnf.Game 的宠物加载器读全库宠物定义、通用配置、经验表与装备脚本上的宠物字段,只报一致性计数;--dump 写出每个对象读到的字段,可与 tools/py/pet_ref.py --dump 逐行对拍。\n" +
+            "  dnf craft-check [--dump <文件>]\n" +
+            "      用 Dnf.Game 的配方加载器读全库配方(stackable.lst 里 [stackable type] 为 [recipe] 的物品),只报一致性计数;--dump 写出每个配方读到的字段,可与 tools/py/craft_ref.py --dump 逐行对拍(craft_ref.py compare 只报一致与不一致的个数)。\n" +
             "  dnf act-check [--dump <文件>] [--json <文件>]\n" +
             "      用 Dnf.Game 的语法树解析器读全库 .act(证据 E-050),统计节点、块、多余与笔误闭合;--json 写出\"父标签 → 子标签 → 次数\"表,可与 tools/py/act_tree.py 逐项对拍。\n" +
             "  dnf act-run-check [--json <文件>]\n" +
@@ -810,6 +812,8 @@ namespace Dnf.Cli
                     return AtkCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "pet-check":
                     return PetCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "craft-check":
+                    return CraftCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "act-check":
                     return ActCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "ai-check":
