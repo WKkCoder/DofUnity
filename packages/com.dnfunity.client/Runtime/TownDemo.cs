@@ -28,7 +28,12 @@ namespace Dnf.Client
     /// 再带 -dnfnetdungeon &lt;副本编号&gt; &lt;模式 0 到 4&gt;(要同时带 -dnfnet)时,进城后在同一个会话上接着走联网进副本(开始游戏 → 选副本 → 收到起始地图,<see cref="OnlineDungeonRunner"/>),
     /// 阶段与结局只打 DNF_NET stage=dungeon 日志(阶段名、失败原因与计数,不含载荷内容),进城快照里的角色等级、职业、成长类型打一行 DNF_NET snapshot,
     /// 进城阶段的会话事件(信封拆开几个、列表应答怎么来的)汇总成一行 DNF_NET session;
-    /// 进副本这一步有结局后才继续城镇流程,心跳保活在进副本之后接上、照旧跑到退出;没有怪物、没有战斗。不带这个参数时联网流程与以前一字不变。
+    /// 进副本这一步有结局后才继续城镇流程;进副本成功(拿到起始地图)之后在同一个会话上接着跑联网战斗(<see cref="OnlineDungeonCombatRunner"/>,它自己回心跳):
+    /// 离线副本(<see cref="DungeonSession"/>)起始房间里的怪死了,<see cref="RoomKillWatcher"/> 观察到后按位置(第 i 只本地怪 ↔ 起始地图第 i 条记录)把本地序号排给它,
+    /// 它查对应表、用记录第 3 项(服务端认的击杀编号)发击杀命令;服务端清图通知到后才发结算命令,两段结算通知收齐就是"可以回城"。
+    /// 战斗的阶段与事件只打 DNF_NET stage=combat 行(阶段名、枚举名与计数,不含载荷内容与服务端编号);战斗结束之后才接心跳保活、照旧跑到退出。
+    /// 联网的怪物不在画面上出现、没有 AI 表现(画面里打的仍是离线房间的本地怪,与服务端只是按位置对号),回城也只是打日志,缺口写在 HANDOFF。
+    /// 不带这个参数时联网流程与以前一字不变。
     /// 带 -dnfflow 时玩整条流程(<see cref="GameFlow"/>,证据 E-093):从选角(-dnfflowfrom char,证据 E-096:方向键移动选中、回车或空格开始游戏、Esc 或点"结束游戏"退出,点角色格子选中)、
     /// 城镇(town,默认)、副本选择(select)或副本(dungeon)开始;
     /// 城镇走城镇图册(<see cref="AtlasTownWorld"/>,证据 E-095):登录落在赛丽亚房间、走进地图边缘的出口换区域、艾尔文防线走到地下城入口区域再走进右边的出口打开世界地图,
@@ -222,6 +227,10 @@ namespace Dnf.Client
         private int _netDungeonMode;                        // 联网进副本的模式(0 到 4)
         private volatile bool _netDungeonDone;              // 后台进副本这一步已有结局(成功或失败),主线程据此放行城镇流程
         private const float NetDungeonWaitLimitSeconds = 90f; // 等进副本有结局的兜底上限(后台三步各有超时,合计不过半分钟)
+        private OnlineDungeonCombatRunner _netCombat;       // -dnfnetdungeon:进副本成功后接着跑的联网战斗(为空 = 没有联网战斗,击杀桥接什么都不做)
+        private DungeonSession _netKillSource;              // 击杀桥接当前绑着的离线副本会话
+        private RoomKillWatcher _netKillWatcher;            // 盯着那局副本的起始房间(只读观察,不改战斗)
+        private readonly List<int> _netKillScratch = new List<int>(); // 每帧轮询复用的序号表
         private string _flowFrom = "town";
         private string _flowChoices = DefaultFlowChoices;
         private string _worldMapPath = DefaultWorldMap;
@@ -727,7 +736,9 @@ namespace Dnf.Client
         /// -dnfnetdungeon 的联网进副本一段:在进城用的同一个会话上走"开始游戏 → 选副本 → 起始地图"(<see cref="OnlineDungeonRunner"/>),
         /// 在后台线程里跑;主线程只等这一步有结局(成功或失败都算)就放行城镇流程。协议与日志都在 OnlineDungeonRunner 里:
         /// 阶段与结局只打 DNF_NET stage=dungeon 行(阶段名、失败原因与计数,不含载荷内容)。
-        /// 进副本之后 OnlineDungeonRunner 接上与以前同一个心跳泵(日志同文 DNF_NET heartbeat …),一直跑到退出(OnDestroy 取消)。没有怪物,没有战斗。
+        /// 进副本成功之后 OnlineDungeonRunner 接着在同一个会话上跑联网战斗(<see cref="OnlineDungeonCombatRunner"/>,自己回心跳;日志行首 DNF_NET stage=combat,
+        /// 与进副本的日志走同一个回调),离线副本里本地怪的死亡由 <see cref="PumpNetKills"/> 每帧轮询后排给它;战斗结束之后 OnlineDungeonRunner 才接上与以前同一个心跳泵
+        /// (日志同文 DNF_NET heartbeat …),一直跑到退出(OnDestroy 取消)。进副本没成功(没有起始地图)时不跑战斗,行为与以前一字不变。
         /// </summary>
         private IEnumerator RunOnlineDungeon(GameClientSession session)
         {
@@ -735,6 +746,7 @@ namespace Dnf.Client
             _state = State.Loading;
             _netDungeonDone = false;
             var runner = new OnlineDungeonRunner(session);
+            _netCombat = runner.UseCombat();
             int dungeonId = _netDungeonId;
             int dungeonMode = _netDungeonMode;
             CancellationToken token = _netCancel.Token;

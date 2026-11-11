@@ -19,7 +19,9 @@ namespace Dnf.Net.Session
     /// <item>保活的先后次序:进副本期间会话归进副本编排独占(它不回心跳,不能与保活泵同时收同一个会话),
     /// 所以保活泵只在进副本这一步结束之后才起;连接已断或切帧出错的会话不起泵(泵遇到切帧错误会空转)。</item>
     /// </list>
-    /// 不做战斗、不处理怪物、不发"装载完成"命令(那是后续任务)。
+    /// 默认不做战斗、不处理怪物、不发"装载完成"命令(服务端不等它也推起始地图,真服已证)。
+    /// 调用 <see cref="UseCombat"/> 之后,进副本成功(拿到起始地图)会接着在同一个会话上续跑联网战斗(<see cref="OnlineDungeonCombatRunner"/>),
+    /// 战斗结束之后才轮到保活;不调用时行为一字不变。
     /// </summary>
     public sealed class OnlineDungeonRunner
     {
@@ -33,6 +35,8 @@ namespace Dnf.Net.Session
         private readonly Func<string> _unusableReason;
         private readonly Func<CancellationToken, Task<int>> _keepAlive;
         private readonly Func<IReadOnlyList<SessionEvent>> _events;     // 真会话才有事件表;接缝替身没有,不打汇总行
+        private readonly Func<OnlineDungeonCombatOptions, OnlineDungeonCombatRunner> _makeCombat;
+        private OnlineDungeonCombatRunner _combat;                      // 调过 UseCombat 才有:进副本成功后、保活之前续跑
 
         /// <summary>在已进城的真会话上创建;进副本之后用 <see cref="OnlineHeartbeat"/> 保活。</summary>
         public OnlineDungeonRunner(GameClientSession session)
@@ -51,6 +55,7 @@ namespace Dnf.Net.Session
             _unusableReason = () => session.PeerClosed ? "ConnectionClosed" : (session.LastFrameError != FrameError.None ? "FramingFault" : null);
             _keepAlive = keepAlive;
             _events = () => session.Events;
+            _makeCombat = options => new OnlineDungeonCombatRunner(session, UnwrapEnvelope, options);
         }
 
         /// <summary>
@@ -66,6 +71,19 @@ namespace Dnf.Net.Session
             _entry = new OnlineDungeonEntry(session, UnwrapEnvelope);
             _unusableReason = () => session.PeerClosed ? "ConnectionClosed" : (session.LastFrameError != FrameError.None ? "FramingFault" : null);
             _keepAlive = keepAlive;
+            _makeCombat = options => new OnlineDungeonCombatRunner(session, UnwrapEnvelope, options);
+        }
+
+        /// <summary>
+        /// 打开"进副本之后续跑联网战斗":之后 <see cref="RunAsync"/> 在进副本成功(拿到起始地图)时,先在同一个会话上跑
+        /// <see cref="OnlineDungeonCombatRunner"/>(它自己回心跳,直到回城就绪、连接断开、取消或超时),再接保活;进副本没成功的结局与不调用本方法时一字不变。
+        /// 必须在 <see cref="RunAsync"/> 之前调用;返回的跑器给宿主用(<see cref="OnlineDungeonCombatRunner.PostKill"/> 报本地击杀)。重复调用以最后一次为准。
+        /// </summary>
+        /// <param name="options">战斗的可调项;null 全用缺省。</param>
+        public OnlineDungeonCombatRunner UseCombat(OnlineDungeonCombatOptions options = null)
+        {
+            _combat = _makeCombat(options);
+            return _combat;
         }
 
         /// <summary>
@@ -184,6 +202,7 @@ namespace Dnf.Net.Session
 
         /// <summary>
         /// 进副本、再接保活:先 <see cref="EnterAsync"/>,结局允许时(<see cref="ShouldKeepAlive"/> 且会话还可用)起保活泵并一直跑到连接断开或取消。
+        /// 调过 <see cref="UseCombat"/> 且进副本成功时,在 <paramref name="entered"/> 之后、保活之前续跑联网战斗(见 <see cref="OnlineDungeonCombatRunner"/>)。
         /// 返回进副本的结局;整个调用在保活结束时才返回,宿主一般把它丢到后台线程不等它。
         /// 从不抛异常:取消时安静地返回 null,别的意外异常打一行 <c>DNF_NET stage=dungeon failed exception=类型名</c>(不带异常消息)后返回 null。
         /// 保活结束的日志行与宿主原来的两行同文:<c>DNF_NET heartbeat answered=N</c>、<c>DNF_NET heartbeat ended=异常类型名</c>(取消不打)。
@@ -226,6 +245,17 @@ namespace Dnf.Net.Session
                 return null;
             }
             SafeEntered(entered, result);
+
+            // 联网战斗接力(只有调过 UseCombat 且进副本拿到了起始地图才跑):它独占会话收发(自己回心跳),跑完才轮到下面的保活;
+            // 它从不抛异常(取消、断线、超时都是返回的结局),日志照同一个回调打,行首是 DNF_NET stage=combat。
+            if (_combat != null && result.Entered && result.StartMap != null)
+            {
+                OnlineDungeonCombatResult fought = await _combat.RunAsync(result.StartMap, line => SafeLog(log, line), cancellationToken).ConfigureAwait(false);
+                if (fought.Outcome == OnlineDungeonCombatOutcome.Cancelled)
+                {
+                    return result;          // 取消:与保活期间取消一样,安静地结束
+                }
+            }
 
             try
             {
