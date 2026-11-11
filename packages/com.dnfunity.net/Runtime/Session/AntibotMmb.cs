@@ -5,6 +5,11 @@ namespace Dnf.Net.Session
     /// <summary>
     /// MMB 128 位块变体(Daemen MMB 结构)；密钥 key32 前 16 字节。
     /// 6 次 γ(f)+θ 与 7 次轮密钥异或(末轮仅异或无 f)；余量 <c>len%16</c> 走 Seattos。
+    /// <para>
+    /// 线程安全：展开出的轮密钥是每次 <see cref="Transform"/> 调用自己的局部数组，显式传给逐块函数；
+    /// 这两个类里没有任何可变的静态状态(静态字段全是只读常量表)，所以不同密钥的调用可以任意并发，结果与串行逐字节一致。
+    /// (曾经把轮密钥放在一个静态可变字段里，并发时不同密钥互相覆盖，解出乱码，拆信封时表现为 CRC 对不上。)
+    /// </para>
     /// </summary>
     internal static class AntibotMmb
     {
@@ -15,18 +20,18 @@ namespace Dnf.Net.Session
                 return;
             }
 
-            AntibotMmbCore.PrepareKey(key32);
+            uint[] roundKey = AntibotMmbCore.PrepareKey(key32);
             int off = 0;
             int aligned = buf.Length & ~0xF;
             while (off < aligned)
             {
                 if (encrypt)
                 {
-                    AntibotMmbCore.EncryptBlock(buf, off);
+                    AntibotMmbCore.EncryptBlock(roundKey, buf, off);
                 }
                 else
                 {
-                    AntibotMmbCore.DecryptBlock(buf, off);
+                    AntibotMmbCore.DecryptBlock(roundKey, buf, off);
                 }
 
                 off += 16;
@@ -107,36 +112,35 @@ namespace Dnf.Net.Session
             new[] { 0, 1, 2, 3 },
         };
 
-        private static uint[] _roundKey;
-
-        internal static void PrepareKey(byte[] key32)
+        /// <summary>由 key32 的前 16 字节展开出 4 个字的轮密钥；每次返回新数组，交给调用方持有，不存进任何静态字段。</summary>
+        internal static uint[] PrepareKey(byte[] key32)
         {
             uint k0 = ReadLe32(key32, 0);
             uint k1 = ReadLe32(key32, 4);
             uint k2 = ReadLe32(key32, 8);
             uint k3 = ReadLe32(key32, 12);
-            _roundKey = ExpandKey(k0, k1, k2, k3);
+            return ExpandKey(k0, k1, k2, k3);
         }
 
-        internal static void EncryptBlock(byte[] buf, int offset)
+        internal static void EncryptBlock(uint[] roundKey, byte[] buf, int offset)
         {
             uint[] s = ReadBlock(buf, offset);
             for (int r = 0; r < 6; r++)
             {
-                AddRoundKey(s, EncryptXor[r]);
+                AddRoundKey(s, roundKey, EncryptXor[r]);
                 OpF(s);
             }
 
-            AddRoundKey(s, EncryptXor[6]);
+            AddRoundKey(s, roundKey, EncryptXor[6]);
             WriteBlock(buf, offset, s);
         }
 
-        internal static void DecryptBlock(byte[] buf, int offset)
+        internal static void DecryptBlock(uint[] roundKey, byte[] buf, int offset)
         {
             uint[] s = ReadBlock(buf, offset);
             for (int r = 0; r < 7; r++)
             {
-                AddRoundKey(s, DecryptXor[r]);
+                AddRoundKey(s, roundKey, DecryptXor[r]);
                 if (r < 6)
                 {
                     OpG(s);
@@ -216,11 +220,11 @@ namespace Dnf.Net.Session
             }
         }
 
-        private static void AddRoundKey(uint[] s, int[] map)
+        private static void AddRoundKey(uint[] s, uint[] roundKey, int[] map)
         {
             for (int i = 0; i < 4; i++)
             {
-                s[i] ^= _roundKey[map[i]];
+                s[i] ^= roundKey[map[i]];
             }
         }
 
