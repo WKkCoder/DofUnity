@@ -381,6 +381,10 @@ namespace Dnf.Cli
             "      强化、附魔、套装、品级(r15-enhance):读强化表(Etc/upgrade.etc、Etc/amplifyupgrade.etc)、品级样本与整份物品清单,检查结构(表读得进来、惩罚类型与概率在服务端的取值范围、每个稀有度总是成功能升到封顶、\n" +
             "      总是失败时惩罚与表一致、失败频率落在期望附近;套装穿齐才生效、少一件不生效;附魔卡有部位表;真实装备穿上后汇总等于各件加叠加项之和)。环境变量 DNF_ENHANCE_DUMP 给了目录就把表、物品、品级、抽档的规范文本写进去,\n" +
             "      用 tools/py/enhance_ref.py compare 与独立的 Python 实现逐行比对(只报计数;数值与编号来自本机的数据,只打印在终端,不要抄进入库的文件)。\n" +
+            "  dnf title-check\n" +
+            "      称号与成就:整库读称号物品的外观与时限、称号气泡、图鉴定义与分类 [title] 的任务(成就),核对结构;再用真实定义演习成就框架(一次触发完成、差一个不完成、\n" +
+            "      重复领取被拒、等级门槛、称号放进的格、邮件与收集加成、登录核对与补发)。环境变量 DNF_TITLE_DUMP=<路径> 逐记录转储,用 tools/py/title_ref.py compare 与独立的 Python 实现比对\n" +
+            "      (转储只写在被 git 忽略的 out/ 下;数值、编号与件数来自本机的数据,只打印在终端,不要抄进入库的文件;通过与否只看结构)。\n" +
             "  dnf shop-check [--level N]\n" +
             "      NPC 商店(证据 E-119):整库读 itemshop.lst 与每家店的脚本、npc.lst 与每个 NPC 的 [role]、城镇区域里摆着的 NPC、价格倍率表,检查结构(每家店读得出来、商品都认得、NPC 与商店编号互相指回、\n" +
             "      走到商店 NPC 身边总在交互范围内);再对每家店的每件商品演习买一件卖回去、买三件卖三件,核对钱与背包的账,检查商店窗口的光标滚动、无人值守探针与画面\n" +
@@ -848,6 +852,8 @@ namespace Dnf.Cli
                     return EquipCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "enhance-check":
                     return EnhanceCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "title-check":
+                    return TitleCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "bag-shot":
                     return BagShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "shop-check":

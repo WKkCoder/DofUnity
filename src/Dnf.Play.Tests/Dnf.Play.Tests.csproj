@@ -36,6 +36,8 @@
     <Compile Include="..\Dnf.Game.Tests\TokenStreamBuilder.cs" Link="TokenStreamBuilder.cs" />
     <!-- 合成的脚本文件集合(任务目录的合成数据用) -->
     <Compile Include="..\Dnf.Game.Tests\Fixtures.cs" Link="Fixtures.cs" />
+    <!-- 称号与成就的合成数据(小图鉴、成就目录、称号物品;称号会话的测试用,与规则层测试共用) -->
+    <Compile Include="..\Dnf.Game.Tests\TitleFixtures.cs" Link="TitleFixtures.cs" />
   </ItemGroup>
 
   <ItemGroup>
