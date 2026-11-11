@@ -23,7 +23,7 @@ public class ExpertJobSessionTests
     {
         public HeroProgress Hero;
         public ExpertJobSession Jobs;
-        public ScriptedRandom Rng;
+        public ScriptedDisjointRandom Rng;
         public readonly Dictionary<int, ItemInfo> Items = new Dictionary<int, ItemInfo>();
         public readonly Dictionary<int, ExpertJobItemTags> Tags = new Dictionary<int, ExpertJobItemTags>();
 
@@ -46,7 +46,7 @@ public class ExpertJobSessionTests
         var rig = new Rig();
         rig.Hero = ExpTests.Progress(level: charLevel);
         rig.Hero.AddGold(gold);
-        rig.Rng = new ScriptedRandom(rolls ?? new int[0]);
+        rig.Rng = new ScriptedDisjointRandom(rolls ?? new int[0]);
         for (int code = 948; code <= 970; code++)
         {
             rig.Items[code] = Material(code);
