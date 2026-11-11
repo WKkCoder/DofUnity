@@ -42,6 +42,9 @@ namespace Dnf.Game
         /// <summary>界面分页的页数(不含服务端用的"无效"值)。</summary>
         public const int UiGroupCount = 4;
 
+        /// <summary>觉醒(第二成长类型)的个数:1 = 一觉、2 = 二觉(0 = 没觉醒)。</summary>
+        public const int AwakeningCount = CharacterGrowth.AwakeningCount;
+
         /// <summary>某个成长类型能学到的最高级;越界、没有标签为 0(这个成长类型学不了)。</summary>
         public static int TypeMaxLevel(SkillDef def, int growtype)
         {
@@ -50,6 +53,37 @@ namespace Dnf.Game
                 return 0;
             }
             return def.GrowtypeMaxLevels[growtype];
+        }
+
+        /// <summary>
+        /// 成长类型 <paramref name="growtype"/> 觉醒到 <paramref name="awakening"/> 以后,这个技能自己写的最高级([second growtype maximum level] 的第
+        /// 成长类型 × 2 + 觉醒 − 1 项,服务端 get_second_growtype_max_level 0x08350658);0 = 没写,越界或没有标签也是 0。
+        /// </summary>
+        public static int SecondMaxLevel(SkillDef def, int growtype, int awakening)
+        {
+            if (def == null || growtype < 0 || growtype >= GrowtypeCount || awakening < 1 || awakening > AwakeningCount)
+            {
+                return 0;
+            }
+            int index = growtype * AwakeningCount + (awakening - 1);
+            return index < def.SecondGrowtypeMaxLevels.Length ? def.SecondGrowtypeMaxLevels[index] : 0;
+        }
+
+        /// <summary>
+        /// 觉醒后能学到的最高级(服务端 can_learn 与 getMaxSkillLevel 的取法):没觉醒(0)或越界看成长类型本身的最高级;觉醒了就取技能自己为这次觉醒写的最高级,
+        /// 它是 0(没写)时回到成长类型本身的最高级。所以觉醒可以让一个技能学得更高、更低,或者(成长类型本身学不了的)才开始学得了。
+        /// </summary>
+        public static int TypeMaxLevel(SkillDef def, int growtype, int awakening)
+        {
+            if (awakening >= 1 && awakening <= AwakeningCount)
+            {
+                int second = SecondMaxLevel(def, growtype, awakening);
+                if (second != 0)
+                {
+                    return second;
+                }
+            }
+            return TypeMaxLevel(def, growtype);
         }
 
         /// <summary>学到第 <paramref name="level"/> 级需要的主角等级:[required level] + [required level range] × (级数 − 1)。</summary>
@@ -68,11 +102,17 @@ namespace Dnf.Game
         /// </summary>
         public static bool CanLearn(SkillDef def, int heroLevel, int growtype, int target)
         {
+            return CanLearn(def, heroLevel, growtype, 0, target);
+        }
+
+        /// <summary>同 <see cref="CanLearn(SkillDef, int, int, int)"/>,最高级按觉醒后的算(<see cref="TypeMaxLevel(SkillDef, int, int)"/>)。</summary>
+        public static bool CanLearn(SkillDef def, int heroLevel, int growtype, int awakening, int target)
+        {
             if (def == null)
             {
                 return false;
             }
-            int max = TypeMaxLevel(def, growtype);
+            int max = TypeMaxLevel(def, growtype, awakening);
             if (target < 1 || target > max)
             {
                 return false;
@@ -91,7 +131,13 @@ namespace Dnf.Game
         /// </summary>
         public static int MaxLearnable(SkillDef def, int heroLevel, int growtype)
         {
-            int max = TypeMaxLevel(def, growtype);
+            return MaxLearnable(def, heroLevel, growtype, 0);
+        }
+
+        /// <summary>同 <see cref="MaxLearnable(SkillDef, int, int)"/>,最高级按觉醒后的算(服务端 getMaxSkillLevel 的第二成长类型实参)。</summary>
+        public static int MaxLearnable(SkillDef def, int heroLevel, int growtype, int awakening)
+        {
+            int max = TypeMaxLevel(def, growtype, awakening);
             if (max <= 0)
             {
                 return -1;

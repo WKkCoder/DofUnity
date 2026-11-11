@@ -111,6 +111,9 @@ namespace Dnf.Play
         /// <summary>转职任务给的新成长类型下标(完成时角色换成这个成长类型);没有这种奖励是 −1。</summary>
         public int Growtype { get; set; } = -1;
 
+        /// <summary>觉醒任务给的觉醒号(1 一觉、2 二觉;完成时角色觉醒到这一步,条件不满足则不换);没有这种奖励是 0。</summary>
+        public int Awakening { get; set; }
+
         /// <summary>固定给的物品。</summary>
         public List<QuestRewardLine> Rewards { get; } = new List<QuestRewardLine>();
 
@@ -143,7 +146,7 @@ namespace Dnf.Play
         /// <summary>细节:任务名(带进度)或物品名,是数据文字,取不到时是占位的 <c>QUEST 编号</c>。</summary>
         public string Detail { get; private set; }
 
-        /// <summary>完成时的奖励概要(占位英文,如 <c>EXP 100  GOLD 20</c>;换了成长类型的转职任务再加 <c>JOB CHANGE</c>),其它提示是空串。</summary>
+        /// <summary>完成时的奖励概要(占位英文,如 <c>EXP 100  GOLD 20</c>;换了成长类型的转职任务再加 <c>JOB CHANGE</c>,觉醒了的再加 <c>AWAKENING</c>),其它提示是空串。</summary>
         public string Extra { get; }
 
         internal void Update(string detail)
@@ -252,6 +255,9 @@ namespace Dnf.Play
 
         /// <summary>靠转职任务奖励换过多少次成长类型(这一次运行里;日志用)。</summary>
         public int JobChanges { get; private set; }
+
+        /// <summary>靠觉醒任务奖励觉醒过多少次(这一次运行里;日志用)。</summary>
+        public int Awakenings { get; private set; }
 
         /// <summary>任务的计数被击杀事件推进过多少次、拿到过多少件任务物品(日志用)。</summary>
         public int KillsCounted { get; private set; }
@@ -457,6 +463,7 @@ namespace Dnf.Play
             row.Exp = reward.Exp;
             row.Gold = reward.Gold;
             row.Growtype = reward.Growtype;
+            row.Awakening = reward.Awakening;
             foreach (QuestItem item in reward.Items)
             {
                 row.Rewards.Add(Line(item));
@@ -624,6 +631,12 @@ namespace Dnf.Play
             {
                 JobChanges++;
             }
+            // 觉醒奖励:第二成长类型换成奖励给的号(白送觉醒技能、属性换觉醒块,都由 Awaken 做);等级不到、次序不对、没转职的话任务照样完成,只是不觉醒
+            bool awakened = reward.Awakening >= 1 && _hero.Awaken(reward.Awakening) == AwakeningCheck.Ok;
+            if (awakened)
+            {
+                Awakenings++;
+            }
             Completed++;
             _readyNoted.Remove(questId);
             string extra = reward.Exp > 0 || reward.Gold > 0
@@ -632,6 +645,10 @@ namespace Dnf.Play
             if (jobChanged)
             {
                 extra = extra == null ? "JOB CHANGE" : extra + "  JOB CHANGE";
+            }
+            if (awakened)
+            {
+                extra = extra == null ? "AWAKENING" : extra + "  AWAKENING";
             }
             Notify(QuestNoticeKind.Completed, questId, "QUEST COMPLETE", NameOf(def), extra);
             _dirty = true;

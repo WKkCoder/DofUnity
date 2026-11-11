@@ -238,7 +238,7 @@ namespace Dnf.Play
             int fixedShown = Math.Min(row.Rewards.Count, MaxRewardLines);
             int choiceShown = Math.Min(row.Choices.Count, MaxChoiceLines);
             bool hasGold = row.Exp > 0 || row.Gold > 0;
-            bool hasJob = row.Growtype >= 0;
+            bool hasJob = row.Growtype >= 0 || row.Awakening >= 1;
             if (fixedShown == 0 && choiceShown == 0 && !hasGold && !hasJob)
             {
                 return DetailBottom;
@@ -289,7 +289,7 @@ namespace Dnf.Play
             if (hasJob)
             {
                 y -= LineHeight;
-                SpriteFrame job = art.Text(JobChangeText, LineScale, OverlayArt.Orange);
+                SpriteFrame job = art.Text(row.Awakening >= 1 ? AwakeningText : JobChangeText, LineScale, OverlayArt.Orange);
                 into.Add(OverlayArt.Place(job, innerX + 6, y, order++, "quest-reward-job"));
             }
             y -= LineHeight;
@@ -386,6 +386,9 @@ namespace Dnf.Play
 
         /// <summary>转职奖励的一行(占位英文;任务奖励是换成长类型时在奖励区里多这一行)。</summary>
         public const string JobChangeText = "JOB CHANGE";
+
+        /// <summary>觉醒奖励的一行(占位英文;任务奖励是觉醒时在奖励区里多这一行,位置与转职奖励同一行,两种奖励不会同时出现)。</summary>
+        public const string AwakeningText = "AWAKENING";
 
         /// <summary>经验与金币一行(占位英文;两项都写,有一项是 0 也写)。</summary>
         public static string GoldText(QuestRow row)

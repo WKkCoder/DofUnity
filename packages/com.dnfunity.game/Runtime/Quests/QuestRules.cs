@@ -76,6 +76,12 @@ namespace Dnf.Game
         /// 服务端 <c>quest_reward</c> 0x0866ea92 对这个类型做的是:新值当第一成长类型、第二成长类型保持原样,走 <c>set_grow_type</c>。
         /// </summary>
         public int Growtype { get; set; } = -1;
+
+        /// <summary>
+        /// 觉醒奖励(奖励种类 <c>[awakening type]</c>)给的新觉醒号(1 一觉、2 二觉);没有这种奖励为 0。
+        /// 服务端 <c>quest_reward</c> 对这个类型做的是:第一成长类型保持原样、新值当第二成长类型,走 <c>set_grow_type</c>。
+        /// </summary>
+        public int Awakening { get; set; }
     }
 
     /// <summary>任务的规则:哪些任务这一步支持、能不能接、完成条件、奖励。全是纯函数,状态在 <see cref="QuestLog"/>。</summary>
@@ -106,6 +112,17 @@ namespace Dnf.Game
         }
 
         /// <summary>
+        /// 觉醒任务链上的任务:<c>[job change quest]</c> 标志是 <see cref="AwakeningRules.QuestFlag"/>、分类是成就。
+        /// 观察:本地数据里标志为 2 的任务全是 50 到 99 级的成就类,链尾那一环的奖励种类是觉醒(<see cref="QuestDef.IsAwakeningReward"/>)。
+        /// 觉醒只有走这条链才触发,所以这一类即使分类是成就也放行(其余成就类仍按 <see cref="IsGradeOffered"/> 不放行)。
+        /// 推断:原版里成就类任务是否也由 NPC 对话发放,没有读到(服务端 select_quest 对成就另有一路),这里按和其他分类一样的 NPC 对话发放。
+        /// </summary>
+        public static bool IsAwakeningChain(QuestDef q)
+        {
+            return q != null && q.Grade == QuestGrade.Achievement && q.JobChange == AwakeningRules.QuestFlag;
+        }
+
+        /// <summary>
         /// 这一步不支持的原因(短词);支持返回 null。<paramref name="monsterExists"/> 不为 null 时,猎杀目标里编号 ≥ 0 的怪物必须存在
         /// (有的猎杀目标写的不是怪物列表里的编号,杀不出来的任务不列出来)。
         /// </summary>
@@ -115,7 +132,7 @@ namespace Dnf.Game
             {
                 return "missing";
             }
-            if (!IsGradeOffered(q.Grade))
+            if (!IsGradeOffered(q.Grade) && !IsAwakeningChain(q))
             {
                 return "grade";
             }
@@ -136,6 +153,13 @@ namespace Dnf.Game
             if (growReward)
             {
                 if (GrowtypeOf(q) < 0)
+                {
+                    return "reward-shape";
+                }
+            }
+            else if (q.IsAwakeningReward)
+            {
+                if (AwakeningOf(q) < 1)
                 {
                     return "reward-shape";
                 }
@@ -201,6 +225,20 @@ namespace Dnf.Game
             }
             int value = q.RewardData[0];
             return value >= 1 && value < SkillRules.GrowtypeCount ? value : -1;
+        }
+
+        /// <summary>
+        /// 觉醒奖励给的觉醒号(奖励种类 <c>[awakening type]</c> 时 <c>[reward int data]</c> 的第一个整数);不是这种奖励或数据不合法返回 0。
+        /// 合法 = 1 到 <see cref="AwakeningRules.Count"/>:0 是没觉醒,不是觉醒的目标;更大的没有对应的觉醒块与技能表。
+        /// </summary>
+        public static int AwakeningOf(QuestDef q)
+        {
+            if (q == null || !q.IsAwakeningReward || q.RewardData.Count < 1)
+            {
+                return 0;
+            }
+            int value = q.RewardData[0];
+            return value >= 1 && value <= AwakeningRules.Count ? value : 0;
         }
 
         private static string KillGroupsReason(QuestDef q, Func<int, bool> monsterExists)
@@ -472,6 +510,7 @@ namespace Dnf.Game
             }
 
             reward.Growtype = GrowtypeOf(q);
+            reward.Awakening = AwakeningOf(q);
 
             List<QuestItem> choices = SelectableRewards(q, hero);
             if (selection >= 0 && selection < choices.Count)

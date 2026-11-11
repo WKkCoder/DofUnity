@@ -163,6 +163,13 @@ namespace Dnf.Game
         public int[] GrowtypeMaxLevels { get; }
 
         /// <summary>
+        /// [second growtype maximum level]:第二成长类型(觉醒)后各自能学到的最高级,12 个数 = 6 个成长类型 × 2 个觉醒(下标 = 成长类型 × 2 + 觉醒 − 1)。
+        /// 0 = 没写,沿用 <see cref="GrowtypeMaxLevels"/> 里这个成长类型的最高级;非 0 就取它(可以比转职时更高或更低)。没有这个标签为空数组。
+        /// 服务端 ImportSkillScript 0x08a98cea 读 12 个整数,CSkill::can_learn 0x0835039e、getMaxSkillLevel 0x08350700 在第二成长类型 &gt; 0 时用它(r15-awaken 读码)。
+        /// </summary>
+        public int[] SecondGrowtypeMaxLevels { get; }
+
+        /// <summary>
         /// [purchase cost]:每一级要花的技能点(第 n 个数是升到第 n 级的花费)。服务端载入后把它用最后一个数补到 <see cref="EffectiveMaxLevel"/> 个,
         /// 所以绝大多数技能只写一个数(每级同价);原样保存,按级取用 <see cref="SkillRules.NeedSp"/>。同一标签出现多次时后一次覆盖前一次。
         /// </summary>
@@ -188,6 +195,13 @@ namespace Dnf.Game
         /// </summary>
         public int EffectiveMaxLevel { get; }
 
+        /// <summary>
+        /// 读档时夹等级的上界:<see cref="EffectiveMaxLevel"/> 与觉醒后各自的最高级(<see cref="SecondGrowtypeMaxLevels"/>)里最大的。
+        /// 服务端载入时只拿成长类型的最高级抬 [maximum level](ImportSkillScript 尾部 0x08a9ac51 的循环不看第二成长类型那张表),
+        /// 所以觉醒后的最高级可以高过有效最高级;读档不能把这样学到的等级削回去。
+        /// </summary>
+        public int SaveCeilingLevel { get; }
+
         public SkillDef(int id, string path, ScriptLine[] lines)
         {
             Id = id;
@@ -197,6 +211,7 @@ namespace Dnf.Game
             int skillClass = 0;
             int range = 0;
             int[] growtypeMax = Array.Empty<int>();
+            int[] secondMax = Array.Empty<int>();
             int[] purchase = Array.Empty<int>();
             int[] special = Array.Empty<int>();
             int[] fit = Array.Empty<int>();
@@ -227,6 +242,10 @@ namespace Dnf.Game
                 else if (tagged.TagIs("[growtype maximum level]"))
                 {
                     growtypeMax = tagged.Ints().ToArray();
+                }
+                else if (tagged.TagIs("[second growtype maximum level]"))
+                {
+                    secondMax = tagged.Ints().ToArray();
                 }
                 else if (tagged.TagIs("[purchase cost]"))
                 {
@@ -260,6 +279,7 @@ namespace Dnf.Game
             SkillClass = skillClass;
             RequiredLevelRange = range;
             GrowtypeMaxLevels = growtypeMax;
+            SecondGrowtypeMaxLevels = secondMax;
             PurchaseCost = purchase;
             SpecialPurchaseCost = special;
             FitGrowtypes = fit;
@@ -281,6 +301,15 @@ namespace Dnf.Game
                 }
             }
             EffectiveMaxLevel = effective;
+            int ceiling = effective;
+            foreach (int m in secondMax)
+            {
+                if (m > ceiling)
+                {
+                    ceiling = m;
+                }
+            }
+            SaveCeilingLevel = ceiling;
             Type = table.FirstString("[type]");
             HasCommand = table.Has("[command]");
             Command = table.TryGetLine("[command]", out ScriptLine commandLine) ? SkillCommand.From(commandLine) : SkillCommand.Empty;

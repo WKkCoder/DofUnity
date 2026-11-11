@@ -217,7 +217,8 @@ namespace Dnf.Game
 
         /// <summary>
         /// <c>[job change quest]</c>:转职任务标志(0 无;1 与 2 是转职任务,服务端 <c>isDoingJobChangeQuest</c> 0x086ad48a 把这两个值当"正在做转职任务";
-        /// 10 与 20 匹配职业时不看转职方向)。1 的任务奖励是换成长类型(<see cref="IsGrowtypeReward"/>)。
+        /// 10 与 20 匹配职业时不看转职方向)。1 的任务奖励是换成长类型(<see cref="IsGrowtypeReward"/>);2 是觉醒任务链(<see cref="AwakeningRules.QuestFlag"/>),
+        /// 链尾那一环的奖励是觉醒(<see cref="IsAwakeningReward"/>)。
         /// </summary>
         public int JobChange { get; set; }
 
@@ -235,6 +236,15 @@ namespace Dnf.Game
 
         /// <summary>奖励种类是不是换成长类型:是的话 <see cref="RewardData"/> 第一个整数是新的成长类型下标(服务端 <c>quest_reward</c> 0x0866ea92 的奖励类型 1)。</summary>
         public bool IsGrowtypeReward => string.Equals(RewardType, GrowtypeRewardType, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>奖励种类里"觉醒"的关键字。</summary>
+        public const string AwakeningRewardType = "[awakening type]";
+
+        /// <summary>
+        /// 奖励种类是不是觉醒:是的话 <see cref="RewardData"/> 第一个整数是新的第二成长类型(1 一觉、2 二觉;服务端 <c>quest_reward</c> 的奖励类型 2,
+        /// 走 <c>set_grow_type</c>,第一成长类型不变)。
+        /// </summary>
+        public bool IsAwakeningReward => string.Equals(RewardType, AwakeningRewardType, StringComparison.OrdinalIgnoreCase);
 
         /// <summary><c>[reward int data]</c> 里的整数,按脚本次序原样保留(物品类奖励另有 <see cref="Rewards"/> 的解析结果;非物品类奖励的数值从这里取)。</summary>
         public List<int> RewardData { get; } = new List<int>();

@@ -73,6 +73,22 @@ internal static class QuestCheck
             + ";这一步支持的 " + growQuests.Count(q => QuestRules.IsSupported(q, monsters.Contains)) + " 个");
         Report(growBad == 0, "转职任务的新成长类型下标都在 1 到 " + (SkillRules.GrowtypeCount - 1) + " 之内(越界或没写的 " + growBad + " 个)");
 
+        // 3a'. 觉醒任务(r15-awaken,服务端 quest_reward 的奖励类型 2):奖励种类是觉醒的,觉醒号要在 1 到 AwakeningRules.Count 之内(整库);
+        //      觉醒链(成就类、[job change quest] 为 2)的等级下限不低于觉醒门槛;觉醒奖励任务都在觉醒链里(链外的会按各自的分类走,单独报数)
+        List<QuestDef> awakeQuests = all.Where(q => q.IsAwakeningReward).ToList();
+        int awakeBad = awakeQuests.Count(q => QuestRules.AwakeningOf(q) < 1);
+        List<QuestDef> chain = all.Where(QuestRules.IsAwakeningChain).ToList();
+        int chainLow = chain.Count(q => q.MinLevel < AwakeningRules.MinLevel);
+        int awakeOutside = awakeQuests.Count(q => !QuestRules.IsAwakeningChain(q));
+        Console.WriteLine("  觉醒任务(奖励种类是觉醒)" + awakeQuests.Count + " 个:觉醒号 "
+            + string.Join(" ", awakeQuests.GroupBy(q => QuestRules.AwakeningOf(q)).OrderBy(g => g.Key).Select(g => g.Key + "×" + g.Count()))
+            + ";在觉醒链之外的 " + awakeOutside + " 个;这一步支持的 " + awakeQuests.Count(q => QuestRules.IsSupported(q, monsters.Contains)) + " 个");
+        Console.WriteLine("  觉醒链(成就类、[job change quest] " + AwakeningRules.QuestFlag + ")" + chain.Count + " 个:等级下限 "
+            + string.Join(" ", chain.GroupBy(q => q.MinLevel).OrderBy(g => g.Key).Select(g => g.Key + "×" + g.Count()))
+            + ";这一步支持的 " + chain.Count(q => QuestRules.IsSupported(q, monsters.Contains)) + " 个");
+        Report(awakeBad == 0, "觉醒任务的觉醒号都在 1 到 " + AwakeningRules.Count + " 之内(越界或没写的 " + awakeBad + " 个)");
+        Report(chainLow == 0, "觉醒链上的任务等级下限都不低于觉醒门槛 " + AwakeningRules.MinLevel + " 级(低于的 " + chainLow + " 个)");
+
         // 3b. 文字:名字与三段对话在整库里取不取得到、写法里有没有要特殊处理的字符(只打印个数,不打印文字)
         var library = new StrLibrary(path => assets.Pvf.TryGetEntry(path, out PvfEntry entry) ? assets.Pvf.Read(entry) : null);
         var texts = new (string Label, Func<QuestDef, QuestText> Pick)[]
@@ -386,6 +402,10 @@ internal static class QuestCheck
         if (q.IsGrowtypeReward != (reward.Growtype >= 0) || (reward.Growtype >= 0 && (reward.Growtype == hero.GrowType || reward.Items.Count != 0)))
         {
             return "growtype-reward";
+        }
+        if (q.IsAwakeningReward != (reward.Awakening >= 1) || (reward.Awakening >= 1 && (reward.Growtype >= 0 || reward.Items.Count != 0)))
+        {
+            return "awakening-reward";
         }
         if (!QuestRules.Complete(q, log) || log.IsActive(q.Id))
         {

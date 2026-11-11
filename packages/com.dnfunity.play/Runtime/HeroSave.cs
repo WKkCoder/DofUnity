@@ -162,6 +162,9 @@ namespace Dnf.Play
         /// <summary>成长类型(M35 加的键 <c>growtype 下标</c>,0 或没有这一行是转职前)。</summary>
         public int Growtype { get; set; }
 
+        /// <summary>觉醒(服务端的第二成长类型;键 <c>awakening 号</c>):0 或没有这一行是没觉醒,1、2 是一觉、二觉。</summary>
+        public int Awakening { get; set; }
+
         public int LevelUps { get; set; }
 
         public long TotalGained { get; set; }
@@ -205,6 +208,10 @@ namespace Dnf.Play
             if (Growtype != 0)
             {
                 Line(sb, "growtype", Growtype);
+            }
+            if (Awakening != 0)
+            {
+                Line(sb, "awakening", Awakening);
             }
             Line(sb, "level", Level);
             Line(sb, "exp", Exp);
@@ -345,6 +352,7 @@ namespace Dnf.Play
             {
                 case "cleared":
                 case "growtype":
+                case "awakening":
                 case "job":
                 case "level":
                 case "exp":
@@ -447,6 +455,10 @@ namespace Dnf.Play
                 case "growtype":
                     ok = InRange(a, 0, Dnf.Game.SkillRules.GrowtypeCount - 1);
                     r.Growtype = (int)a;
+                    break;
+                case "awakening":
+                    ok = InRange(a, 0, Dnf.Game.AwakeningRules.Count);
+                    r.Awakening = (int)a;
                     break;
                 case "skill":
                     ok = InRange(a, 1, int.MaxValue) && InRange(b, 1, MaxSkillLevel);

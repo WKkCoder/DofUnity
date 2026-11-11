@@ -107,6 +107,12 @@ namespace Dnf.Game
         /// </summary>
         public SkillOpResult CheckLearn(int skillId, int heroLevel, int growtype, int delta, out int cost)
         {
+            return CheckLearn(skillId, heroLevel, growtype, 0, delta, out cost);
+        }
+
+        /// <summary>同 <see cref="CheckLearn(int, int, int, int, out int)"/>,最高级按觉醒 <paramref name="awakening"/> 以后的算(<see cref="SkillRules.TypeMaxLevel(SkillDef, int, int)"/>)。</summary>
+        public SkillOpResult CheckLearn(int skillId, int heroLevel, int growtype, int awakening, int delta, out int cost)
+        {
             cost = 0;
             SkillDef def = _catalog.Find(skillId);
             if (def == null || delta < 1)
@@ -115,7 +121,7 @@ namespace Dnf.Game
             }
             int current = LevelOf(skillId);
             int target = current + delta;
-            if (!SkillRules.CanLearn(def, heroLevel, growtype, target))
+            if (!SkillRules.CanLearn(def, heroLevel, growtype, awakening, target))
             {
                 return SkillOpResult.NotAllowed;
             }
@@ -145,7 +151,13 @@ namespace Dnf.Game
         /// </summary>
         public SkillOpResult Learn(int skillId, int heroLevel, int growtype, int delta, out int spent)
         {
-            SkillOpResult result = CheckLearn(skillId, heroLevel, growtype, delta, out spent);
+            return Learn(skillId, heroLevel, growtype, 0, delta, out spent);
+        }
+
+        /// <summary>同 <see cref="Learn(int, int, int, int, out int)"/>,最高级按觉醒 <paramref name="awakening"/> 以后的算。</summary>
+        public SkillOpResult Learn(int skillId, int heroLevel, int growtype, int awakening, int delta, out int spent)
+        {
+            SkillOpResult result = CheckLearn(skillId, heroLevel, growtype, awakening, delta, out spent);
             if (result != SkillOpResult.Ok)
             {
                 spent = 0;
@@ -255,6 +267,20 @@ namespace Dnf.Game
         public void SetGiven(IEnumerable<SkillGrant> grants)
         {
             _given.Clear();
+            ApplyGrants(grants);
+        }
+
+        /// <summary>
+        /// 在已有的白送技能之上再给一批(觉醒时给的,服务端 set_grow_type 对第二成长类型 &gt; 0 的处理:只对这一批调 growtype_skill,不清已学的技能,点数也不动):
+        /// 这批的等级并入退技能的下限(同一个技能取较高的),当前等级不足的补到给出的等级,新得到的主动技能放进快捷栏的空格。不认得的技能忽略。
+        /// </summary>
+        public void GrantGiven(IEnumerable<SkillGrant> grants)
+        {
+            ApplyGrants(grants);
+        }
+
+        private void ApplyGrants(IEnumerable<SkillGrant> grants)
+        {
             if (grants != null)
             {
                 foreach (SkillGrant grant in grants)
@@ -356,7 +382,7 @@ namespace Dnf.Game
 
         /// <summary>
         /// 从存档还原:技能等级与快捷栏整个换掉,点数设成 <paramref name="sp"/>、<paramref name="sfp"/>。
-        /// 目录里没有的技能丢掉;等级夹在 1 到有效最高级之内;低于白送等级的补回白送等级(先 <see cref="SetGiven"/> 再还原);
+        /// 目录里没有的技能丢掉;等级夹在 1 到 <see cref="SkillDef.SaveCeilingLevel"/>(有效最高级与觉醒后的最高级里最大的)之内;低于白送等级的补回白送等级(先 <see cref="SetGiven"/> 再还原);
         /// 快捷栏里只留学会了的主动技能,同一个技能只留第一格。返回丢掉了几条(技能与快捷栏格各算一条)。
         /// </summary>
         public int Restore(IEnumerable<KeyValuePair<int, int>> levels, IEnumerable<KeyValuePair<int, int>> quick, int sp, int sfp)
@@ -374,7 +400,7 @@ namespace Dnf.Game
                         dropped++;
                         continue;
                     }
-                    int cap = Math.Max(1, def.EffectiveMaxLevel);
+                    int cap = Math.Max(1, def.SaveCeilingLevel);
                     _levels[row.Key] = Math.Min(row.Value, cap);
                 }
             }
