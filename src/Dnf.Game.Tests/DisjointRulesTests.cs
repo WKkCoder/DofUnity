@@ -14,7 +14,7 @@ public class DisjointRulesTests
     private static readonly ExpertJobScript Script = Disjointer();
     private static readonly ExpertJobEtc EtcTable = Etc();
 
-    private static DisjointOutcome Run(DisjointItem item, DisjointContext ctx, ScriptedRandom rng) => DisjointRules.Compute(Script, EtcTable, item, ctx, rng);
+    private static DisjointOutcome Run(DisjointItem item, DisjointContext ctx, ScriptedDisjointRandom rng) => DisjointRules.Compute(Script, EtcTable, item, ctx, rng);
 
     // ------------------------------------------------------------------ 类型这一关(宠物、非装备、时装、神器)
 
@@ -198,7 +198,7 @@ public class DisjointRulesTests
     [Fact]
     public void ABigWinRollBelowTheThresholdPicksFromTheBigWinGroup()
     {
-        var rng = new ScriptedRandom(999, 5000);
+        var rng = new ScriptedDisjointRandom(999, 5000);
         DisjointOutcome o = Run(Candidate(value: 1000, grade: 20, rarity: 1), Others(), rng);
         Assert.True(o.Ok);
         Assert.Equal(new[] { 950, 960, 0, 0, 0 }, o.Items);
@@ -215,7 +215,7 @@ public class DisjointRulesTests
     [InlineData(1000, 9999, 952, 4)]
     public void TheNormalGroupIsPickedByCumulativeWeightWithInclusiveEdges(int roll1, int roll2, int item, int count)
     {
-        DisjointOutcome o = Run(Candidate(value: 1000, grade: 20, rarity: 1), Others(), new ScriptedRandom(roll1, roll2));
+        DisjointOutcome o = Run(Candidate(value: 1000, grade: 20, rarity: 1), Others(), new ScriptedDisjointRandom(roll1, roll2));
         Assert.Equal(new[] { 950, item, 0, 0, 0 }, o.Items);
         Assert.Equal(new[] { 16, count, 0, 0, 0 }, o.Counts);
     }
@@ -229,7 +229,7 @@ public class DisjointRulesTests
     [InlineData(9999, 951)]
     public void TheBigWinThresholdIsStrictlyBelowTenThousandthsOfTheRowPercent(int roll1, int item)
     {
-        DisjointOutcome o = Run(Candidate(value: 1000, grade: 20, rarity: 1), Others(), new ScriptedRandom(roll1, 5000));
+        DisjointOutcome o = Run(Candidate(value: 1000, grade: 20, rarity: 1), Others(), new ScriptedDisjointRandom(roll1, 5000));
         Assert.Equal(item, o.Items[1]);
     }
 
@@ -237,7 +237,7 @@ public class DisjointRulesTests
     public void ABigWinGroupIsUsedOnlyWhenTheRowNamesOne()
     {
         // 稀有度 3 的行没有大成功组,百分数 0:任何抽值都走普通组。
-        DisjointOutcome o = Run(Candidate(value: 1000, grade: 15, rarity: 3), Others(), new ScriptedRandom(0, 5000));
+        DisjointOutcome o = Run(Candidate(value: 1000, grade: 15, rarity: 3), Others(), new ScriptedDisjointRandom(0, 5000));
         Assert.Equal(954, o.Items[1]);
         Assert.Equal(3, o.Counts[1]);     // 15 ÷ 4.0 = 3.75 → 3
     }
@@ -247,19 +247,19 @@ public class DisjointRulesTests
     {
         // 稀有度 2、价值 5000:1.1 倍 5500 → 5500 → 55000 → ×2.0 ÷ 1000 = 110;大成功线 20% = 2000;
         // 抽值 1999 < 2000 → 大成功组 2(961 权重 3000 除数 1.0 → 30 ÷ 1 = 30);自用抽值 9 < 10 → 970 × 2。
-        var rng = new ScriptedRandom(1999, 3000, 9);
+        var rng = new ScriptedDisjointRandom(1999, 3000, 9);
         DisjointOutcome o = Run(Candidate(value: 5000, grade: 30, rarity: 2), Mine(), rng);
         Assert.Equal(new[] { 950, 961, 970, 0, 0 }, o.Items);
         Assert.Equal(new[] { 110, 30, 2, 0, 0 }, o.Counts);
         Assert.Equal(new[] { 10000, 10000, 100 }, rng.Ranges);
 
         // 自用抽值 10 不小于 10 → 没中。
-        DisjointOutcome miss = Run(Candidate(value: 5000, grade: 30, rarity: 2), Mine(), new ScriptedRandom(1999, 3000, 10));
+        DisjointOutcome miss = Run(Candidate(value: 5000, grade: 30, rarity: 2), Mine(), new ScriptedDisjointRandom(1999, 3000, 10));
         Assert.Equal(new[] { 950, 961, 0, 0, 0 }, miss.Items);
         Assert.Equal(new[] { 110, 30, 0, 0, 0 }, miss.Counts);
 
         // 大成功线 2000:抽值 2000 不算大成功,走普通组 2(953 除数 2.0 → 15)。
-        DisjointOutcome normal = Run(Candidate(value: 5000, grade: 30, rarity: 2), Mine(), new ScriptedRandom(2000, 3000, 99));
+        DisjointOutcome normal = Run(Candidate(value: 5000, grade: 30, rarity: 2), Mine(), new ScriptedDisjointRandom(2000, 3000, 99));
         Assert.Equal(new[] { 950, 953, 0, 0, 0 }, normal.Items);
         Assert.Equal(new[] { 110, 15, 0, 0, 0 }, normal.Counts);
     }
@@ -267,7 +267,7 @@ public class DisjointRulesTests
     [Fact]
     public void ARarityOneItemOnYourMachineDoesNotDrawTheSelfServiceNumber()
     {
-        var rng = new ScriptedRandom(1000, 5000);
+        var rng = new ScriptedDisjointRandom(1000, 5000);
         DisjointOutcome o = Run(Candidate(value: 1000, grade: 20, rarity: 1), Mine(), rng);
         Assert.Equal(new[] { 950, 951, 0, 0, 0 }, o.Items);
         Assert.Equal(new[] { 10000, 10000 }, rng.Ranges);     // 只抽两次
@@ -276,7 +276,7 @@ public class DisjointRulesTests
     [Fact]
     public void AnotherPersonsMachineNeverDrawsTheSelfServiceNumberEvenForHighRarity()
     {
-        var rng = new ScriptedRandom(1999, 3000);
+        var rng = new ScriptedDisjointRandom(1999, 3000);
         DisjointOutcome o = Run(Candidate(value: 5000, grade: 30, rarity: 2), Others(), rng);
         Assert.Equal(new[] { 950, 961, 0, 0, 0 }, o.Items);
         Assert.Equal(new[] { 10000, 10000 }, rng.Ranges);
@@ -286,22 +286,22 @@ public class DisjointRulesTests
     public void TheMachineGradeBonusAddsToTheBigWinLineOnlyForTheOwner()
     {
         // 机器档 1:结果行 (1,稀有度 1) 系数 3.0 → 主产物 33;大成功百分数 30 → 3000;机主再加机器档表键 2 的 5 → +500 = 3500。
-        DisjointOutcome ownerBig = Run(Candidate(), Mine(machineGrade: 1), new ScriptedRandom(3499, 5000));
+        DisjointOutcome ownerBig = Run(Candidate(), Mine(machineGrade: 1), new ScriptedDisjointRandom(3499, 5000));
         Assert.Equal(960, ownerBig.Items[1]);
         Assert.Equal(33, ownerBig.Counts[0]);
-        DisjointOutcome ownerNormal = Run(Candidate(), Mine(machineGrade: 1), new ScriptedRandom(3500, 5000));
+        DisjointOutcome ownerNormal = Run(Candidate(), Mine(machineGrade: 1), new ScriptedDisjointRandom(3500, 5000));
         Assert.Equal(951, ownerNormal.Items[1]);
 
-        DisjointOutcome otherBig = Run(Candidate(), Others(machineGrade: 1), new ScriptedRandom(2999, 5000));
+        DisjointOutcome otherBig = Run(Candidate(), Others(machineGrade: 1), new ScriptedDisjointRandom(2999, 5000));
         Assert.Equal(960, otherBig.Items[1]);
-        DisjointOutcome otherNormal = Run(Candidate(), Others(machineGrade: 1), new ScriptedRandom(3000, 5000));
+        DisjointOutcome otherNormal = Run(Candidate(), Others(machineGrade: 1), new ScriptedDisjointRandom(3000, 5000));
         Assert.Equal(951, otherNormal.Items[1]);
     }
 
     [Fact]
     public void WithoutAnEtcTableTheMachineGradeBonusIsZero()
     {
-        DisjointOutcome o = DisjointRules.Compute(Script, null, Candidate(), Mine(machineGrade: 1), new ScriptedRandom(3000, 5000));
+        DisjointOutcome o = DisjointRules.Compute(Script, null, Candidate(), Mine(machineGrade: 1), new ScriptedDisjointRandom(3000, 5000));
         Assert.Equal(951, o.Items[1]);     // 阈值 3000(没有 +500)
     }
 
@@ -310,18 +310,18 @@ public class DisjointRulesTests
     {
         // 机器档 1:3000 + 500 + 100 × 12.5 = 4750。
         DisjointContext active = Mine(machineGrade: 1, active: true, bonus: 12.5f);
-        Assert.Equal(960, Run(Candidate(), active, new ScriptedRandom(4749, 5000)).Items[1]);
-        Assert.Equal(951, Run(Candidate(), active, new ScriptedRandom(4750, 5000)).Items[1]);
+        Assert.Equal(960, Run(Candidate(), active, new ScriptedDisjointRandom(4749, 5000)).Items[1]);
+        Assert.Equal(951, Run(Candidate(), active, new ScriptedDisjointRandom(4750, 5000)).Items[1]);
 
         // 机主不在线(没有角色):穿戴加成不算,只有机器档加成 → 3500。
         DisjointContext inactive = Mine(machineGrade: 1, active: false, bonus: 12.5f);
-        Assert.Equal(960, Run(Candidate(), inactive, new ScriptedRandom(3499, 5000)).Items[1]);
-        Assert.Equal(951, Run(Candidate(), inactive, new ScriptedRandom(3500, 5000)).Items[1]);
+        Assert.Equal(960, Run(Candidate(), inactive, new ScriptedDisjointRandom(3499, 5000)).Items[1]);
+        Assert.Equal(951, Run(Candidate(), inactive, new ScriptedDisjointRandom(3500, 5000)).Items[1]);
 
         // 别人的机器:连机器档加成都没有,穿戴当然也没有 → 3000。
         DisjointContext others = Others(machineGrade: 1, active: true, bonus: 50f, variation: 70f);
-        Assert.Equal(960, Run(Candidate(), others, new ScriptedRandom(2999, 5000)).Items[1]);
-        Assert.Equal(951, Run(Candidate(), others, new ScriptedRandom(3000, 5000)).Items[1]);
+        Assert.Equal(960, Run(Candidate(), others, new ScriptedDisjointRandom(2999, 5000)).Items[1]);
+        Assert.Equal(951, Run(Candidate(), others, new ScriptedDisjointRandom(3000, 5000)).Items[1]);
     }
 
     [Fact]
@@ -329,8 +329,8 @@ public class DisjointRulesTests
     {
         // 机器档 1:3000 + 500 + 100 × 12.346 = 3500 + 1234.6 → 向零取整得 4734(四舍五入会是 4735)。
         DisjointContext ctx = Mine(machineGrade: 1, active: true, bonus: 12.346f);
-        Assert.Equal(960, Run(Candidate(), ctx, new ScriptedRandom(4733, 5000)).Items[1]);
-        Assert.Equal(951, Run(Candidate(), ctx, new ScriptedRandom(4734, 5000)).Items[1]);
+        Assert.Equal(960, Run(Candidate(), ctx, new ScriptedDisjointRandom(4733, 5000)).Items[1]);
+        Assert.Equal(951, Run(Candidate(), ctx, new ScriptedDisjointRandom(4734, 5000)).Items[1]);
     }
 
     [Fact]
@@ -338,12 +338,12 @@ public class DisjointRulesTests
     {
         // 机器档 1、变化 10%:主产物 33 + 3 = 36;大成功产物 10 + 1 = 11。
         DisjointContext ctx = Mine(machineGrade: 1, active: true, bonus: 12.5f, variation: 10f);
-        DisjointOutcome o = Run(Candidate(), ctx, new ScriptedRandom(4749, 5000));
+        DisjointOutcome o = Run(Candidate(), ctx, new ScriptedDisjointRandom(4749, 5000));
         Assert.Equal(new[] { 950, 960, 0, 0, 0 }, o.Items);
         Assert.Equal(new[] { 36, 11, 0, 0, 0 }, o.Counts);
 
         // 普通组:附加 2 个,2 × 10% = 0.2 → 0。
-        DisjointOutcome normal = Run(Candidate(), ctx, new ScriptedRandom(4750, 5000));
+        DisjointOutcome normal = Run(Candidate(), ctx, new ScriptedDisjointRandom(4750, 5000));
         Assert.Equal(new[] { 36, 2, 0, 0, 0 }, normal.Counts);
     }
 
@@ -352,7 +352,7 @@ public class DisjointRulesTests
     {
         // 70 ÷ 100 在单精度里是 0.69999999…,10 × 它 = 6.9999999 → 向零取整 6;而不是十进制的 7。
         DisjointContext ctx = Mine(machineGrade: 0, active: true, variation: 70f);
-        DisjointOutcome o = Run(Candidate(), ctx, new ScriptedRandom(999, 5000));
+        DisjointOutcome o = Run(Candidate(), ctx, new ScriptedDisjointRandom(999, 5000));
         Assert.Equal(new[] { 950, 960, 0, 0, 0 }, o.Items);
         Assert.Equal(new[] { 27, 16, 0, 0, 0 }, o.Counts);     // 16 + 11 = 27;10 + 6 = 16(不是 17)
     }
@@ -360,7 +360,7 @@ public class DisjointRulesTests
     [Fact]
     public void ANegativeVariationShrinksTheCountsTowardZeroButTheAdditionalCountStaysAtLeastOne()
     {
-        DisjointOutcome o = Run(Candidate(), Mine(active: true, variation: -50f), new ScriptedRandom(1000, 5000));
+        DisjointOutcome o = Run(Candidate(), Mine(active: true, variation: -50f), new ScriptedDisjointRandom(1000, 5000));
         Assert.Equal(new[] { 950, 951, 0, 0, 0 }, o.Items);
         Assert.Equal(new[] { 8, 1, 0, 0, 0 }, o.Counts);
     }
@@ -368,7 +368,7 @@ public class DisjointRulesTests
     [Fact]
     public void ZeroVariationLeavesTheCountsAsTheyAre()
     {
-        DisjointOutcome o = Run(Candidate(), Mine(active: true), new ScriptedRandom(1000, 5000));
+        DisjointOutcome o = Run(Candidate(), Mine(active: true), new ScriptedDisjointRandom(1000, 5000));
         Assert.Equal(new[] { 16, 2, 0, 0, 0 }, o.Counts);
     }
 
@@ -376,14 +376,14 @@ public class DisjointRulesTests
     public void VariationAppliesToTheSelfServiceCountToo()
     {
         // 133.3%:主产物 110 → 256,大成功产物 30 → 69,自用额外产物 2 → 4。
-        DisjointOutcome o = Run(Candidate(value: 5000, grade: 30, rarity: 2), Mine(active: true, variation: 133.3f), new ScriptedRandom(1999, 3000, 9));
+        DisjointOutcome o = Run(Candidate(value: 5000, grade: 30, rarity: 2), Mine(active: true, variation: 133.3f), new ScriptedDisjointRandom(1999, 3000, 9));
         Assert.Equal(new[] { 256, 69, 4, 0, 0 }, o.Counts);
     }
 
     [Fact]
     public void AnUnidentifiedItemUsesTheUnidentifiedRow()
     {
-        var rng = new ScriptedRandom(0, 0);
+        var rng = new ScriptedDisjointRandom(0, 0);
         DisjointOutcome o = Run(Candidate(identified: false), Others(), rng);
         Assert.True(o.Ok);
         Assert.Equal(new[] { 949, 0, 0, 0, 0 }, o.Items);       // 行 (0,1,未鉴定):主产物 949,系数 0.5 → 11000 × 0.5 ÷ 1000 = 5.5 → 5
@@ -394,7 +394,7 @@ public class DisjointRulesTests
     [Fact]
     public void AMissingRowIsInvalidForIdentifiedAndNoResultForUnidentifiedAndDrawsNothing()
     {
-        var rng = new ScriptedRandom();
+        var rng = new ScriptedDisjointRandom();
         DisjointOutcome identified = Run(Candidate(rarity: 5), Others(), rng);
         Assert.Equal(ExpertJobError.InvalidItem, identified.Error);
         Assert.False(identified.Ok);
@@ -413,19 +413,19 @@ public class DisjointRulesTests
     {
         var rates = new ItemPriceRates(800, 900, 700);
         // 价值 1000 → 1100;随机选项 700‰ → 770 → 7700 → ×1.5 ÷ 1000 = 11.55 → 11;否则 800‰ → 880 → 8800 → 13.2 → 13。
-        Assert.Equal(11, Run(Candidate(randomOption: true), Others(rates: rates), new ScriptedRandom(1000, 5000)).Counts[0]);
-        Assert.Equal(13, Run(Candidate(randomOption: false), Others(rates: rates), new ScriptedRandom(1000, 5000)).Counts[0]);
+        Assert.Equal(11, Run(Candidate(randomOption: true), Others(rates: rates), new ScriptedDisjointRandom(1000, 5000)).Counts[0]);
+        Assert.Equal(13, Run(Candidate(randomOption: false), Others(rates: rates), new ScriptedDisjointRandom(1000, 5000)).Counts[0]);
         // 倍率表为 null:用替身(都是 1000)。
-        Assert.Equal(16, Run(Candidate(randomOption: true), Others(), new ScriptedRandom(1000, 5000)).Counts[0]);
+        Assert.Equal(16, Run(Candidate(randomOption: true), Others(), new ScriptedDisjointRandom(1000, 5000)).Counts[0]);
     }
 
     [Fact]
     public void ACountBelowOneIsRaisedToOneForTheMainAndTheAdditionalProduct()
     {
         // 价值 1:收购价 1 → 10 → ×1.5 ÷ 1000 = 0.015 → 0 → 至少 1。
-        Assert.Equal(1, Run(Candidate(value: 1), Others(), new ScriptedRandom(1000, 5000)).Counts[0]);
+        Assert.Equal(1, Run(Candidate(value: 1), Others(), new ScriptedDisjointRandom(1000, 5000)).Counts[0]);
         // 物品等级 2 ÷ 除数 10.0 = 0.2 → 0 → 至少 1。
-        Assert.Equal(1, Run(Candidate(grade: 2), Others(), new ScriptedRandom(1000, 5000)).Counts[1]);
+        Assert.Equal(1, Run(Candidate(grade: 2), Others(), new ScriptedDisjointRandom(1000, 5000)).Counts[1]);
     }
 
     [Theory]
@@ -436,7 +436,7 @@ public class DisjointRulesTests
     [InlineData(35, 0, 955, 4)]         // 等级 35:第一项(10 到 20)不在范围,不消耗抽值;第二项选中
     public void AnAdditionalGroupFallsOffToItsLastEntryWhenNothingIsPicked(int grade, int roll2, int item, int count)
     {
-        DisjointOutcome o = Run(Candidate(grade: grade, rarity: 3), Others(), new ScriptedRandom(1000, roll2));
+        DisjointOutcome o = Run(Candidate(grade: grade, rarity: 3), Others(), new ScriptedDisjointRandom(1000, roll2));
         Assert.Equal(item, o.Items[1]);
         Assert.Equal(count, o.Counts[1]);
     }
@@ -445,7 +445,7 @@ public class DisjointRulesTests
     public void TheSameItemMayAppearInTwoSlots()
     {
         // 稀有度 4 的普通组第一项就是主产物 950:产物里 950 出现两次。
-        DisjointOutcome o = Run(Candidate(rarity: 4), Others(), new ScriptedRandom(0, 0));
+        DisjointOutcome o = Run(Candidate(rarity: 4), Others(), new ScriptedDisjointRandom(0, 0));
         Assert.Equal(new[] { 950, 950, 0, 0, 0 }, o.Items);
         Assert.Equal(new[] { 11, 10, 0, 0, 0 }, o.Counts);
         List<KeyValuePair<int, int>> products = o.Products();
@@ -474,7 +474,7 @@ public class DisjointRulesTests
         {
             L("[disjoint result]", 0, 1, 0, 950, 1.5f, 0, 0, 0),
         });
-        var rng = new ScriptedRandom();
+        var rng = new ScriptedDisjointRandom();
         DisjointOutcome o = DisjointRules.Compute(noBase, EtcTable, Candidate(), Others(), rng);
         Assert.Equal(ExpertJobError.NotPermitted, o.Error);
         Assert.Empty(rng.Ranges);
@@ -488,7 +488,7 @@ public class DisjointRulesTests
             L("[base const]", 100),
             L("[disjoint result]", 0, 2, 0, 950, 2.0f, 0, 0, 0),
         });
-        var rng = new ScriptedRandom(1, 1, 0);
+        var rng = new ScriptedDisjointRandom(1, 1, 0);
         DisjointOutcome o = DisjointRules.Compute(noSelf, EtcTable, Candidate(rarity: 2, value: 5000), Mine(), rng);
         Assert.Equal(new[] { 950, 0, 0, 0, 0 }, o.Items);
         Assert.Equal(3, rng.Ranges.Count);
@@ -497,9 +497,9 @@ public class DisjointRulesTests
     [Fact]
     public void ComputeRejectsMissingArguments()
     {
-        Assert.Throws<ArgumentNullException>(() => DisjointRules.Compute(null, EtcTable, Candidate(), Mine(), new ScriptedRandom()));
-        Assert.Throws<ArgumentNullException>(() => DisjointRules.Compute(Script, EtcTable, null, Mine(), new ScriptedRandom()));
-        Assert.Throws<ArgumentNullException>(() => DisjointRules.Compute(Script, EtcTable, Candidate(), null, new ScriptedRandom()));
+        Assert.Throws<ArgumentNullException>(() => DisjointRules.Compute(null, EtcTable, Candidate(), Mine(), new ScriptedDisjointRandom()));
+        Assert.Throws<ArgumentNullException>(() => DisjointRules.Compute(Script, EtcTable, null, Mine(), new ScriptedDisjointRandom()));
+        Assert.Throws<ArgumentNullException>(() => DisjointRules.Compute(Script, EtcTable, Candidate(), null, new ScriptedDisjointRandom()));
         Assert.Throws<ArgumentNullException>(() => DisjointRules.Compute(Script, EtcTable, Candidate(), Mine(), null));
     }
 
@@ -567,7 +567,7 @@ public class DisjointRulesTests
             L("[additional result]", Rate(1, 1, 50, -1, 10000, 2.0f)),
             L("[disjoint result]", 0, 1, 0, 950, 1.5f, 1, 0, 0),
         });
-        DisjointOutcome o = DisjointRules.Compute(script, EtcTable, Candidate(), Others(), new ScriptedRandom(1000, 0));
+        DisjointOutcome o = DisjointRules.Compute(script, EtcTable, Candidate(), Others(), new ScriptedDisjointRandom(1000, 0));
         Assert.Equal(new[] { 950, 0, 0, 0, 0 }, o.Items);
         Assert.Equal(0, o.Counts[1]);
     }
@@ -582,7 +582,7 @@ public class DisjointRulesTests
             L("[additional result]", Rate(1, 1, 50, 951, 10000, 1.0e-9f)),
             L("[disjoint result]", 0, 1, 0, 950, 1.5f, 1, 0, 0),
         });
-        DisjointOutcome o = DisjointRules.Compute(script, EtcTable, Candidate(), Others(), new ScriptedRandom(9999, 0));
+        DisjointOutcome o = DisjointRules.Compute(script, EtcTable, Candidate(), Others(), new ScriptedDisjointRandom(9999, 0));
         Assert.Equal(new[] { 950, 951, 0, 0, 0 }, o.Items);
         Assert.Equal(1, o.Counts[1]);
     }
@@ -706,7 +706,7 @@ public class DisjointRulesTests
             OwnerResultVariation = variation,
             PriceRates = RateSets[rateSet],
         };
-        var rng = new ScriptedRandom(roll1, roll2, roll3);
+        var rng = new ScriptedDisjointRandom(roll1, roll2, roll3);
         DisjointOutcome o = Run(Candidate(value: value, grade: grade, rarity: rarity, randomOption: randomOption), ctx, rng);
         if (error != 0)
         {

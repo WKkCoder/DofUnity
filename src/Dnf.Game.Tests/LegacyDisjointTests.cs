@@ -12,7 +12,7 @@ public class LegacyDisjointTests
 {
     private static readonly LegacyDisjointScript Script = Legacy();
 
-    private static DisjointOutcome Run(DisjointItem item, ScriptedRandom rng, ItemPriceRates rates = null) => Script.Compute(item, rates, rng);
+    private static DisjointOutcome Run(DisjointItem item, ScriptedDisjointRandom rng, ItemPriceRates rates = null) => Script.Compute(item, rates, rng);
 
     // ------------------------------------------------------------------ 读取
 
@@ -89,7 +89,7 @@ public class LegacyDisjointTests
         LegacyDisjointScript empty = LegacyDisjointScript.Parse(null);
         Assert.Equal(0, empty.MainItem);
         Assert.Equal(0, empty.BaseConst);
-        var rng = new ScriptedRandom();
+        var rng = new ScriptedDisjointRandom();
         Assert.Equal(ExpertJobError.NotPermitted, empty.Compute(Candidate(), null, rng).Error);
         Assert.Empty(rng.Ranges);
     }
@@ -102,7 +102,7 @@ public class LegacyDisjointTests
     [InlineData(5, 38)]     // 38.5
     public void ARarityWithoutAnAdditionalGroupGivesOnlyTheMainProductAndDrawsNothing(int rarity, int count)
     {
-        var rng = new ScriptedRandom();
+        var rng = new ScriptedDisjointRandom();
         DisjointOutcome o = Run(Candidate(rarity: rarity), rng);
         Assert.True(o.Ok);
         Assert.Equal(new[] { 950, 0, 0, 0, 0 }, o.Items);
@@ -117,7 +117,7 @@ public class LegacyDisjointTests
     [InlineData(1999, 9999, 952, 4)]
     public void ARarityOneItemPicksAnAdditionalItemByIndexAndASeparateBigWinRoll(int indexRoll, int bigRoll, int item, int count)
     {
-        var rng = new ScriptedRandom(indexRoll, bigRoll);
+        var rng = new ScriptedDisjointRandom(indexRoll, bigRoll);
         DisjointOutcome o = Run(Candidate(rarity: 1, grade: 20), rng);
         Assert.Equal(new[] { 950, item, 0, 0, 0 }, o.Items);
         Assert.Equal(new[] { 16, count, 0, 0, 0 }, o.Counts);
@@ -133,7 +133,7 @@ public class LegacyDisjointTests
     public void TheAdditionalCountIsAtLeastOneWhateverTheGrade(int grade, int count)
     {
         // 抽值 5000 不小于大成功线 2000 → 普通除数 5.0。
-        DisjointOutcome o = Run(Candidate(rarity: 1, grade: grade), new ScriptedRandom(0, 5000));
+        DisjointOutcome o = Run(Candidate(rarity: 1, grade: grade), new ScriptedDisjointRandom(0, 5000));
         Assert.Equal(951, o.Items[1]);
         Assert.Equal(count, o.Counts[1]);
     }
@@ -148,7 +148,7 @@ public class LegacyDisjointTests
             L("[additional result]", 0, 1, 951),
             L("[additional result const]", 0, 5.0f, 0.0f, 0, 0),
         });
-        DisjointOutcome o = script.Compute(Candidate(rarity: 1, grade: 20), null, new ScriptedRandom(0, 5000));
+        DisjointOutcome o = script.Compute(Candidate(rarity: 1, grade: 20), null, new ScriptedDisjointRandom(0, 5000));
         Assert.Equal(951, o.Items[1]);
         Assert.Equal(1, o.Counts[1]);       // 20 ÷ 0 = 无穷大,转成整数是不定值,不大于 0 → 按 1 个
     }
@@ -156,7 +156,7 @@ public class LegacyDisjointTests
     [Fact]
     public void ARarityTwoItemNeverBigWinsBecauseItsPercentIsZero()
     {
-        var rng = new ScriptedRandom(0, 0);
+        var rng = new ScriptedDisjointRandom(0, 0);
         DisjointOutcome o = Run(Candidate(rarity: 2, grade: 20), rng);
         Assert.Equal(new[] { 950, 953, 0, 0, 0 }, o.Items);
         Assert.Equal(new[] { 22, 20, 0, 0, 0 }, o.Counts);    // 普通除数 1.0 → 20
@@ -166,7 +166,7 @@ public class LegacyDisjointTests
     [Fact]
     public void ARarityFourItemAlwaysBigWinsBecauseItsPercentIsAHundred()
     {
-        var rng = new ScriptedRandom(0, 9999);
+        var rng = new ScriptedDisjointRandom(0, 9999);
         DisjointOutcome o = Run(Candidate(rarity: 4, grade: 20), rng);
         Assert.Equal(new[] { 950, 960, 0, 0, 0 }, o.Items);
         Assert.Equal(new[] { 33, 5, 0, 0, 0 }, o.Counts);     // 大成功除数 4.0 → 5
@@ -182,7 +182,7 @@ public class LegacyDisjointTests
             L("[additional result]", 0, 1, 0),
             L("[additional result const]", 0, 5.0f, 2.0f, 50, 0),
         });
-        var rng = new ScriptedRandom(0);
+        var rng = new ScriptedDisjointRandom(0);
         DisjointOutcome o = script.Compute(Candidate(rarity: 1), null, rng);
         Assert.Equal(new[] { 950, 0, 0, 0, 0 }, o.Items);
         Assert.Equal(new[] { 1000 }, rng.Ranges);
@@ -199,7 +199,7 @@ public class LegacyDisjointTests
             L("[additional result]", 0, 3, 951),
             L("[additional result const]", 0, 5.0f, 2.0f, 50, 0),
         });
-        var rng = new ScriptedRandom(2500);
+        var rng = new ScriptedDisjointRandom(2500);
         DisjointOutcome o = script.Compute(Candidate(rarity: 1), null, rng);
         Assert.Equal(new[] { 950, 0, 0, 0, 0 }, o.Items);
         Assert.Equal(new[] { 3000 }, rng.Ranges);
@@ -211,7 +211,7 @@ public class LegacyDisjointTests
     [InlineData(100)]
     public void ARarityOutsideTheTableIsInvalid(int rarity)
     {
-        var rng = new ScriptedRandom();
+        var rng = new ScriptedDisjointRandom();
         Assert.Equal(ExpertJobError.InvalidItem, Run(Candidate(rarity: rarity), rng).Error);
         Assert.Empty(rng.Ranges);
     }
@@ -220,29 +220,29 @@ public class LegacyDisjointTests
     public void AScriptWithoutABaseConstantOrMainItemIsNotPermitted()
     {
         LegacyDisjointScript noBase = LegacyDisjointScript.Parse(new[] { L("[cube index]", "[no element]", 950), L("[cube creation const]", 0, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f) });
-        Assert.Equal(ExpertJobError.NotPermitted, noBase.Compute(Candidate(), null, new ScriptedRandom()).Error);
+        Assert.Equal(ExpertJobError.NotPermitted, noBase.Compute(Candidate(), null, new ScriptedDisjointRandom()).Error);
         LegacyDisjointScript noMain = LegacyDisjointScript.Parse(new[] { L("[cube creation const]", 100, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f) });
-        Assert.Equal(ExpertJobError.NotPermitted, noMain.Compute(Candidate(), null, new ScriptedRandom()).Error);
+        Assert.Equal(ExpertJobError.NotPermitted, noMain.Compute(Candidate(), null, new ScriptedDisjointRandom()).Error);
     }
 
     [Fact]
     public void ARandomOptionItemIsPricedAtTheThirdRate()
     {
         var rates = new ItemPriceRates(800, 900, 700);
-        Assert.Equal(11, Run(Candidate(rarity: 1, randomOption: true), new ScriptedRandom(0, 5000), rates).Counts[0]);   // 700‰:770 → 7700 → ×1.5 ÷ 1000 = 11.55
-        Assert.Equal(13, Run(Candidate(rarity: 1), new ScriptedRandom(0, 5000), rates).Counts[0]);                      // 800‰:880 → 8800 → 13.2
+        Assert.Equal(11, Run(Candidate(rarity: 1, randomOption: true), new ScriptedDisjointRandom(0, 5000), rates).Counts[0]);   // 700‰:770 → 7700 → ×1.5 ÷ 1000 = 11.55
+        Assert.Equal(13, Run(Candidate(rarity: 1), new ScriptedDisjointRandom(0, 5000), rates).Counts[0]);                      // 800‰:880 → 8800 → 13.2
     }
 
     [Fact]
     public void TheMainCountIsAtLeastOne()
     {
-        Assert.Equal(1, Run(Candidate(rarity: 0, value: 1), new ScriptedRandom()).Counts[0]);
+        Assert.Equal(1, Run(Candidate(rarity: 0, value: 1), new ScriptedDisjointRandom()).Counts[0]);
     }
 
     [Fact]
     public void ComputeRejectsMissingArguments()
     {
-        Assert.Throws<ArgumentNullException>(() => Script.Compute(null, null, new ScriptedRandom()));
+        Assert.Throws<ArgumentNullException>(() => Script.Compute(null, null, new ScriptedDisjointRandom()));
         Assert.Throws<ArgumentNullException>(() => Script.Compute(Candidate(), null, null));
     }
 

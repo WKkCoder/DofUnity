@@ -189,11 +189,11 @@ internal static class ExpertJobTestData
 /// 脚本化的随机数来源:按次序给出事先写好的值,同时记下每次问的范围,用来钉死"抽几次、每次范围多大、先后次序"。
 /// 给出的值必须落在这次问的范围里(否则是测试自己写错了,直接断言失败);值用完了再要就抛异常。
 /// </summary>
-internal sealed class ScriptedRandom : IDisjointRandom
+internal sealed class ScriptedDisjointRandom : IDisjointRandom
 {
     private readonly Queue<int> _values;
 
-    public ScriptedRandom(params int[] values)
+    public ScriptedDisjointRandom(params int[] values)
     {
         _values = new Queue<int>(values);
     }

@@ -273,7 +273,7 @@ public class DisjointMachineTests
     public void CompletingDrawsEnduranceThenExpThenTheBonusRollInThatOrderAndRange()
     {
         // 耐久消耗区间 1 到 3(3 个数)、经验区间 2 到 4(3 个数)、额外经验抽值 0 到 99。
-        var rng = new ScriptedRandom(0, 0, 0);
+        var rng = new ScriptedDisjointRandom(0, 0, 0);
         DisjointCompletion c = DisjointMachine.Complete(Script, 5, 0f, 0, rng);
         Assert.Equal(new[] { 3, 3, 100 }, rng.Ranges);
         Assert.Equal(1, c.EnduranceLost);
@@ -283,7 +283,7 @@ public class DisjointMachineTests
         Assert.Equal(2, c.TotalGain);
         Assert.False(c.MachineBroken);
 
-        var high = new ScriptedRandom(2, 2, 99);
+        var high = new ScriptedDisjointRandom(2, 2, 99);
         DisjointCompletion top = DisjointMachine.Complete(Script, 5, 0f, 0, high);
         Assert.Equal(3, top.EnduranceLost);
         Assert.Equal(2, top.NewEndurance);
@@ -294,16 +294,16 @@ public class DisjointMachineTests
     [Fact]
     public void TheEnduranceLossNeverExceedsWhatIsLeftAndZeroEnduranceBreaksTheMachine()
     {
-        DisjointCompletion two = DisjointMachine.Complete(Script, 2, 0f, 0, new ScriptedRandom(2, 0, 0));      // 抽到 3,只剩 2
+        DisjointCompletion two = DisjointMachine.Complete(Script, 2, 0f, 0, new ScriptedDisjointRandom(2, 0, 0));      // 抽到 3,只剩 2
         Assert.Equal(2, two.EnduranceLost);
         Assert.Equal(0, two.NewEndurance);
         Assert.True(two.MachineBroken);
 
-        DisjointCompletion exact = DisjointMachine.Complete(Script, 3, 0f, 0, new ScriptedRandom(2, 0, 0));
+        DisjointCompletion exact = DisjointMachine.Complete(Script, 3, 0f, 0, new ScriptedDisjointRandom(2, 0, 0));
         Assert.Equal(0, exact.NewEndurance);
         Assert.True(exact.MachineBroken);
 
-        DisjointCompletion left = DisjointMachine.Complete(Script, 4, 0f, 0, new ScriptedRandom(2, 0, 0));
+        DisjointCompletion left = DisjointMachine.Complete(Script, 4, 0f, 0, new ScriptedDisjointRandom(2, 0, 0));
         Assert.Equal(1, left.NewEndurance);
         Assert.False(left.MachineBroken);
     }
@@ -312,25 +312,25 @@ public class DisjointMachineTests
     public void TheBonusExpHitsWhenTheRollIsBelowTheChanceAsAFloatComparison()
     {
         // 概率 12.5:抽值 12 < 12.5 命中,13 不中;命中加额外经验 6。
-        DisjointCompletion hit = DisjointMachine.Complete(Script, 5, 12.5f, 6, new ScriptedRandom(0, 2, 12));
+        DisjointCompletion hit = DisjointMachine.Complete(Script, 5, 12.5f, 6, new ScriptedDisjointRandom(0, 2, 12));
         Assert.True(hit.BonusHit);
         Assert.Equal(4, hit.BaseGain);
         Assert.Equal(10, hit.TotalGain);
 
-        DisjointCompletion miss = DisjointMachine.Complete(Script, 5, 12.5f, 6, new ScriptedRandom(0, 2, 13));
+        DisjointCompletion miss = DisjointMachine.Complete(Script, 5, 12.5f, 6, new ScriptedDisjointRandom(0, 2, 13));
         Assert.False(miss.BonusHit);
         Assert.Equal(4, miss.TotalGain);
 
         // 概率 0 永远不中,概率 100 永远中。
-        Assert.False(DisjointMachine.Complete(Script, 5, 0f, 6, new ScriptedRandom(0, 0, 0)).BonusHit);
-        Assert.True(DisjointMachine.Complete(Script, 5, 100f, 6, new ScriptedRandom(0, 0, 99)).BonusHit);
+        Assert.False(DisjointMachine.Complete(Script, 5, 0f, 6, new ScriptedDisjointRandom(0, 0, 0)).BonusHit);
+        Assert.True(DisjointMachine.Complete(Script, 5, 100f, 6, new ScriptedDisjointRandom(0, 0, 99)).BonusHit);
     }
 
     [Fact]
     public void AReversedIntervalIsTreatedAsASinglePoint()
     {
         ExpertJobScript reversed = ExpertJobScript.Parse(ExpertJobKind.Disjointer, new[] { L("[endurance reduce]", 5, 2), L("[gain exp]", 9, 1) });
-        var rng = new ScriptedRandom(0, 0, 0);
+        var rng = new ScriptedDisjointRandom(0, 0, 0);
         DisjointCompletion c = DisjointMachine.Complete(reversed, 10, 0f, 0, rng);
         Assert.Equal(new[] { 1, 1, 100 }, rng.Ranges);
         Assert.Equal(5, c.EnduranceLost);
@@ -342,7 +342,7 @@ public class DisjointMachineTests
     {
         // 上界比下界小 1:区间的"个数"算出来是 0,仍按 1 个数处理(向随机数问的范围是 1,不是 0)。
         ExpertJobScript off = ExpertJobScript.Parse(ExpertJobKind.Disjointer, new[] { L("[endurance reduce]", 5, 4), L("[gain exp]", 9, 8) });
-        var rng = new ScriptedRandom(0, 0, 0);
+        var rng = new ScriptedDisjointRandom(0, 0, 0);
         DisjointCompletion c = DisjointMachine.Complete(off, 10, 0f, 0, rng);
         Assert.Equal(new[] { 1, 1, 100 }, rng.Ranges);
         Assert.Equal(5, c.EnduranceLost);
@@ -352,7 +352,7 @@ public class DisjointMachineTests
     [Fact]
     public void CompletingRejectsMissingArguments()
     {
-        Assert.Throws<ArgumentNullException>(() => DisjointMachine.Complete(null, 5, 0f, 0, new ScriptedRandom()));
+        Assert.Throws<ArgumentNullException>(() => DisjointMachine.Complete(null, 5, 0f, 0, new ScriptedDisjointRandom()));
         Assert.Throws<ArgumentNullException>(() => DisjointMachine.Complete(Script, 5, 0f, 0, null));
     }
 }
