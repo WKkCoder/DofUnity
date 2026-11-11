@@ -157,7 +157,9 @@ namespace Dnf.Net.Session
         /// <summary>
         /// 在 <paramref name="window"/> 时间内收帧并解码,返回解出的帧(顺序与到达一致)。
         /// 到点、流结束或解出 <paramref name="stopAfterFrames"/> 帧(大于 0 时)就返回;没读完的半个帧留给下一次调用。
-        /// 解出 561 号信封且拆得开时,内层帧紧跟在信封帧之后一并返回(所以返回的帧数可能比 <paramref name="stopAfterFrames"/> 多一个)。
+        /// 解出 561 号信封且拆得开时,内层帧紧跟在信封帧之后一并返回(所以返回的帧数可能比 <paramref name="stopAfterFrames"/> 多一个);
+        /// 内层帧的包号是压缩包号(2、9、0x57)且载荷以 zlib 头开头时,与直接帧一样解压,返回的载荷是明文(<see cref="DecodedFrame.WasCompressed"/> 为真);
+        /// 解不开就原样返回压缩态的载荷,并在装着它的信封帧的事件备注上缀一次 ",内层解压失败:原因"。
         /// </summary>
         public async Task<List<DecodedFrame>> ReceiveAsync(TimeSpan window, int stopAfterFrames = 0, CancellationToken cancellationToken = default)
         {
@@ -218,8 +220,14 @@ namespace Dnf.Net.Session
 
         // 561 号信封(外部反作弊库封的包,载荷明文就是信封):拆得开就把内层完整帧作为一个解码结果附在信封帧之后(类、包号、总长取内层自己的帧头,
         // 载荷从第 15 字节起);拆不开只记事件。信封帧本身总是照常保留,不受拆包结果影响。
+        // 内层帧的包号在压缩包号集合里(与直接帧用同一份:ServerFrameDecoder.IsCompressedId,与类无关)时,载荷与直接帧同口径地解压后再交付:
+        // 先认 zlib 头(HasZlibHeader),认得出才用直接帧同一个严格解压(ZlibInflate)与同一个输出上限去解,解开就以明文载荷交付;
+        // 认得出头却解不开(流不合法、被截断、Adler-32 不符、超过上限……)就原样交付,不猜、不丢帧,并记一次(NoteInnerInflateFailure);
+        // 头不像 zlib 的(明文)、包号不在集合里的内层帧一律不碰,载荷恰好长得像 zlib 也一样。
         private void AppendAntibotInner(DecodedFrame envelope, int envelopeFrameLength, List<DecodedFrame> sink)
         {
+            // 此刻 _events 的最后一条就是刚记下的信封帧事件(见 Decode),内层解压失败要记在它上面
+            int envelopeEventIndex = _events.Count - 1;
             if (!AntibotEnvelope.TryUnwrap(envelope.Payload, out byte[] inner, out AntibotEnvelopeStatus status))
             {
                 _events.Add(new SessionEvent(false, envelope.Header.Class, envelope.Header.PacketId, envelopeFrameLength, 0, "信封拆包失败:" + status));
@@ -231,14 +239,45 @@ namespace Dnf.Net.Session
             {
                 byte[] body = new byte[inner.Length - layout.CipherOffset];
                 Buffer.BlockCopy(inner, layout.CipherOffset, body, 0, body.Length);
-                _events.Add(new SessionEvent(false, header.Class, header.PacketId, inner.Length, body.Length, "信封内层"));
-                sink.Add(new DecodedFrame(header, DecodedKind.Plain, body, false, false, true));
+                byte[] payload = body;
+                bool inflated = false;
+                if (ServerFrameDecoder.IsCompressedId(header.PacketId) && HasZlibHeader(body))
+                {
+                    if (ZlibInflate.TryInflate(body, _decoder.MaxInflatedLength, out byte[] plain, out bool tooLarge))
+                    {
+                        payload = plain;
+                        inflated = true;
+                    }
+                    else
+                    {
+                        NoteInnerInflateFailure(envelopeEventIndex, tooLarge ? FrameStatus.PayloadTooLarge : FrameStatus.InflateFailed);
+                    }
+                }
+                _events.Add(new SessionEvent(false, header.Class, header.PacketId, inner.Length, payload.Length, "信封内层"));
+                sink.Add(new DecodedFrame(header, DecodedKind.Plain, payload, inflated, false, true));
             }
             else
             {
                 // 内层不足一个 15 字节帧头:展开不了,只把类与包号记在事件里
                 _events.Add(new SessionEvent(false, (PacketClass)inner[0], inner[1] | (inner[2] << 8), inner.Length, 0, "信封内层(帧头不足,未展开)"));
             }
+        }
+
+        // zlib 头(RFC 1950):CMF 低 4 位是压缩方法 8,且 CMF*256+FLG 能被 31 整除。只认这两条,后面的内容不看;
+        // 窗口位数、预设字典、流本身是否合法都留给 ZlibInflate 定夺(认得出头却被它拒收的,同样算"解不开")。
+        private static bool HasZlibHeader(byte[] data)
+        {
+            return data.Length >= 2 && (data[0] & 0x0F) == 8 && (((data[0] << 8) | data[1]) % 31) == 0;
+        }
+
+        // 内层帧认得出 zlib 头却解不开:记一次。写法沿用直接帧事件备注的缀法(逗号接后缀,如 ",压缩"、",第二层不符"),
+        // 后缀里的原因取 FrameStatus 的枚举名(与直接帧解压失败时的 "解码失败:<枚举名>" 同一取法),缀在装着这个内层帧的信封帧的事件上,
+        // 不另加事件:事件条数(进城结果的 FramesSeen 按它计)、第二层不符次数、汇总行里的 received、envelopes、id2Inner 等既有计数都不因此变化,
+        // 内层帧自己的事件备注仍恰好是 "信封内层"(汇总行按整串认它)。事件不可变,所以按下标换成缀了后缀的新事件。
+        private void NoteInnerInflateFailure(int envelopeEventIndex, FrameStatus failure)
+        {
+            SessionEvent e = _events[envelopeEventIndex];
+            _events[envelopeEventIndex] = new SessionEvent(e.Outbound, e.PacketClass, e.PacketId, e.FrameLength, e.PayloadLength, e.Note + ",内层解压失败:" + failure);
         }
 
         private bool TryAcceptBootstrap(DecodedFrame frame)
