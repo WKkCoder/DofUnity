@@ -19,7 +19,7 @@
   4. 品级:五段 [grade_N],每段的整数是样本;抽档时第 0 档权重先乘倍率(x87 截断),随机数含上界,第一个"随机数不大于累计权重"的档胜出。
 
 用法(需要 DNF_DIR,见 local.env;只读,输出只写在被 git 忽略的 out/ 下):
-  python3 tools/py/enhance_ref.py dump <目录>                      写出 upgrade_normal.txt upgrade_amplify.txt items.txt grade.txt pick.txt
+  python3 tools/py/enhance_ref.py dump <目录>                      写出 upgrade_normal.txt upgrade_amplify.txt items.txt grade.txt pick.txt effect.txt variation.txt
   python3 tools/py/enhance_ref.py compare <C#目录> <Python目录> [--show]   逐行比对,只报计数(--show 额外打印前几个不一致的键,仅本机看)
 """
 import argparse
@@ -34,6 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import dnfdata as D  # noqa: E402
+import enhance_effect_ref as EF  # noqa: E402
 import equip_stats_ref as E  # noqa: E402
 import x87 as X  # noqa: E402
 from script_dump import Strings  # noqa: E402
@@ -41,9 +42,10 @@ from script_dump import Strings  # noqa: E402
 UPGRADE_PATH = "etc/upgrade.etc"
 AMPLIFY_PATH = "etc/amplifyupgrade.etc"
 GRADE_PATH = "etc/equipmentgradesample.etc"
+PARAMETER_PATH = "etc/etcparameter.etc"
 STACKABLE_LIST_PATH = "stackable/stackable.lst"
 
-FILES = ("upgrade_normal.txt", "upgrade_amplify.txt", "items.txt", "grade.txt", "pick.txt")
+FILES = ("upgrade_normal.txt", "upgrade_amplify.txt", "items.txt", "grade.txt", "pick.txt") + EF.HERE_FILES
 
 RARITY_NAMES = ("common", "uncommon", "rare", "unique", "epic", "chronicle")
 FIRST_PART, LAST_PART = 10, 21
@@ -579,6 +581,16 @@ def cmd_dump(pvf, strings, out_dir):
     lines = pick_lines()
     write_lines(os.path.join(out_dir, "pick.txt"), lines)
     print("grade.txt、pick.txt:%d 行(抽档与倍率)" % len(lines))
+    # 强化等级与品级值换算成属性(enhance_effect_ref.py):同一批装备事实,强化用普通表,浮动用 etc/etcparameter.etc 的 [stat random variation]
+    facts = EF.equipment_facts(pvf, strings, E)
+    lines = EF.dump_effect(table_from(pvf, strings, UPGRADE_PATH), scaled, in_range, facts)
+    write_lines(os.path.join(out_dir, "effect.txt"), lines)
+    raw = pvf.get(PARAMETER_PATH)
+    pairs = EF.parse_pairs(E.split_lines(raw, strings)) if raw is not None and raw[:2] == E.MAGIC else None
+    lines_v = EF.dump_variation(pairs, facts)
+    write_lines(os.path.join(out_dir, "variation.txt"), lines_v)
+    print("effect.txt:%d 行,variation.txt:%d 行(装备 %d 件;浮动数据 %s)" % (
+        len(lines), len(lines_v), len(facts), "读不出" if pairs is None else "%d 对" % len(pairs)))
 
 
 NUMBER = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
@@ -602,7 +614,7 @@ def load_dump(path):
 
 
 def kind_of(name, key):
-    return "件" if name == "items.txt" else key.split(" ")[0]
+    return "件" if name in ("items.txt",) + EF.HERE_FILES else key.split(" ")[0]
 
 
 def cmd_compare(cs_dir, py_dir, show):

@@ -198,6 +198,13 @@ namespace Dnf.Game
         /// <summary><c>[equipment type]</c> / <c>[stackable type]</c> 后面跟的那个整数(含义没有查明,原样留着)。</summary>
         public int TypeIndex { get; set; }
 
+        /// <summary>
+        /// <c>[sub type]</c> 后面的整数;没写为 0。武器上它是"这个职业的第几种武器"(0 到 5,与角色 .chr 里 <c>[weapon hit info]</c> 的先后顺序一致,证据 E-077),
+        /// 强化的武器攻击倍率按它取行(<see cref="IWeaponUpgradeRate"/>)。别的部位上这个标签另有用途,只对武器有意义;
+        /// 同名标签后一次覆盖前一次(全库的武器里它只出现在深度 0,没有嵌在块里的)。
+        /// </summary>
+        public int SubType { get; set; }
+
         /// <summary><c>[field image]</c>:地上的图包(原样,如带大小写的路径)与帧号;没写为 null 与 −1。</summary>
         public string FieldImage { get; set; }
 
@@ -340,6 +347,7 @@ namespace Dnf.Game
             SpecialMonsterDrop,
             EquipmentType,
             StackableType,
+            SubType,
             FieldImage,
             Icon,
             MinimumLevel,
@@ -369,6 +377,7 @@ namespace Dnf.Game
             ["[special monster drop]"] = Field.SpecialMonsterDrop,
             ["[equipment type]"] = Field.EquipmentType,
             ["[stackable type]"] = Field.StackableType,
+            ["[sub type]"] = Field.SubType,
             ["[field image]"] = Field.FieldImage,
             ["[icon]"] = Field.Icon,
             ["[minimum level]"] = Field.MinimumLevel,
@@ -590,6 +599,13 @@ namespace Dnf.Game
                         else if (isInt && !haveInt)
                         {
                             info.TypeIndex = t.Value;
+                            haveInt = true;
+                        }
+                        break;
+                    case Field.SubType:
+                        if (isInt && !haveInt)
+                        {
+                            info.SubType = t.Value;
                             haveInt = true;
                         }
                         break;

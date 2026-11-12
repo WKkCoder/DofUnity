@@ -11,7 +11,8 @@ using Dnf.Data;
 // 掉落强化等级 generateUpgrade 0x08533676 是同一套抽取:按稀有度取一张"(强化等级,权重)"表(CDataManager+0x528,map<稀有度,ItemFarmingData>),
 //   第一项权重同样乘倍率、抽法同上,表里总权重为 0 时返回 0。那张表的导入函数没有找到,所以表由调用方给。
 // etc 文件 equipmentgradesample.etc 的导入 importEquipmentGradeSampleInfo 0x0890e18d:五段 [grade_0] 到 [grade_4],每段 100 个 0 到 32767 的整数样本;
-//   服务端除上面的代表值外没有别的使用,样本怎么变成属性浮动在客户端(受保护,读不到),所以这一步只做"生成规则 + 个体上的品级值"。
+//   服务端除上面的代表值外没有别的使用;品级值怎么变成属性浮动发生在客户端复制装备属性集的函数里(读得到,不是受保护区),
+//   这个文件只做"生成规则 + 个体上的品级值",浮动的算法与数据见 EquipGradeVariation 的文件头。
 namespace Dnf.Game
 {
     /// <summary>品级样本(<c>Etc/equipmentgradesample.etc</c>):五档,每档一串整数样本;每档第一个样本是该档的代表值。</summary>

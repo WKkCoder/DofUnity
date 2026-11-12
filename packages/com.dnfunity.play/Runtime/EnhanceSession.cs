@@ -147,6 +147,8 @@ namespace Dnf.Play
                 Settings.Random = random ?? new DropRandom(Environment.TickCount);
             }
             Overlay = new EquipBonusOverlay(lookup);
+            InstanceEffects = new EquipInstanceBonus(() => Settings.NormalTable);
+            Overlay.InstanceBonus = InstanceEffects;
             Overlay.Attach(progress.Worn);
         }
 
@@ -154,8 +156,15 @@ namespace Dnf.Play
 
         public UpgradeSettings Settings { get; }
 
-        /// <summary>装在装备栏上的附加来源(附魔、套装;要接强化等级、品级换算时设它的 <see cref="EquipBonusOverlay.InstanceBonus"/>)。</summary>
+        /// <summary>装在装备栏上的附加来源(附魔、套装、强化与品级换算;强化与品级见 <see cref="InstanceEffects"/>)。</summary>
         public EquipBonusOverlay Overlay { get; }
+
+        /// <summary>
+        /// 强化等级与品级值换算成属性的实现,已装在 <see cref="Overlay"/> 上:强化表取 <see cref="Settings"/> 的普通表,
+        /// 武器倍率默认按 1、品级浮动默认没有(它们的数据来自本机游戏目录,由宿主按需给:<see cref="EquipInstanceBonus.WeaponRate"/>、
+        /// <see cref="EquipInstanceBonus.GradeVariation"/>;改了之后调用 <c>Overlay.Invalidate()</c>)。
+        /// </summary>
+        public EquipInstanceBonus InstanceEffects { get; }
 
         /// <summary>
         /// 能挡销毁的保护道具的物品编号,按服务端的取用次序排(靠前的先用);背包里有哪个就用哪个、扣一个。服务端写死的四个真实编号不入库,由宿主给。
