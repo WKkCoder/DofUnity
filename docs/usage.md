@@ -114,6 +114,101 @@ open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<同上>" -dnfn
 - **全库对拍**(只在本机跑,数据不提交):C# 实现与 Python 参考实现、PVF 文件清单逐项比较;随机抽 1000 帧逐像素比较。
 - **差分测试**(P3 以后):同样输入在原版客户端(Wine)与 Unity 里各跑一遍再比较。
 
+## 看门狗:定期清理 agent 残留的孤儿进程、僵尸进程和垃圾资源(2026-11-11 新增)
+
+多个 agent、多个 worktree 并行开发时会留下几类东西:agent 退出后没人收的 `dotnet` / MSBuild 节点与脚本驱动、僵尸进程、
+.NET 运行时的 IPC 残留文件、闲置多日的 worktree 里的构建产物。`tools/watchdog/` 是一个只用 Python 标准库的 launchd 定时任务
+(默认每 20 分钟一轮,低优先级),**只清理"能证明属于本工程、并且已经闲置"的东西,拿不准的一律不动**。
+
+```sh
+sh tools/watchdog/install.sh                              # 安装(或升级)并立即生效
+python3 tools/watchdog/watchdog.py scan                   # 只看不动:现在跑一轮会做什么(不改任何东西,包括观察记录)
+python3 tools/watchdog/watchdog.py scan --deep            # 同上,连平时每 2 小时才做一次的重活(构建产物、worktree 清点)也预演
+python3 tools/watchdog/watchdog.py status                 # 安装状态、上一轮的结果、日志位置
+python3 tools/watchdog/watchdog.py pause                  # 暂停(定时任务照常触发但立刻退出);resume 恢复
+python3 tools/watchdog/watchdog.py uninstall [--purge]    # 卸载(--purge 连安装目录、配置、日志一起删)
+python3 -m unittest discover -s tools/watchdog -p 'test_*.py'    # 自测:会起真实进程、真实 git 仓库,约半分钟
+```
+
+### 清什么
+
+| 对象 | 判断依据 | 处理 |
+|---|---|---|
+| 孤儿进程树 | 见下一节的六道关口 | SIGTERM → 等 10 秒 → 仍活着再 SIGKILL |
+| 僵尸进程 | 父进程属于工程范围、有 agent 出身证明,或是受保护的程序(如 Cursor);与本工程无关的父进程不管 | 僵尸本身杀不掉(只是进程表里的一个条目)。5 分钟没被收尸就给父进程发一次 SIGCHLD;仍不收就在报告里点名。**从不杀父进程** |
+| .NET IPC 残留 | `clr-debug-pipe-<pid>-<key>-in/out`、`dotnet-diagnostic-<pid>-<key>-socket`、`/tmp/MSBuild<pid>`:属主进程确认已不存在(或 pid 已被复用),类型与属主正确,存在满 2 分钟 | 删除 |
+| 空的 `MSBuildTemp*` | 空目录且超过 6 小时 | `rmdir` |
+| 过期的重活锁 | 名为 `locks` 的目录下的 `*.lock*.d`:持有者进程已死或已不是 `heavy.sh`,且存在满 2 分钟 | 删除 |
+| git 锁 | 只认白名单:`index.lock`、`HEAD.lock`、`packed-refs.lock`、`config.lock`、`shallow.lock`、`refs/**/*.lock`、各 worktree 下的 `index.lock` / `HEAD.lock`;超过 15 分钟,且工程里当前没有任何 git 进程。**不碰 `.git/cursor/` 下的任何东西** | 删除 |
+| 失效的 worktree 登记 | 目录已经不存在(`git worktree prune --expire 6.hours.ago`) | 清登记 |
+| 闲置 worktree / 草稿克隆里的 `bin/` | 整棵树 ≥ 48 小时没动(根目录、`index`、`HEAD` 的修改时间),没有进程在用,`bin` 是真目录(不是符号链接)、紧挨着 csproj / fsproj / vbproj、且被 git 忽略;`obj/` 默认保留 | 删除(构建会再生;`--deep` 之外每 2 小时才扫一次) |
+
+**绝不碰**:Cursor 本体与它的辅助进程、`cursor-dispatch` / `cursor-agent`、tmux / screen / zellij、ssh-agent / gpg-agent、系统进程、
+Xcode / Unity Hub、看门狗自己;共享的编译服务器(VBCSCompiler 等,即使挂在被清理的树下);Wine / CrossOver 的游戏进程(只报告);
+主工作区的构建产物;任何 worktree 本身(默认不自动删除,见下面的开关)。
+
+### 孤儿进程怎么判断(宁可漏杀,不可错杀)
+
+父进程是 launchd(PPID=1)本身说明不了任何事——`nohup` 起的分片驱动、图形界面的 Unity、共享的编译服务器也是 PPID=1。
+一棵进程树要被清理,必须依次过完这六道关口:
+
+1. 树根的父进程是 launchd;
+2. 不在保护名单里;
+3. 属于本工程:树里有进程的工作目录在主工作区 / 任一 worktree / 同源的草稿克隆里,或命令行按路径边界提到了它们(含 `/tmp/xxx` 这类符号链接别名),或环境里的工作区标签就是本工程;
+4. 有出身证明:`dotnet`、Unity 批处理、Ghidra 无头这三类"一看就是开发工具"的可以豁免;脚本(python / bash / node / ssh …)和未知进程要求树里有进程的环境带 `CURSOR_AGENT`(证明是 agent 启动的)。
+   纯 `sh` + `sleep` 的树读不到环境(系统二进制受 SIP 保护),拿不到证明就不动——这是有意的保守;
+5. 整棵树持续闲置:看门狗自己连续观察,**连续 60 分钟**(用"醒着的时钟",机器睡眠不计时)里 CPU(含已回收的子进程)、磁盘 I/O、网络收发都没有进展,
+   成员也没有变动(`sleep` 的出现与消失不算)。任何一种仪表读不到(`nettop` 失败、进程活着却读不到资源用量)都按"有进展"处理——没有证据就不是闲置;
+6. 动手前复核:重新取快照,确认根进程没变、树里没有新冒出来的成员,再按"pid + 启动时刻"逐个发信号(防 PID 复用),不按进程组发信号;每轮最多处理 10 棵树。
+
+只有"跑一次就该结束"的 `dotnet` 与 Unity 批处理另有存活上限:孤儿状态累计观察满 180 分钟,即使还在吃 CPU 也清(死循环、失控的构建)。
+**刚安装时没有任何观察记录,第一轮只开始计时,不会杀任何进程**;换了一次开机、或隔了 3 小时以上没跑,旧记录作废、重新计时。
+
+### 配置
+
+默认值在 `tools/watchdog/wd_config.py` 的 `DEFAULTS`。要改哪项,就在覆盖文件 `~/Library/Application Support/dnf-unity-watchdog/config.json` 里只写哪项:
+
+```json
+{
+  "processes": {"idle_minutes": 90, "unknown_orphans": "report"},
+  "garbage": {"build_outputs": {"enabled": false}}
+}
+```
+
+| 键 | 默认 | 含义 |
+|---|---|---|
+| `interval_minutes` | 20 | 每隔多少分钟跑一轮(`install` 时写进 launchd 的 plist,改了要重新执行 `install.sh`;也可以 `install.sh --interval N` 临时指定) |
+| `processes.idle_minutes` | 60 | 整棵树连续闲置多久才清(闲置是在每一轮观察时判断的,所以实际动手在满 60 分钟之后的下一轮,最多再晚一个运行间隔) |
+| `processes.unknown_orphans` | `"kill"` | 签名未知的孤儿(同样要过范围 + 出身证明 + 闲置):`"kill"` 清理,`"report"` 只报告 |
+| `processes.extra_scope_roots` | `[]` | 额外算"本工程"的目录 |
+| `processes.extra_protected` | `[]` | 额外的保护名单(正则,匹配完整命令行) |
+| `processes.extra_signatures` | `[]` | 追加进程签名:`name`、`args`(正则)、`trusted`、`action`(`kill` / `report` / `ignore`)、`max_age_minutes` |
+| `zombies.nudge_after_minutes` | 5 | 僵尸多久没被收尸就催父进程 |
+| `garbage.build_outputs.enabled` / `idle_hours` / `purge_obj` | `true` / 48 / `false` | 闲置树里的 `bin/`;`purge_obj` 打开才连 `obj/` 一起清 |
+| `garbage.worktrees.remove_merged_clean` | `false` | 打开后才会自动删 worktree 与草稿克隆,且要求:已并入主干、`git status` 干净、没有 `HANDOFF.json` / `re` / `out`、没人在用、闲置满 `idle_hours`、未加锁;用不带 `--force` 的 `git worktree remove` |
+| `garbage.heavy_interval_minutes` | 120 | 构建产物、worktree 清点这类重活的最短间隔 |
+
+配置有任何问题(JSON 写坏、键名拼错、类型或取值越界、正则不合法),**整轮自动降级为只报告**,不杀进程、不删文件,日志与 `status` 里会点明哪一项有问题。
+
+### 文件位置
+
+- 代码副本:`~/Library/Application Support/dnf-unity-watchdog/bin/`。定时任务跑的是这份副本,不是仓库里的文件
+  (agent 们会在仓库里 `git clean`、切分支,直接跑仓库文件随时可能被弄坏)。升级 = 重新执行 `install.sh`。
+- 同一目录下:`config.json`(覆盖配置)、`state.json`(观察记录)、`last-run.json`(上一轮结果)、`paused`(暂停标记)。
+- 日志:`~/Library/Logs/dnf-unity-watchdog/watchdog.log`(自动轮转),另有 `launchd.out.log` / `launchd.err.log`。
+- launchd 任务:`~/Library/LaunchAgents/com.dnfunity.watchdog.plist`(安装时生成,不入库)。
+- 首次安装时 macOS 可能弹出「后台项目已添加」的通知,这是系统对新增登录项的正常提醒。
+
+以上都在仓库之外;仓库里不含任何本机路径或凭据(`tools/watchdog/test_watchdog.py` 里有一项检查专门盯着这一点)。
+源码分工:`watchdog.py` 入口与 launchd 安装、`wd_config.py` 默认值与校验、`wd_core.py` 进程快照与范围判断、
+`wd_procs.py` 孤儿与僵尸、`wd_garbage.py` 垃圾资源、`wd_util.py` 通用工具。
+
+### 局限
+
+- 僵尸进程杀不掉,只能等父进程收尸;父进程是长期运行的正常程序时,只会被点名,不会被动。
+- "闲置"靠看门狗自己连续观察得出,所以关机、长时间休眠之后要重新计时,多等一会儿才会清理;这是用延迟换安全。
+- 依赖 macOS 的 launchd、`proc_pid_rusage`、`nettop`、`lsof`;其中 `nettop`、`proc_pid_rusage` 不可用时,进程不会因闲置被清理(垃圾清理不受影响)。
+
 ## 发布到 GitHub(2026-11-09 新增;2026-11-10 起发布全部分支与标签)
 
 **不要直接 `git push`,更不要 `git push --all` / `--mirror`。** 历史里有几个旧提交的 `tools/baseline/tool.sh` 带着真实的游戏账号名

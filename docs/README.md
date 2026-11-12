@@ -10,7 +10,7 @@
 | [roadmap.md](roadmap.md) | 路线图:P0–P8 各阶段做什么、怎么验收、依赖谁、现状如何 |
 | [flow.md](flow.md) | 游戏流程骨架与最新进展,按章节记(§1–§94,每章对应一次里程碑)。**联网(P7)从 §75 起** |
 | [boundaries.md](boundaries.md) | 范围与边界:硬边界、证据纪律、版权 |
-| [usage.md](usage.md) | 使用手册:环境、命令行、构建与播放、各类检查命令、测试策略、发布到 GitHub(脱敏脚本) |
+| [usage.md](usage.md) | 使用手册:环境、命令行、构建与播放、各类检查命令、测试策略、看门狗(定期清理 agent 残留的孤儿进程与垃圾资源)、发布到 GitHub(脱敏脚本) |
 | [progress-log.md](progress-log.md) | 整理前 README 里按阶段写的里程碑流水账(历史存档,不再更新) |
 
 ## 数据与格式
