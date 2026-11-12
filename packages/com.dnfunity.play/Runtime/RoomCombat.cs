@@ -1773,9 +1773,15 @@ namespace Dnf.Play
         /// <paramref name="difficulty"/> 为 0 到 4;<paramref name="dungeonBonus"/> 是 .dgn 自带的难度加成,没有就按等级行);
         /// 普攻数据读 swordman 的 .chr [attack info]。缺图或缺脚本的怪物跳过。
         /// <paramref name="heroVitals"/> 为假时主角没有生命值(<see cref="Vitals"/> 为 null):怪物照样走近、出招,但打不到主角,没有血条(自动化检查用)。
+        /// <paramref name="spawnPlan"/>(r15-dungeonhost,联网副本宿主用)给了就按它返回的出生点表造怪物,不再用地图自己的 [monster]:表里第 i 项造成的怪物
+        /// <see cref="MonsterActor.Index"/> 恒为 i,造不出来的项只是缺席、后面的序号<b>不</b>前移——宿主靠"序号 = 表位置"把本地怪物对回外部的身份表(联网层的本地序号);
+        /// 计划返回 null 当作空表。为 null(缺省)时走原来的路,造怪的循环与序号一字不变。其余(装备、技能、掉落、召唤、脚本计数器)与缺省完全相同;
+        /// 唯一的副作用:表里有缺席项时,脚本召唤怪的序号(接在 <see cref="Monsters"/> 长度之后)可能与某个出生点怪的序号相同,
+        /// 它只影响音效声道键与随机种子,击杀观察者(<see cref="RoomKillWatcher"/>)本来就不交召唤怪。
         /// </summary>
         public static RoomCombatSession Create(DnfAssets assets, RoomSession room, int seed = 1, bool heroVitals = true, HeroProgress progress = null,
-            float expWeight = 1f, int difficulty = 0, DungeonDifficultyBonus dungeonBonus = null)
+            float expWeight = 1f, int difficulty = 0, DungeonDifficultyBonus dungeonBonus = null,
+            Func<RoomMap, IReadOnlyList<RoomMonsterSpawn>> spawnPlan = null)
         {
             var data = new GameData(new PvfScriptSource(assets.Pvf));
             var strikes = new List<HeroStrikeInfo>();
@@ -1798,12 +1804,28 @@ namespace Dnf.Play
             // 逐只怪物的构造(模型、数值、攻击信息、AI、脚本、面板)抽在 RoomMonsterBuilder 里,脚本召唤出来的怪物走同一条路(M41,E-134)
             var builder = new RoomMonsterBuilder(assets, data, MonsterCatalog.Read(assets), room.Hero, room.Map.Width, seed, difficulty, dungeonBonus, heroWidth);
             var actors = new List<MonsterActor>();
-            foreach (RoomMonsterSpawn spawn in room.Map.Monsters)
+            if (spawnPlan == null)
             {
-                MonsterActor actor = builder.Build(actors.Count, spawn);
-                if (actor != null)
+                foreach (RoomMonsterSpawn spawn in room.Map.Monsters)
                 {
-                    actors.Add(actor);
+                    MonsterActor actor = builder.Build(actors.Count, spawn);
+                    if (actor != null)
+                    {
+                        actors.Add(actor);
+                    }
+                }
+            }
+            else
+            {
+                // 出生点计划(联网副本宿主):序号取表位置,造不出来的项不占 actors 但也不让后面的序号前移
+                IReadOnlyList<RoomMonsterSpawn> planned = spawnPlan(room.Map);
+                for (int i = 0; planned != null && i < planned.Count; i++)
+                {
+                    MonsterActor actor = builder.Build(i, planned[i]);
+                    if (actor != null)
+                    {
+                        actors.Add(actor);
+                    }
                 }
             }
             // 受击硬直的三张表:Etc/EtcParameter.etc(证据 E-080);读不到就退回占位硬直
@@ -4654,11 +4676,12 @@ namespace Dnf.Play
     /// <summary>演示用的房间战斗:在 <see cref="DemoRoom"/> 的房间上摆怪物。</summary>
     public static class DemoCombat
     {
+        /// <param name="spawnPlan">出生点计划,原样交给 <see cref="RoomCombatSession.Create"/>(联网副本宿主用);null(缺省)是原来的行为。</param>
         public static RoomCombatSession CreateSession(DnfAssets assets, string mapPath, string weaponEqu = DemoHero.StarterWeapon, int seed = 1,
-            bool heroVitals = true, HeroProgress progress = null)
+            bool heroVitals = true, HeroProgress progress = null, Func<RoomMap, IReadOnlyList<RoomMonsterSpawn>> spawnPlan = null)
         {
             RoomSession room = DemoRoom.CreateSession(assets, mapPath, progress?.WeaponPath ?? weaponEqu);   // 装备栏里穿着武器就用它(证据 E-118)
-            return RoomCombatSession.Create(assets, room, seed, heroVitals, progress);
+            return RoomCombatSession.Create(assets, room, seed, heroVitals, progress, spawnPlan: spawnPlan);
         }
     }
 }

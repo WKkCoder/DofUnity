@@ -671,11 +671,14 @@ internal sealed class CombatFakeSession : IOnlineDungeonSession
                     return result;
                 }
             }
-            if (_closed || _fault != FrameError.None || window <= TimeSpan.Zero || watch.Elapsed >= window)
+            // 秒表只读一次:判到点与算剩余必须用同一个读数。若分两次读,两次之间线程被挂起一毫秒以上,剩余时间就成了负数,
+            // 而 Task.Delay 对 -1 毫秒(取整后)是"无限等"、更小的直接抛 ArgumentOutOfRangeException——跑器会永远卡在这里,或者以 Faulted 收场。
+            TimeSpan elapsed = watch.Elapsed;
+            if (_closed || _fault != FrameError.None || window <= TimeSpan.Zero || elapsed >= window)
             {
                 return new List<DecodedFrame>();
             }
-            TimeSpan left = window - watch.Elapsed;
+            TimeSpan left = window - elapsed;
             await Task.Delay(left < TimeSpan.FromMilliseconds(5) ? left : TimeSpan.FromMilliseconds(5), cancellationToken);
         }
     }
