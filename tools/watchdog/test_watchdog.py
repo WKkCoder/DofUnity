@@ -707,8 +707,12 @@ class TestProcs(Base):
     def test_stopped_process_is_continued_then_terminated(self) -> None:
         repo, state = self.make_repo(), {}
         pid = self.spawn_orphan(self.sleeper("WD_T_STOPPED"), repo)
-        os.kill(pid, signal.SIGSTOP)
-        self.wait_for(lambda: "T" in wd_util.run(["ps", "-o", "stat=", "-p", str(pid)])[1], 5, "进程被暂停")
+        # 只发一次 SIGSTOP 会偶发落空(实测约 5%):Homebrew 的 python3 是启动跳板,会再 exec 成真正的解释器,
+        # 信号恰好落在 exec 跳转的窗口里就丢了,进程一直是 S 态。所以重发,直到 ps 确认它真的停了;对已停的进程重发无害。
+        def stopped() -> bool:
+            os.kill(pid, signal.SIGSTOP)
+            return "T" in wd_util.run(["ps", "-o", "stat=", "-p", str(pid)])[1]
+        self.wait_for(stopped, 5, "进程被暂停")
         cfg = self.cfg(repo)
         self.advance(repo, cfg, state, 0)
         self.advance(repo, cfg, state, 40)
