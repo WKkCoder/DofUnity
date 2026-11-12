@@ -8,7 +8,7 @@
 | 文档 | 内容 |
 |---|---|
 | [roadmap.md](roadmap.md) | 路线图:P0–P8 各阶段做什么、怎么验收、依赖谁、现状如何 |
-| [flow.md](flow.md) | 游戏流程骨架与最新进展,按章节记(§1–§94,每章对应一次里程碑)。**联网(P7)从 §75 起** |
+| [flow.md](flow.md) | 游戏流程骨架与最新进展,按章节记(§1–§111,每章对应一次里程碑)。**联网(P7)从 §75 起** |
 | [boundaries.md](boundaries.md) | 范围与边界:硬边界、证据纪律、版权 |
 | [usage.md](usage.md) | 使用手册:环境、命令行、构建与播放、各类检查命令、测试策略、看门狗(定期清理 agent 残留的孤儿进程与垃圾资源)、发布到 GitHub(脱敏脚本) |
 | [progress-log.md](progress-log.md) | 整理前 README 里按阶段写的里程碑流水账(历史存档,不再更新) |
@@ -35,7 +35,7 @@
 
 | 文档 | 内容 |
 |---|---|
-| [evidence/ledger.md](evidence/ledger.md) | **证据台账**(E-001 至 E-387,已分卷):活跃卷为本文件(E-300 起);冻结归档为 [ledger-archive-1.md](evidence/ledger-archive-1.md)(E-001 至 E-106)与 [ledger-archive-2.md](evidence/ledger-archive-2.md)(E-107 至 E-299)。按编号搜,不要通读 |
+| [evidence/ledger.md](evidence/ledger.md) | **证据台账**(E-001 至 E-404,已分卷):活跃卷为本文件(E-300 起);冻结归档为 [ledger-archive-1.md](evidence/ledger-archive-1.md)(E-001 至 E-106)与 [ledger-archive-2.md](evidence/ledger-archive-2.md)(E-107 至 E-299)。按编号搜,不要通读 |
 | [reverse-workflow.md](reverse-workflow.md) | 逆向工作流:对 `DNF.exe` 做静态分析的做法 |
 | [baseline.md](baseline.md) | 对照基线:原版客户端怎么跑、怎么截、截哪些场景(S01–S10) |
 | [hit-pipeline.md](hit-pipeline.md) | 命中与受伤流水线(客户端 `DNF.exe` 的静态读取结果) |
