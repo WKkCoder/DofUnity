@@ -1,0 +1,72 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    宿主(UPM 包 com.dnfunity.client)的"无 Unity 授权"类型检查工程,由 tools/typecheck-client.sh 驱动;
+    不属于 DnfUnity.slnx(没有 Unity 引擎程序集的机器上会构建失败),也不产出任何有用的程序集,只为拿编译器的诊断。
+
+    做法与 Dnf.Client.asmdef 对齐:
+      - 源码:宿主包 Runtime 下的全部 .cs(asmdef 的作用域就是它所在目录及子目录);
+      - 引用:Data、Render、Play、Net 四个库的工程(asmdef 里的 references),加上 Unity 安装里的 UnityEngine*.dll;
+      - 语言级别 C# 9 与 netstandard2.1,与四个库的工程一致。
+    不定义任何 Unity 编译符号,所以检查的是"播放器"那一侧:#if UNITY_EDITOR 里的代码不会被编译(见 tools/typecheck-client.sh 开头的说明)。
+    警告不算失败:不继承库工程的 TreatWarningsAsErrors。
+
+    由脚本传入的属性(也可以手工 dotnet build -c Release -p:UnityManaged=<目录>):
+      UnityManaged     含 UnityEngine.CoreModule.dll 的目录(必填)
+      ClientSourceDir  宿主源码目录(默认是本仓库的包目录;脚本的自测模式会改指向带故意错误的临时副本)
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <AssemblyName>Dnf.Client.TypeCheck</AssemblyName>
+    <RootNamespace>Dnf.Client</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <ClientSourceDir Condition="'$(ClientSourceDir)' == ''">$(MSBuildThisFileDirectory)../../packages/com.dnfunity.client/Runtime</ClientSourceDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(ClientSourceDir)/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UnityManaged)' != ''">
+    <Reference Include="$(UnityManaged)/UnityEngine*.dll">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Dnf.Data/Dnf.Data.csproj" />
+    <ProjectReference Include="../../src/Dnf.Render/Dnf.Render.csproj" />
+    <ProjectReference Include="../../src/Dnf.Play/Dnf.Play.csproj" />
+    <ProjectReference Include="../../src/Dnf.Net/Dnf.Net.csproj" />
+  </ItemGroup>
+
+  <!--
+    输入检查:手工 dotnet build 时没给对目录,在编译前就说清楚,而不是等编译器报一堆找不到 UnityEngine;
+    源码一个都没匹配到时也要报错,否则"编了 0 个文件、0 个错误"会被当成通过。
+    错误带上代码(DNFTC001 起),这样脚本按 "error 代码:" 的固定写法就能把它们抽出来。
+  -->
+  <Target Name="CheckInputs" BeforeTargets="ResolveAssemblyReferences;CoreCompile">
+    <Error Code="DNFTC001" Condition="'$(UnityManaged)' == '' Or !Exists('$(UnityManaged)/UnityEngine.CoreModule.dll')"
+           Text="找不到 Unity 引擎程序集:属性 UnityManaged 必须是含 UnityEngine.CoreModule.dll 的目录(当前值:'$(UnityManaged)')。推荐直接运行 tools/typecheck-client.sh。" />
+    <Error Code="DNFTC002" Condition="!Exists('$(ClientSourceDir)')"
+           Text="找不到宿主源码目录:'$(ClientSourceDir)'。" />
+    <Error Code="DNFTC003" Condition="'@(Compile)' == ''"
+           Text="宿主源码目录里没有匹配到任何 .cs 文件:'$(ClientSourceDir)'。编 0 个文件不算检查。" />
+  </Target>
+
+  <!--
+    每次都重编宿主程序集:MSBuild 靠时间戳判断"已是最新",换了 Unity 目录(引擎文件时间戳很旧)或用保留时间戳的方式复制了源码时,
+    会跳过编译、假装通过;类型检查工具不能有"没真检查却报 0 错误"的路径。四个库仍按正常的增量规则构建。
+  -->
+  <Target Name="ForceRecompileHost" BeforeTargets="CoreCompile">
+    <Delete Files="@(IntermediateAssembly)" />
+  </Target>
+
+</Project>
