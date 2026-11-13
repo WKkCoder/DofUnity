@@ -15,6 +15,8 @@ namespace Dnf.NetProbe;
 ///
 /// 用法:
 ///   dnf-netprobe offline &lt;首包文件&gt;            把保存下来的频道首包喂给会话层,验证解码与频道信息解析(不联网)
+///   dnf-netprobe fight [仓库根] --dungeon &lt;副本编号&gt; &lt;模式 0-4&gt; [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S]
+///        无头战斗:进城 → 进副本 → 杀光起始地图的怪 → 清图 → 结算 → 可回城(详见 FightCommand.cs),输出行以 PROBE_FIGHT 开头
 ///   dnf-netprobe live [--register] [--channel-port N] [--data-version N] [--seconds N]
 ///        网关健康检查 → 登录(或先注册测试号) → 取游戏服地址 → 连频道 → 收首包 → 发 LOGIN → 收集 N 秒回包
 /// 在仓库根目录(或带 local.env 的工作树根目录)下运行。
@@ -35,7 +37,11 @@ internal static class Program
         {
             return await Orchestrated(args);
         }
-        Console.WriteLine("用法: dnf-netprobe offline <首包文件> | live [--register] [--channel-port N] [--data-version N] [--seconds N] | orchestrated [仓库根]");
+        if (args.Length >= 1 && args[0] == "fight")
+        {
+            return await FightCommand.RunAsync(args);
+        }
+        Console.WriteLine("用法: dnf-netprobe offline <首包文件> | live [--register] [--channel-port N] [--data-version N] [--seconds N] | orchestrated [仓库根] | fight [仓库根] --dungeon <副本编号> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S]");
         return 64;
     }
 
