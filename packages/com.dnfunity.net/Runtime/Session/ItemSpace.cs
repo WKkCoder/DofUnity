@@ -44,7 +44,7 @@ namespace Dnf.Net.Session
         UnsupportedSpace = 2,
 
         /// <summary>
-        /// 条目需要物品类型才能读下去,但调用方没有给判定回调,或回调对该物品号回答 <see cref="ItemKind.Unknown"/>:整包拒绝。
+        /// 条目需要物品类型才能读下去,但调用方没有给判定回调,或回调对该物品号回答 <see cref="ResolvedItemKind.Unknown"/>:整包拒绝。
         /// 条数为 0 的包与只含删除标记的增量包不需要类型,不受影响。
         /// </summary>
         KindUnresolved = 3,

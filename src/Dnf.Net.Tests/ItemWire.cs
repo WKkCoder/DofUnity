@@ -338,21 +338,21 @@ internal static class ItemWire
     /// <summary>字典式的物品类型判定替身:字典里没有的物品号回答 Unknown。</summary>
     internal sealed class DictionaryKindResolver : Dnf.Net.Session.IItemKindResolver
     {
-        private readonly Dictionary<uint, Dnf.Net.Session.ItemKind> _kinds = new Dictionary<uint, Dnf.Net.Session.ItemKind>();
+        private readonly Dictionary<uint, Dnf.Net.Session.ResolvedItemKind> _kinds = new Dictionary<uint, Dnf.Net.Session.ResolvedItemKind>();
 
         /// <summary>被问过的物品号个数(含重复)。</summary>
         public int CallCount { get; private set; }
 
-        public DictionaryKindResolver With(long itemId, Dnf.Net.Session.ItemKind kind)
+        public DictionaryKindResolver With(long itemId, Dnf.Net.Session.ResolvedItemKind kind)
         {
             _kinds[(uint)itemId] = kind;
             return this;
         }
 
-        public Dnf.Net.Session.ItemKind Resolve(uint itemId)
+        public Dnf.Net.Session.ResolvedItemKind Resolve(uint itemId)
         {
             CallCount++;
-            return _kinds.TryGetValue(itemId, out Dnf.Net.Session.ItemKind kind) ? kind : Dnf.Net.Session.ItemKind.Unknown;
+            return _kinds.TryGetValue(itemId, out Dnf.Net.Session.ResolvedItemKind kind) ? kind : Dnf.Net.Session.ResolvedItemKind.Unknown;
         }
     }
 }

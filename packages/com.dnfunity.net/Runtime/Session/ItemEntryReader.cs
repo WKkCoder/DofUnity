@@ -306,21 +306,21 @@ namespace Dnf.Net.Session
                     {
                         return true;
                     }
-                    ItemKind kind = kindResolver == null ? ItemKind.Unknown : kindResolver.Resolve(itemId);
-                    if (kind == ItemKind.Unknown)
+                    ResolvedItemKind kind = kindResolver == null ? ResolvedItemKind.Unknown : kindResolver.Resolve(itemId);
+                    if (kind == ResolvedItemKind.Unknown)
                     {
                         return false;
                     }
                     // 宠物栏的服务端写入器只有宠物分支(0x084fe258),没有装扮块;身上装备两者都有(服务端 MakeItemPacket)。
-                    hasAvatarBlocks = shape == ItemEntryShape.BodyEquip && kind == ItemKind.Avatar;
-                    hasPetTime = kind == ItemKind.Pet;
+                    hasAvatarBlocks = shape == ItemEntryShape.BodyEquip && kind == ResolvedItemKind.Avatar;
+                    hasPetTime = kind == ResolvedItemKind.Pet;
                     return true;
                 }
 
                 case ItemEntryShape.EquipDetail:
                 {
-                    ItemKind kind = kindResolver == null ? ItemKind.Unknown : kindResolver.Resolve(itemId);
-                    if (kind == ItemKind.Unknown)
+                    ResolvedItemKind kind = kindResolver == null ? ResolvedItemKind.Unknown : kindResolver.Resolve(itemId);
+                    if (kind == ResolvedItemKind.Unknown)
                     {
                         // 缺省近似:槽 ≤ 9 视为装扮、槽 22 视为宠物。样本没触发过这个近似、未经验证(笔记 §2.2.4)。
                         hasAvatarBlocks = slot <= ApproximateAvatarMaxSlot;
@@ -328,8 +328,8 @@ namespace Dnf.Net.Session
                     }
                     else
                     {
-                        hasAvatarBlocks = kind == ItemKind.Avatar;
-                        hasPetTime = kind == ItemKind.Pet;
+                        hasAvatarBlocks = kind == ResolvedItemKind.Avatar;
+                        hasPetTime = kind == ResolvedItemKind.Pet;
                     }
                     return true;
                 }

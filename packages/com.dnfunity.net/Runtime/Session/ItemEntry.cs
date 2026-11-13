@@ -58,7 +58,7 @@ namespace Dnf.Net.Session
         /// <summary>随机选项块的个数大于 3(服务端 0x7c7eb0 / 0x858e3ec 只可能给 0 到 3)。</summary>
         InvalidRandomOption = 3,
 
-        /// <summary>需要物品类型却没有回调,或回调回答 <see cref="ItemKind.Unknown"/>。</summary>
+        /// <summary>需要物品类型却没有回调,或回调回答 <see cref="ResolvedItemKind.Unknown"/>。</summary>
         KindUnresolved = 4,
     }
 

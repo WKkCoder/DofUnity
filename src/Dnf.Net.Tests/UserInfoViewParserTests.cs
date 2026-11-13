@@ -185,7 +185,7 @@ public class UserInfoViewParserTests
     {
         // 槽 2 按近似是装扮,回调说是普通物品:不读装扮块,否则后面的字节全部错位。
         byte[] payload = SelfViewPacket(1, 1, 2, new byte[3], 0, new byte[4], Item(2, ItemB), Item(10, ItemA));
-        DictionaryKindResolver resolver = new DictionaryKindResolver().With(ItemB, ItemKind.Other).With(ItemA, ItemKind.Other);
+        DictionaryKindResolver resolver = new DictionaryKindResolver().With(ItemB, ResolvedItemKind.Other).With(ItemA, ResolvedItemKind.Other);
         UserInfoViewNotice n = ParseOk(payload, resolver);
         Assert.False(n.DetailedEquips[0].HasAvatarBlocks);
         Assert.Equal(10, n.DetailedEquips[1].Slot);

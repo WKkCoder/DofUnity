@@ -149,7 +149,7 @@ public class ExpandEquipParserTests
         avatar.SocketBlock = Socket();
         avatar.ExpansionBlock = Expansion();
         byte[] payload = Packet(1, (1, new[] { avatar }), (2, None), (3, None));
-        ExpandEquipNotice n = ParseOk(payload, new DictionaryKindResolver().With(ItemB, ItemKind.Avatar));
+        ExpandEquipNotice n = ParseOk(payload, new DictionaryKindResolver().With(ItemB, ResolvedItemKind.Avatar));
         Assert.True(n.Groups[0].Entries[0].HasAvatarBlocks);
         Assert.False(ExpandEquipParser.TryParse(payload, out _));
     }

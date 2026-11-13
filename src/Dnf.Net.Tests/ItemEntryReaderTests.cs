@@ -351,7 +351,7 @@ public class ItemEntryReaderTests
         s.Trade = 1;
         byte[] bytes = BagEntryBytes(s);
         Assert.Equal(25 + 4, bytes.Length);
-        ItemEntry e = ReadOk(ItemEntryShape.PetBag, bytes, new DictionaryKindResolver().With(ItemC, ItemKind.Pet));
+        ItemEntry e = ReadOk(ItemEntryShape.PetBag, bytes, new DictionaryKindResolver().With(ItemC, ResolvedItemKind.Pet));
         Assert.True(e.HasPetRemainTime);
         Assert.Equal(86400u, e.PetRemainTime);
         Assert.False(e.HasAvatarBlocks);
@@ -362,7 +362,7 @@ public class ItemEntryReaderTests
     public void PetBagOrdinaryEntryHasNoExtraBytes()
     {
         byte[] bytes = BagEntryBytes(Item(2, ItemC));
-        ItemEntry e = ReadOk(ItemEntryShape.PetBag, bytes, new DictionaryKindResolver().With(ItemC, ItemKind.Other));
+        ItemEntry e = ReadOk(ItemEntryShape.PetBag, bytes, new DictionaryKindResolver().With(ItemC, ResolvedItemKind.Other));
         Assert.False(e.HasPetRemainTime);
         Assert.Equal(0u, e.PetRemainTime);
     }
@@ -371,7 +371,7 @@ public class ItemEntryReaderTests
     public void PetBagIgnoresTheAvatarVerdictBecauseTheServerWriterOnlyHasThePetBranch()
     {
         byte[] bytes = BagEntryBytes(Item(2, ItemC));
-        ItemEntry e = ReadOk(ItemEntryShape.PetBag, bytes, new DictionaryKindResolver().With(ItemC, ItemKind.Avatar));
+        ItemEntry e = ReadOk(ItemEntryShape.PetBag, bytes, new DictionaryKindResolver().With(ItemC, ResolvedItemKind.Avatar));
         Assert.False(e.HasAvatarBlocks);
         Assert.False(e.HasPetRemainTime);
     }
@@ -406,7 +406,7 @@ public class ItemEntryReaderTests
         ItemSpec s = Item(4, ItemB);
         s.SocketBlock = Socket(0x10);
         s.ExpansionBlock = Expansion(0x70);
-        ItemEntry e = ReadOk(ItemEntryShape.BodyEquip, BagEntryBytes(s), new DictionaryKindResolver().With(ItemB, ItemKind.Avatar));
+        ItemEntry e = ReadOk(ItemEntryShape.BodyEquip, BagEntryBytes(s), new DictionaryKindResolver().With(ItemB, ResolvedItemKind.Avatar));
         Assert.True(e.HasAvatarBlocks);
         Assert.False(e.HasPetRemainTime);
         Assert.Equal(Socket(0x10).ToArray(), e.SocketBlock.ToArray());
@@ -418,7 +418,7 @@ public class ItemEntryReaderTests
     {
         ItemSpec s = Item(22, ItemC);
         s.PetTime = 3600;
-        ItemEntry e = ReadOk(ItemEntryShape.BodyEquip, BagEntryBytes(s), new DictionaryKindResolver().With(ItemC, ItemKind.Pet));
+        ItemEntry e = ReadOk(ItemEntryShape.BodyEquip, BagEntryBytes(s), new DictionaryKindResolver().With(ItemC, ResolvedItemKind.Pet));
         Assert.True(e.HasPetRemainTime);
         Assert.Equal(3600u, e.PetRemainTime);
         Assert.False(e.HasAvatarBlocks);
@@ -427,7 +427,7 @@ public class ItemEntryReaderTests
     [Fact]
     public void BodyEquipOrdinaryItemHasNoOptionalBlocks()
     {
-        ItemEntry e = ReadOk(ItemEntryShape.BodyEquip, BagEntryBytes(Item(10, ItemA)), new DictionaryKindResolver().With(ItemA, ItemKind.Other));
+        ItemEntry e = ReadOk(ItemEntryShape.BodyEquip, BagEntryBytes(Item(10, ItemA)), new DictionaryKindResolver().With(ItemA, ResolvedItemKind.Other));
         Assert.False(e.HasAvatarBlocks);
         Assert.False(e.HasPetRemainTime);
         Assert.Equal(25, e.WireLength);
@@ -524,7 +524,7 @@ public class ItemEntryReaderTests
     public void EquipDetailResolverVerdictOverridesTheSlotGuess()
     {
         // 槽 3 按近似是装扮,但回调说它是普通物品:不读装扮块。
-        DictionaryKindResolver ordinary = new DictionaryKindResolver().With(ItemB, ItemKind.Other);
+        DictionaryKindResolver ordinary = new DictionaryKindResolver().With(ItemB, ResolvedItemKind.Other);
         ItemEntry a = ReadOk(ItemEntryShape.EquipDetail, DetailEntryBytes(Item(3, ItemB)), ordinary);
         Assert.False(a.HasAvatarBlocks);
         Assert.Equal(27, a.WireLength);
@@ -533,7 +533,7 @@ public class ItemEntryReaderTests
         ItemSpec avatar = Item(15, ItemB);
         avatar.SocketBlock = Socket();
         avatar.ExpansionBlock = Expansion();
-        DictionaryKindResolver isAvatar = new DictionaryKindResolver().With(ItemB, ItemKind.Avatar);
+        DictionaryKindResolver isAvatar = new DictionaryKindResolver().With(ItemB, ResolvedItemKind.Avatar);
         ItemEntry b = ReadOk(ItemEntryShape.EquipDetail, DetailEntryBytes(avatar), isAvatar);
         Assert.True(b.HasAvatarBlocks);
     }

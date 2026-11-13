@@ -234,7 +234,7 @@ public class ItemUpdateParserTests
     {
         ItemSpec pet = Item(1, ItemC);
         pet.PetTime = 120;
-        DictionaryKindResolver resolver = new DictionaryKindResolver().With(ItemC, ItemKind.Pet);
+        DictionaryKindResolver resolver = new DictionaryKindResolver().With(ItemC, ResolvedItemKind.Pet);
         ItemUpdateNotice n = ParseOk(UpdatePacket(7, pet), resolver);
         Assert.Equal(ItemSpace.PetBag, n.Space);
         Assert.True(n.Operations[0].Entry.HasPetRemainTime);
@@ -264,7 +264,7 @@ public class ItemUpdateParserTests
         ItemSpec s = Item(2, ItemB);
         s.SocketBlock = Socket();
         s.ExpansionBlock = Expansion();
-        ItemUpdateNotice n = ParseOk(UpdatePacket(3, s), new DictionaryKindResolver().With(ItemB, ItemKind.Avatar));
+        ItemUpdateNotice n = ParseOk(UpdatePacket(3, s), new DictionaryKindResolver().With(ItemB, ResolvedItemKind.Avatar));
         Assert.Equal(ItemSpace.BodyEquip, n.Space);
         ItemUpdateOperation op = Assert.Single(n.Operations);
         Assert.Equal(2, op.Slot);
@@ -277,7 +277,7 @@ public class ItemUpdateParserTests
     {
         byte[] payload = UpdatePacket(3, Item(11, ItemA));
         Assert.Equal(3 + 25, payload.Length);
-        ItemUpdateNotice n = ParseOk(payload, new DictionaryKindResolver().With(ItemA, ItemKind.Other));
+        ItemUpdateNotice n = ParseOk(payload, new DictionaryKindResolver().With(ItemA, ResolvedItemKind.Other));
         Assert.False(n.Operations[0].Entry.HasAvatarBlocks);
         Assert.False(n.Operations[0].Entry.HasPetRemainTime);
     }
@@ -287,7 +287,7 @@ public class ItemUpdateParserTests
     {
         ItemSpec pet = Item(22, ItemC);
         pet.PetTime = 9999;
-        ItemUpdateNotice n = ParseOk(UpdatePacket(3, pet), new DictionaryKindResolver().With(ItemC, ItemKind.Pet));
+        ItemUpdateNotice n = ParseOk(UpdatePacket(3, pet), new DictionaryKindResolver().With(ItemC, ResolvedItemKind.Pet));
         Assert.Equal(22, n.Operations[0].Slot);
         Assert.Equal(9999u, n.Operations[0].Entry.PetRemainTime);
     }
@@ -383,7 +383,7 @@ public class ItemUpdateParserTests
         byte[] bad = UpdatePacket(3, s);
         // 偏移 3 是条目起点,条目内偏移 21 是镶嵌块长度:改成 31。
         bad[3 + 21] = 31;
-        AssertRejected(bad, ItemParseStatus.Malformed, new DictionaryKindResolver().With(ItemB, ItemKind.Avatar));
+        AssertRejected(bad, ItemParseStatus.Malformed, new DictionaryKindResolver().With(ItemB, ResolvedItemKind.Avatar));
     }
 
     // ---- 尾部 ----

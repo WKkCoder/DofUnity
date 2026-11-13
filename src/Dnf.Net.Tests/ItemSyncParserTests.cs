@@ -235,7 +235,7 @@ public class ItemSyncParserTests
     public void SpacePacketsOfDifferentSpacesDoNotInterfere()
     {
         ItemSyncSnapshot s = ParseWith(
-            Resolver().With(ItemC, ItemKind.Other),
+            Resolver().With(ItemC, ResolvedItemKind.Other),
             Noti(SpaceId, BagSpacePacket(8, 1, 2, 3, Item(5, ItemA))),
             Noti(SpaceId, CargoSpacePacket(24, Item(5, ItemB), Item(6, ItemB))),
             Noti(SpaceId, AvatarSpacePacket(AvatarItem(3, ItemA))),
@@ -431,7 +431,7 @@ public class ItemSyncParserTests
         Assert.Equal(1, without.FramesMalformed);
         Assert.Equal(1, without.FramesKindUnresolved);
 
-        ItemSyncSnapshot with = ParseWith(Resolver().With(ItemA, ItemKind.Other), frame);
+        ItemSyncSnapshot with = ParseWith(Resolver().With(ItemA, ResolvedItemKind.Other), frame);
         Assert.NotNull(with.BodyEquip);
         Assert.False(with.BodyEquip.HasFullState);
         Assert.Equal(new[] { 2 }, Slots(with.BodyEquip));
@@ -463,7 +463,7 @@ public class ItemSyncParserTests
     [Fact]
     public void PetBagWithAResolverIsParsedAndTheResolverIsConsulted()
     {
-        DictionaryKindResolver resolver = Resolver().With(ItemA, ItemKind.Other);
+        DictionaryKindResolver resolver = Resolver().With(ItemA, ResolvedItemKind.Other);
         ItemSyncSnapshot s = ParseWith(resolver, Noti(SpaceId, PetSpacePacket(Item(1, ItemA))));
         Assert.NotNull(s.PetBag);
         Assert.Equal(1, s.PetBag.Count);
@@ -642,7 +642,7 @@ public class ItemSyncParserTests
         avatarInSpare.ExpansionBlock = Expansion();
         byte[] body = new NoticePayloadBuilder().U16(0x0101).U8(10).AppendDetailList(avatarInSpare).U8(11).AppendDetailList().U8(12).AppendDetailList().ToArray();
 
-        ItemSyncSnapshot with = ParseWith(Resolver().With(ItemA, ItemKind.Avatar), Noti(ExpandId, body));
+        ItemSyncSnapshot with = ParseWith(Resolver().With(ItemA, ResolvedItemKind.Avatar), Noti(ExpandId, body));
         Assert.Equal(1, with.FramesParsed);
         Assert.Single(with.ExpandEquips[0].Groups[0].Entries);
         Assert.True(with.ExpandEquips[0].Groups[0].Entries[0].HasAvatarBlocks);

@@ -290,7 +290,7 @@ public class ItemListParserTests
         ItemSpec pet = Item(0, ItemA);
         pet.PetTime = 777;
         ItemSpec egg = Item(1, ItemB);
-        DictionaryKindResolver resolver = new DictionaryKindResolver().With(ItemA, ItemKind.Pet).With(ItemB, ItemKind.Other);
+        DictionaryKindResolver resolver = new DictionaryKindResolver().With(ItemA, ResolvedItemKind.Pet).With(ItemB, ResolvedItemKind.Other);
         ItemListNotice n = ParseOk(PetSpacePacket(pet, egg), resolver);
         Assert.Equal(2, n.Entries.Count);
         Assert.True(n.Entries[0].HasPetRemainTime);
@@ -309,7 +309,7 @@ public class ItemListParserTests
     {
         ItemSpec known = Item(0, ItemA);
         ItemSpec unknown = Item(1, ItemB);
-        DictionaryKindResolver resolver = new DictionaryKindResolver().With(ItemA, ItemKind.Other);
+        DictionaryKindResolver resolver = new DictionaryKindResolver().With(ItemA, ResolvedItemKind.Other);
         AssertRejected(PetSpacePacket(known, unknown), ItemParseStatus.KindUnresolved, resolver);
     }
 
