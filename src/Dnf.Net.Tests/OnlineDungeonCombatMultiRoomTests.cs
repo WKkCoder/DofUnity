@@ -492,6 +492,30 @@ public class OnlineDungeonCombatMultiRoomTests
     }
 
     /// <summary>
+    /// 换房与装载完成各自的等待上限,是从"这条命令发出的那一刻"算起,不是从跑器启动的那一刻算起:
+    /// 宿主在跑器已经空转了比握手上限还久之后才排请求,服务端立刻回应,整段要照常走通,不能被误判超时。
+    /// 两个计时起点各由一个变异单独钉住:起点记成 0 的话,命令一发出就已经"等过了上限"。
+    /// </summary>
+    [Fact]
+    public async Task The_handshake_clocks_start_when_each_command_goes_out_and_not_when_the_run_starts()
+    {
+        var w = new Walk(TwoRooms(), Options(handshakeSeconds: 1.0, overallSeconds: 12));
+        Task<OnlineDungeonCombatResult> run = w.Run();
+        await Task.Delay(TimeSpan.FromSeconds(1.6));                        // 跑器空转了 1.6 秒,比握手上限 1 秒还久;这期间没有任何命令在等回应
+        Assert.False(run.IsCompleted);
+        Assert.True(w.PostKills(0));
+        Assert.True(w.Runner.PostMoveRoom(0, RoomKit.Move(1, 0)));
+        await w.WaitForRoomLoaded(1, 1);                                    // 换房发出、换表、装载完成发出、通知收到:两步都在各自的上限之内
+        Assert.True(w.PostKills(1));
+
+        OnlineDungeonCombatResult r = await run;
+
+        Assert.Equal(OnlineDungeonCombatOutcome.ReturnReady, r.Outcome);
+        Assert.Equal((1, 0, 1), (r.MovesSent, r.MoveRefusals, r.LoadReports));
+        Assert.Equal(new[] { 42, 42, 42, 48, 40, 42, 42, 49 }, w.Wire());
+    }
+
+    /// <summary>
     /// 换房命令发出后服务端什么都不回,同一个房间又排了第二条换房:第一条在途的整段时间里,第二条一直留在队首、没人动它
     /// (不是被当成"已有一条在途"出队丢掉并记一条 MoveInFlight 的拦截),整段按握手上限收场,线上只有第一条换房命令,汇总行 blocked=0。
     /// 服务端有回应时,在途的窗口短到跑器的下一圈已经看不到它,"在途期间队里后面的请求怎么处理"只有让服务端不回才看得见。

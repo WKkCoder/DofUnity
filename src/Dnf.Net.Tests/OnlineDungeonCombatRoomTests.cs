@@ -184,6 +184,40 @@ public class OnlineDungeonCombatRoomTests
     }
 
     /// <summary>
+    /// 几道关口能同时成立时报哪一个,次序是固定的(跑器靠它决定"留着等"还是"丢掉"):房间对不上最先;清图之后阶段已关,排在拒绝额度与在途之前。
+    /// 只在两个条件真的能同时成立的状态里钉:额度用完与在途、握手没完与在途、额度用完与房间没清,本来就不会同时成立(额度只在发过命令、
+    /// 房间清空之后才会消耗,换房成功就清零),不在此列。
+    /// </summary>
+    [Fact]
+    public async Task Block_reasons_that_can_hold_together_are_reported_in_a_fixed_priority()
+    {
+        // 额度用完之后清图通知又到了:报"阶段已关",不是"额度用完"
+        var spent = new RoomRig(CombatKit.Sequential(1), new OnlineDungeonCombatOptions { MaxMoveRefusalsPerRoom = 1 });
+        await spent.KillAndConfirmAll();
+        Assert.True((await spent.Move()).Sent);
+        spent.Feed(RoomKit.MoveRefusal(201));
+        Assert.Equal(OnlineCombatBlock.MoveBudgetExhausted, spent.Machine.MoveGate());
+        spent.Feed(CombatKit.Clear());
+        Assert.Equal(OnlineCombatBlock.PhaseClosed, spent.Machine.MoveGate());
+        Assert.Equal(OnlineCombatBlock.PhaseClosed, (await spent.Move()).Block);
+        Assert.Equal(1, spent.Commands(48));
+
+        // 换房在途时清图通知到了:报"阶段已关",不是"在途";在途的那条命令本身不受影响
+        var flying = new RoomRig(CombatKit.Sequential(1));
+        await flying.KillAndConfirmAll();
+        Assert.True((await flying.Move()).Sent);
+        Assert.Equal(OnlineCombatBlock.MoveInFlight, flying.Machine.MoveGate());
+        flying.Feed(CombatKit.Clear());
+        Assert.True(flying.Machine.MoveInFlight);
+        Assert.Equal(OnlineCombatBlock.PhaseClosed, flying.Machine.MoveGate());
+        Assert.Equal(1, flying.Commands(48));
+
+        // 阶段已关的同时房间也对不上:报"房间对不上"
+        Assert.Equal(OnlineCombatBlock.StaleRoom, spent.Machine.MoveGate(1));
+        Assert.Equal(OnlineCombatBlock.StaleRoom, flying.Machine.MoveGate(1));
+    }
+
+    /// <summary>
     /// 清图闸门与换房闸门是两回事:一个房间全部确认只放开换房,结算命令的闸门仍然只认服务端的清图通知——
     /// 多房间副本里"某一间清空"不能被当成"副本清空",否则会在没通关时发结算命令。
     /// </summary>
