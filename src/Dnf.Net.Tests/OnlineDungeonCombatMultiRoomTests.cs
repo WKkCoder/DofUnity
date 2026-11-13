@@ -492,6 +492,39 @@ public class OnlineDungeonCombatMultiRoomTests
     }
 
     /// <summary>
+    /// 换房命令发出后服务端什么都不回,同一个房间又排了第二条换房:第一条在途的整段时间里,第二条一直留在队首、没人动它
+    /// (不是被当成"已有一条在途"出队丢掉并记一条 MoveInFlight 的拦截),整段按握手上限收场,线上只有第一条换房命令,汇总行 blocked=0。
+    /// 服务端有回应时,在途的窗口短到跑器的下一圈已经看不到它,"在途期间队里后面的请求怎么处理"只有让服务端不回才看得见。
+    /// </summary>
+    [Fact]
+    public async Task A_second_move_behind_an_unanswered_one_stays_in_the_queue_untouched()
+    {
+        var w = new Walk(TwoRooms(), Options(handshakeSeconds: 0.4, overallSeconds: 8));
+        w.Server.SwallowMoves = true;
+        Assert.True(w.PostKills(0));
+        Assert.True(w.Runner.PostMoveRoom(0, RoomKit.Move(1, 0)));
+        Assert.True(w.Runner.PostMoveRoom(0, RoomKit.Move(1, 0)));
+        Stopwatch watch = Stopwatch.StartNew();
+
+        OnlineDungeonCombatResult r = await w.Run();
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(4), "换房等回应的上限 0.4 秒到点就该收场,实际用了 " + watch.Elapsed);
+        Assert.Equal(OnlineDungeonCombatOutcome.Timeout, r.Outcome);
+        Assert.True(r.MoveInFlight);
+        Assert.Equal(0, r.Room);
+        Assert.Equal((1, 0, 0), (r.MovesSent, r.MoveRefusals, r.LoadReports));
+        Assert.Equal(0, r.Blocked);                                                  // 第二条没被碰过:没出队、没记拦截
+        Assert.Equal(new[] { 42, 42, 42, 48 }, w.Wire());                            // 线上只有三条击杀与第一条换房
+        Assert.Equal(
+            "Spawned KillSent:0 KillSent:1 KillSent:2 KillConfirmed:0 KillConfirmed:1 KillConfirmed:2 MoveSent:r0",
+            CombatKit.Trace(r.Events));
+        Assert.Equal(
+            Prefix + " ended outcome=Timeout phase=Fighting monsters=3 sent=3 confirmed=3 refused=0 blocked=0 outOfOrder=0 duplicate=0 unknownNumber=0 malformed=0 " +
+            "passthrough=0 heartbeats=0 envelopes=0/0 innerSkipped=0 frames=3 room=0 moves=1/0 loadReports=0 waiting=move passIds=-",
+            w.Log.Lines.Last());
+    }
+
+    /// <summary>
     /// 握手没完成,下一次换房就不发(闸门要等装载完成通知):即使新房间的怪已经全被确认、换房请求早就排在队首。
     /// 装载完成通知补到之后,队首的换房才发出,整条链接着走完。
     /// </summary>
