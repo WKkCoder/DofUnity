@@ -106,7 +106,8 @@ namespace Dnf.Net.Session
 
         internal OnlineEntryResult(OnlineStage stage, OnlineFailure failure, byte? loginFailureCode, int slot,
             GameClientSession session, IDisposable connection, int framesSeen, int secondLayerMismatches,
-            TownEntrySnapshot snapshot = null)
+            TownEntrySnapshot snapshot = null, DungeonPermissionSnapshot dungeonPermissions = null,
+            SelectCharacterResult selectCharacter = null)
         {
             Stage = stage;
             Failure = failure;
@@ -117,6 +118,8 @@ namespace Dnf.Net.Session
             FramesSeen = framesSeen;
             SecondLayerMismatches = secondLayerMismatches;
             Snapshot = snapshot;
+            DungeonPermissions = dungeonPermissions;
+            SelectCharacter = selectCharacter;
         }
 
         /// <summary>停在的阶段(成功为 <see cref="OnlineStage.Done"/>)。</summary>
@@ -150,6 +153,21 @@ namespace Dnf.Net.Session
         /// 只是附加信息:不影响阶段与失败判定。
         /// </summary>
         public TownEntrySnapshot Snapshot { get; }
+
+        /// <summary>
+        /// 进城回程里副本许可通知(类 0、包号 5)合并出的许可档位表(没进城、或进城窗口里一个 (0,5) 帧也没有为 null;含义与"没有条目"的区别见 <see cref="DungeonPermissionSnapshot"/>)。
+        /// 喂给合并的帧与 <see cref="Snapshot"/> 是同一批(城镇阶段收到的全部帧,各一遍;应答被封进信封的,会话层拆开后的内层帧在其中),进副本阶段的帧不在其中。
+        /// 只是附加信息:不影响阶段与失败判定;入口(<see cref="OnlineDungeonEntry"/>)目前不看它,要不要据此把关由后续线决定。
+        /// </summary>
+        public DungeonPermissionSnapshot DungeonPermissions { get; }
+
+        /// <summary>
+        /// 选角回包(类 1、包号 4)的解析结果:已进城时是进城那个槽的回包窗口里第一个读得通的成功回包,窗口里没有时再看紧随其后的尾窗口
+        /// (进城是靠别的帧判出来的、回包晚到或回包读不通时,两个窗口里都没有读得通的成功回包则为 null);
+        /// 没进城时是最后一个给出失败回包的槽的解析结果(没有为 null;失败码的映射在 <see cref="SelectCharacterResult.Failure"/>),这时 <see cref="Slot"/> 是 -1,
+        /// 不要用 <see cref="Slot"/> 去对应它。只是附加信息:选角的流程与 <see cref="Stage"/>、<see cref="Failure"/> 的判定仍由 <see cref="SlotJudge"/> 定,不受它影响。
+        /// </summary>
+        public SelectCharacterResult SelectCharacter { get; }
 
         /// <summary>关闭连接与会话。</summary>
         public void Dispose()
@@ -247,6 +265,7 @@ namespace Dnf.Net.Session
             }
 
             onStage?.Invoke(OnlineStage.SelectSlot);
+            SelectCharacterResult lastFailureResult = null;
             for (int slot = 0; slot < _settings.MaxSlots; slot++)
             {
                 FrameStatus sent = await session.SendAsync(PacketClass.Cmd, (ushort)SlotJudge.SelectPacketId, new byte[] { (byte)slot }, cancellationToken).ConfigureAwait(false);
@@ -256,6 +275,12 @@ namespace Dnf.Net.Session
                 }
                 List<DecodedFrame> window = await session.ReceiveAsync(w.Slot, stopAfterFrames: 64, cancellationToken).ConfigureAwait(false);
                 SlotOutcome outcome = SlotJudge.Judge(window);
+
+                // 判定只看状态字节,解析结果随判定一起送出:失败槽的结果留到最后一个("没有可用的槽"时带出去),进城槽的结果进结果对象。选角流程不因此改变。
+                if (outcome.Kind == SlotOutcomeKind.Failed && outcome.SelectResult != null)
+                {
+                    lastFailureResult = outcome.SelectResult;
+                }
                 if (outcome.Kind == SlotOutcomeKind.Entered)
                 {
                     List<DecodedFrame> tail = await session.ReceiveAsync(w.Tail, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -269,11 +294,18 @@ namespace Dnf.Net.Session
                     entryFrames.AddRange(tail);
                     TownEntrySnapshot snapshot = TownEntryParser.Parse(entryFrames, slot);
 
+                    // 副本许可表走并列的出口:同一批帧,各一遍。不并进 TownEntrySnapshot(它的字段只放简单值,计数口径也不变:(0,5) 与 (1,4) 帧在那里照旧只计"看过")。
+                    DungeonPermissionSnapshot permissions = DungeonPermissionParser.Collect(entryFrames);
+
+                    // 选角回包的解析结果:优先取选角窗口里的(判定时已带出),没有再看尾窗口(回包被挤到窗口之后时才会这样)。只读附加信息,不影响上面的判定。
+                    SelectCharacterResult selectResult = outcome.SelectResult ?? FirstSelectSuccess(tail);
+
                     // 帧数按会话的脱敏事件总数计(只进不减)。
-                    return new OnlineEntryResult(OnlineStage.Done, OnlineFailure.None, null, slot, session, connection, session.Events.Count, session.SecondLayerMismatches, snapshot);
+                    return new OnlineEntryResult(OnlineStage.Done, OnlineFailure.None, null, slot, session, connection, session.Events.Count, session.SecondLayerMismatches,
+                        snapshot, permissions, selectResult);
                 }
             }
-            return Fail(OnlineStage.SelectSlot, OnlineFailure.NoUsableSlot, null, -1, session.Events.Count, null, connection, session.SecondLayerMismatches);
+            return Fail(OnlineStage.SelectSlot, OnlineFailure.NoUsableSlot, null, -1, session.Events.Count, null, connection, session.SecondLayerMismatches, lastFailureResult);
         }
 
         /// <summary>本机出口地址按小端 u32 取(登录请求里要带);不是 IPv4 或取不到就是 0。</summary>
@@ -371,9 +403,26 @@ namespace Dnf.Net.Session
             }
         }
 
-        private static OnlineEntryResult Fail(OnlineStage stage, OnlineFailure failure, byte? code, int slot, int framesSeen, GameClientSession session, IDisposable connection, int mismatches)
+        private static OnlineEntryResult Fail(OnlineStage stage, OnlineFailure failure, byte? code, int slot, int framesSeen, GameClientSession session, IDisposable connection, int mismatches,
+            SelectCharacterResult selectCharacter = null)
         {
-            return new OnlineEntryResult(stage, failure, code, slot, session, connection, framesSeen, mismatches);
+            return new OnlineEntryResult(stage, failure, code, slot, session, connection, framesSeen, mismatches, null, null, selectCharacter);
+        }
+
+        // 一批帧里第一个读得通的选角成功回包(类 1、包号 4)的解析结果,没有为 null。只在选角窗口里没找到时,拿来看尾窗口。
+        private static SelectCharacterResult FirstSelectSuccess(IReadOnlyList<DecodedFrame> frames)
+        {
+            foreach (DecodedFrame frame in frames)
+            {
+                if (frame.Header.Class == PacketClass.Cmd
+                    && frame.Header.PacketId == SelectCharacterResultParser.PacketId
+                    && SelectCharacterResultParser.TryParse(frame.Payload, out SelectCharacterResult parsed)
+                    && parsed.IsSuccess)
+                {
+                    return parsed;
+                }
+            }
+            return null;
         }
     }
 
