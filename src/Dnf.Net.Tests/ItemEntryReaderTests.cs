@@ -308,9 +308,13 @@ public class ItemEntryReaderTests
     [InlineData(0x1E0000)]
     public void AvatarBagSocketBlockLengthThatIsNotThirtyIsRejected(int length)
     {
+        // 长度字段之后接一段"合法的"后续(30 字节镶嵌块、长度 4 的扩展块、C3 与随机选项各 0 个、单独强化与交易限制两个字节):
+        // 如果校验被放宽(例如只拒小于 30 的),这条条目就会被读成功,断言会失败;后续不合法的话,别处的校验会替它兜底,看不出差别。
         byte[] bytes = new NoticePayloadBuilder()
             .U16(11).U32(ItemB).U32(0).U8(0).U16(0).U8(0).U32(0).U8(0).U16(0)
-            .U32(length).Raw(new byte[80])
+            .U32(length).Raw(Socket())
+            .U32(4).Raw(new byte[4])
+            .U8(0).U8(0).U8(0).U8(0)
             .ToArray();
         AssertFault(ItemEntryShape.AvatarBag, bytes, ItemEntryFault.InvalidBlockLength);
     }
