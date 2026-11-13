@@ -308,6 +308,33 @@ internal static class ItemWire
         return payload;
     }
 
+    /// <summary>类号:通知。</summary>
+    public const byte ClassNoti = 0;
+
+    /// <summary>类号:命令(应答)。</summary>
+    public const byte ClassCmd = 1;
+
+    /// <summary>
+    /// 手工拼一个服务端整帧(15 字节头 + 载荷,两个校验值都是载荷的 crc32N)并走真实的 <see cref="Dnf.Net.Frame.ServerFrameDecoder"/>
+    /// (不加密的替身密码)解码,返回解码帧。载荷原样进帧,所以解码帧的 Payload 与传入的字节逐字节相同。
+    /// 别用包号 1、2、9、87(启动包、压缩包号)与类 1 的 21 字节包号 1(拒绝帧),它们走特殊解码路径。
+    /// </summary>
+    public static Dnf.Net.Frame.DecodedFrame FrameOf(byte cls, int packetId, byte[] payload)
+    {
+        uint crc = Dnf.Net.Frame.Crc32N.Compute(payload);
+        byte[] wire = new byte[15 + payload.Length];
+        wire[0] = cls;
+        wire[1] = (byte)packetId;
+        wire[2] = (byte)(packetId >> 8);
+        BitConverter.GetBytes((uint)wire.Length).CopyTo(wire, 3);
+        BitConverter.GetBytes(crc).CopyTo(wire, 7);
+        BitConverter.GetBytes(crc).CopyTo(wire, 11);
+        payload.CopyTo(wire, 15);
+        Dnf.Net.Frame.ServerFrameDecoder decoder = new Dnf.Net.Frame.ServerFrameDecoder { Cipher = new Dnf.Net.Frame.NullPayloadCipher() };
+        Assert.Equal(Dnf.Net.Frame.FrameStatus.Ok, decoder.Decode(wire, out Dnf.Net.Frame.DecodedFrame frame));
+        return frame;
+    }
+
     /// <summary>字典式的物品类型判定替身:字典里没有的物品号回答 Unknown。</summary>
     internal sealed class DictionaryKindResolver : Dnf.Net.Session.IItemKindResolver
     {
