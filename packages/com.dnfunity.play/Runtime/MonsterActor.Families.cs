@@ -152,6 +152,7 @@ namespace Dnf.Play
             {
                 return;
             }
+            f.Runner?.EndMotion();      // 事件流收口:被顶掉的运行器开始过的叠加层先各出一个"结束"(MonsterActor.MotionEvents.cs)
             f.Runner = new ActRunner(f.Action.Program, ActSelf, _famHost, f.Enabled);
             f.ClockMs = 0;
             f.SetPending = true;
@@ -162,6 +163,7 @@ namespace Dnf.Play
         {
             if (f != null)
             {
+                f.Runner?.EndMotion();  // 事件流收口:这一族的运行器开始过的叠加层各出一个"结束"
                 f.Runner = null;
             }
         }
@@ -220,6 +222,9 @@ namespace Dnf.Play
             {
                 // 没经过血量归零就消失(整房清场之类的直接收掉):最后一幕不放
                 _lastStarted = true;
+                // 事件流收口:当前族与过程动作不会再有人推它们了,各自开始过的叠加层在这里出"结束"(运行器留着,只是不再有事件)
+                _famActive?.Runner?.EndMotion();
+                _fam[(int)MonsterActFamily.Proc]?.Runner?.EndMotion();
                 return;
             }
             TickFamily(Host(MonsterActFamily.Last), deltaMs < 0 ? 0 : deltaMs);
@@ -245,6 +250,7 @@ namespace Dnf.Play
             runner.Update(FamilyFrame(f), (float)(deltaMs / 1000.0));
             if (f.Family == MonsterActFamily.Last && f.Runner == runner && f.ClockMs >= LastSpan(f))
             {
+                runner.EndMotion();     // 事件流收口:最后一幕放完,开始过的叠加层各出一个"结束"
                 f.Runner = null;
             }
         }

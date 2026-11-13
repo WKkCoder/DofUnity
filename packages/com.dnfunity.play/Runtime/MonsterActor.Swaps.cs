@@ -202,6 +202,7 @@ namespace Dnf.Play
             {
                 ActionFilesWithoutAnimation++;
             }
+            InstallMotionAttack(index, action, host);       // 没有触发器、只有叠加层与声音的招:事件流登记(MonsterActor.MotionEvents.cs)
             IActHost runnerHost = _actHost ?? host;
             if (_actPrograms == null)
             {

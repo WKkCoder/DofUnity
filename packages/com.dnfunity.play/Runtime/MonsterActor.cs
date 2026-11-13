@@ -757,7 +757,9 @@ namespace Dnf.Play
             _deferredAttack = -1;
             _deferredCustom = -1;
             _motionVersion++;
+            _actRunner?.EndMotion();        // 同一个出招阶段里切招、重来:上一段留着的叠加层先收口(事件流,MonsterActor.MotionEvents.cs)
             _actRunner = null;
+            BeginMotionEvents();            // 没有触发器、只有叠加层与声音的招:事件流单独放,不建运行器
             if (_customIndex >= 0)
             {
                 // 自定义动作(M62-b):自己的动画、自己的触发器程序与开关板;没有触发器的只放动画
@@ -781,6 +783,8 @@ namespace Dnf.Play
         /// <summary>离开出招阶段:脚本的速度与攻击框开关清零。离开的原因是被打倒(倒地的飞行自己接管 Z)时不碰高度。</summary>
         private void EndActs()
         {
+            _actRunner?.EndMotion();    // 事件流收口:开始过的叠加层各出一个"结束"(MonsterActor.MotionEvents.cs)
+            EndMotionEvents();
             _damageBoxOff = false;      // 受击盒关着出了出招阶段:当作脚本忘了开,别让怪物永远打不到而清不掉房间(推断,E-133)
             RestoreHover();
             DropIfAirborne();
@@ -1529,6 +1533,10 @@ namespace Dnf.Play
                         {
                             break;
                         }
+                    }
+                    else if (_motionPlayer != null)
+                    {
+                        TickMotionEvents();         // 没有触发器的招:叠加层与声音的事件流(只读,不动行为)
                     }
                     if (_phaseMs * PhaseRate >= AttackSpanMs())
                     {

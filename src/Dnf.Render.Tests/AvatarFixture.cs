@@ -600,6 +600,18 @@ internal sealed class AvatarFixture : IDisposable
     /// </summary>
     public const int ActCastId = 9229;
 
+    /// <summary>
+    /// SUB ANI 线:带触发器与事件登记的被动对象(编号 900 是合成的,与别的夹具编号无关)。基础动作是三帧、每帧 100 毫秒的爆炸动画,播完就消失;
+    /// [MOTION] 里叠加层 #0 帧 0,声音 930 帧 1、931 帧 2;唯一的触发器出生时关着(只为让它有运行器,不放东西)。怪物 spawn900 的出招帧 1 放出一个。
+    /// </summary>
+    public const int ActMotionObjId = 900;
+
+    /// <summary>
+    /// SUB ANI 线:换动作的被动对象(编号 901 是合成的)。基础动作(叠加层帧 0、声音 935 帧 2)的触发器在帧 1(100 毫秒)把动作切到自定义动作 0
+    /// (叠加层帧 0、声音 936 帧 1,触发器出生时关着),都用三帧、每帧 100 毫秒的爆炸动画;自定义动作播完对象就消失。怪物 spawn901 的出招帧 1 放出一个。
+    /// </summary>
+    public const int ActMotionSwapId = 901;
+
     /// <summary>M70(证据 E-169):xmoveto 怪物 [MOVE TO TARGET] 的速度(每秒像素)。</summary>
     public const int MoveToSpeed = 400;
     public const string CastAni = "monster/blob/animation_blob/cast.ani";
@@ -766,6 +778,40 @@ internal sealed class AvatarFixture : IDisposable
             }
             return Str(path);
         }
+
+        /// <summary>SUB ANI 线:[SUB ANI] 一块(叠加动画路径只是占位,事件流不读它),整数是 起始帧、层序键。</summary>
+        public Script SubAni(string path, int startFrame, int depth)
+        {
+            return Tag("[SUB ANI]").Str(path).Int(startFrame, depth).Tag("[/SUB ANI]");
+        }
+
+        /// <summary>SUB ANI 线:[SUB ANI WITH XY] 一块,整数是 起始帧、层序键、偏移 x、偏移 y。</summary>
+        public Script SubAniXy(string path, int startFrame, int depth, int x, int y)
+        {
+            return Tag("[SUB ANI WITH XY]").Str(path).Int(startFrame, depth, x, y).Tag("[/SUB ANI WITH XY]");
+        }
+
+        /// <summary>SUB ANI 线:[SOUND] 一块,每条是 (声音标签, 帧号)。</summary>
+        public Script Sounds(params (string Key, int Frame)[] entries)
+        {
+            Tag("[SOUND]");
+            foreach ((string key, int frame) in entries)
+            {
+                Str(key).Int(frame);
+            }
+            return Tag("[/SOUND]");
+        }
+
+        /// <summary>SUB ANI 线:[SOUND PROBABILITY] 一块,每条是 (声音标签, 帧号, 百分数)。</summary>
+        public Script SoundChances(params (string Key, int Frame, int Percent)[] entries)
+        {
+            Tag("[SOUND PROBABILITY]");
+            foreach ((string key, int frame, int percent) in entries)
+            {
+                Str(key).Int(frame, percent);
+            }
+            return Tag("[/SOUND PROBABILITY]");
+        }
     }
 
     private int Intern(string text)
@@ -800,6 +846,14 @@ internal sealed class AvatarFixture : IDisposable
     private Script ActWith(string baseAni)
     {
         return NewScript().Tag("[MOTION]").Tag("[BASE ANI]").Str(baseAni).Tag("[/MOTION]");
+    }
+
+    /// <summary>SUB ANI 线:一个 [MOTION],主动画之后是 <paramref name="entries"/> 写的叠加层与声音登记;后面可再接 Trigger 与 Behavior。</summary>
+    private Script ActMotionWith(string baseAni, Action<Script> entries)
+    {
+        Script s = NewScript().Tag("[MOTION]").Tag("[BASE ANI]").Str(baseAni);
+        entries(s);
+        return s.Tag("[/MOTION]");
     }
 
     private const string ThrowActAni = "../Animation_Blob/Throw.ani";
@@ -906,6 +960,12 @@ internal sealed class AvatarFixture : IDisposable
         ("spawn9226", new[] { "ActSpawn9226" }),
         ("spawn9227", new[] { "ActSpawn9227" }),
         ("spawn9228", new[] { "ActSpawn9228" }),
+        // SUB ANI 线:[MOTION] 里的叠加层与声音(编号 900、901 起,全是合成的)
+        ("motionfeed", new[] { "ActMotionFeed" }),
+        ("motiontrig", new[] { "ActMotionTrig" }),
+        ("spawn900", new[] { "ActSpawn900" }),
+        ("spawn901", new[] { "ActSpawn901" }),
+        ("motionchain", new[] { "ActMotionChain", "ActMotionTrig" }),
     };
 
     /// <summary>
@@ -972,6 +1032,12 @@ internal sealed class AvatarFixture : IDisposable
         ("f_custstaychain", new[] { "ActPlain" }, new[] { "[waiting action]", "FStayCust", "[etc action]", "CustChain|CustB" }),
         ("f_custswap", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustSwap" }),
         ("f_custswap2", new[] { "ActCustSwapNow", "ActPlain" }, new[] { "[etc action]", "CustA" }),
+        // SUB ANI 线:自定义动作没有触发器、只有叠加层与声音;出招脚本把第 1 招换成没有触发器的事件流程序再切过去
+        ("f_custmotion", new[] { "ActCustNow", "ActPlain" }, new[] { "[etc action]", "CustMotion" }),
+        ("f_swapmotion", new[] { "ActSwapMotion", "ActPlain" }, new string[0]),
+        // SUB ANI 线:站立动作、最后一幕带触发器(出生时关着,只为让这一族有运行器)与事件登记
+        ("f_staymotion", new[] { "ActPlain" }, new[] { "[waiting action]", "FStayMotion" }),
+        ("f_lastmotion", new[] { "ActPlain" }, new[] { "[last action]", "FLastMotion" }),
     };
 
     private IEnumerable<(string Name, byte[] Data)> ActScripts()
@@ -1039,6 +1105,54 @@ internal sealed class AvatarFixture : IDisposable
         }
         // ---- 怪物的出招 .act
         yield return (BlobActionDir + "/actplain.act", ActMotion(StrikeActAni));
+        // ---- SUB ANI 线:主动画都是 4 帧、每帧 80 毫秒(出招从第 0 帧起算)
+        // actmotionfeed:没有触发器。叠加层 #0 帧 1 层序键 5、#1(带偏移)帧 2 层序键 -2;声音 900 帧 1、901 帧 3、904 帧 0,
+        // 概率声音 902 帧 2(100%)、903 帧 2(0%,永不响)
+        yield return (BlobActionDir + "/actmotionfeed.act", ActMotionWith(StrikeActAni, e => e
+                .SubAni("syn/l900.ani", 1, 5)
+                .SubAniXy("syn/l901.ani", 2, -2, 12, -7)
+                .Sounds(("SYN_SND_900", 1), ("SYN_SND_901", 3), ("SYN_SND_904", 0))
+                .SoundChances(("SYN_SND_902", 2, 100), ("SYN_SND_903", 2, 0)))
+            .Build());
+        // actmotiontrig:有触发器(帧 2 把 X 速度设成 0,不动怪物),事件流由运行器出:叠加层帧 0、声音 910 帧 1
+        yield return (BlobActionDir + "/actmotiontrig.act", ActMotionWith(ThrowActAni, e => e
+                .SubAni("syn/l910.ani", 0, 0)
+                .Sounds(("SYN_SND_910", 1)))
+            .Trigger(r => r.Tag("[FRAME]").Int(2, 2), 0)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 0))
+            .Build());
+        // custmotion:自定义动作(3 帧、每帧 80 毫秒),没有触发器:叠加层帧 0、声音 920 帧 1
+        yield return (BlobActionDir + "/custmotion.act", ActMotionWith(CustomAActAni, e => e
+                .SubAni("syn/l920.ani", 0, 0)
+                .Sounds(("SYN_SND_920", 1)))
+            .Build());
+        // actswapmotion:一开始把第 1 招换成 ActMotionFeed(没有触发器、有事件流),再切到第 1 招
+        yield return (BlobActionDir + "/actswapmotion.act", ActWith(StrikeActAni)
+            .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.ChangeFile("[ATTACK]", 1, "ActMotionFeed.act").Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[NOW]"))
+            .Build());
+        // actmotionchain:有触发器,叠加层帧 0、声音 945 帧 2;帧 1(80 毫秒)切第 1 招(接 ActMotionTrig):切走的这一招开始过的叠加层要在切的那一刻收口,
+        // 它帧 2 的声音没响到就不再响
+        yield return (BlobActionDir + "/actmotionchain.act", ActMotionWith(ThrowActAni, e => e
+                .SubAni("syn/l945.ani", 0, 0)
+                .Sounds(("SYN_SND_945", 2)))
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[ATTACK]").Int(1).Tag("[NOW]"))
+            .Build());
+        // fstaymotion:站立动作(循环,2 帧、每帧 100 毫秒),触发器出生时关着(只为让这一族有运行器):叠加层帧 0、声音 940 帧 1(每圈各响一次)
+        yield return (BlobActionDir + "/fstaymotion.act", ActMotionWith(StayActAni, e => e
+                .SubAni("syn/l940.ani", 0, 0)
+                .Sounds(("SYN_SND_940", 1)))
+            .Trigger(r => r.Tag("[ENABLE]").Tag("[OFF]").Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 0))
+            .Build());
+        // flastmotion:最后一幕(3 帧、每帧 400 毫秒,播完再留一小会儿):叠加层帧 0、声音 950 帧 2(800 毫秒起,晚于身体消失的 500 毫秒)
+        yield return (BlobActionDir + "/flastmotion.act", ActMotionWith(LastActAni, e => e
+                .SubAni("syn/l950.ani", 0, 0)
+                .Sounds(("SYN_SND_950", 2)))
+            .Trigger(r => r.Tag("[ENABLE]").Tag("[OFF]").Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 0))
+            .Build());
         yield return (BlobActionDir + "/actshoot.act", ActWith(ThrowActAni)
             .Trigger(r => r.Tag("[ON SET ACTION]"), 0)
             .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 1)
@@ -1539,7 +1653,7 @@ internal sealed class AvatarFixture : IDisposable
                 .Tag("[TRIGGER]").Tag("[CUSTOM]").Int(0, 0).Tag("[OFF]"))
             .Build());
         yield return (BlobAnimationDir + "/last.ani", BuildBlobAni(false, (0, 400, default), (1, 400, default), (2, 400, default)));
-        foreach (int id in new[] { ActShotId, ActRepeatId, ActGraveId, ActSpawnerId, ActFallId, ActBoardReadId, ActBoardWriteId, ActAtkChgId, ActAtkDefId, ActAtkSeqId, ActAtkSwapId })
+        foreach (int id in new[] { ActShotId, ActRepeatId, ActGraveId, ActSpawnerId, ActFallId, ActBoardReadId, ActBoardWriteId, ActAtkChgId, ActAtkDefId, ActAtkSeqId, ActAtkSwapId, ActMotionObjId, ActMotionSwapId })
         {
             int spawned = id;
             yield return (BlobActionDir + "/actspawn" + id + ".act", ActWith(ThrowActAni)
@@ -1740,6 +1854,34 @@ internal sealed class AvatarFixture : IDisposable
             .Build());
         yield return (ActObjectDir + "/actforever.obj", NewScript().Tag("[basic action]").Str("action/actidle.act").Build());
         yield return (ActObjectDir + "/action/actidle.act", ActMotion("../animation/idle.ani"));
+        // SUB ANI 线:有触发器(出生时关着)与事件登记的被动对象,爆炸动画(3 帧、每帧 100 毫秒)播完就消失:叠加层帧 0、声音 930 帧 1、931 帧 2
+        yield return (ActObjectDir + "/actmotionobj.obj", NewScript()
+            .Tag("[basic action]").Str("action/actmotionobj.act")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[on end of animation]", "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actmotionobj.act", ActMotionWith("../animation/boom.ani", e => e
+                .SubAni("syn/l930.ani", 0, 0)
+                .Sounds(("SYN_SND_930", 1), ("SYN_SND_931", 2)))
+            .Trigger(r => r.Tag("[ENABLE]").Tag("[OFF]").Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 0))
+            .Build());
+        // SUB ANI 线:换动作的被动对象。基础动作帧 1(100 毫秒)切到自定义动作 0:换掉的那段动作开始过的叠加层要在切的那一刻收口,
+        // 它登记在帧 2 的声音(935)没响到就不再响;自定义动作从头出自己的事件,播完对象消失时再收口
+        yield return (ActObjectDir + "/actmotionswap.obj", NewScript()
+            .Tag("[basic action]").Str("action/actmotionswap.act")
+            .Tag("[etc action]").Str("action/actmotionswap_b.act")
+            .Tag("[object destroy condition]").Str(shotDestroy, "[on end of animation]", "[time limite]").Int(1000).Build());
+        yield return (ActObjectDir + "/action/actmotionswap.act", ActMotionWith("../animation/boom.ani", e => e
+                .SubAni("syn/l935.ani", 0, 0)
+                .Sounds(("SYN_SND_935", 2)))
+            .Trigger(r => r.Tag("[FRAME]").Int(1, 1), 0)
+            .Behavior(b => b.Tag("[SET ACTION]").Tag("[CUSTOM]").Int(0).Tag("[NOW]"))
+            .Build());
+        yield return (ActObjectDir + "/action/actmotionswap_b.act", ActMotionWith("../animation/boom.ani", e => e
+                .SubAni("syn/l936.ani", 0, 0)
+                .Sounds(("SYN_SND_936", 1)))
+            .Trigger(r => r.Tag("[ENABLE]").Tag("[OFF]").Tag("[ON SET ACTION]"), 0)
+            .Behavior(b => b.SetSpeed("[X AXIS]", 0))
+            .Build());
         // ---- M67(证据 E-165):被动对象追踪
         yield return (ActObjectDir + "/acthomei.obj", HomingObj("action/actidle.act", s => s
             .Tag("[homing use]").Int(1).Tag("[homing follow]").Str("[ENEMY]").Tag("[homing velocity]").Int(200, 0).Tag("[homing check gap]").Int(100)));
@@ -2315,6 +2457,8 @@ internal sealed class AvatarFixture : IDisposable
                 .Int(ActAtkSeqId).Str("blob/actatkseq.obj")
                 .Int(ActAtkSwapId).Str("blob/actatkswap.obj")
                 .Int(ActCastId).Str("blob/actcast.obj")
+                .Int(ActMotionObjId).Str("blob/actmotionobj.obj")
+                .Int(ActMotionSwapId).Str("blob/actmotionswap.obj")
                 .Int(CrateObjectId).Str("MapObject/BreakableObject/Crate.obj")
                 .Int(BarrelObjectId).Str("MapObject/BreakableObject/Barrel.obj")
                 .Int(PillarObjectId).Str("MapObject/BreakableObject/Pillar.obj")

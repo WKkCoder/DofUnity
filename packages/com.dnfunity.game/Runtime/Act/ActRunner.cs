@@ -516,6 +516,7 @@ namespace Dnf.Game.Act
                 }
             }
             _unsupportedTriggerTags = unsupportedTags == null ? Array.Empty<string>() : unsupportedTags.ToArray();
+            InitMotion();
             Begin();
         }
 
@@ -595,6 +596,7 @@ namespace Dnf.Game.Act
             {
                 _host.NoteUnsupportedTrigger(tag);
             }
+            BeginMotion();         // 叠加层与声音事件流跟着动作重来(与触发器无关,见 ActRunner.Motion.cs)
         }
 
         /// <summary>变量当前值([DIM] 赋的;没赋过读 0,推断);测试与审计用。</summary>
@@ -609,6 +611,7 @@ namespace Dnf.Game.Act
         /// </summary>
         public void Update(int frame, float dt)
         {
+            PumpMotion(frame);      // 叠加层与声音事件只看主层帧号、与触发器无关:没有触发器的程序也出(见 ActRunner.Motion.cs)
             if (_inert.Length == 0)
             {
                 return;

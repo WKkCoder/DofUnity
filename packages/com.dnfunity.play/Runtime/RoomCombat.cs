@@ -1190,6 +1190,7 @@ namespace Dnf.Play
                 _passiveBoardReadMisses += p.BoardReadMisses;
                 _passiveBoardWrites += p.BoardWrites;
                 _passiveBoardWriteMisses += p.BoardWriteMisses;
+                p.EndMotionEvents();        // 事件流收口:退场的对象开始过的叠加层各出一个"结束"(RoomCombat.MotionEvents.cs)
                 _passives.RemoveAt(i);
             }
         }
@@ -1543,6 +1544,7 @@ namespace Dnf.Play
             _procRandom = new Random(unchecked(seed * 271 + 97));
             _heroDown = new HeroKnockdown(_room.Hero);
             _voiceSeed = unchecked((uint)seed * 2246822519u + 3266489917u);
+            _actSoundSeed = unchecked((uint)seed * 3266489917u + 374761393u);     // .act 概率声音自己的一条线(RoomCombat.MotionEvents.cs)
             SyncStance();
             _cueMotion = _room.Hero.Motion;
             _cueSwing = _room.Hero.SwingNumber;
@@ -3522,6 +3524,7 @@ namespace Dnf.Play
                 {
                     m.ActTarget = null;
                     m.SetActs(null, null);
+                    m.SetMotionActs(null, null);
                     m.SetActDefaultStrikes(null);
                     m.SetFamilyActs(null, null);
                 }
@@ -3543,6 +3546,7 @@ namespace Dnf.Play
             IReadOnlyList<string> paths = m.Model.AttackActionPaths;
             var programs = new ActProgram[paths.Count];
             HeroStrikeInfo?[] defaults = null;
+            ActProgram[] feeds = null;
             bool any = false;
             for (int i = 0; i < programs.Length; i++)
             {
@@ -3558,9 +3562,14 @@ namespace Dnf.Play
                     any = true;
                     _acts.Preload(p);
                 }
+                else if (p != null && p.HasMotionEvents)
+                {
+                    (feeds ?? (feeds = new ActProgram[programs.Length]))[i] = p;      // 没有触发器、只有叠加层与声音:事件流单独放(MonsterActor.MotionEvents.cs)
+                }
             }
             m.ActTarget = _heroEntity;
             m.SetActs(any ? programs : null, any ? _actWorld : null);
+            m.SetMotionActs(feeds, _actWorld);
             m.SetActDefaultStrikes(defaults);
             // 非出招动作族(站立、行走、受击、倒地、过程、最后一幕)的 .act 触发器(M53,E-146)
             m.SetFamilyActs(MonsterFamilyActs.Build(_acts, m.Model.FamilyActs), _actWorld);
