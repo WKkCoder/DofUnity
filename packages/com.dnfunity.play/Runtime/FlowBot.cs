@@ -34,6 +34,7 @@ namespace Dnf.Play
         private readonly bool _explore;
         private readonly List<SettlementChoice> _choices;
         private DungeonBot _bot;
+        private HostedRoomBot _hosted;
         private int _serial;
         private double _stageMs;
 
@@ -66,6 +67,24 @@ namespace Dnf.Play
         /// <summary>副本里的自动机清房之后顺手打翻房间里的可破坏物件(M34,<see cref="DungeonBot.SmashObjects"/>)。默认关。</summary>
         public bool SmashObjects { get; set; }
 
+        /// <summary>
+        /// 联网房间(<see cref="HostedRoomRun"/>)里也让自动机打(r16-onlinebot):交给 <see cref="HostedRoomBot"/>(决策复用 <see cref="DungeonBot"/>,带整段超时与无进展上限)。
+        /// 默认关:关着时自动机对不是离线副本会话(<see cref="DungeonSession"/>)的副本一概不动,与以前一字不变(联网房间里没有人推进它)。
+        /// 开着时流程在联网结算选定回城的那一帧、或自动机放弃(主角倒下、没进展、整段超时、怪都死了结算不来)的那一帧走完(<see cref="Done"/>);
+        /// 这一局被别的原因切走(失败计时走完出副本等)的话,下一帧走完:联网房间只有一局,离开之后不会再进副本,批量运行据此提前收尾,
+        /// 不会在城镇里接着走去打离线副本。结算清单(<c>choices</c>)对联网房间不起作用。
+        /// </summary>
+        public bool HostedRooms { get; set; }
+
+        /// <summary>联网房间自动机的整段上限(毫秒;<see cref="HostedRoomBot.TotalLimitMs"/>),默认 <see cref="HostedRoomBot.DefaultTotalLimitMs"/>;要在第一次推进联网房间之前设。</summary>
+        public double HostedTotalLimitMs { get; set; } = HostedRoomBot.DefaultTotalLimitMs;
+
+        /// <summary>联网房间自动机的无进展上限(毫秒;<see cref="HostedRoomBot.NoProgressLimitMs"/>),默认 <see cref="HostedRoomBot.DefaultNoProgressLimitMs"/>;要在第一次推进联网房间之前设。</summary>
+        public double HostedNoProgressLimitMs { get; set; } = HostedRoomBot.DefaultNoProgressLimitMs;
+
+        /// <summary>联网房间这一局的自动机(<see cref="HostedRooms"/> 开着、推进过联网房间才有;宿主据此写停手日志,房间结束之后也还在,只读它的状态);否则为 null。</summary>
+        public HostedRoomBot HostedBot => _hosted;
+
         /// <summary>清单用完了(回到了城镇,或者停在没有选择可做的结算菜单上):流程走完,不会再有动作。</summary>
         public bool Done { get; private set; }
 
@@ -91,6 +110,11 @@ namespace Dnf.Play
                 _serial = flow.StageSerial;
                 _stageMs = 0.0;
                 _bot = null;
+                if (_hosted != null)
+                {
+                    Done = true;                      // 联网房间只有一局:离开它(回城、失败出副本、被外面切走)之后不会再进副本,流程走完(不再接着走去打离线副本)
+                    return;
+                }
             }
             _stageMs += deltaMs;
             switch (flow.Stage)
@@ -162,6 +186,10 @@ namespace Dnf.Play
         {
             if (!(flow.Run is DungeonSession dungeon))
             {
+                if (HostedRooms && flow.Run is HostedRoomRun hosted)
+                {
+                    AdvanceHosted(hosted, deltaMs);
+                }
                 return;
             }
             if (!dungeon.Finished)
@@ -189,6 +217,20 @@ namespace Dnf.Play
                 {
                     Done = true;                  // 清单用完了、停在这一次的结算菜单上(清单没有以返回城镇收尾,或者本来就是空的)
                 }
+            }
+        }
+
+        /// <summary>
+        /// 联网房间这一局(<see cref="HostedRooms"/> 开着才会走到):交给 <see cref="HostedRoomBot"/> 推进。联网结算选定回城(<see cref="HostedRoomRun.Choice"/>)或自动机因为别的原因停手
+        /// (结算收齐只是停手、还要等回城延迟走完,不算放弃),这一局就没有下文了:<see cref="Done"/>。随后这一帧的 <see cref="GameFlow.Poll"/> 照旧应用回城或失败。
+        /// </summary>
+        private void AdvanceHosted(HostedRoomRun run, double deltaMs)
+        {
+            _hosted = _hosted ?? new HostedRoomBot(HostedTotalLimitMs, HostedNoProgressLimitMs) { SmashObjects = SmashObjects };
+            _hosted.Advance(run, deltaMs);
+            if (run.Choice != SettlementChoice.None || (_hosted.Stopped && _hosted.Reason != HostedBotStop.Settled))
+            {
+                Done = true;
             }
         }
     }
