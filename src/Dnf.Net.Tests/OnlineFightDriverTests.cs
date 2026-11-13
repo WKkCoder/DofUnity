@@ -745,4 +745,129 @@ public class OnlineFightDriverTests
         Assert.Equal(OnlineFightOutcome.AllDone, s.Outcome);
         Assert.Equal(2, s.Confirmed);
     }
+
+    // ======== 第二轮补的:集成者抽查里存活的变异(结算命令卡住时的清图闸门、终局压过异常、在途一只的判读、第 0 只被拒的判读行) ========
+
+    [Fact]
+    public async Task A_clear_notice_that_is_still_waiting_on_the_settlement_send_stops_the_remaining_kills_too()
+    {
+        // 与 Once_the_server_says_the_map_is_cleared_… 同一张表(只有前三只,三只确认后服务端说清图),但这回结算命令的发送被"门"挡住:
+        // 跑器收到清图通知后卡在"发结算命令"上,状态机的阶段确定性地停在 Cleared(结算命令没发出去,所以不是 Settling)。
+        // 驱动在节奏等待到点之后,必须只凭"清图通知已到"就不再排击杀;不能等到阶段走到 Settling 才停。
+        var rig = new FightRig(5, table: CombatKit.Sequential(5).Take(3), holdSendOfCommand: 49);
+        Task<OnlineFightSummary> run = await rig.Start();
+        try
+        {
+            await rig.PostKills(3);
+            await rig.WaitEvent(OnlineCombatEventKind.MapCleared);
+            await rig.Held.WaitEntered();
+            Assert.Equal(OnlineCombatPhase.Cleared, rig.Machine.Phase);         // 阶段确定性地停在 Cleared
+            Assert.Equal(0, rig.Session.Commands(49));                          // 结算命令一条也没到线上
+
+            await rig.Step();                           // 第三次节奏等待到点:驱动醒来,眼前是 Cleared
+
+            // 驱动看到清图就不再排:它直接进了等结算,停在一个等结算的小步上,而不是再排一只、再等一个 400 毫秒的节奏
+            await CombatKit.WaitUntil(() => rig.Clock.Requests.Length >= 4, "驱动醒来之后又停在一个新的延时上");
+            Assert.Equal(rig.Options.PollInterval, rig.Clock.Requests[3]);
+            Assert.Contains(rig.Log.Lines, l => l == OnlineFightLog.Prefix + " phase=settleWait posted=3");
+            Assert.Equal(OnlineCombatPhase.Cleared, rig.Machine.Phase);         // 这一段里阶段一直没动过
+
+            rig.Held.Release();                         // 放行结算命令:服务端回两段结算,链走完
+            OnlineFightSummary s = await rig.Pump(run);
+
+            Assert.Equal(OnlineFightOutcome.AllDone, s.Outcome);
+            Assert.Equal(5, s.Monsters);
+            Assert.Equal(3, s.Posted);
+            Assert.Equal(3, s.Sent);
+            Assert.Equal(3, s.Confirmed);
+            Assert.Equal(0, s.Blocked);
+            Assert.Equal(3, rig.Session.Commands(42));
+            Assert.Equal(1, rig.Session.Commands(49));
+            Assert.Equal(rig.Kills(0, 3).Concat(new[] { "clear", "settle" }).ToArray(), rig.Server.Journal);
+        }
+        finally
+        {
+            rig.Cts.Cancel();                           // 断言失败时别把被门挡住的跑器与等着的驱动留在后台
+        }
+    }
+
+    [Fact]
+    public async Task A_fault_after_the_state_machine_reached_the_final_phase_does_not_take_the_finished_outcome_away()
+    {
+        // 结算命令无人应答,两段结算由测试亲手推:结果先到;奖励与一个心跳通知被同一批交给跑器。
+        // 奖励一到状态机就走到 Settled;紧接着回心跳的那次发送(第三次发送)抛了异常,跑器以异常收场。
+        // 结局仍是 AllDone(优先级:终局高于异常——两段结算已经收齐,之后的故障改变不了这一点);
+        // 故障本身没有被抹掉:类型名留在 FaultType 与收场行里,跑器结局是 Faulted;异常消息不进任何一行日志。
+        var rig = new FightRig(1);
+        rig.Session.Respond = (cls, id, payload) => id == 49 ? null : rig.Server.Handle(cls, id, payload);
+        rig.Session.FailureOfSend = index => index == 2 ? new IOException("secret-detail-24680") : null;
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(1);
+        await CombatKit.WaitUntil(() => rig.Session.Commands(49) == 1, "结算命令发出");
+
+        rig.Session.Push(CombatKit.Result());
+        rig.Session.PushUnit(CombatKit.Reward().Decoded(), CombatKit.Heartbeat().Decoded());
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineFightOutcome.AllDone, s.Outcome);
+        Assert.True(s.ReturnReady);
+        Assert.Equal(OnlineCombatPhase.Settled, s.Phase);
+        Assert.Equal(OnlineFightSettlement.Complete, s.Settlement);
+        Assert.Equal("IOException", s.FaultType);
+        Assert.Equal(OnlineDungeonCombatOutcome.Faulted, s.RunnerOutcome);
+        Assert.Contains(rig.Log.Lines, l => l.StartsWith(OnlineFightLog.Prefix + " end outcome=AllDone ") && l.EndsWith(" exception=IOException"));
+        Assert.DoesNotContain("secret", string.Join("\n", rig.Log.Lines));
+    }
+
+    [Theory]
+    [InlineData(3, 2, OnlineFightKillVerdict.Partial, "kill=partial pending=1 firstRefused=-")]
+    [InlineData(1, 0, OnlineFightKillVerdict.Silent, "kill=silent pending=1 firstRefused=-")]
+    public async Task A_last_kill_that_never_gets_an_answer_is_one_in_flight_and_not_a_fully_accepted_set(int count, int confirmed, OnlineFightKillVerdict expected, string verdictFields)
+    {
+        // 最后一只的击杀发出去了,服务端一声不吭(没确认、没拒绝,也没有清图通知,窗口耗尽):已发 N、确认 N-1、没有被拒。
+        // 必须判 Partial(N > 1)或 Silent(N = 1,一条回音也没有),在途 1 只;不能判成"全部确认"。
+        var rig = new FightRig(count);
+        rig.Session.Respond = (cls, id, payload) =>
+        {
+            List<CombatKit.ServerFrame> replies = rig.Server.Handle(cls, id, payload);
+            return id == 42 && KillView.Parse(payload).MobId == rig.Ids[count - 1] ? null : replies;
+        };
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(count);
+        await rig.WaitAnswered(confirmed);
+        await rig.WaitParked();
+
+        rig.Clock.Advance(Window + TimeSpan.FromSeconds(1));
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineFightOutcome.NoClearNotice, s.Outcome);
+        Assert.Equal(count, s.Sent);
+        Assert.Equal(confirmed, s.Confirmed);
+        Assert.Equal(0, s.Refused);
+        Assert.Equal(1, s.Pending);
+        Assert.Equal(expected, s.KillVerdict);
+        Assert.Equal(verdictFields, OnlineFightLog.VerdictFields(s));
+    }
+
+    [Fact]
+    public async Task The_first_monster_being_refused_is_local_number_zero_in_the_verdict_line_and_not_a_dash()
+    {
+        // 第 0 只就被拒(服务端的表里没有它):判读行必须写 firstRefused=0,不能写成"没有被拒"的 -
+        var rig = new FightRig(3, table: CombatKit.Sequential(3).Where(id => id != CombatKit.BaseId));
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(1);
+        await rig.WaitAnswered(1);
+        await rig.Step();                           // 节奏等待到点:驱动醒来先看有没有被拒
+
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineFightOutcome.RefusedStop, s.Outcome);
+        Assert.Equal(1, s.Posted);
+        Assert.Equal(1, s.Sent);
+        Assert.Equal(0, s.Confirmed);
+        Assert.Equal(1, s.Refused);
+        Assert.Equal(0, s.FirstRefusedLocal);
+        Assert.Equal("kill=refused pending=0 firstRefused=0", OnlineFightLog.VerdictFields(s));
+        Assert.Contains(rig.Log.Lines, l => l == OnlineFightLog.Prefix + " refused local=0 action=stop");
+    }
 }

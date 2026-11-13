@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Dnf.Net.Frame;
 using Dnf.Net.Session;
 
 namespace Dnf.Net.Tests;
@@ -159,6 +160,64 @@ internal sealed class ManualFightClock : IFightClock
 }
 
 /// <summary>
+/// "发送门":包在会话接缝外面,把某一条命令(类 1、指定包号)的第一次发送挡在门外——命令不会写到内层会话(线上没有这条命令),
+/// 发送的等待也不返回,直到测试放行(<see cref="Release"/>)或调用方取消(取消令牌触发时按取消结束,所以被门挡住的跑器随驱动一起收场,不会留在后台)。
+/// 其余发送、收帧与各状态原样转调内层会话。
+/// 用来让"发出某条命令之后才会变"的状态确定性地停在变之前:例如挡住结算命令(包号 49),跑器收到清图通知后就卡在"发结算命令"上,
+/// 状态机的阶段一直是 Cleared、不会走到 Settling——跑得快的假会话做不到这一点(它在驱动醒来之前就已经走到 Settling 了)。
+/// </summary>
+internal sealed class HeldSendSession : IOnlineDungeonSession
+{
+    private readonly IOnlineDungeonSession _inner;
+    private readonly ushort _holdCommandId;
+    private readonly TaskCompletionSource<bool> _release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    private volatile bool _entered;
+    private int _held;
+
+    public HeldSendSession(IOnlineDungeonSession inner, ushort holdCommandId)
+    {
+        _inner = inner;
+        _holdCommandId = holdCommandId;
+    }
+
+    public bool IsReady => _inner.IsReady;
+
+    public bool PeerClosed => _inner.PeerClosed;
+
+    public FrameError LastFrameError => _inner.LastFrameError;
+
+    /// <summary>被挡的那条命令的发送是否已经走到了门口(正在等放行)。</summary>
+    public bool Entered => _entered;
+
+    /// <summary>等到被挡的命令走到门口。</summary>
+    public Task WaitEntered()
+    {
+        return CombatKit.WaitUntil(() => Entered, "被挡住的命令(包号 " + _holdCommandId + ")的发送走到了门口");
+    }
+
+    /// <summary>放行:被挡住的那一次发送继续转给内层会话。放行之后的同包号发送不再挡。</summary>
+    public void Release()
+    {
+        _release.TrySetResult(true);
+    }
+
+    public async Task<FrameStatus> SendAsync(PacketClass packetClass, ushort packetId, byte[] payload, CancellationToken cancellationToken)
+    {
+        if (packetClass == PacketClass.Cmd && packetId == _holdCommandId && Interlocked.Exchange(ref _held, 1) == 0)
+        {
+            _entered = true;
+            await _release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        return await _inner.SendAsync(packetClass, packetId, payload, cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task<List<DecodedFrame>> ReceiveAsync(TimeSpan window, int stopAfterFrames, CancellationToken cancellationToken)
+    {
+        return _inner.ReceiveAsync(window, stopAfterFrames, cancellationToken);
+    }
+}
+
+/// <summary>
 /// 无头战斗驱动的测试装置:合成起始地图(怪编号 9100 起)+ 照笔记建模的假服务端 + 线程安全的假会话 + 真的战斗跑器 + 手拨假时钟。
 /// 跑器与驱动都在后台线程里跑(跑器按真时间轮询,驱动按假时间等),所以装置提供"锁步"的推进方法:
 /// 只在真实的跑器处理完前面的回复之后才拨动假时钟,虚拟时间不会跑在真实的跑器前面。
@@ -178,7 +237,8 @@ internal sealed class FightRig
         TimeSpan? clearWait = null,
         TimeSpan? settleWait = null,
         double runnerSettlementSeconds = 10,
-        double runnerOverallSeconds = 60)
+        double runnerOverallSeconds = 60,
+        int? holdSendOfCommand = null)
     {
         Ids = CombatKit.Sequential(count);
         Map = CombatKit.Map(Ids);
@@ -186,7 +246,14 @@ internal sealed class FightRig
         Session = CombatFakeSession.ForServer(Server);
         OnlineDungeonCombatOptions runnerOptions = CombatKit.Options(overallSeconds: runnerOverallSeconds, settlementSeconds: runnerSettlementSeconds);
         runnerOptions.OnEvent = RecordEvent;
-        Runner = new OnlineDungeonCombatRunner(Session, null, runnerOptions);
+        // 给了 holdSendOfCommand:跑器走"发送门"(见 HeldSendSession),该包号命令的第一次发送被挡住,直到测试放行;不给就与以前完全一样
+        IOnlineDungeonSession seam = Session;
+        if (holdSendOfCommand.HasValue)
+        {
+            Held = new HeldSendSession(Session, (ushort)holdSendOfCommand.Value);
+            seam = Held;
+        }
+        Runner = new OnlineDungeonCombatRunner(seam, null, runnerOptions);
         Clock = new ManualFightClock();
         Options = new OnlineFightOptions
         {
@@ -206,6 +273,9 @@ internal sealed class FightRig
     public FakeCombatServer Server { get; }
 
     public CombatFakeSession Session { get; }
+
+    /// <summary>发送门(构造时给了 <c>holdSendOfCommand</c> 才有,否则为 null)。门挡住的命令不会出现在 <see cref="Session"/> 的发送记录里,直到放行。</summary>
+    public HeldSendSession Held { get; }
 
     public OnlineDungeonCombatRunner Runner { get; }
 

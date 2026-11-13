@@ -136,6 +136,27 @@ public class OnlineFightCliTests
         Assert.Equal(expected, Problem(joined));
     }
 
+    [Theory]
+    [InlineData("--continue-on-refuse|some-root")]                              // 紧跟在第一个选项后面的裸字符串:不是仓库根
+    [InlineData("--continue-on-refuse|some-root|--dungeon|901|0")]              // 同上,别的都对也一样是错
+    [InlineData("some-root|other-root|--dungeon|901|0")]                        // 第二个裸字符串不能把第一个仓库根顶掉
+    [InlineData("--dungeon|901|0|--continue-on-refuse|some-root")]
+    [InlineData("--dungeon|901|0|--pace-ms|250|some-root")]
+    public void A_bare_word_after_the_first_position_is_an_unknown_argument_and_never_a_repo_root(string joined)
+    {
+        Assert.Equal(OnlineFightArgumentProblem.UnknownArgument, Problem(joined));
+    }
+
+    [Fact]
+    public void The_repo_root_taken_from_the_first_position_is_kept_as_it_was_given()
+    {
+        OnlineFightArguments a = Parse("first-root", "--continue-on-refuse", "--dungeon", "901", "0");
+
+        Assert.Equal("first-root", a.RepoRoot);
+        Assert.True(a.ContinueOnRefuse);
+        Assert.Equal(901, a.DungeonId);
+    }
+
     // ======== 退出码 ========
 
     [Theory]
@@ -189,6 +210,62 @@ public class OnlineFightCliTests
         }
     }
 
+    [Fact]
+    public void The_exit_code_numbers_are_an_external_contract_and_are_pinned_literally()
+    {
+        // 集成者读退出码判结局:数值一变,脚本就读错。这里一律用写死的数字,不拿常量名互相比
+        Assert.Equal(0, OnlineFightExitCodes.Success);
+        Assert.Equal(2, OnlineFightExitCodes.SettingsFailed);
+        Assert.Equal(3, OnlineFightExitCodes.TownEntryFailed);
+        Assert.Equal(5, OnlineFightExitCodes.AuthFailed);
+        Assert.Equal(6, OnlineFightExitCodes.DungeonEntryFailed);
+        Assert.Equal(10, OnlineFightExitCodes.RefusedStop);
+        Assert.Equal(11, OnlineFightExitCodes.NoClearNotice);
+        Assert.Equal(12, OnlineFightExitCodes.SettleIncomplete);
+        Assert.Equal(13, OnlineFightExitCodes.SessionClosed);
+        Assert.Equal(14, OnlineFightExitCodes.Faulted);
+        Assert.Equal(15, OnlineFightExitCodes.Cancelled);
+        Assert.Equal(64, OnlineFightExitCodes.Usage);
+        Assert.Equal(70, OnlineFightExitCodes.Unexpected);
+
+        // 一个也不多、不少:反射读出全部公开的整数常量,与上面写死的名单逐项相等(新加一个码而没钉数值,这里就会红)
+        var expected = new SortedDictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["Success"] = 0,
+            ["SettingsFailed"] = 2,
+            ["TownEntryFailed"] = 3,
+            ["AuthFailed"] = 5,
+            ["DungeonEntryFailed"] = 6,
+            ["RefusedStop"] = 10,
+            ["NoClearNotice"] = 11,
+            ["SettleIncomplete"] = 12,
+            ["SessionClosed"] = 13,
+            ["Faulted"] = 14,
+            ["Cancelled"] = 15,
+            ["Usage"] = 64,
+            ["Unexpected"] = 70,
+        };
+        var actual = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        foreach (System.Reflection.FieldInfo field in typeof(OnlineFightExitCodes).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+        {
+            if (field.IsLiteral && field.FieldType == typeof(int))
+            {
+                actual[field.Name] = (int)field.GetRawConstantValue();
+            }
+        }
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [InlineData(OnlineFailure.GatewayLoginFailed, 5)]
+    [InlineData(OnlineFailure.GameLoginRejected, 5)]
+    [InlineData(OnlineFailure.BadLoginRequest, 5)]
+    [InlineData(OnlineFailure.GameLoginNoReply, 3)]
+    public void The_exit_code_of_a_town_failure_is_a_literal_number(OnlineFailure failure, int expected)
+    {
+        Assert.Equal(expected, OnlineFightExitCodes.ForTownFailure(failure));
+    }
+
     // ======== 汇总字段 ========
 
     [Fact]
@@ -229,6 +306,37 @@ public class OnlineFightCliTests
         OnlineFightSummary s = Summary(sent: sent, confirmed: confirmed, refused: refused, monsters: 7);
         Assert.Equal(expected, s.KillVerdict);
         Assert.Equal(sent - confirmed - refused, s.Pending);
+    }
+
+    [Theory]
+    [InlineData(2, 1, 0, OnlineFightKillVerdict.Partial)]       // 差一只在途:已发 N、确认 N-1、没有被拒,不是"全部确认"
+    [InlineData(3, 2, 0, OnlineFightKillVerdict.Partial)]
+    [InlineData(5, 4, 0, OnlineFightKillVerdict.Partial)]
+    [InlineData(7, 6, 0, OnlineFightKillVerdict.Partial)]
+    [InlineData(1, 0, 0, OnlineFightKillVerdict.Silent)]        // 只发一只、一点回音也没有:静默
+    [InlineData(2, 0, 0, OnlineFightKillVerdict.Silent)]
+    [InlineData(2, 2, 0, OnlineFightKillVerdict.Accepted)]
+    [InlineData(7, 7, 0, OnlineFightKillVerdict.Accepted)]
+    [InlineData(5, 4, 1, OnlineFightKillVerdict.Refused)]       // 4 条确认加 1 条被拒:没有在途,同样是被拒
+    public void The_kill_verdict_tells_one_missing_confirmation_from_a_fully_confirmed_set(int sent, int confirmed, int refused, OnlineFightKillVerdict expected)
+    {
+        OnlineFightSummary s = Summary(sent: sent, confirmed: confirmed, refused: refused, monsters: 7);
+
+        Assert.Equal(expected, s.KillVerdict);
+        Assert.Equal(sent - confirmed - refused, s.Pending);
+        Assert.StartsWith("kill=" + expected.ToString().ToLowerInvariant() + " pending=" + (sent - confirmed - refused) + " ", OnlineFightLog.VerdictFields(s));
+    }
+
+    [Theory]
+    [InlineData(0, 1, "kill=refused pending=1 firstRefused=0")]     // 第一只被拒是本地序号 0:写 0,不是 -
+    [InlineData(1, 1, "kill=refused pending=1 firstRefused=1")]
+    [InlineData(3, 2, "kill=refused pending=0 firstRefused=3")]
+    [InlineData(-1, 0, "kill=partial pending=2 firstRefused=-")]    // 没有被拒才写 -
+    public void The_first_refused_field_is_a_dash_only_when_no_monster_was_refused(int firstRefused, int refused, string expected)
+    {
+        OnlineFightSummary s = Summary(OnlineFightOutcome.RefusedStop, monsters: 6, sent: 4, confirmed: 2, refused: refused, firstRefused: firstRefused);
+
+        Assert.Equal(expected, OnlineFightLog.VerdictFields(s));
     }
 
     // ======== 探针转行的白名单 ========
