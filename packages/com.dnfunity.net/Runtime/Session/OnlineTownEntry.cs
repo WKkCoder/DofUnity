@@ -184,64 +184,69 @@ namespace Dnf.Net.Session
     /// </summary>
     public sealed class OnlineTownEntry
     {
-        private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
-        private static readonly TimeSpan BootstrapTimeout = TimeSpan.FromSeconds(15);
+        internal static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
+        internal static readonly TimeSpan BootstrapTimeout = TimeSpan.FromSeconds(15);
 
         private readonly OnlineEntrySettings _settings;
+        private readonly OnlineClientSessionHooks _runHooks;
 
         /// <summary>按入参创建编排。</summary>
         public OnlineTownEntry(OnlineEntrySettings settings)
+            : this(settings, null)
+        {
+        }
+
+        internal OnlineTownEntry(OnlineEntrySettings settings, OnlineClientSessionHooks runHooks)
         {
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+            _runHooks = runHooks;
         }
 
         /// <summary>跑完整条链;中途失败返回带原因的结果,取消时抛 <see cref="OperationCanceledException"/>。</summary>
         public async Task<OnlineEntryResult> RunAsync(Action<OnlineStage> onStage = null, CancellationToken cancellationToken = default)
         {
-            int framesSeen = 0;
-
-            onStage?.Invoke(OnlineStage.GatewayLogin);
-            string token;
-            using (GatewayClient gateway = CreateGateway())
+            OnlineClientSessionHooks hooks = _runHooks ?? new OnlineClientSessionHooks();
+            hooks.AutoHeartbeat = false;
+            hooks.InlineCallbacks = true;
+            hooks.ValidateSlot = false;
+            var client = new OnlineClientSession(_settings, onStage, null, hooks);
+            try
             {
-                GatewayResult login = await gateway.LoginAsync(_settings.Account, _settings.Password, cancellationToken).ConfigureAwait(false);
-                if (!login.IsSuccess || login.Token == null)
+                OnlineLoginResult login = await client.LoginAsync(_settings.Account, _settings.Password, cancellationToken).ConfigureAwait(false);
+                if (!login.IsSuccess)
                 {
-                    return Fail(OnlineStage.GatewayLogin, OnlineFailure.GatewayLoginFailed, null, -1, framesSeen, null, null, 0);
+                    return client.Detach(Fail(login.Stage, login.Failure, null, -1, 0, null, null, 0));
                 }
-                token = login.Token;
-
-                onStage?.Invoke(OnlineStage.GameServerAddress);
-                GatewayResult ip = await gateway.GetGameServerIpAsync(cancellationToken).ConfigureAwait(false);
-                if (!ip.IsSuccess || ip.Text == null || !IPAddress.TryParse(ip.Text.Trim(), out IPAddress address))
+                OnlineConnectResult connected = await client.ConnectAsync(_settings.ChannelPort, cancellationToken).ConfigureAwait(false);
+                if (!connected.IsSuccess)
                 {
-                    return Fail(OnlineStage.GameServerAddress, OnlineFailure.NoGameServerAddress, null, -1, framesSeen, null, null, 0);
+                    return client.Detach(connected.EntryResult);
                 }
 
-                onStage?.Invoke(OnlineStage.ChannelConnect);
-                TcpClient tcp = new TcpClient();
-                Task connectTask = tcp.ConnectAsync(address, _settings.ChannelPort);
-                Task timeoutTask = Task.Delay(ConnectTimeout, cancellationToken);
-                if (await Task.WhenAny(connectTask, timeoutTask).ConfigureAwait(false) != connectTask || !tcp.Connected)
+                client.EnsureSelectionStage();
+                SelectCharacterResult lastFailureResult = null;
+                for (int slot = 0; slot < _settings.MaxSlots; slot++)
                 {
-                    tcp.Dispose();
-                    if (cancellationToken.IsCancellationRequested)
+                    OnlineSelectCharacterResult selected = await client.SelectCharacterAsync(slot, cancellationToken).ConfigureAwait(false);
+                    if (selected.Entered)
                     {
-                        throw new OperationCanceledException(cancellationToken);
+                        return client.Detach(selected.EntryResult);
                     }
-                    return Fail(OnlineStage.ChannelConnect, OnlineFailure.ConnectFailed, null, -1, framesSeen, null, null, 0);
+                    if (selected.SelectCharacter != null)
+                    {
+                        lastFailureResult = selected.SelectCharacter;
+                    }
+                    if (!selected.MayTryAnotherSlot)
+                    {
+                        break;
+                    }
                 }
-
-                var session = new GameClientSession(tcp.GetStream());
-                onStage?.Invoke(OnlineStage.Bootstrap);
-                bool boot = await session.ReceiveBootstrapAsync(BootstrapTimeout, cancellationToken).ConfigureAwait(false);
-                if (!boot)
-                {
-                    OnlineFailure failure = session.Rejected ? OnlineFailure.Rejected : OnlineFailure.BootstrapFailed;
-                    return Fail(OnlineStage.Bootstrap, failure, null, -1, framesSeen, null, tcp, 0);
-                }
-
-                return await EnterOnSessionAsync(session, token, LocalAddressOf(tcp), tcp, onStage, null, cancellationToken).ConfigureAwait(false);
+                return client.Detach(client.NoUsableSlot(lastFailureResult));
+            }
+            catch
+            {
+                client.Dispose();
+                throw;
             }
         }
 
@@ -268,48 +273,57 @@ namespace Dnf.Net.Session
             SelectCharacterResult lastFailureResult = null;
             for (int slot = 0; slot < _settings.MaxSlots; slot++)
             {
-                FrameStatus sent = await session.SendAsync(PacketClass.Cmd, (ushort)SlotJudge.SelectPacketId, new byte[] { (byte)slot }, cancellationToken).ConfigureAwait(false);
-                if (sent != FrameStatus.Ok)
+                OnlineTownSelection selection = await SelectOnSessionAsync(session, slot, earlyFrames, connection, w, cancellationToken).ConfigureAwait(false);
+                if (selection.Result.Entered)
+                {
+                    return selection.Result;
+                }
+                if (selection.Result.SelectCharacter != null)
+                {
+                    lastFailureResult = selection.Result.SelectCharacter;
+                }
+                if (!selection.CanRetry)
                 {
                     break;
-                }
-                List<DecodedFrame> window = await session.ReceiveAsync(w.Slot, stopAfterFrames: 64, cancellationToken).ConfigureAwait(false);
-                SlotOutcome outcome = SlotJudge.Judge(window);
-
-                // 判定只看状态字节,解析结果随判定一起送出:失败槽的结果留到最后一个("没有可用的槽"时带出去),进城槽的结果进结果对象。选角流程不因此改变。
-                if (outcome.Kind == SlotOutcomeKind.Failed && outcome.SelectResult != null)
-                {
-                    lastFailureResult = outcome.SelectResult;
-                }
-                if (outcome.Kind == SlotOutcomeKind.Entered)
-                {
-                    List<DecodedFrame> tail = await session.ReceiveAsync(w.Tail, cancellationToken: cancellationToken).ConfigureAwait(false);
-
-                    // 进城后给明文帧做只读快照,喂的是城镇阶段收到的全部帧,各一遍:登录回包窗口与登录后拉角色列表的窗口(早先被丢弃的那部分;
-                    // 应答被信封封住的,会话层拆开后的内层帧已紧跟在信封帧后面)、选角窗口、尾窗口。进副本阶段的帧不在其中(快照在这里定下,之后不再喂)。
-                    // 解析器对错位与未知帧号只跳过,不抛。
-                    var entryFrames = new List<DecodedFrame>(earlyFrames.Count + window.Count + tail.Count);
-                    entryFrames.AddRange(earlyFrames);
-                    entryFrames.AddRange(window);
-                    entryFrames.AddRange(tail);
-                    TownEntrySnapshot snapshot = TownEntryParser.Parse(entryFrames, slot);
-
-                    // 副本许可表走并列的出口:同一批帧,各一遍。不并进 TownEntrySnapshot(它的字段只放简单值,计数口径也不变:(0,5) 与 (1,4) 帧在那里照旧只计"看过")。
-                    DungeonPermissionSnapshot permissions = DungeonPermissionParser.Collect(entryFrames);
-
-                    // 选角回包的解析结果:优先取选角窗口里的(判定时已带出),没有再看尾窗口(回包被挤到窗口之后时才会这样)。只读附加信息,不影响上面的判定。
-                    SelectCharacterResult selectResult = outcome.SelectResult ?? FirstSelectSuccess(tail);
-
-                    // 帧数按会话的脱敏事件总数计(只进不减)。
-                    return new OnlineEntryResult(OnlineStage.Done, OnlineFailure.None, null, slot, session, connection, session.Events.Count, session.SecondLayerMismatches,
-                        snapshot, permissions, selectResult);
                 }
             }
             return Fail(OnlineStage.SelectSlot, OnlineFailure.NoUsableSlot, null, -1, session.Events.Count, null, connection, session.SecondLayerMismatches, lastFailureResult);
         }
 
+        /// <summary>单个槽的选角阶段；完整进城与分阶段会话共用这一段，保证命令、窗口与快照口径一致。</summary>
+        internal async Task<OnlineTownSelection> SelectOnSessionAsync(GameClientSession session, int slot,
+            List<DecodedFrame> earlyFrames, IDisposable connection, OnlineTownWindows windows, CancellationToken cancellationToken)
+        {
+            FrameStatus sent = await session.SendAsync(PacketClass.Cmd, (ushort)SlotJudge.SelectPacketId,
+                new byte[] { (byte)slot }, cancellationToken).ConfigureAwait(false);
+            if (sent != FrameStatus.Ok)
+            {
+                return new OnlineTownSelection(Fail(OnlineStage.SelectSlot, OnlineFailure.NoUsableSlot, null, -1,
+                    session.Events.Count, null, connection, session.SecondLayerMismatches), false);
+            }
+            List<DecodedFrame> window = await session.ReceiveAsync(windows.Slot, stopAfterFrames: 64, cancellationToken).ConfigureAwait(false);
+            SlotOutcome outcome = SlotJudge.Judge(window);
+            if (outcome.Kind != SlotOutcomeKind.Entered)
+            {
+                SelectCharacterResult failure = outcome.Kind == SlotOutcomeKind.Failed ? outcome.SelectResult : null;
+                return new OnlineTownSelection(Fail(OnlineStage.SelectSlot, OnlineFailure.NoUsableSlot, null, -1,
+                    session.Events.Count, null, connection, session.SecondLayerMismatches, failure), true);
+            }
+
+            List<DecodedFrame> tail = await session.ReceiveAsync(windows.Tail, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var entryFrames = new List<DecodedFrame>(earlyFrames.Count + window.Count + tail.Count);
+            entryFrames.AddRange(earlyFrames);
+            entryFrames.AddRange(window);
+            entryFrames.AddRange(tail);
+            TownEntrySnapshot snapshot = TownEntryParser.Parse(entryFrames, slot);
+            DungeonPermissionSnapshot permissions = DungeonPermissionParser.Collect(entryFrames);
+            SelectCharacterResult selectResult = outcome.SelectResult ?? FirstSelectSuccess(tail);
+            return new OnlineTownSelection(new OnlineEntryResult(OnlineStage.Done, OnlineFailure.None, null, slot,
+                session, connection, session.Events.Count, session.SecondLayerMismatches, snapshot, permissions, selectResult), false);
+        }
+
         /// <summary>本机出口地址按小端 u32 取(登录请求里要带);不是 IPv4 或取不到就是 0。</summary>
-        private static uint LocalAddressOf(TcpClient tcp)
+        internal static uint LocalAddressOf(TcpClient tcp)
         {
             if (tcp.Client.LocalEndPoint is IPEndPoint local && local.AddressFamily == AddressFamily.InterNetwork)
             {
@@ -324,7 +338,7 @@ namespace Dnf.Net.Session
         /// 登录回包窗口里收到的全部帧,以及登录成功后顺带拉的那次角色列表的窗口里收到的全部帧,按到达顺序追加进 <paramref name="earlyFrames"/>
         /// (调用方进城后交给 <see cref="TownEntryParser"/>;登录失败时结果对象不带快照,追加的内容不会被用到)。
         /// </summary>
-        private async Task<OnlineEntryResult> TryGameLogin(GameClientSession session, string token, uint localAddress,
+        internal async Task<OnlineEntryResult> TryGameLogin(GameClientSession session, string token, uint localAddress,
             IDisposable connection, OnlineTownWindows windows, List<DecodedFrame> earlyFrames, CancellationToken cancellationToken)
         {
             byte[] mouseCipher = _settings.MouseCipher != null && _settings.MouseCipher.Length == LoginRequest.MouseCipherBytes
@@ -380,7 +394,7 @@ namespace Dnf.Net.Session
             return null;
         }
 
-        private GatewayClient CreateGateway()
+        internal GatewayClient CreateGateway()
         {
             // 游戏服与网关都在自有网络上,这里关掉系统代理直连(与探针同一做法)。
             var transport = new HttpGatewayTransport(
@@ -403,7 +417,7 @@ namespace Dnf.Net.Session
             }
         }
 
-        private static OnlineEntryResult Fail(OnlineStage stage, OnlineFailure failure, byte? code, int slot, int framesSeen, GameClientSession session, IDisposable connection, int mismatches,
+        internal static OnlineEntryResult Fail(OnlineStage stage, OnlineFailure failure, byte? code, int slot, int framesSeen, GameClientSession session, IDisposable connection, int mismatches,
             SelectCharacterResult selectCharacter = null)
         {
             return new OnlineEntryResult(stage, failure, code, slot, session, connection, framesSeen, mismatches, null, null, selectCharacter);
