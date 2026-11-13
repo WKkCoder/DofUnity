@@ -41,7 +41,11 @@ internal static class Program
         {
             return await FightCommand.RunAsync(args);
         }
-        Console.WriteLine("用法: dnf-netprobe offline <首包文件> | live [--register] [--channel-port N] [--data-version N] [--seconds N] | orchestrated [仓库根] | fight [仓库根] --dungeon <副本编号> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S]");
+        if (args.Length >= 1 && args[0] == "channel")
+        {
+            return await ChannelProbe.RunAsync(args);
+        }
+        Console.WriteLine("用法: dnf-netprobe offline <首包文件> | live [--register] [--channel-port N] [--data-version N] [--seconds N] | orchestrated [仓库根] | fight [仓库根] --dungeon <副本编号> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] | channel [仓库根] [--channel-port N] [--version V]");
         return 64;
     }
 
