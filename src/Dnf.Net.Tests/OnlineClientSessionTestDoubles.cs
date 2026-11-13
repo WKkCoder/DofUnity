@@ -49,33 +49,43 @@ internal sealed class OnlineFlowRig
     internal Func<int, bool> FailChannel { get; set; } = _ => false;
     internal Func<int, Func<DungeonEntryClientFrame, IEnumerable<byte[]>>> ScriptFactory { get; set; }
 
-    internal OnlineClientSession CreateSession(Action<OnlineStage> onStage = null, bool autoHeartbeat = false)
+    /// <summary>
+    /// 新建会话。给了 <paramref name="dispatcher"/> 就把事件(与进度)交给它派发并关掉"内联回调";
+    /// 传一个同步派发器,断线事件就在触发它的那个线程上同步执行,测试可以不靠睡眠直接数事件。
+    /// </summary>
+    internal OnlineClientSession CreateSession(Action<OnlineStage> onStage = null, bool autoHeartbeat = false,
+        IOnlineDispatcher dispatcher = null)
     {
         Hooks.AutoHeartbeat = autoHeartbeat;
-        return new OnlineClientSession(Settings, onStage, null, Hooks);
+        if (dispatcher != null)
+        {
+            Hooks.InlineCallbacks = false;
+        }
+        return new OnlineClientSession(Settings, onStage, dispatcher, Hooks);
     }
 
-    internal async Task<OnlineClientSession> LoggedIn(Action<OnlineStage> onStage = null, bool autoHeartbeat = false)
+    internal async Task<OnlineClientSession> LoggedIn(Action<OnlineStage> onStage = null, bool autoHeartbeat = false,
+        IOnlineDispatcher dispatcher = null)
     {
-        OnlineClientSession client = CreateSession(onStage, autoHeartbeat);
+        OnlineClientSession client = CreateSession(onStage, autoHeartbeat, dispatcher);
         OnlineLoginResult login = await client.LoginAsync(Account, Password);
         Assert.True(login.IsSuccess, login.Failure.ToString());
         return client;
     }
 
     internal async Task<(OnlineClientSession Client, OnlineConnectResult Connected)> Connected(
-        Action<OnlineStage> onStage = null, bool autoHeartbeat = false)
+        Action<OnlineStage> onStage = null, bool autoHeartbeat = false, IOnlineDispatcher dispatcher = null)
     {
-        OnlineClientSession client = await LoggedIn(onStage, autoHeartbeat);
+        OnlineClientSession client = await LoggedIn(onStage, autoHeartbeat, dispatcher);
         OnlineConnectResult connected = await GatewayTestSupport.Bounded(client.ConnectAsync(9010), 5);
         Assert.True(connected.IsSuccess, connected.Failure.ToString());
         return (client, connected);
     }
 
     internal async Task<(OnlineClientSession Client, OnlineSelectCharacterResult Selected)> Selected(
-        int slot = 0, bool autoHeartbeat = false)
+        int slot = 0, bool autoHeartbeat = false, IOnlineDispatcher dispatcher = null)
     {
-        (OnlineClientSession client, _) = await Connected(autoHeartbeat: autoHeartbeat);
+        (OnlineClientSession client, _) = await Connected(autoHeartbeat: autoHeartbeat, dispatcher: dispatcher);
         OnlineSelectCharacterResult selected = await GatewayTestSupport.Bounded(client.SelectCharacterAsync(slot), 5);
         Assert.True(selected.Entered, selected.Failure.ToString());
         return (client, selected);
@@ -100,7 +110,7 @@ internal sealed class OnlineFlowRig
         var recording = new OnlineFlowRecordingStream(pipe);
         var observer = new OnlineObservedStream(recording);
         var session = new GameClientSession(observer, slot => new SliceXorCipher(slot), () => 0x5a);
-        var connection = new CountingConnection();
+        var connection = new OnlineFlowConnection();
         var link = new OnlineChannelLink(session, connection, 0, observer);
         var channel = new OnlineFlowChannel(pipe, recording, link, connection);
         Channels.Add(channel);
@@ -126,7 +136,7 @@ internal sealed class OnlineFlowRig
 internal sealed class OnlineFlowChannel
 {
     internal OnlineFlowChannel(DungeonEntryPipe pipe, OnlineFlowRecordingStream recording,
-        OnlineChannelLink link, CountingConnection connection)
+        OnlineChannelLink link, OnlineFlowConnection connection)
     {
         Pipe = pipe;
         Recording = recording;
@@ -137,7 +147,46 @@ internal sealed class OnlineFlowChannel
     internal DungeonEntryPipe Pipe { get; }
     internal OnlineFlowRecordingStream Recording { get; }
     internal OnlineChannelLink Link { get; }
-    internal CountingConnection Connection { get; }
+    internal OnlineFlowConnection Connection { get; }
+}
+
+/// <summary>
+/// 假链路的"底层连接":数着被释放几次(链路被关的标志),并可挂一个释放时的回调——
+/// 回调在 <see cref="OnlineClientSession"/> 持门闩释放链路的那一刻、由释放它的线程同步执行,测试借此在释放窗口内做事。
+/// </summary>
+internal sealed class OnlineFlowConnection : IDisposable
+{
+    private int _disposeCount;
+
+    internal int DisposeCount => Volatile.Read(ref _disposeCount);
+
+    /// <summary>每次释放时调用(在计数之后);null 为不做事。</summary>
+    internal Action OnDispose { get; set; }
+
+    public void Dispose()
+    {
+        Interlocked.Increment(ref _disposeCount);
+        OnDispose?.Invoke();
+    }
+}
+
+/// <summary>线程安全的断线事件记录:事件可能在后台派发线程或心跳线程上到达。</summary>
+internal sealed class OnlineDisconnectLog
+{
+    private readonly object _gate = new();
+    private readonly List<OnlineDisconnectReason> _reasons = new();
+
+    internal void Add(OnlineDisconnectReason reason)
+    {
+        lock (_gate) _reasons.Add(reason);
+    }
+
+    internal OnlineDisconnectReason[] Reasons
+    {
+        get { lock (_gate) return _reasons.ToArray(); }
+    }
+
+    internal int Count => Reasons.Length;
 }
 
 /// <summary>记录写出线上的原始字节，同时把 I/O 交给脚本化管道。</summary>

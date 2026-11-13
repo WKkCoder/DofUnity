@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Reflection;
 using Dnf.Net.Frame;
 using Dnf.Net.Session;
 
@@ -817,5 +819,779 @@ public sealed class OnlineClientSessionTests
         Assert.Equal(whole.Stage, failure.Stage);
         Assert.Equal(whole.Failure, failure.Failure);
         AssertWritesEqual(wholeRig.Channels[0].Recording.Writes, stagedRig.Channels[0].Recording.Writes);
+    }
+
+    // =====================================================================================================
+    // 验收后补测试:逐条堵住变异抽检里存活的缺口(每组注释里标了它盯的变异编号)。
+    // 协议数字(包号、槽号边界、帧数上限、心跳超时窗口)一律写字面值,不引用产品常量;数据全是合成的。
+    // 所有等待都有上限(5 秒),回归时是断言失败而不是挂住。
+    // =====================================================================================================
+
+    /// <summary>与心跳、选角、角色列表都无关的通知帧(包号 900 不属于任何被识别的集合):用来制造"收到了一帧"。</summary>
+    private static byte[] IdleNotice() => DungeonEntryWire.Notice(900, new byte[] { 9 });
+
+    /// <summary>服务端发来的心跳请求:类 0(通知)、包号 0、载荷一个字节。</summary>
+    private static byte[] HeartbeatRequest() => DungeonEntryWire.Notice(0, new byte[] { 0 });
+
+    /// <summary>客户端已写出的心跳回复数:类 1(命令)、包号 0。</summary>
+    private static int HeartbeatReplies(DungeonEntryPipe pipe) =>
+        pipe.ClientFrames.Count(f => f.Class == PacketClass.Cmd && f.Id == 0);
+
+    /// <summary>
+    /// 经反射直接调用会话内部的断线通知:产品自己的路径造不出"已被换下的旧链路"和"释放进行到一半"这两种时序,
+    /// 但守卫必须挡住它们,所以直接以这两种链路调用同一个入口。
+    /// </summary>
+    private static void NotifyDisconnectedDirectly(OnlineClientSession client, OnlineChannelLink link, OnlineDisconnectReason reason)
+    {
+        MethodInfo method = typeof(OnlineClientSession).GetMethod("NotifyDisconnected", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        method.Invoke(client, new object[] { link, reason });
+    }
+
+    // ---- F02:连频道只允许从"已登录"进入;链路已经开着时再连是顺序错误,且不动现有链路 ----
+
+    [Theory]
+    [InlineData("connected")]
+    [InlineData("selected")]
+    [InlineData("exclusive")]
+    public async Task Connect_is_refused_once_a_channel_is_open_and_leaves_the_live_link_alone(string state)
+    {
+        var rig = new OnlineFlowRig();
+        OnlineClientSession client;
+        OnlineClientSessionState expected;
+        switch (state)
+        {
+            case "connected":
+                (client, _) = await rig.Connected();
+                expected = OnlineClientSessionState.Connected;
+                break;
+            case "selected":
+                (client, _) = await rig.Selected();
+                expected = OnlineClientSessionState.CharacterSelected;
+                break;
+            default:
+                (client, _) = await rig.Selected();
+                await client.EnterExclusiveReceiveAsync();
+                expected = OnlineClientSessionState.ExclusiveReceive;
+                break;
+        }
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.ConnectAsync(9011));
+
+        Assert.Equal(expected, client.State);
+        Assert.Single(rig.RequestedPorts);                          // 没有再去开第二条频道连接
+        Assert.Single(rig.Channels);
+        Assert.Equal(0, rig.Channels[0].Connection.DisposeCount);   // 现有链路原样保留,没被关
+        Assert.NotNull(client.GameSession);
+        client.Dispose();
+    }
+
+    // ---- F06:断开之后回到哪个状态,取决于手里有没有网关令牌 ----
+
+    [Fact]
+    public async Task Disconnect_before_any_login_keeps_the_session_created_and_connect_stays_an_order_error()
+    {
+        var rig = new OnlineFlowRig();
+        OnlineClientSession client = rig.CreateSession();
+
+        await Bounded(client.DisconnectAsync());
+
+        Assert.Equal(OnlineClientSessionState.Created, client.State);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.ConnectAsync(9010));
+        Assert.Empty(rig.Channels);
+        Assert.True((await Bounded(client.LoginAsync(OnlineFlowRig.Account, OnlineFlowRig.Password))).IsSuccess);
+        Assert.Equal(OnlineClientSessionState.LoggedIn, client.State);
+    }
+
+    [Fact]
+    public async Task Disconnect_after_a_failed_login_keeps_the_session_created()
+    {
+        var rig = new OnlineFlowRig();
+        OnlineClientSession client = rig.CreateSession();
+        OnlineLoginResult failed = await Bounded(client.LoginAsync(OnlineFlowRig.Account, "wrong900"));
+        Assert.Equal(OnlineFailure.GatewayLoginFailed, failed.Failure);
+
+        await Bounded(client.DisconnectAsync());
+
+        Assert.Equal(OnlineClientSessionState.Created, client.State);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.ConnectAsync(9010));
+        Assert.Empty(rig.Channels);
+    }
+
+    // ---- H02:选角成功之前不能开心跳(链路已开但还没选角时,泵起来会抢读选角回包) ----
+
+    [Theory]
+    [InlineData("created", false)]
+    [InlineData("logged-in", false)]
+    [InlineData("connected", false)]
+    [InlineData("selected", true)]
+    public async Task Heartbeat_can_only_be_enabled_once_a_character_is_selected(string state, bool allowed)
+    {
+        var rig = new OnlineFlowRig();
+        OnlineClientSession client;
+        switch (state)
+        {
+            case "created":
+                client = rig.CreateSession();
+                break;
+            case "logged-in":
+                client = await rig.LoggedIn();
+                break;
+            case "connected":
+                (client, _) = await rig.Connected();
+                break;
+            default:
+                (client, _) = await rig.Selected();
+                break;
+        }
+
+        if (allowed)
+        {
+            await Bounded(client.SetHeartbeatAsync(true));
+            Assert.Equal(OnlineHeartbeatState.Running, client.HeartbeatState);
+            await Bounded(client.SetHeartbeatAsync(false));
+            Assert.Equal(OnlineHeartbeatState.Disabled, client.HeartbeatState);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => client.SetHeartbeatAsync(true));
+            Assert.Equal(OnlineHeartbeatState.Disabled, client.HeartbeatState);
+        }
+        client.Dispose();
+    }
+
+    // ---- F07:网关"成功但没有令牌"的回包,会话看到的是登录失败(守卫在网关客户端里,会话这一层是第二道) ----
+
+    [Theory]
+    [InlineData("success")]
+    [InlineData("0")]
+    public async Task A_gateway_success_reply_without_a_token_is_a_login_failure(string plaintext)
+    {
+        var rig = new OnlineFlowRig();
+        rig.FakeGateway.ForceReplyPlaintext = plaintext;
+        OnlineClientSession client = rig.CreateSession();
+
+        OnlineLoginResult result = await Bounded(client.LoginAsync(OnlineFlowRig.Account, OnlineFlowRig.Password));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(OnlineStage.GatewayLogin, result.Stage);
+        Assert.Equal(OnlineFailure.GatewayLoginFailed, result.Failure);
+        Assert.Equal(OnlineClientSessionState.Created, client.State);
+        Assert.Equal(0, rig.FakeGateway.GetCount);                  // 登录没成功,就不去取游戏服地址
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.ConnectAsync(9010));
+        Assert.Empty(rig.Channels);
+    }
+
+    // ---- F08:游戏服地址文本两端的空白被容忍,空白或不是地址的文本被拒绝(地址文本在网关客户端里已被规整) ----
+
+    [Theory]
+    [InlineData("  {0}\r\n", true)]
+    [InlineData("\n\t{0}   ", true)]
+    [InlineData(" \t\r\n ", false)]
+    [InlineData("{0}.9", false)]
+    [InlineData("{0} extra", false)]
+    public async Task Game_server_address_text_is_trimmed_and_blank_or_malformed_text_is_refused(string format, bool accepted)
+    {
+        var rig = new OnlineFlowRig();
+        rig.FakeGateway.GameServerIp = string.Format(format, GatewayTestSupport.Dots(127, 0, 0, 1));
+        OnlineClientSession client = rig.CreateSession();
+
+        OnlineLoginResult result = await Bounded(client.LoginAsync(OnlineFlowRig.Account, OnlineFlowRig.Password));
+
+        Assert.Equal(OnlineStage.GameServerAddress, result.Stage);
+        if (accepted)
+        {
+            Assert.True(result.IsSuccess);
+            Assert.Equal(OnlineClientSessionState.LoggedIn, client.State);
+            Assert.True((await Bounded(client.ConnectAsync(9010))).IsSuccess);   // 取到的地址真能用来连频道
+        }
+        else
+        {
+            Assert.Equal(OnlineFailure.NoGameServerAddress, result.Failure);
+            Assert.Equal(OnlineClientSessionState.Created, client.State);
+        }
+        client.Dispose();
+    }
+
+    // ---- F11:连接失败时,结果不得声称"角色列表已收到" ----
+
+    [Theory]
+    [InlineData("channel")]
+    [InlineData("closed")]
+    [InlineData("refused")]
+    [InlineData("login-rejected")]
+    [InlineData("login-silent")]
+    [InlineData("bad-request")]
+    public async Task A_failed_connect_never_claims_a_character_list(string kind)
+    {
+        var rig = new OnlineFlowRig();
+        OnlineClientSession client;
+        switch (kind)
+        {
+            case "channel":
+                rig.FailChannel = _ => true;
+                client = await rig.LoggedIn();
+                break;
+            case "closed":
+                rig.BootstrapFactory = _ => null;
+                rig.CloseBeforeBootstrap = _ => true;
+                client = await rig.LoggedIn();
+                break;
+            case "refused":
+                rig.BootstrapFactory = _ => DungeonEntryWire.Refusal();
+                client = await rig.LoggedIn();
+                break;
+            case "login-rejected":
+                rig.ScriptFactory = _ => Script(HostTestKit.Frames(DungeonEntryWire.Reply(1, new byte[] { 0, 0x17, 0, 0 })));
+                client = await rig.LoggedIn();
+                break;
+            case "login-silent":
+                rig.ScriptFactory = _ => Script(HostTestKit.Frames());
+                client = await rig.LoggedIn();
+                break;
+            default:
+                string account = new string('a', 25);
+                string md5 = Convert.ToHexString(System.Security.Cryptography.MD5.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(OnlineFlowRig.Password))).ToLowerInvariant();
+                rig.FakeGateway.Accounts[account] = new FakeGateway.Account { Md5 = md5, Qq = string.Empty };
+                client = rig.CreateSession();
+                Assert.True((await client.LoginAsync(account, OnlineFlowRig.Password)).IsSuccess);
+                break;
+        }
+
+        OnlineConnectResult result = await Bounded(client.ConnectAsync(9010));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(OnlineCharacterListStatus.NotReceived, result.CharacterListStatus);
+        Assert.False(result.CharacterListReceived);
+        Assert.Null(result.CharacterList);
+        Assert.Null(result.Channel);
+        Assert.Equal(OnlineClientSessionState.LoggedIn, client.State);
+        client.Dispose();
+    }
+
+    // ---- F14:只有包号 2 的通知才被当作角色列表;别的通知不论载荷长得多像都不算 ----
+
+    [Fact]
+    public async Task A_notice_with_another_packet_id_is_never_read_as_the_character_list()
+    {
+        var rig = new OnlineFlowRig();
+        // 诱饵:载荷是一份合法的单条目列表,但包号是 900;它排在真列表(包号 2、三个条目)前面
+        byte[] decoy = DungeonEntryWire.Notice(900, UserInfoTestData.Packet(UserInfoTestData.Standard(7)));
+        rig.ScriptFactory = _ => Script(
+            login: HostTestKit.Frames(DungeonEntryWire.Reply(1, HostTestKit.LoginSuccess()), decoy),
+            list: HostTestKit.Frames(HostTestKit.DirectListNotice()));
+
+        (OnlineClientSession client, OnlineConnectResult result) = await rig.Connected();
+
+        Assert.Equal(OnlineCharacterListStatus.Received, result.CharacterListStatus);
+        Assert.Equal(3, result.CharacterList.Entries.Count);       // 真列表是三个条目,诱饵只有一个
+        Assert.Equal(61, result.CharacterList.Entries[0].Level);   // 条目 0 的等级是 61(诱饵里是 68)
+        client.Dispose();
+    }
+
+    [Theory]
+    [InlineData("valid")]
+    [InlineData("malformed")]
+    public async Task A_decoy_notice_alone_leaves_the_character_list_not_received(string kind)
+    {
+        var rig = new OnlineFlowRig();
+        byte[] body = kind == "valid" ? UserInfoTestData.Packet(UserInfoTestData.Standard(7)) : new byte[] { 2, 1 };
+        rig.ScriptFactory = _ => Script(
+            login: HostTestKit.Frames(DungeonEntryWire.Reply(1, HostTestKit.LoginSuccess()), DungeonEntryWire.Notice(900, body)),
+            list: HostTestKit.Frames());
+
+        (OnlineClientSession client, OnlineConnectResult result) = await rig.Connected();
+
+        Assert.Equal(OnlineCharacterListStatus.NotReceived, result.CharacterListStatus);
+        Assert.False(result.CharacterListReceived);
+        Assert.Null(result.CharacterList);
+        client.Dispose();
+    }
+
+    // ---- F17:槽号的合法范围是 0 到 255(含两端),范围之外在发任何帧之前就拒绝 ----
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(255)]
+    public async Task The_one_byte_slot_range_includes_both_ends(int slot)
+    {
+        var rig = new OnlineFlowRig();
+        (OnlineClientSession client, _) = await rig.Connected();
+
+        OnlineSelectCharacterResult result = null;
+        Exception error = await Record.ExceptionAsync(async () => result = await Bounded(client.SelectCharacterAsync(slot)));
+
+        Assert.Null(error);
+        Assert.True(result.Entered);
+        Assert.Equal(slot, result.Slot);
+        Assert.Equal(slot, result.RequestedSlot);
+        DungeonEntryClientFrame select = rig.Channels[0].Pipe.ClientFrames.Single(f => f.Class == PacketClass.Cmd && f.Id == 4);
+        Assert.Equal((byte)slot, select.Plain[0]);
+        client.Dispose();
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(256)]
+    [InlineData(1000)]
+    [InlineData(int.MinValue)]
+    [InlineData(int.MaxValue)]
+    public async Task Out_of_range_slots_are_refused_before_any_frame_is_sent(int slot)
+    {
+        var rig = new OnlineFlowRig();
+        (OnlineClientSession client, _) = await rig.Connected();
+        int writesBefore = rig.Channels[0].Recording.Writes.Count;
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.SelectCharacterAsync(slot));
+
+        Assert.Equal(writesBefore, rig.Channels[0].Recording.Writes.Count);
+        Assert.DoesNotContain(rig.Channels[0].Pipe.ClientFrames, f => f.Id == 4);
+        Assert.Equal(OnlineClientSessionState.Connected, client.State);
+        Assert.True((await Bounded(client.SelectCharacterAsync(0))).Entered);       // 被拒之后连接照常可用
+        client.Dispose();
+    }
+
+    // ---- R10:选角窗口最多收 64 帧;成功回包被挤到窗口之后时,要从尾窗口里把它找回来 ----
+
+    [Fact]
+    public async Task A_select_reply_pushed_past_the_64_frame_window_is_taken_from_the_tail_window()
+    {
+        var rig = new OnlineFlowRig();
+        SelectCharacterSpec late = SelectCharacterSpec.Variant(5);
+        byte[][] frames = Enumerable.Repeat(IdleNotice(), 63)                   // 窗口里的前 63 帧:无关通知
+            .Concat(HostTestKit.EnterComplete())                                // 第 64 帧:进城完成,窗口到此为止
+            .Append(DungeonEntryWire.Reply(4, late.Build()))                    // 第 65 帧:成功回包,落在尾窗口
+            .ToArray();
+        rig.ScriptFactory = _ => Script(select: _ => frames);
+
+        (OnlineClientSession client, OnlineSelectCharacterResult selected) = await rig.Selected();
+
+        Assert.True(selected.Entered);
+        Assert.NotNull(selected.SelectCharacter);
+        Assert.True(selected.SelectCharacter.IsSuccess);
+        Assert.Equal(late.Village, selected.SelectCharacter.Load.Village);
+        client.Dispose();
+    }
+
+    [Fact]
+    public async Task A_select_reply_inside_the_window_wins_over_a_later_one_in_the_tail_window()
+    {
+        var rig = new OnlineFlowRig();
+        SelectCharacterSpec inWindow = SelectCharacterSpec.Variant(3);
+        SelectCharacterSpec late = SelectCharacterSpec.Variant(5);
+        Assert.NotEqual(inWindow.Village, late.Village);
+        byte[][] frames = new[] { DungeonEntryWire.Reply(4, inWindow.Build()) }  // 第 1 帧:窗口里的成功回包
+            .Concat(Enumerable.Repeat(IdleNotice(), 63))                         // 第 2 到 64 帧:无关通知
+            .Append(DungeonEntryWire.Reply(4, late.Build()))                     // 第 65 帧:尾窗口里的另一份回包
+            .ToArray();
+        rig.ScriptFactory = _ => Script(select: _ => frames);
+
+        (OnlineClientSession client, OnlineSelectCharacterResult selected) = await rig.Selected();
+
+        Assert.True(selected.Entered);
+        Assert.Equal(inWindow.Village, selected.SelectCharacter.Load.Village);
+        client.Dispose();
+    }
+
+    // ---- H05:一直有帧进来,空闲计时就一直被重置,不应报心跳超时 ----
+
+    [Fact]
+    public async Task Steady_inbound_traffic_keeps_resetting_the_idle_timer()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromMilliseconds(1000);
+        var log = new OnlineDisconnectLog();
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true, dispatcher: new OnlineInlineDispatcher());
+        client.Disconnected += log.Add;
+        DungeonEntryPipe pipe = rig.Channels[0].Pipe;
+
+        // 22 次、每次隔 100 毫秒推一帧与心跳无关的通知,总长约 2.2 秒,是超时窗口(1 秒)的两倍多:
+        // 空闲计时每收到一帧就重置的话,一次超时也不该报;不重置的话,约 1 秒时就会报。
+        for (int i = 0; i < 22; i++)
+        {
+            pipe.Push(IdleNotice());
+            await Task.Delay(100);
+            Assert.Empty(log.Reasons);
+        }
+        Assert.Equal(OnlineHeartbeatState.Running, client.HeartbeatState);
+
+        // 帧停了之后,超时从"最后一帧"算起,不会立刻报,窗口走完才报
+        Stopwatch quiet = Stopwatch.StartNew();
+        await WaitUntil(() => log.Count > 0);
+        Assert.True(quiet.Elapsed >= TimeSpan.FromMilliseconds(250), "超时应从最后一帧起算,实际 " + quiet.ElapsedMilliseconds + " 毫秒就报了");
+        Assert.Equal(new[] { OnlineDisconnectReason.HeartbeatTimeout }, log.Reasons);
+        client.Dispose();
+    }
+
+    // ---- H07:心跳回复写成功就是写成功,不能当作写失败报断线 ----
+
+    [Fact]
+    public async Task A_successful_heartbeat_reply_is_not_reported_as_a_write_failure()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        var log = new OnlineDisconnectLog();
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true, dispatcher: new OnlineInlineDispatcher());
+        client.Disconnected += log.Add;
+        DungeonEntryPipe pipe = rig.Channels[0].Pipe;
+
+        pipe.Push(HeartbeatRequest());
+        await WaitUntil(() => HeartbeatReplies(pipe) == 1);
+        await Task.Delay(200);
+        Assert.Empty(log.Reasons);
+        Assert.Equal(OnlineHeartbeatState.Running, client.HeartbeatState);
+
+        // 泵还活着:第二次请求照样被回复,事件仍然没有
+        pipe.Push(HeartbeatRequest());
+        await WaitUntil(() => HeartbeatReplies(pipe) == 2);
+        await Task.Delay(100);
+        Assert.Empty(log.Reasons);
+        Assert.Equal(OnlineHeartbeatState.Running, client.HeartbeatState);
+        client.Dispose();
+    }
+
+    [Fact]
+    public async Task A_failed_heartbeat_write_is_reported_exactly_once_as_a_write_error()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        var log = new OnlineDisconnectLog();
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true, dispatcher: new OnlineInlineDispatcher());
+        client.Disconnected += log.Add;
+        DungeonEntryPipe pipe = rig.Channels[0].Pipe;
+
+        pipe.WriteFailure = new IOException("synthetic");
+        pipe.Push(HeartbeatRequest());
+        await WaitUntil(() => log.Count > 0);
+        await WaitUntil(() => client.HeartbeatState == OnlineHeartbeatState.Disabled);
+        await Task.Delay(100);
+
+        Assert.Equal(new[] { OnlineDisconnectReason.WriteError }, log.Reasons);
+        client.Dispose();
+    }
+
+    // ---- D01:同一条链路的断线只报一次(阶段调用与心跳泵先后发现、泵重启后再发现,都不重复) ----
+
+    [Fact]
+    public async Task A_link_that_closed_before_the_pump_starts_is_reported_once_across_stage_and_pump()
+    {
+        var rig = new OnlineFlowRig();
+        rig.ScriptFactory = index => Script(select: _ =>
+        {
+            // 选角回包到达的同时服务端关了连接:阶段调用在选角结束时发现一次,随后启动的泵第一圈又会发现一次
+            DungeonEntryPipe pipe = rig.Channels[index].Pipe;
+            pipe.Push(HostTestKit.EnterComplete()[0]);
+            pipe.CloseServer();
+            return HostTestKit.Frames();
+        });
+        var dispatcher = new OnlineInlineDispatcher();
+        var log = new OnlineDisconnectLog();
+        OnlineClientSession client = await rig.LoggedIn(autoHeartbeat: true, dispatcher: dispatcher);
+        client.Disconnected += log.Add;
+        Assert.True((await Bounded(client.ConnectAsync(9010))).IsSuccess);
+
+        OnlineSelectCharacterResult selected = await Bounded(client.SelectCharacterAsync(0));
+
+        Assert.True(selected.Entered);
+        await WaitUntil(() => client.HeartbeatState == OnlineHeartbeatState.Disabled);   // 泵已经跑完并退出
+        await Task.Delay(100);
+        Assert.Equal(new[] { OnlineDisconnectReason.PeerClosed }, log.Reasons);
+        Assert.Equal(1, dispatcher.Calls);
+        client.Dispose();
+    }
+
+    [Fact]
+    public async Task Restarting_the_pump_on_a_dead_link_does_not_report_it_again()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        var dispatcher = new OnlineInlineDispatcher();
+        var log = new OnlineDisconnectLog();
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true, dispatcher: dispatcher);
+        client.Disconnected += log.Add;
+
+        rig.Channels[0].Pipe.CloseServer();
+        await WaitUntil(() => client.HeartbeatState == OnlineHeartbeatState.Disabled);
+        Assert.Equal(new[] { OnlineDisconnectReason.PeerClosed }, log.Reasons);
+
+        // 手动重开心跳:链路还是那条已经通知过的死链路,泵再次发现对端已关,但不得再报
+        await Bounded(client.SetHeartbeatAsync(true));
+        await WaitUntil(() => client.HeartbeatState == OnlineHeartbeatState.Disabled);
+        await Task.Delay(100);
+        Assert.Equal(new[] { OnlineDisconnectReason.PeerClosed }, log.Reasons);
+        Assert.Equal(1, dispatcher.Calls);
+        client.Dispose();
+    }
+
+    // ---- D02:只有当前链路才报断线;换下来的旧链路再出什么事都不触发 ----
+
+    [Fact]
+    public async Task A_link_that_is_no_longer_current_never_raises_the_disconnect_event()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        var dispatcher = new OnlineInlineDispatcher();
+        var log = new OnlineDisconnectLog();
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true, dispatcher: dispatcher);
+        client.Disconnected += log.Add;
+        OnlineChannelLink oldLink = rig.Channels[0].Link;
+
+        Assert.True((await Bounded(client.SwitchChannelAsync(9020))).IsSuccess);
+        Assert.Equal(2, rig.Channels.Count);
+        Assert.Equal(1, rig.Channels[0].Connection.DisposeCount);
+        Assert.Empty(log.Reasons);                                  // 换频道本身(含旧泵的收摊)不产生任何事件
+        OnlineChannelLink newLink = rig.Channels[1].Link;
+
+        // 旧链路(已被换下并关闭)被报告出错:它不是当前链路,不得触发事件
+        NotifyDisconnectedDirectly(client, oldLink, OnlineDisconnectReason.ReadError);
+        Assert.Empty(log.Reasons);
+        Assert.Equal(0, dispatcher.Calls);
+
+        // 对照:同样的通知落在当前链路上就是恰好一次事件,第二次通知被吞掉
+        NotifyDisconnectedDirectly(client, newLink, OnlineDisconnectReason.ReadError);
+        NotifyDisconnectedDirectly(client, newLink, OnlineDisconnectReason.WriteError);
+        Assert.Equal(new[] { OnlineDisconnectReason.ReadError }, log.Reasons);
+        Assert.Equal(1, dispatcher.Calls);
+        client.Dispose();
+    }
+
+    [Fact]
+    public async Task The_old_links_late_close_after_a_reconnect_raises_no_event()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        var log = new OnlineDisconnectLog();
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true, dispatcher: new OnlineInlineDispatcher());
+        client.Disconnected += log.Add;
+        OnlineFlowChannel old = rig.Channels[0];
+
+        await Bounded(client.DisconnectAsync());
+        Assert.True((await Bounded(client.ConnectAsync(9011))).IsSuccess);
+        Assert.True((await Bounded(client.SelectCharacterAsync(0))).Entered);       // 新链路上泵重新跑起来了
+
+        old.Link.ReadFault = true;                                  // 旧链路"出错"并且服务端关了连接
+        old.Pipe.CloseServer();
+        await Task.Delay(300);
+
+        Assert.Empty(log.Reasons);
+        Assert.Equal(OnlineHeartbeatState.Running, client.HeartbeatState);
+        client.Dispose();
+    }
+
+    // ---- D03:释放之后(包括释放进行到一半)不再触发断线事件 ----
+
+    [Fact]
+    public async Task A_failure_noticed_inside_the_dispose_window_raises_no_event()
+    {
+        var rig = new OnlineFlowRig();
+        var dispatcher = new OnlineInlineDispatcher();
+        var log = new OnlineDisconnectLog();
+        (OnlineClientSession client, _) = await rig.Connected(dispatcher: dispatcher);
+        client.Disconnected += log.Add;
+        OnlineFlowChannel channel = rig.Channels[0];
+        OnlineDisconnectReason[] insideWindow = null;
+        // 释放链路的那一刻(会话状态已经是 Disposed,但链路引用还没清空),让会话"发现"这条链路坏了
+        channel.Connection.OnDispose = () =>
+        {
+            NotifyDisconnectedDirectly(client, channel.Link, OnlineDisconnectReason.ReadError);
+            insideWindow = log.Reasons;
+        };
+
+        client.Dispose();
+
+        Assert.NotNull(insideWindow);                               // 回调确实在释放过程中跑过
+        Assert.Empty(insideWindow);
+        Assert.Equal(1, channel.Connection.DisposeCount);
+        Assert.Empty(log.Reasons);
+        Assert.Equal(0, dispatcher.Calls);
+
+        // 释放之后再通知同一条链路,同样没有事件
+        NotifyDisconnectedDirectly(client, channel.Link, OnlineDisconnectReason.PeerClosed);
+        Assert.Empty(log.Reasons);
+        Assert.Equal(OnlineClientSessionState.Disposed, client.State);
+    }
+
+    [Fact]
+    public async Task A_link_failure_after_dispose_raises_no_event_even_with_the_pump_running()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        var log = new OnlineDisconnectLog();
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true, dispatcher: new OnlineInlineDispatcher());
+        client.Disconnected += log.Add;
+        OnlineFlowChannel channel = rig.Channels[0];
+
+        client.Dispose();
+        channel.Link.ReadFault = true;
+        channel.Pipe.CloseServer();
+        await Task.Delay(200);
+
+        Assert.Empty(log.Reasons);
+        Assert.Equal(1, channel.Connection.DisposeCount);
+    }
+
+    // ---- D04:释放会话时底层连接被关闭(恰好一次,重复释放不重复关) ----
+
+    [Theory]
+    [InlineData("connected")]
+    [InlineData("selected")]
+    [InlineData("heartbeating")]
+    [InlineData("exclusive")]
+    [InlineData("failed-bootstrap")]
+    public async Task Dispose_closes_the_underlying_connection_exactly_once(string state)
+    {
+        var rig = new OnlineFlowRig();
+        OnlineClientSession client;
+        switch (state)
+        {
+            case "connected":
+                (client, _) = await rig.Connected();
+                break;
+            case "selected":
+                (client, _) = await rig.Selected();
+                break;
+            case "heartbeating":
+                (client, _) = await rig.Selected(autoHeartbeat: true);
+                break;
+            case "exclusive":
+                (client, _) = await rig.Selected();
+                await client.EnterExclusiveReceiveAsync();
+                break;
+            default:
+                rig.BootstrapFactory = _ => DungeonEntryWire.Refusal();
+                client = await rig.LoggedIn();
+                Assert.False((await Bounded(client.ConnectAsync(9010))).IsSuccess);
+                break;
+        }
+        Assert.Equal(0, rig.Channels[0].Connection.DisposeCount);   // 释放之前连接是开着的
+
+        client.Dispose();
+
+        Assert.Equal(1, rig.Channels[0].Connection.DisposeCount);
+        client.Dispose();                                           // 重复释放是空操作
+        Assert.Equal(1, rig.Channels[0].Connection.DisposeCount);
+        Assert.Equal(OnlineClientSessionState.Disposed, client.State);
+        Assert.Null(client.GameSession);
+    }
+
+    // ---- R01:RunAsync 不启动心跳泵(调用方自己用连接读包,泵会抢读) ----
+
+    [Fact]
+    public async Task RunAsync_forces_the_heartbeat_pump_off_even_when_the_hooks_ask_for_it()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Hooks.AutoHeartbeat = true;                             // 钩子要求自动心跳
+        OnlineEntryResult result = await Bounded(rig.CreateTownEntry().RunAsync());
+        Assert.True(result.Entered);
+
+        // RunAsync 必须把它压成关闭:调用方自己读包,不能让会话起一个泵去抢读
+        Assert.False(rig.Hooks.AutoHeartbeat);
+
+        // 行为侧:服务端发来的心跳请求没有被后台泵回复,而是原样留在会话里等调用方来读
+        rig.Channels[0].Pipe.Push(HeartbeatRequest());
+        await Task.Delay(150);
+        Assert.Equal(0, HeartbeatReplies(rig.Channels[0].Pipe));
+        List<DecodedFrame> mine = await Bounded(result.Session.ReceiveAsync(TimeSpan.FromMilliseconds(100)));
+        Assert.Contains(mine, f => f.Header.Class == PacketClass.Noti && f.Header.PacketId == 0);
+    }
+
+    // ---- R03:所有槽都选不进去时,最终结果带回最后一次失败槽的选角结果 ----
+
+    [Fact]
+    public async Task RunAsync_when_every_slot_fails_returns_the_last_slots_failure()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Settings.MaxSlots = 3;
+        byte[] codes = { 0x13, 4, 0x9f };                           // 每个槽的失败码都不同:区分"最后一个"与"第一个"
+        rig.ScriptFactory = _ => Script(select: slot => HostTestKit.Frames(DungeonEntryWire.Reply(4, SelectCharacterSpec.Failure(codes[slot]))));
+
+        OnlineEntryResult result = await Bounded(rig.CreateTownEntry().RunAsync());
+
+        Assert.False(result.Entered);
+        Assert.Equal(OnlineStage.SelectSlot, result.Stage);
+        Assert.Equal(OnlineFailure.NoUsableSlot, result.Failure);
+        Assert.NotNull(result.SelectCharacter);
+        Assert.False(result.SelectCharacter.IsSuccess);
+        Assert.Equal(codes[2], result.SelectCharacter.FailureCode);
+        Assert.Equal(new byte[] { 0, 1, 2 }, rig.Channels[0].Pipe.ClientFrames.Where(f => f.Id == 4).Select(f => f.Plain[0]).ToArray());
+    }
+
+    [Fact]
+    public async Task RunAsync_keeps_the_last_explicit_failure_when_later_slots_stay_silent()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Settings.MaxSlots = 3;
+        rig.ScriptFactory = _ => Script(select: slot => slot == 0
+            ? HostTestKit.Frames(DungeonEntryWire.Reply(4, SelectCharacterSpec.Failure(4)))
+            : HostTestKit.Frames());
+
+        OnlineEntryResult result = await Bounded(rig.CreateTownEntry().RunAsync());
+
+        Assert.False(result.Entered);
+        Assert.Equal(OnlineFailure.NoUsableSlot, result.Failure);
+        Assert.NotNull(result.SelectCharacter);
+        Assert.Equal((byte)4, result.SelectCharacter.FailureCode);
+        Assert.Equal(SelectCharacterFailure.SlotOutOfRange, result.SelectCharacter.Failure);
+    }
+
+    // ---- R05:RunAsync 中途被取消或出错时,创建的会话与连接被释放,异常原样抛出 ----
+
+    [Theory]
+    [InlineData("bootstrap")]
+    [InlineData("select")]
+    public async Task RunAsync_cancelled_mid_flight_releases_the_connection_and_throws(string phase)
+    {
+        var rig = new OnlineFlowRig();
+        if (phase == "bootstrap")
+        {
+            rig.BootstrapFactory = _ => null;                       // 启动包永远不来:卡在等启动包
+        }
+        else
+        {
+            // 选角窗口拉长到 20 秒(登录、列表窗口保持很短),选角命令发出后服务端一直沉默:卡在等选角回包,只有取消能结束它
+            rig.Hooks.Windows = new OnlineTownWindows(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(100),
+                TimeSpan.FromSeconds(20), TimeSpan.FromMilliseconds(30));
+            rig.ScriptFactory = _ => Script(select: _ => HostTestKit.Frames());
+        }
+        using var stop = new CancellationTokenSource();
+        Task<OnlineEntryResult> run = rig.CreateTownEntry().RunAsync(cancellationToken: stop.Token);
+
+        if (phase == "bootstrap")
+        {
+            await WaitUntil(() => rig.Channels.Count == 1);
+        }
+        else
+        {
+            await WaitUntil(() => rig.Channels.Count == 1 && rig.Channels[0].Pipe.ClientFrames.Any(f => f.Class == PacketClass.Cmd && f.Id == 4));
+        }
+        stop.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Bounded(run));
+        Assert.Equal(1, rig.Channels[0].Connection.DisposeCount);
+    }
+
+    [Fact]
+    public async Task A_select_send_failure_surfaces_as_an_io_error_and_RunAsync_releases_the_connection()
+    {
+        var rig = new OnlineFlowRig();
+        Func<DungeonEntryClientFrame, IEnumerable<byte[]>> inner = Script();
+        rig.ScriptFactory = index => frame =>
+        {
+            IEnumerable<byte[]> replies = inner(frame);
+            if (frame.Class == PacketClass.Cmd && frame.Id == 8)
+            {
+                // 角色列表请求处理完之后连接"坏了":下一次写(选角命令)会失败
+                rig.Channels[index].Pipe.WriteFailure = new IOException("synthetic write failure");
+            }
+            return replies;
+        };
+
+        IOException error = await Assert.ThrowsAsync<IOException>(() => Bounded(rig.CreateTownEntry().RunAsync()));
+
+        Assert.Equal("synthetic write failure", error.Message);
+        Assert.Equal(1, rig.Channels[0].Connection.DisposeCount);
+        Assert.DoesNotContain(rig.Channels[0].Pipe.ClientFrames, f => f.Id == 4);   // 选角命令没有写出去
+        Assert.Single(rig.Channels);                                                // 也没有换连接再试
     }
 }
