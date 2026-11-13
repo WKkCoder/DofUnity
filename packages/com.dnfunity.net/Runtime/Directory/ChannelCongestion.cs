@@ -54,21 +54,18 @@ namespace Dnf.Net.ChannelDirectory
         public ChannelScriptData(
             string rawText,
             float fullThresholdPercent,
-            IReadOnlyList<ChannelRecommendLevelRule> recommendLevels,
-            IReadOnlyCollection<string> pvpChannelNames)
+            IReadOnlyList<ChannelRecommendLevelRule> recommendLevels)
         {
             RawText = rawText ?? string.Empty;
             FullThresholdPercent = fullThresholdPercent;
             RecommendLevels = recommendLevels ?? Array.Empty<ChannelRecommendLevelRule>();
-            PvpChannelNames = pvpChannelNames ?? Array.Empty<string>();
         }
 
         /// <summary>默认空脚本(满载阈值 95.0)。</summary>
         public static ChannelScriptData Default { get; } = new ChannelScriptData(
             string.Empty,
             ChannelServiceConstants.DefaultFullThresholdPercent,
-            Array.Empty<ChannelRecommendLevelRule>(),
-            Array.Empty<string>());
+            Array.Empty<ChannelRecommendLevelRule>());
 
         /// <summary>解密并去除尾部零填充后的原文。</summary>
         public string RawText { get; }
@@ -78,9 +75,6 @@ namespace Dnf.Net.ChannelDirectory
 
         /// <summary>推荐等级规则列表。</summary>
         public IReadOnlyList<ChannelRecommendLevelRule> RecommendLevels { get; }
-
-        /// <summary>PVP 频道名集合(若有)。</summary>
-        public IReadOnlyCollection<string> PvpChannelNames { get; }
 
         /// <summary>按客户端 <c>0x010f4780</c> 规则去掉频道名内 ASCII 数字后,匹配推荐等级范围。</summary>
         public bool TryMatchRecommendLevel(string channelName, out int minLevel, out int maxLevel)
@@ -141,7 +135,10 @@ namespace Dnf.Net.ChannelDirectory
         }
     }
 
-    /// <summary>解析 <c>ChannelScript</c> / <c>ChannelRecommendLevel.etc</c> 中的阈值与推荐等级配置。</summary>
+    /// <summary>
+    /// 解析 <c>ChannelScript</c> / <c>ChannelRecommendLevel.etc</c> 中的阈值与推荐等级配置。
+    /// 本解析器只认 <c>[channel rate full]</c> 与 <c>[channel] "标签" 最低 最高</c> 两种行,其余行一律跳过。
+    /// </summary>
     public static class ChannelScriptParser
     {
         /// <summary>解析脚本明文;无法识别的行与 <c>comfortable/harmony/normal</c> 等客户端丢弃项安全跳过。</summary>
@@ -154,7 +151,6 @@ namespace Dnf.Net.ChannelDirectory
 
             float fullThreshold = ChannelServiceConstants.DefaultFullThresholdPercent;
             var rules = new List<ChannelRecommendLevelRule>();
-            var pvpNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             string[] lines = scriptText.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.RemoveEmptyEntries);
             for (int i = 0; i < lines.Length; i++)
@@ -182,18 +178,9 @@ namespace Dnf.Net.ChannelDirectory
                     }
                     continue;
                 }
-
-                if (TryReadAfterTag(line, "[pvp channel]", out string pvpRest))
-                {
-                    string name = Unquote(FirstToken(pvpRest));
-                    if (!string.IsNullOrEmpty(name))
-                    {
-                        pvpNames.Add(name);
-                    }
-                }
             }
 
-            return new ChannelScriptData(scriptText, fullThreshold, rules, pvpNames);
+            return new ChannelScriptData(scriptText, fullThreshold, rules);
         }
 
         private static bool TryReadAfterTag(string line, string tag, out string rest)
@@ -228,15 +215,6 @@ namespace Dnf.Net.ChannelDirectory
         {
             List<string> tokens = Tokenize(text);
             return tokens.Count > 0 ? tokens[0] : string.Empty;
-        }
-
-        private static string Unquote(string value)
-        {
-            if (value != null && value.Length >= 2 && value[0] == '"' && value[value.Length - 1] == '"')
-            {
-                return value.Substring(1, value.Length - 2);
-            }
-            return value ?? string.Empty;
         }
 
         private static List<string> Tokenize(string text)

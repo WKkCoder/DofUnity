@@ -16,8 +16,7 @@ namespace Dnf.Net.ChannelDirectory
         /// <summary>匹配到 <c>ChannelRecommendLevel</c> 推荐等级范围。</summary>
         HasRecommendLevel = 1 << 1,
 
-        /// <summary>命中 PVP 频道列表。</summary>
-        IsPvp = 1 << 2,
+        // 1 << 2 曾给已删除的 PVP 标记用;空位保留不重排,其余成员的数值保持不变。
 
         /// <summary>具备有效正整数端口(&gt; 0 且 &lt;= 65535)。</summary>
         HasValidPort = 1 << 3,
@@ -200,18 +199,6 @@ namespace Dnf.Net.ChannelDirectory
                             minLv = matchedMin;
                             maxLv = matchedMax;
                             flags |= ChannelEntryFlags.HasRecommendLevel;
-                        }
-
-                        if (effectiveScript.PvpChannelNames.Count > 0)
-                        {
-                            foreach (string pvp in effectiveScript.PvpChannelNames)
-                            {
-                                if (string.Equals(pvp, wc.Name, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    flags |= ChannelEntryFlags.IsPvp;
-                                    break;
-                                }
-                            }
                         }
 
                         if (wc.Port > 0 && wc.Port <= 65535)

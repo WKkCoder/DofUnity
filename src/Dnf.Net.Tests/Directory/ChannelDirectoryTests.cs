@@ -12,8 +12,9 @@ namespace Dnf.Net.Tests;
 /// <summary>
 /// 选服与选频道服务(7001)只读目录读取器的纯合成字节测试。
 /// 全部主机、端口、版本、脚本、密钥均采用合成假值(RFC5737 192.0.2.x 与 900+ 编号),不依赖真实抓包或原版文本。
+/// 验收后补的边界测试(杀存活变异)在同一个 partial 类的 <c>ChannelDirectoryTests.Boundary.cs</c> 里,共用本文件的私有助手。
 /// </summary>
-public sealed class ChannelDirectoryTests
+public sealed partial class ChannelDirectoryTests
 {
     private static byte[] SyntheticKey16()
     {
@@ -154,7 +155,8 @@ public sealed class ChannelDirectoryTests
             32);
         Assert.Equal(32, greetingCipher.Length);
         Assert.True(ChannelServiceCrypto.TryDecryptAes128Ecb(key, greetingCipher, out byte[] greetingDec));
-        Assert.Equal("dnf_game", ChannelInfoBinaryParser.ReadFixedString(greetingDec, 0, 32));
+        // 不在测试里重复写预共享的问候明文,只比对摘要(摘要钉住预共享值,避免字面量扩散)
+        Assert.Equal(GreetingPlaintextSha256, Sha256Hex(greetingDec));
 
         byte[] plainPayload = BuildBinaryChannelList(new[]
         {
@@ -300,8 +302,7 @@ public sealed class ChannelDirectoryTests
             "[channel rate harmony] 3\n" +
             "[channel rate normal] 11\n" +
             "[channel rate full] 92\n" +
-            "[channel] \"[alpha_zone]\" 901 915\n" +
-            "[pvp channel] \"arena902\"\n";
+            "[channel] \"[alpha_zone]\" 901 915\n";
 
         ChannelScriptData parsed = ChannelScriptParser.Parse(script);
         Assert.Equal(92.0f, parsed.FullThresholdPercent);
@@ -343,8 +344,11 @@ public sealed class ChannelDirectoryTests
         byte[] sessionKey32 = SyntheticKey32();
         byte[] sessionKey16 = SyntheticKey16();
         var commandsSeen = new List<byte>();
+        // 脚本明文长度不是 16 的倍数,AES 零填充后尾部带 NUL;客户端必须把尾部 NUL 去掉(见末尾 RawText 断言)
+        const string scriptBody = "[channel rate full] 90\n[channel] \"[zone_alpha]\" 905 920\n";
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(800));
+        // 5 秒级超时:假服务端/客户端等不到数据时按失败处理,不会卡死
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         Task serverTask = Task.Run(async () =>
         {
             await using var _s = serverStream;
@@ -356,7 +360,7 @@ public sealed class ChannelDirectoryTests
             Assert.Equal(ChannelServiceConstants.CmdKeyExchangeRequest, fHello.Header.Command);
             Assert.Equal(32, fHello.Body.Length);
             Assert.True(ChannelServiceCrypto.TryDecryptAes128Ecb(initialKey, fHello.Body, out byte[] helloPlain));
-            Assert.Equal("dnf_game", ChannelInfoBinaryParser.ReadFixedString(helloPlain, 0, 32));
+            Assert.Equal(GreetingPlaintextSha256, Sha256Hex(helloPlain));
 
             byte[] keyExchangeReply = new byte[36];
             Buffer.BlockCopy(sessionKey32, 0, keyExchangeReply, 4, 32);
@@ -381,7 +385,6 @@ public sealed class ChannelDirectoryTests
             Assert.Equal(ChannelServiceConstants.CmdScriptRequest, fScriptReq.Header.Command);
             Assert.Empty(fScriptReq.Body);
 
-            const string scriptBody = "[channel rate full] 90\n[channel] \"[zone_alpha]\" 905 920\n[pvp channel] \"[zone_alpha]02\"\n";
             byte[] scriptCipher = ChannelServiceCrypto.EncryptAes128EcbZeroPadded(sessionKey16, Encoding.UTF8.GetBytes(scriptBody));
             await SendRawAsync(serverStream, ChannelServiceConstants.CmdScriptRequest, ZlibCompress(scriptCipher));
 
@@ -408,13 +411,15 @@ public sealed class ChannelDirectoryTests
         {
             result = await ChannelDirectoryClient.LoadFromStreamAsync(clientStream, cancellationToken: cts.Token);
         }
-        await serverTask;
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.True(result.Succeeded, result.ErrorDetail);
         Assert.Equal(new byte[] { 0x0b, 0x05, 0x09, 0x01 }, commandsSeen.ToArray());
         Assert.Equal("v900", result.Snapshot.ScriptVersion);
         Assert.False(result.Snapshot.ScriptUpToDate);
         Assert.Equal(90.0f, result.Snapshot.ScriptData.FullThresholdPercent);
+        // 脚本原文里不能带 AES 零填充留下的尾部 NUL
+        Assert.Equal(scriptBody, result.Snapshot.ScriptData.RawText);
         Assert.Equal(2, result.Snapshot.Channels.Count);
 
         ChannelEntry ch1 = result.Snapshot.Channels[0];
@@ -430,12 +435,15 @@ public sealed class ChannelDirectoryTests
         Assert.True(ch1.Flags.HasFlag(ChannelEntryFlags.HasRecommendLevel));
         Assert.True(ch1.Flags.HasFlag(ChannelEntryFlags.HasValidPort));
         Assert.False(ch1.Flags.HasFlag(ChannelEntryFlags.Full));
+        // 标志位按字面数值钉死:HasRecommendLevel=2 | HasValidPort=8,没有多余的位
+        Assert.Equal((ChannelEntryFlags)(2 | 8), ch1.Flags);
 
         ChannelEntry ch2 = result.Snapshot.Channels[1];
         Assert.Equal(2, ch2.ChannelNo);
         Assert.Equal(ChannelCongestionTier.Full, ch2.Status);
         Assert.True(ch2.Flags.HasFlag(ChannelEntryFlags.Full));
-        Assert.True(ch2.Flags.HasFlag(ChannelEntryFlags.IsPvp));
+        // Full=1 | HasRecommendLevel=2 | HasValidPort=8
+        Assert.Equal((ChannelEntryFlags)(1 | 2 | 8), ch2.Flags);
     }
 
     [Fact]
@@ -446,7 +454,7 @@ public sealed class ChannelDirectoryTests
         byte[] sessionKey16 = SyntheticKey16();
         var commandsSeen = new List<byte>();
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(800));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         Task serverTask = Task.Run(async () =>
         {
             await using var _s = serverStream;
@@ -479,7 +487,7 @@ public sealed class ChannelDirectoryTests
         {
             result = await ChannelDirectoryClient.LoadFromStreamAsync(clientStream, cachedVersion: "v901", fallbackScript: fallback, cancellationToken: cts.Token);
         }
-        await serverTask;
+        await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.True(result.Succeeded, result.ErrorDetail);
         Assert.Equal(new byte[] { 0x0b, 0x05, 0x01 }, commandsSeen.ToArray());
@@ -503,17 +511,20 @@ public sealed class ChannelDirectoryTests
         // Bad cached version (contains NUL or >= 16 bytes) rejected before wire send
         {
             var (c, _) = BlockingDuplexStream.CreatePair();
-            ChannelDirectoryLoadResult badVerLen = await ChannelDirectoryClient.LoadFromStreamAsync(c, cachedVersion: new string('9', 16));
+            // 带 5 秒取消令牌:若回归成"放行 16 字节版本串",客户端会发问候帧再等回包,这里要按失败收场而不是挂起
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            ChannelDirectoryLoadResult badVerLen = await ChannelDirectoryClient.LoadFromStreamAsync(c, cachedVersion: new string('9', 16), cancellationToken: cts.Token);
             Assert.Equal(ChannelDirectoryLoadOutcome.InvalidArgument, badVerLen.Outcome);
         }
 
         // Flag == 0 on key exchange reply -> FrameError
         {
             var (c, s) = BlockingDuplexStream.CreatePair();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             Task srv = Task.Run(async () =>
             {
                 await using var _s = s;
-                await ChannelServiceFrameCodec.ReadFrameAsync(s);
+                await ChannelServiceFrameCodec.ReadFrameAsync(s, cancellationToken: cts.Token);
                 byte[] pkt = ChannelServiceFrameCodec.Build(ChannelServiceConstants.CmdKeyExchangeReply, new byte[36], flag: 0);
                 await s.WriteAsync(pkt, 0, pkt.Length);
                 await s.FlushAsync();
@@ -521,7 +532,6 @@ public sealed class ChannelDirectoryTests
             ChannelDirectoryLoadResult res;
             await using (c)
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 res = await ChannelDirectoryClient.LoadFromStreamAsync(c, cancellationToken: cts.Token);
             }
             await srv.WaitAsync(TimeSpan.FromSeconds(5));
@@ -531,29 +541,29 @@ public sealed class ChannelDirectoryTests
         // Corrupted compressed channel list -> DecompressOrDecryptFailed
         {
             var (c, s) = BlockingDuplexStream.CreatePair();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             byte[] key32 = SyntheticKey32();
             byte[] key16 = SyntheticKey16();
             Task srv = Task.Run(async () =>
             {
                 await using var _s = s;
-                await ChannelServiceFrameCodec.ReadFrameAsync(s);
+                await ChannelServiceFrameCodec.ReadFrameAsync(s, cancellationToken: cts.Token);
                 byte[] kReply = new byte[36];
                 Buffer.BlockCopy(key32, 0, kReply, 4, 32);
                 await SendRawAsync(s, ChannelServiceConstants.CmdKeyExchangeReply, kReply);
 
-                await ChannelServiceFrameCodec.ReadFrameAsync(s);
+                await ChannelServiceFrameCodec.ReadFrameAsync(s, cancellationToken: cts.Token);
                 byte[] verOk = new byte[16];
                 BitConverter.TryWriteBytes(verOk.AsSpan(0), 1u);
                 await SendRawAsync(s, ChannelServiceConstants.CmdVersionCheckReply,
                     ChannelServiceCrypto.EncryptAes128EcbZeroPadded(key16, verOk, 16));
 
-                await ChannelServiceFrameCodec.ReadFrameAsync(s);
+                await ChannelServiceFrameCodec.ReadFrameAsync(s, cancellationToken: cts.Token);
                 await SendRawAsync(s, ChannelServiceConstants.CmdChannelListReply, new byte[] { 0x78, 0x9c, 0x00, 0x01, 0x02, 0x03, 0x04 });
             });
             ChannelDirectoryLoadResult res;
             await using (c)
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 res = await ChannelDirectoryClient.LoadFromStreamAsync(c, "v902", cancellationToken: cts.Token);
             }
             await srv.WaitAsync(TimeSpan.FromSeconds(5));
@@ -563,10 +573,11 @@ public sealed class ChannelDirectoryTests
         // Non-zero handshake status -> KeyExchangeRejected
         {
             var (c, s) = BlockingDuplexStream.CreatePair();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             Task srv = Task.Run(async () =>
             {
                 await using var _s = s;
-                await ChannelServiceFrameCodec.ReadFrameAsync(s);
+                await ChannelServiceFrameCodec.ReadFrameAsync(s, cancellationToken: cts.Token);
                 byte[] reply = new byte[36];
                 BitConverter.TryWriteBytes(reply.AsSpan(0), 7u);
                 await SendRawAsync(s, ChannelServiceConstants.CmdKeyExchangeReply, reply);
@@ -574,7 +585,6 @@ public sealed class ChannelDirectoryTests
             ChannelDirectoryLoadResult res;
             await using (c)
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 res = await ChannelDirectoryClient.LoadFromStreamAsync(c, cancellationToken: cts.Token);
             }
             await srv.WaitAsync(TimeSpan.FromSeconds(5));
@@ -585,16 +595,16 @@ public sealed class ChannelDirectoryTests
         // Wrong 0x0c length -> BadKeyExchangeLength
         {
             var (c, s) = BlockingDuplexStream.CreatePair();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             Task srv = Task.Run(async () =>
             {
                 await using var _s = s;
-                await ChannelServiceFrameCodec.ReadFrameAsync(s);
+                await ChannelServiceFrameCodec.ReadFrameAsync(s, cancellationToken: cts.Token);
                 await SendRawAsync(s, ChannelServiceConstants.CmdKeyExchangeReply, new byte[35]);
             });
             ChannelDirectoryLoadResult res;
             await using (c)
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 res = await ChannelDirectoryClient.LoadFromStreamAsync(c, cancellationToken: cts.Token);
             }
             await srv.WaitAsync(TimeSpan.FromSeconds(5));
@@ -604,16 +614,17 @@ public sealed class ChannelDirectoryTests
         // upToDate == 2 -> VersionRejected
         {
             var (c, s) = BlockingDuplexStream.CreatePair();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             byte[] key32 = SyntheticKey32();
             byte[] key16 = SyntheticKey16();
             Task srv = Task.Run(async () =>
             {
                 await using var _s = s;
-                await ChannelServiceFrameCodec.ReadFrameAsync(s);
+                await ChannelServiceFrameCodec.ReadFrameAsync(s, cancellationToken: cts.Token);
                 byte[] reply = new byte[36];
                 Buffer.BlockCopy(key32, 0, reply, 4, 32);
                 await SendRawAsync(s, ChannelServiceConstants.CmdKeyExchangeReply, reply);
-                await ChannelServiceFrameCodec.ReadFrameAsync(s);
+                await ChannelServiceFrameCodec.ReadFrameAsync(s, cancellationToken: cts.Token);
                 byte[] badVer = new byte[16];
                 BitConverter.TryWriteBytes(badVer.AsSpan(0), 2u);
                 await SendRawAsync(s, ChannelServiceConstants.CmdVersionCheckReply,
@@ -622,7 +633,6 @@ public sealed class ChannelDirectoryTests
             ChannelDirectoryLoadResult res;
             await using (c)
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 res = await ChannelDirectoryClient.LoadFromStreamAsync(c, cancellationToken: cts.Token);
             }
             await srv.WaitAsync(TimeSpan.FromSeconds(5));

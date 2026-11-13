@@ -31,7 +31,10 @@ internal static class ChannelProbe
             return 2;
         }
 
-        using var gateway = GatewayClient.Create(settings.Gateway);
+        // 网关传输必须关系统代理(UseProxy = false):本机有系统代理时,健康检查会被代理截走而误报成退出码 3;
+        // 与 live 子命令的写法一致。传输由本方法自己释放(公开构造的 GatewayClient 不拥有传输)。
+        using var transport = new HttpGatewayTransport(new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false }, settings.Gateway.Timeout);
+        using var gateway = new GatewayClient(settings.Gateway, transport);
 
         GatewayResult health = await gateway.HealthAsync();
         Console.WriteLine("网关健康检查: " + health.Outcome + " (HTTP " + health.HttpStatus + ")");
