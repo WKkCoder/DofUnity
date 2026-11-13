@@ -30,11 +30,21 @@ namespace Dnf.Net.Session
 
         /// <summary>出现了不认识的参数,或仓库根不在第一个位置。</summary>
         UnknownArgument,
+
+        /// <summary>
+        /// <c>--permits-only</c>(只看副本许可表、不进副本)与 <c>--dungeon</c>(进这个副本)同时出现:二选一,不分先后。
+        /// 和别的问题一样只给问题名,不回显用户输入。
+        /// </summary>
+        Conflict,
     }
 
     /// <summary>
     /// 探针 <c>fight</c> 子命令的命令行:<c>[仓库根] --dungeon &lt;副本编号&gt; &lt;模式 0–4&gt; [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S]</c>。
     /// 解析是纯函数,不读环境、不连网;数值一律只认纯数字(不认正负号与空白),越界就是错,不悄悄截断。
+    /// <para>
+    /// 默认关闭的诊断选项 <c>--permits-only</c>:登录进城后只打印副本许可表就退出,不进副本,所以<b>不需要</b> <c>--dungeon</c>(见 <see cref="PermitsOnly"/>);
+    /// 与 <c>--dungeon</c> 同时给是 <see cref="OnlineFightArgumentProblem.Conflict"/>。不带它时一切与以前完全一样。
+    /// </para>
     /// </summary>
     public sealed class OnlineFightArguments
     {
@@ -71,6 +81,12 @@ namespace Dnf.Net.Session
 
         /// <summary>结局出来之后继续挂着看服务端还有没有动作的秒数,缺省 0(不挂)。</summary>
         public int StaySeconds { get; private set; }
+
+        /// <summary>
+        /// 只看副本许可表:登录进城后打印一行许可表就退出,不进副本。缺省 false(默认的 <c>fight</c> 一字不变)。
+        /// 为 true 时没有 <c>--dungeon</c>,所以 <see cref="DungeonId"/> 与 <see cref="Mode"/> 没有意义(都是 0),别去用它们。
+        /// </summary>
+        public bool PermitsOnly { get; private set; }
 
         /// <summary>
         /// 解析 <c>fight</c> 之后的那些参数。仓库根只能出现在第一个位置(不以 <c>--</c> 开头的那个);同一个选项给了多次以最后一次为准。
@@ -169,13 +185,22 @@ namespace Dnf.Net.Session
                     case "--continue-on-refuse":
                         result.ContinueOnRefuse = true;
                         break;
+                    case "--permits-only":
+                        result.PermitsOnly = true;
+                        break;
                     default:
                         problem = OnlineFightArgumentProblem.UnknownArgument;
                         return false;
                 }
             }
 
-            if (!haveDungeon)
+            // 只看许可表与进副本二选一:每个参数都读得通之后才判(不分先后);只看许可表时不要求 --dungeon,否则一如既往必须给
+            if (result.PermitsOnly && haveDungeon)
+            {
+                problem = OnlineFightArgumentProblem.Conflict;
+                return false;
+            }
+            if (!haveDungeon && !result.PermitsOnly)
             {
                 problem = OnlineFightArgumentProblem.MissingDungeon;
                 return false;

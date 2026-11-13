@@ -20,10 +20,20 @@ namespace Dnf.NetProbe;
 /// 要么是 <c>PROBE_FIGHT abort …</c>(没走到战斗:装配、进城、认证、进副本失败或用法不对),两者互斥。
 ///
 /// 安全:认证类失败(网关登录被拒、游戏登录被拒)立即以专用退出码退出,绝不自动重试、绝不循环重连;整条链是线性的,只连一次。
+///
+/// 默认关闭的诊断选项 <c>--permits-only</c>(给集成者选副本用,与 <c>--dungeon</c> 二选一):
+///   dnf-netprobe fight [仓库根] --permits-only
+/// 走与上面同一段装配与进城编排(只连一次,失败不重试;进城失败照旧是 abort 行,认证类 5、其余 3),进城之后<b>只</b>多打两行就以退出码 0 结束:
+/// <c>PROBE_FIGHT stage=permits notices= malformed= count= entries=</c>(副本许可表:副本号升序,<c>副本号:档位</c>,逗号分隔)与最后一行 <c>PROBE_FIGHT result permits=ok</c>;
+/// 不进副本、不排击杀。两行的拼法在 Net 层(<see cref="OnlineFightLog.PermitsReport"/>),探针只管打。副本号与档位只在这个选项下才打,输出只在本机终端看,不落库;
+/// 不带这个选项时输出与行为一字不变。
 /// </summary>
 internal static class FightCommand
 {
     private const string UsageText = "用法: dnf-netprobe fight [仓库根] --dungeon <副本编号 0-65535> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S]";
+
+    // 只在 --permits-only 与 --dungeon 冲突时多打这一行(默认路径的用法文字一字不变)。
+    private const string PermitsUsageText = "只看许可表: dnf-netprobe fight [仓库根] --permits-only(不要 --dungeon;登录进城后打印一行许可表就退出,不进副本)";
 
     // --stay 里最多列出多少个收到的帧(再多的只记"+N")。
     private const int MaxStayFrames = 48;
@@ -39,6 +49,10 @@ internal static class FightCommand
         {
             Console.WriteLine("PROBE_FIGHT abort at=usage reason=" + usageProblem + " exit=" + OnlineFightExitCodes.Usage);
             Console.WriteLine(UsageText);
+            if (usageProblem == OnlineFightArgumentProblem.Conflict)
+            {
+                Console.WriteLine(PermitsUsageText);
+            }
             return OnlineFightExitCodes.Usage;
         }
 
@@ -103,6 +117,16 @@ internal static class FightCommand
                 int code = OnlineFightExitCodes.ForTownFailure(town.Failure);
                 string reason = code == OnlineFightExitCodes.AuthFailed ? "auth-failed" : "town-entry-failed";
                 return Abort(clock, "town", reason, code, "failure=" + town.Failure + " reached=" + town.Stage + " loginFailureCode=" + loginCode + (code == OnlineFightExitCodes.AuthFailed ? " retry=never" : string.Empty));
+            }
+
+            // ---- 只看许可表(--permits-only,默认关闭):许可表就在进城结果里,打印到这里为止,不进副本、不排击杀;整行拼法在 Net 层
+            if (parsed.PermitsOnly)
+            {
+                foreach (string line in OnlineFightLog.PermitsReport(town.DungeonPermissions))
+                {
+                    Console.WriteLine(line);
+                }
+                return OnlineFightExitCodes.Success;
             }
 
             // ---- 进副本五步(与 TownDemo 同样的用法与参数顺序:副本编号、模式)

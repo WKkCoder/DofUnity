@@ -105,6 +105,63 @@ namespace Dnf.Net.Session
             return "stage=" + body;
         }
 
+        /// <summary>
+        /// 探针各行的统一前缀。带 <c>t=</c> 的线索行由探针自己加前缀与时间;<c>--permits-only</c> 的两行(见 <see cref="PermitsReport"/>)不带 <c>t=</c>,整行由本类拼好,探针只管打。
+        /// </summary>
+        public const string ProbePrefix = "PROBE_FIGHT";
+
+        /// <summary>
+        /// 副本许可表一行的字段(纯函数,<c>--permits-only</c> 的输出):<c>notices=1 malformed=0 count=3 entries=901:1,905:4,940:2</c>。
+        /// <c>notices</c> 是合并进来的许可通知个数,<c>malformed</c> 是读不通、整包丢弃的个数,<c>count</c> 是合并后的条目数(副本号去重之后);
+        /// <c>entries</c> 按副本号<b>升序</b>、十进制、<c>副本号:档位</c>、逗号分隔(档位是线上原值,不做换算);没有条目写 <c>-</c>。
+        /// 快照为 null(进城窗口里一个许可通知也没有)时:<c>notices=0 malformed=0 count=- entries=-</c>,
+        /// 用 <c>count=-</c> 与"收到了个数为 0 的表"(<c>count=0</c>)区分开。
+        /// 只含副本号、档位与各计数,没有账号、口令、地址、端口、令牌,也没有载荷字节。
+        /// 这是默认关闭的诊断选项的输出,只给集成者在本机终端上挑副本用;默认的 <c>fight</c> 不打副本号。
+        /// </summary>
+        public static string PermitsFields(DungeonPermissionSnapshot snapshot)
+        {
+            if (snapshot == null)
+            {
+                return "notices=0 malformed=0 count=- entries=-";
+            }
+
+            var entries = new DungeonPermissionEntry[snapshot.Entries.Count];
+            for (int i = 0; i < entries.Length; i++)
+            {
+                entries[i] = snapshot.Entries[i];
+            }
+            Array.Sort(entries, (a, b) => a.DungeonId.CompareTo(b.DungeonId));
+
+            var list = new StringBuilder();
+            for (int i = 0; i < entries.Length; i++)
+            {
+                if (i > 0)
+                {
+                    list.Append(',');
+                }
+                list.Append(Number(entries[i].DungeonId)).Append(':').Append(Number(entries[i].Tier));
+            }
+
+            return "notices=" + Number(snapshot.NoticeCount)
+                + " malformed=" + Number(snapshot.MalformedNoticeCount)
+                + " count=" + Number(snapshot.Count)
+                + " entries=" + (entries.Length == 0 ? "-" : list.ToString());
+        }
+
+        /// <summary>
+        /// <c>--permits-only</c> 成功时探针打的两整行(都不带 <c>t=</c>,先后就是打印顺序,最后一行是 <c>PROBE_FIGHT result permits=ok</c>):
+        /// <c>PROBE_FIGHT stage=permits &lt;<see cref="PermitsFields"/>&gt;</c> 与 <c>PROBE_FIGHT result permits=ok</c>。
+        /// </summary>
+        public static string[] PermitsReport(DungeonPermissionSnapshot snapshot)
+        {
+            return new[]
+            {
+                ProbePrefix + " stage=permits " + PermitsFields(snapshot),
+                ProbePrefix + " result permits=ok",
+            };
+        }
+
         private static string Flag(bool value)
         {
             return value ? "1" : "0";
