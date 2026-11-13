@@ -39,15 +39,16 @@ internal static class CombatKit
     }
 
     /// <summary>
-    /// 合成的起始地图载荷(地图类型 1、有地图体):头部十字节、地图编号 905、<paramref name="serverIds"/> 条怪记录(第 3 项是怪编号,
-    /// 其余各项每条不同且都不等于编号)、0 条物品、全局 3、0 组四元组、玩家序号 0。读序同 <c>StartMapParser</c>,手工拼,不用产品代码。
+    /// 合成的起始地图载荷(地图类型 1、有地图体):头部十字节(格 <paramref name="cellX"/>、<paramref name="cellY"/>,缺省 (3,4))、地图编号(缺省 905)、
+    /// <paramref name="serverIds"/> 条怪记录(第 3 项是怪编号,其余各项每条不同且都不等于编号)、0 条物品、全局 3、0 组四元组、玩家序号 0。
+    /// 读序同 <c>StartMapParser</c>,手工拼,不用产品代码。
     /// </summary>
-    public static byte[] Map29Payload(IReadOnlyList<int> serverIds)
+    public static byte[] Map29Payload(IReadOnlyList<int> serverIds, int cellX = 3, int cellY = 4, int mapId = 905)
     {
         NoticePayloadBuilder b = new NoticePayloadBuilder()
-            .U8(3).U8(4).U8(0).I32(90001).U8(1).U8(2)
+            .U8(cellX).U8(cellY).U8(0).I32(90001).U8(1).U8(2)
             .U8(1)
-            .U16(905)
+            .U16(mapId)
             .U8(serverIds.Count);
         for (int i = 0; i < serverIds.Count; i++)
         {
@@ -169,7 +170,8 @@ internal static class CombatKit
 
     /// <summary>
     /// 把事件序列渲染成一行文字,断言时一次比对整条链:Spawned、KillSent:本地号、KillConfirmed:本地号、KillRefused:本地号、
-    /// KillBlocked:本地号:原因、MapCleared、SettlementSent、SettlementBlocked:原因、SettlementArrived:段、ReadyToReturnToTown、Ignored:判定[:本地号]。
+    /// KillBlocked:本地号:原因、MapCleared、SettlementSent、SettlementBlocked:原因、SettlementArrived:段、ReadyToReturnToTown、Ignored:判定[:本地号];
+    /// 多房间的事件:MoveSent:r房间、MoveBlocked:r房间:原因、MoveRefused:r房间:code码、RoomEntered:r新房间:m怪数、LoadedSent:r房间、LoadedBlocked:r房间:原因、RoomLoaded:r房间。
     /// </summary>
     public static string Trace(IEnumerable<OnlineCombatEvent> events)
     {
@@ -191,6 +193,13 @@ internal static class CombatKit
             case OnlineCombatEventKind.SettlementArrived: return "SettlementArrived:" + e.Part;
             case OnlineCombatEventKind.ReadyToReturnToTown: return "ReadyToReturnToTown";
             case OnlineCombatEventKind.FrameIgnored: return "Ignored:" + e.Verdict + (e.LocalId >= 0 ? ":" + e.LocalId : "");
+            case OnlineCombatEventKind.RoomMoveSent: return "MoveSent:r" + e.Room;
+            case OnlineCombatEventKind.RoomMoveBlocked: return "MoveBlocked:r" + e.Room + ":" + e.Block;
+            case OnlineCombatEventKind.RoomMoveRefused: return "MoveRefused:r" + e.Room + ":code" + e.ReplyCode;
+            case OnlineCombatEventKind.RoomEntered: return "RoomEntered:r" + e.Room + ":m" + e.RoomMonsters;
+            case OnlineCombatEventKind.RoomLoadedSent: return "LoadedSent:r" + e.Room;
+            case OnlineCombatEventKind.RoomLoadedBlocked: return "LoadedBlocked:r" + e.Room + ":" + e.Block;
+            case OnlineCombatEventKind.RoomLoaded: return "RoomLoaded:r" + e.Room;
             default: return e.Kind.ToString();
         }
     }
