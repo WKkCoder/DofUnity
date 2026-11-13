@@ -29,6 +29,7 @@ tools/verify-p1.sh
 全部对拍(P1、`.atk`、`.act`、怪物数值、伤害公式、Squirrel 加载链、整条流程)一条命令:`tools/verify-all.sh`(约 65 秒,结果写到 `out/verify-all.json`);再 `python3 tools/py/coverage.py --write-doc docs/coverage.md` 重写覆盖率表(M11,E-098)。
 
 5. 在 Unity 里跑测试(批处理模式,不需要登录):`tools/unity-test.sh`。结果在 `out/unity-EditMode-results.xml`。
+   只想快速确认宿主层还能不能编译(几秒、不启动编辑器、不占授权):`tools/typecheck-client.sh`(加 `--selftest` 做负对照;退出码 0 无错、1 有错、2 环境问题;不定义 UNITY_EDITOR,编辑器条件编译块不在检查范围;E-413)。
    加 `UNITY_GRAPHICS=1` 会去掉 `-nographics`,让 GPU 与 CPU 合成器的对照真正运行(需要 GPU);`UNITY_GRAPHICS=1 tools/unity-build-smoke.sh macos` 在 macOS 播放器里再做一遍;`UNITY_TEST_TARGET=Android` 让编辑器按移动端精度编译着色器再做一遍(默认目标是 StandaloneOSX,E-031)。
 
 6. 对照原版画面(需要一张原版客户端的 800×600 截图,窗口内容 1:1,放在 `re/` 下;截图不入库):
@@ -97,6 +98,8 @@ dotnet build src/Dnf.NetProbe -c Release
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe offline <首包文件>               # 不联网:把保存下来的频道首包喂给会话层,验证解码与频道信息解析
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe live [--register] [--seconds N]  # 网关健康检查 → 登录(或先注册测试号)→ 取游戏服地址 → 连频道 → 收首包 → 登录 → 收集 N 秒回包
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe orchestrated [仓库根] [--stay N]  # 与 Unity 宿主同一条编排:网关登录 → 取游戏服地址 → 连频道 → 游戏登录 → 逐槽选角 → 进城;--stay N 进城后再挂 N 秒(心跳保活)
+src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe fight [仓库根] --dungeon <副本号 0–65535> <模式 0–4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S]  # 无头:进城 → 进副本 → 对起始地图的怪逐只发击杀 → 等清图通知 → 等两段结算;只打脱敏的 PROBE_FIGHT 行,退出码 0 才是收齐;认证失败退出码 5 且绝不重试(E-416)
+src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe fight [仓库根] --permits-only  # 进城后只打副本许可表(副本号与档位,只给你自己的终端看、不落库)就退出,不进副本;用来挑单房间副本
 ```
 
     Unity 开发版宿主(第 9 条的播放器)加联网参数:`-dnfnet` 先在后台把上面那条编排跑完、再进入城镇(`-dnfnetroot <仓库根>` 指定读本地凭据的位置,`-dnfnetport <端口>` 改频道端口);
