@@ -153,4 +153,117 @@ public sealed class SettlementMenuPayloadsTests
             Assert.False(SettlementMenuPayloads.TryParseEplpReply(new byte[len], out _));
         }
     }
+
+    // ======== 验收后补测试:线上数值与命令枚举用字面数字钉死(期望值不引用产品常量) ========
+    // 上面既有的用例拿产品常量造包、再拿同一个常量断言,常量被改一处时造包与解析一起变,测试照样通过。
+    // 下面的用例里,包号、字段上界、标志位、命令值都是字面数字(读码结论,也是产品常量的现值)。
+
+    /// <summary>线上数值表:每个常量一行,期望值全是字面数字;命令枚举的线上值也按字面钉死。产品里任何一个被改一处,对应那一行就失败。</summary>
+    [Fact]
+    public void WireNumberTable_EverySettlementConstantEqualsItsLiteral()
+    {
+        // 包号:1/72 评分卷轴状态、1/73 翻牌权限状态、1/74 翻牌、1/75 结算菜单命令
+        Assert.Equal(72, SettlementMenuPayloads.ScoreScrollStatePacketId);
+        Assert.Equal(73, SettlementMenuPayloads.CardSelectRightStatePacketId);
+        Assert.Equal(74, SettlementMenuPayloads.SelectCardPacketId);
+        Assert.Equal(75, SettlementMenuPayloads.EplpCommandPacketId);
+
+        // 字段取值上界与标志位
+        Assert.Equal(1, SettlementMenuPayloads.MaxSelectCardMode);
+        Assert.Equal(3, SettlementMenuPayloads.MaxEplpCommand);
+        Assert.Equal(1, SettlementMenuPayloads.EplpFlagExecute);
+        Assert.Equal(2, SettlementMenuPayloads.EplpFlagUiSync);
+
+        // (1, 73) 回包固定的槽位数
+        Assert.Equal(4, SettlementMenuPayloads.CardSelectRightSlotCount);
+
+        // 命令枚举的线上值
+        Assert.Equal(0, (int)EplpCommand.Retry);
+        Assert.Equal(1, (int)EplpCommand.SelectOtherDungeon);
+        Assert.Equal(2, (int)EplpCommand.ReturnToTown);
+        Assert.Equal(3, (int)EplpCommand.OpenSecretShop);
+    }
+
+    /// <summary>
+    /// "已知命令"属性(<see cref="EplpReplyNotice.Command"/>)的边界:原始命令值 0 到 3 有强类型,3(最大已知值)必须有值、4(最大值加 1)必须没有。
+    /// 原始值都是字面数字;成功与失败两种回包形状各验一遍。
+    /// </summary>
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(1, true)]
+    [InlineData(2, true)]
+    [InlineData(3, true)]
+    [InlineData(4, false)]
+    [InlineData(5, false)]
+    [InlineData(255, false)]
+    public void TryParseEplpReply_KnownCommandHasValueThroughRaw3AndNotFromRaw4(byte raw, bool known)
+    {
+        byte[] success = new NoticePayloadBuilder().U8(1).U8(1).U8(raw).ToArray();
+        Assert.True(SettlementMenuPayloads.TryParseEplpReply(success, out EplpReplyNotice okNotice));
+        Assert.Equal(raw, okNotice.CommandRaw);
+        Assert.Equal(known, okNotice.Command.HasValue);
+
+        byte[] failure = new NoticePayloadBuilder().U8(0).U8(8).U8(raw).ToArray();
+        Assert.True(SettlementMenuPayloads.TryParseEplpReply(failure, out EplpReplyNotice errNotice));
+        Assert.Equal(raw, errNotice.CommandRaw);
+        Assert.Equal(known, errNotice.Command.HasValue);
+
+        if (known)
+        {
+            Assert.Equal(raw, (byte)okNotice.Command.Value);
+            Assert.Equal(raw, (byte)errNotice.Command.Value);
+        }
+    }
+
+    /// <summary>原始命令值 0 到 3 各自对应的枚举名(字面数字对枚举名),成功与失败两种形状都一样。</summary>
+    [Fact]
+    public void TryParseEplpReply_CommandNamesFollowRawValues0To3()
+    {
+        (byte Raw, EplpCommand Name)[] table =
+        {
+            (0, EplpCommand.Retry),
+            (1, EplpCommand.SelectOtherDungeon),
+            (2, EplpCommand.ReturnToTown),
+            (3, EplpCommand.OpenSecretShop),
+        };
+
+        foreach ((byte raw, EplpCommand name) in table)
+        {
+            byte[] success = new NoticePayloadBuilder().U8(1).U8(1).U8(raw).ToArray();
+            Assert.True(SettlementMenuPayloads.TryParseEplpReply(success, out EplpReplyNotice okNotice));
+            Assert.Equal(name, okNotice.Command);
+
+            byte[] failure = new NoticePayloadBuilder().U8(0).U8(8).U8(raw).ToArray();
+            Assert.True(SettlementMenuPayloads.TryParseEplpReply(failure, out EplpReplyNotice errNotice));
+            Assert.Equal(name, errNotice.Command);
+        }
+    }
+
+    /// <summary>
+    /// 四槽位列表承诺只读:当作 IList 写下标必须抛 NotSupportedException。
+    /// 注意:数组也实现 IList,但数组的 Clear/Add/Insert/Remove 会抛、写下标却会成功,所以必须用写下标来区分"只读包装"与"直接暴露数组"。
+    /// </summary>
+    [Fact]
+    public void TryParseCardSelectRightReply_SlotStatesRejectIndexerWriteThroughIList()
+    {
+        byte[] payload = new NoticePayloadBuilder().U8(1).U16(1).U16(0).U16(0xFFFF).U16(901).ToArray();
+        Assert.Equal(9, payload.Length);
+        Assert.True(SettlementMenuPayloads.TryParseCardSelectRightReply(payload, out CardSelectRightReplyNotice notice));
+
+        IList<short> list = (IList<short>)notice.SlotStates;
+        Assert.Throws<NotSupportedException>(() => { list[0] = 7; });
+        Assert.Throws<NotSupportedException>(() => { list[3] = 7; });
+        Assert.Throws<NotSupportedException>(() => { list.Add(7); });
+        Assert.Throws<NotSupportedException>(() => { list.Insert(0, 7); });
+        Assert.Throws<NotSupportedException>(() => { list.Remove(1); });
+        Assert.Throws<NotSupportedException>(() => { list.RemoveAt(0); });
+        Assert.Throws<NotSupportedException>(() => { list.Clear(); });
+
+        // 写入全都被拒之后,四个槽位原样不动
+        Assert.Equal(4, notice.SlotStates.Count);
+        Assert.Equal((short)1, notice.SlotStates[0]);
+        Assert.Equal((short)0, notice.SlotStates[1]);
+        Assert.Equal((short)-1, notice.SlotStates[2]);
+        Assert.Equal((short)901, notice.SlotStates[3]);
+    }
 }
