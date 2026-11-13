@@ -231,6 +231,41 @@ public class OnlineFightCliTests
         Assert.Equal(sent - confirmed - refused, s.Pending);
     }
 
+    // ======== 探针转行的白名单 ========
+
+    [Theory]
+    [InlineData("DNF_NET stage=dungeon step=SelectDungeon", "stage=dungeon step=SelectDungeon")]
+    [InlineData("DNF_NET stage=dungeon frame n=0 step=WaitLoadingNotice NOTI/27(26)@561", "stage=dungeon frame n=0 step=WaitLoadingNotice NOTI/27(26)@561")]
+    [InlineData("DNF_NET stage=dungeon done step=Done frames=9 unopened=0 outOfOrder=0 duplicate=0 loading27=26 info28=1 map29=1", "stage=dungeon done step=Done frames=9 unopened=0 outOfOrder=0 duplicate=0 loading27=26 info28=1 map29=1")]
+    [InlineData("DNF_NET stage=dungeon failed step=WaitStartMap failure=Timeout send=- rejected=- code=- frames=2", "stage=dungeon failed step=WaitStartMap failure=Timeout send=- rejected=- code=- frames=2")]
+    [InlineData("DNF_NET stage=combat begin monsters=7 duplicateNumbers=0", "stage=combat begin monsters=7 duplicateNumbers=0")]
+    [InlineData("DNF_NET stage=combat event=KillSent local=0 sent=1 confirmed=0 total=7", "stage=combat event=KillSent local=0 sent=1 confirmed=0 total=7")]
+    [InlineData("DNF_NET stage=fight phase=clearWait posted=7", "stage=fight phase=clearWait posted=7")]
+    public void The_probe_forwards_dungeon_combat_and_fight_lines_without_the_net_prefix(string netLine, string expected)
+    {
+        Assert.Equal(expected, OnlineFightLog.ProbeText(netLine));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("DNF_NET stage=dungeon begin dungeon=901 mode=2")]       // 回显命令行里的副本编号与模式
+    [InlineData("DNF_NET stage=town step=Login")]
+    [InlineData("DNF_NET stage=dungeonX step=1")]                       // 类别名后面必须跟空格,不是任意以 dungeon 开头
+    [InlineData("DNF_NET stage=combatant x=1")]
+    [InlineData("DNF_NET stage=fighter x=1")]
+    [InlineData("DNF_NET stage=")]
+    [InlineData("DNF_NET snapshot slot=0 level=1 job=0 growType=0 enterComplete=1 seen=3 parsed=3 malformed=0")]  // 角色数值那一行
+    [InlineData("DNF_NET heartbeat answered=3")]
+    [InlineData("DNF_NET session events=9 received=9")]
+    [InlineData("stage=dungeon step=Done")]                             // 没有 DNF_NET 前缀的不认
+    [InlineData(" DNF_NET stage=dungeon step=Done")]
+    [InlineData("PROBE_FIGHT stage=dungeon step=Done")]
+    public void The_probe_drops_every_other_line_and_the_dungeon_begin_echo(string netLine)
+    {
+        Assert.Null(OnlineFightLog.ProbeText(netLine));
+    }
+
     [Fact]
     public void The_option_defaults_are_the_documented_ones_and_bad_options_are_refused()
     {

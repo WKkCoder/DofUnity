@@ -82,6 +82,29 @@ namespace Dnf.Net.Session
                 + " firstRefused=" + (r.FirstRefusedLocal >= 0 ? Number(r.FirstRefusedLocal) : "-");
         }
 
+        /// <summary>
+        /// 探针转行的白名单(纯函数):Net 层的日志行只放行 <c>stage=dungeon</c>、<c>stage=combat</c>、<c>stage=fight</c> 三类,
+        /// 返回去掉 <c>DNF_NET </c> 前缀的 <c>stage=…</c> 文本(探针再加 <c>PROBE_FIGHT </c> 前缀与时间);其余一律返回 null,探针不打。
+        /// 进副本的 <c>begin</c> 行回显命令行里的副本编号与模式,同样不放行。白名单放在这里而不是探针里,是为了让它有测试守着。
+        /// </summary>
+        public static string ProbeText(string netLine)
+        {
+            const string head = "DNF_NET stage=";
+            if (netLine == null || !netLine.StartsWith(head, StringComparison.Ordinal))
+            {
+                return null;
+            }
+            string body = netLine.Substring(head.Length);
+            bool allowed = body.StartsWith("dungeon ", StringComparison.Ordinal)
+                || body.StartsWith("combat ", StringComparison.Ordinal)
+                || body.StartsWith("fight ", StringComparison.Ordinal);
+            if (!allowed || body.StartsWith("dungeon begin ", StringComparison.Ordinal))
+            {
+                return null;
+            }
+            return "stage=" + body;
+        }
+
         private static string Flag(bool value)
         {
             return value ? "1" : "0";

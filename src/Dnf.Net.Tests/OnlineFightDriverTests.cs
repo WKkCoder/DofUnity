@@ -518,6 +518,51 @@ public class OnlineFightDriverTests
     }
 
     [Fact]
+    public async Task A_fault_outranks_a_refusal_the_driver_had_not_looked_at_yet()
+    {
+        // 第 1 只被拒,驱动还停在节奏等待里没来得及看;随后回心跳的那次发送(第三次发送)抛了异常,跑器以异常收场。
+        // 结局记异常(优先级:异常高于被拒),被拒只留在计数与判读里;异常消息不进任何一行日志
+        var rig = new FightRig(4, table: CombatKit.Sequential(4).Where(id => id != CombatKit.BaseId + 1));
+        rig.Session.FailureOfSend = index => index == 2 ? new IOException("secret-detail-54321") : null;
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(2);                     // 第 0 只确认、第 1 只被拒(发送下标 0、1)
+        await rig.WaitAnswered(2);
+        await rig.WaitParked();
+
+        rig.Session.Push(CombatKit.Heartbeat());    // 回心跳是下标 2 的发送
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineFightOutcome.Faulted, s.Outcome);
+        Assert.Equal("IOException", s.FaultType);
+        Assert.Equal(OnlineDungeonCombatOutcome.Faulted, s.RunnerOutcome);
+        Assert.Equal(1, s.Refused);
+        Assert.Equal(1, s.FirstRefusedLocal);
+        Assert.Equal(OnlineFightKillVerdict.Refused, s.KillVerdict);
+        Assert.DoesNotContain("secret", string.Join("\n", rig.Log.Lines));
+    }
+
+    [Fact]
+    public async Task A_cancel_outranks_a_refusal_the_driver_had_not_looked_at_yet()
+    {
+        // 同样的先后,但这回是调用方取消:结局记取消(优先级:取消高于被拒),被拒留在计数里
+        var rig = new FightRig(4, table: CombatKit.Sequential(4).Where(id => id != CombatKit.BaseId + 1));
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(2);
+        await rig.WaitAnswered(2);
+        await rig.WaitParked();
+
+        rig.Cts.Cancel();
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineFightOutcome.Cancelled, s.Outcome);
+        Assert.Null(s.FaultType);
+        Assert.Equal(2, s.Posted);
+        Assert.Equal(1, s.Refused);
+        Assert.Equal(1, s.FirstRefusedLocal);
+        Assert.Equal(OnlineFightKillVerdict.Refused, s.KillVerdict);
+    }
+
+    [Fact]
     public async Task Continuing_after_refusals_without_a_clear_notice_ends_as_a_missing_notice_and_logs_only_the_first_refusal()
     {
         // 表是空的:每一只都被拒;继续模式照排,没有清图通知,窗口耗尽
@@ -665,6 +710,26 @@ public class OnlineFightDriverTests
                 Assert.DoesNotContain(lines, l => l.Contains(number.ToString()));
             }
         }
+    }
+
+    [Fact]
+    public async Task Every_line_of_a_whole_run_passes_the_probe_whitelist_and_only_loses_its_prefix()
+    {
+        var rig = new FightRig(3);
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(3);
+        await rig.Pump(run);
+
+        string[] lines = rig.Log.Lines;
+        Assert.NotEmpty(lines);
+        foreach (string line in lines)
+        {
+            string text = OnlineFightLog.ProbeText(line);
+            Assert.True(text != null, "被白名单挡掉了一行:" + line);
+            Assert.Equal(line.Substring("DNF_NET ".Length), text);
+        }
+        // 探针再加 PROBE_FIGHT 与时间就是打出来的那一行,不含 DNF_NET 字样
+        Assert.DoesNotContain(lines.Select(OnlineFightLog.ProbeText), t => t.Contains("DNF_NET"));
     }
 
     [Fact]

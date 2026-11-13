@@ -45,10 +45,15 @@ internal static class FightCommand
         var clock = Stopwatch.StartNew();
         string at = "settings";
         using var cancel = new CancellationTokenSource();
+        int pressed = 0;
         ConsoleCancelEventHandler onCancel = (_, e) =>
         {
-            e.Cancel = true;            // 让流程自己收场(关连接),不被进程直接杀掉
-            cancel.Cancel();
+            // 第一次 Ctrl+C:让流程自己收场(关连接、打结局行);再按一次就不拦了,进程直接结束
+            if (Interlocked.Increment(ref pressed) == 1)
+            {
+                e.Cancel = true;
+                cancel.Cancel();
+            }
         };
         Console.CancelKeyPress += onCancel;
         try
@@ -244,27 +249,15 @@ internal static class FightCommand
             + " frames=" + (frames.Length == 0 ? "-" : frames.ToString()));
     }
 
-    // 把 Net 层的日志行转成探针的线索行:只收 stage=dungeon、stage=combat、stage=fight 三类,其余一律不打;
-    // 进副本的 begin 行带副本编号与模式(命令行参数的回显),不打。
+    // 把 Net 层的日志行转成探针的线索行:白名单(只收 stage=dungeon、stage=combat、stage=fight 三类,
+    // 进副本的 begin 行带副本编号与模式、是命令行参数的回显,不收)放在 Net 层的 OnlineFightLog.ProbeText 里,有测试守着。
     private static void SayNet(Stopwatch clock, string line)
     {
-        const string head = "DNF_NET stage=";
-        if (line == null || !line.StartsWith(head, StringComparison.Ordinal))
+        string text = OnlineFightLog.ProbeText(line);
+        if (text != null)
         {
-            return;
+            Say(clock, text);
         }
-        string body = line.Substring(head.Length);
-        if (!(body.StartsWith("dungeon ", StringComparison.Ordinal)
-            || body.StartsWith("combat ", StringComparison.Ordinal)
-            || body.StartsWith("fight ", StringComparison.Ordinal)))
-        {
-            return;
-        }
-        if (body.StartsWith("dungeon begin ", StringComparison.Ordinal))
-        {
-            return;
-        }
-        Say(clock, "stage=" + body);
     }
 
     private static int Abort(Stopwatch clock, string at, string reason, int exitCode, string detail)
