@@ -322,7 +322,45 @@ namespace Dnf.Play
                 _lastY = double.NaN;
                 return false;
             }
-            RoomCombatSession fight = session.Current;
+            return DecideInRoom(session, session.Current, out dirX, out dirY);
+        }
+
+        /// <summary>
+        /// 联网房间(<see cref="HostedRoomRun"/> 托管的那一间)里的一步:只认房间战斗会话,没有迷宫。决策与 <see cref="Next"/> 在房间里的那一半是同一份代码(<see cref="DecideInRoom"/>):
+        /// 找最近打得到的怪、走位、寻路、出手间隔、清空后的捡金币与(带 <see cref="SmashObjects"/> 时)打物件,一个数都没改;主角死了与离线一样——复活窗口开着就按复活键,否则站着等。
+        /// 与离线唯一的不同:房间清空之后没有出口可走(<see cref="Navigate"/> 要迷宫),站着等外面(联网结算)说话。步数照样计(<see cref="Steps"/>,出手间隔按它取模)。
+        /// 方向写进 <paramref name="dirX"/>、<paramref name="dirY"/>,返回这一步是否按攻击键。
+        /// </summary>
+        /// <exception cref="ArgumentNullException"><paramref name="fight"/> 为 null。</exception>
+        public bool NextInRoom(RoomCombatSession fight, out int dirX, out int dirY)
+        {
+            if (fight == null)
+            {
+                throw new ArgumentNullException(nameof(fight));
+            }
+            dirX = 0;
+            dirY = 0;
+            _steps++;
+            if (fight.HeroDead)
+            {
+                // 与离线同一个分支:主角死了,复活窗口里能复活就按复活键(与玩家一样是攻击键),否则站着等
+                _stuck = 0;
+                _lastX = double.NaN;
+                _lastY = double.NaN;
+                Intent = fight.CanRevive ? "复活" : "等待复活窗口";
+                return fight.CanRevive;
+            }
+            return DecideInRoom(null, fight, out dirX, out dirY);
+        }
+
+        /// <summary>
+        /// 一间房里的决策(<see cref="Next"/> 在"副本没走完、主角活着、不在转场"时走到这里,<see cref="NextInRoom"/> 也走到这里):从 <paramref name="fight"/> 读状态,给出方向与是否出手。
+        /// <paramref name="session"/> 只有出迷宫的路线(<see cref="Navigate"/>)要用;为 null(联网房间)时房间清空后原地不动。
+        /// </summary>
+        private bool DecideInRoom(DungeonSession session, RoomCombatSession fight, out int dirX, out int dirY)
+        {
+            dirX = 0;
+            dirY = 0;
             TownHero hero = fight.Hero;
             if (!ReferenceEquals(fight, _pathRoom))
             {
@@ -424,9 +462,9 @@ namespace Dnf.Play
                         {
                             attack = smashAttack;
                         }
-                        else
+                        else if (session != null)
                         {
-                            Navigate(session, fight, hero, out dirX, out dirY);
+                            Navigate(session, fight, hero, out dirX, out dirY);      // 联网房间(session 为 null)没有迷宫,没有出口可走:站着等结算
                         }
                     }
                 }

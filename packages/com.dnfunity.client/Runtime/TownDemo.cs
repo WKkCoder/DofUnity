@@ -36,6 +36,9 @@ namespace Dnf.Client
     /// 战斗的阶段与事件只打 DNF_NET stage=combat 行(阶段名、枚举名与计数,不含载荷内容与服务端编号),房间接线只打 DNF_NET stage=room 行(状态名与只数);战斗结束之后才接心跳保活、照旧跑到退出。
     /// 联网房间里的怪是本地怪:出生点与怪物编号是推断(与服务端怪表只按记录顺序对号),没有复活窗口(主角死亡不会失败,真服核对时建议带 -dnfnodamage)。
     /// 不带这个参数时联网流程与以前一字不变。
+    /// 再带 -dnfnetbot(要同时带 -dnfbot、-dnfnet、-dnfnetdungeon,缺一个就只留一行 DNF_NET stage=room bot ignored 提示、当没带)时,联网房间里也由自动机打(r16-onlinebot,
+    /// <see cref="FlowBot.HostedRooms"/> → <see cref="HostedRoomBot"/>:决策与离线同一份,带整段超时与无进展上限,不会无限挂机);自动机停手(或收尾时仍在打)写一行 DNF_NET stage=room bot,
+    /// 联网结算选定回城时 DNF_NET stage=room return 照旧写一行。不带 -dnfnetbot 时联网房间与以前一字不变(自动机不动它)。
     /// 带 -dnfflow 时玩整条流程(<see cref="GameFlow"/>,证据 E-093):从选角(-dnfflowfrom char,证据 E-096:方向键移动选中、回车或空格开始游戏、Esc 或点"结束游戏"退出,点角色格子选中)、
     /// 城镇(town,默认)、副本选择(select)或副本(dungeon)开始;
     /// 城镇走城镇图册(<see cref="AtlasTownWorld"/>,证据 E-095):登录落在赛丽亚房间、走进地图边缘的出口换区域、艾尔文防线走到地下城入口区域再走进右边的出口打开世界地图,
@@ -237,6 +240,8 @@ namespace Dnf.Client
         private OnlineDungeonRoom _netRoom;                 // 联网副本房间的接线(进联网房间时造,见 PrepareNetRoom)
         private HostedRoomRun _netRun;                      // 造好、还没被流程取走的联网房间这一局(流程的副本工厂取一次,见 TakeNetRun)
         private bool _netRoomNoted;                         // 联网房间选定回城的那一刻已经写过 DNF_NET stage=room return
+        private bool _netBot;                               // -dnfnetbot:联网房间里也让自动机打(要同时带 -dnfbot -dnfnet -dnfnetdungeon,见 HostedRoomBot.IgnoredReason)
+        private bool _netBotOn;                             // -dnfnetbot 三者齐全、真正生效(进流程之前定下);默认 false:联网房间与以前一字不变
         private string _flowFrom = "town";
         private string _flowChoices = DefaultFlowChoices;
         private string _worldMapPath = DefaultWorldMap;
@@ -450,6 +455,9 @@ namespace Dnf.Client
                         if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
                                 System.Globalization.CultureInfo.InvariantCulture, out int nport) && nport > 0 && nport < 65536) { _netPort = nport; i++; }
                         break;
+                    case "-dnfnetbot":
+                        _netBot = true;      // 要不要生效、缺什么,进流程之前由 ResolveNetBot 定
+                        break;
                     case "-dnfnetdungeon":
                         // -dnfnetdungeon <副本编号 0..65535> <模式 0..4>:两个参数都合规才生效(解析与范围见 OnlineDungeonRunner.TryParseArguments);
                         // 写错就当没带,只留一行提示
@@ -577,6 +585,7 @@ namespace Dnf.Client
             _state = State.Loading;
             _message = "Opening the game data…";
             yield return null;
+            ResolveNetBot();
             if (_netMode)
             {
                 // 真联网:-dnfnet 时先把网关登录一路跑到选角进城,成功了再按流程进城(角色本体数据先用本地占位)
@@ -877,6 +886,38 @@ namespace Dnf.Client
             }
             _netRoomNoted = true;
             Debug.Log(OnlineDungeonRoom.LogPrefix + " return choice=" + run.Choice + " reported=" + run.Reported + " dropped=" + run.Dropped);
+        }
+
+        /// <summary>
+        /// -dnfnetbot 要不要生效(进流程之前调一次):-dnfbot、-dnfnet、-dnfnetdungeon 三者齐全才生效(<see cref="HostedRoomBot.IgnoredReason"/>);缺了写一行
+        /// DNF_NET stage=room bot ignored reason=…、开关当没带。没带 -dnfnetbot 什么也不写,联网房间与以前一字不变。
+        /// </summary>
+        private void ResolveNetBot()
+        {
+            if (!_netBot)
+            {
+                return;
+            }
+            string reason = HostedRoomBot.IgnoredReason(_useBot, _netMode, _netDungeon);
+            _netBotOn = reason == null;
+            if (!_netBotOn)
+            {
+                Debug.Log(HostedRoomBot.LogPrefix + " ignored reason=" + reason);
+            }
+        }
+
+        /// <summary>
+        /// 联网房间自动机停手的那一刻写一行 DNF_NET stage=room bot(原因、步数、上报数等,只有状态名与只数);<paramref name="atQuit"/> 为 true 是收尾时
+        /// (-dnfquitafter 先到、自动机还在打)也留一行当时的状态。"只写一次、什么时候该写"都在 <see cref="HostedRoomBot.TakeLogLine"/> 里(有测试),这里只转发;
+        /// 没生效、不是联网房间时 HostedBot 恒为 null,什么也不写。
+        /// </summary>
+        private void NoteNetBot(bool atQuit)
+        {
+            string line = _netBotOn && _flowBot != null && _flowBot.HostedBot != null ? _flowBot.HostedBot.TakeLogLine(atQuit) : null;
+            if (line != null)
+            {
+                Debug.Log(line);
+            }
         }
 
         private static string StageText(int stage) => (OnlineStage)stage switch
@@ -1491,6 +1532,7 @@ namespace Dnf.Client
             if (_quitAfterSeconds >= 0f && Time.realtimeSinceStartup - _runningSince >= _quitAfterSeconds)
             {
                 float seconds = Time.realtimeSinceStartup - _runningSince;
+                NoteNetBot(true);   // 联网房间自动机收尾时还在打(没生效或已写过就什么也不写)
                 Debug.Log("DNF_TOWN_DEMO ran frames=" + _frames + " seconds=" + seconds.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)
                     + " clockMs=" + (long)_clockMs + " sprites=" + _spriteCount + HeroLog());
                 if (_audio != null)
@@ -2219,7 +2261,14 @@ namespace Dnf.Client
         {
             if (_flowBot != null)
             {
+                // 联网房间自动机(-dnfnetbot):推进时流程的 Poll 可能已经把阶段切回城镇,所以先抓住这一局,推进完再写回城与自动机停手的日志;没生效时 botRun 恒为 null,与以前一样
+                HostedRoomRun botRun = _netBotOn ? _flow.Run as HostedRoomRun : null;
                 _flowBot.Advance(_flow, deltaMs);
+                if (botRun != null)
+                {
+                    NoteNetRoom(botRun);
+                    NoteNetBot(false);
+                }
             }
             else
             {
@@ -2484,7 +2533,7 @@ namespace Dnf.Client
             }
             if (_useBot)
             {
-                _flowBot = new FlowBot(_botExplore, ParseSettlementChoices(_flowChoices)) { RaiseDifficulty = _raiseDifficulty, SmashObjects = _smash };
+                _flowBot = new FlowBot(_botExplore, ParseSettlementChoices(_flowChoices)) { RaiseDifficulty = _raiseDifficulty, SmashObjects = _smash, HostedRooms = _netBotOn };
             }
         }
 
