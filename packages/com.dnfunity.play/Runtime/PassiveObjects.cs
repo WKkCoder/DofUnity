@@ -495,8 +495,18 @@ namespace Dnf.Play
                 _strikeOverride = null;     // 进入自带默认攻击信息的动作:默认在动作开始时套上,盖掉之前脚本换的(推断,E-167)
             }
             _motionVersion++;
+            _runner?.EndMotion();       // 事件流收口:换掉的这段动作开始过的叠加层先各出一个"结束"(叠加层与声音事件,见 IActHost.MotionEvent)
             _runner = next.HasTriggers ? new ActRunner(next.Program, this, _host, BoardOf(next)) : null;
             _setActionPending = _runner != null;
+        }
+
+        /// <summary>
+        /// 退场(会话把消失的对象从表里拿掉之前调)的事件流收口:当前这段动作的运行器开始过的叠加层各出一个"结束",只收一次。
+        /// 没有触发器的动作没有运行器,什么都不做(这一版没有为它单独出事件流)。
+        /// </summary>
+        public void EndMotionEvents()
+        {
+            _runner?.EndMotion();
         }
 
         /// <summary>推进 <paramref name="deltaMs"/> 毫秒:先让触发器跑(含刚切动作时的 [ON SET ACTION]),再按速度挪位置,最后判断消失。</summary>

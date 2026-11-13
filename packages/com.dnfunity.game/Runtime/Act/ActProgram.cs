@@ -1105,8 +1105,11 @@ namespace Dnf.Game.Act
         public IReadOnlyList<string> UnsupportedTags { get; }
     }
 
-    /// <summary>一个 [MOTION] 块:主动画与叠加动画的路径(相对 .act 所在目录,原样)。</summary>
-    public sealed class ActMotion
+    /// <summary>
+    /// 一个 [MOTION] 块:主动画与叠加动画的路径(相对 .act 所在目录,原样)。
+    /// 叠加层与声音的结构化条目(起始帧、层序键、偏移、声音帧与概率)见 ActMotion.Events.cs。
+    /// </summary>
+    public sealed partial class ActMotion
     {
         internal ActMotion(string baseAni, List<string> subAnis)
         {
@@ -1170,6 +1173,9 @@ namespace Dnf.Game.Act
         /// <summary>第一个 [MOTION] 的 [BASE ANI] 路径;没有是 null。</summary>
         public string BaseAniPath => Motions.Count > 0 ? Motions[0].BaseAni : null;
 
+        /// <summary>第一个 [MOTION](主动画所在的那个)带叠加层或声音登记,运行器会出事件(见 <see cref="ActMotionPlayer"/>)。</summary>
+        public bool HasMotionEvents => Motions.Count > 0 && Motions[0].HasEvents;
+
         public static readonly ActProgram Empty = new ActProgram(null, new List<ActMotion>(), new List<ActTrigger>(), new List<ActBehaviorGroup>());
 
         public static ActProgram Compile(string path, ActScript script)
@@ -1228,7 +1234,11 @@ namespace Dnf.Game.Act
                     }
                 }
             }
-            return new ActMotion(baseAni, subs);
+            // 叠加层的起始帧与层序键、声音的帧与概率:结构化读一遍(SubAnis 的老写法保留,只数路径)
+            var layers = new List<ActOverlayLayer>();
+            var sounds = new List<ActSoundEvent>();
+            ActMotionCompiler.Read(motion, layers, sounds, out int malformed);
+            return new ActMotion(baseAni, subs, layers, sounds, malformed);
         }
     }
 }
