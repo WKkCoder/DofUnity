@@ -177,13 +177,14 @@ internal sealed class FightRig
         bool withholdClear = false,
         TimeSpan? clearWait = null,
         TimeSpan? settleWait = null,
-        double runnerSettlementSeconds = 10)
+        double runnerSettlementSeconds = 10,
+        double runnerOverallSeconds = 60)
     {
         Ids = CombatKit.Sequential(count);
         Map = CombatKit.Map(Ids);
         Server = new FakeCombatServer(table ?? Ids) { WithholdClear = withholdClear };
         Session = CombatFakeSession.ForServer(Server);
-        OnlineDungeonCombatOptions runnerOptions = CombatKit.Options(overallSeconds: 60, settlementSeconds: runnerSettlementSeconds);
+        OnlineDungeonCombatOptions runnerOptions = CombatKit.Options(overallSeconds: runnerOverallSeconds, settlementSeconds: runnerSettlementSeconds);
         runnerOptions.OnEvent = RecordEvent;
         Runner = new OnlineDungeonCombatRunner(Session, null, runnerOptions);
         Clock = new ManualFightClock();

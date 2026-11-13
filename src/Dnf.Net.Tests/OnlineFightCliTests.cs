@@ -256,3 +256,51 @@ public class OnlineFightCliTests
         Assert.NotNull(new OnlineFightDriver(runner, map, new OnlineFightOptions { PaceMs = 0 }));
     }
 }
+
+/// <summary><see cref="SystemFightClock"/> 的测试(线上用的那个时钟):单调、非正延时立即完成、取消、真等一小会儿。用的都是几十毫秒的小延时。</summary>
+public class SystemFightClockTests
+{
+    [Fact]
+    public void The_shared_instance_is_one_object_and_its_time_never_goes_back()
+    {
+        Assert.Same(SystemFightClock.Instance, SystemFightClock.Instance);
+        TimeSpan before = SystemFightClock.Instance.Now;
+        Thread.Sleep(10);
+        TimeSpan after = SystemFightClock.Instance.Now;
+        Assert.True(after > before);
+        Assert.True(after - before >= TimeSpan.FromMilliseconds(5));
+    }
+
+    [Fact]
+    public void A_delay_that_is_not_positive_completes_at_once()
+    {
+        Assert.True(SystemFightClock.Instance.DelayAsync(TimeSpan.Zero, CancellationToken.None).IsCompletedSuccessfully);
+        Assert.True(SystemFightClock.Instance.DelayAsync(TimeSpan.FromSeconds(-5), CancellationToken.None).IsCompletedSuccessfully);
+    }
+
+    [Fact]
+    public void A_token_that_is_already_cancelled_gives_a_cancelled_task_even_for_a_zero_delay()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.True(SystemFightClock.Instance.DelayAsync(TimeSpan.Zero, cts.Token).IsCanceled);
+        Assert.True(SystemFightClock.Instance.DelayAsync(TimeSpan.FromSeconds(30), cts.Token).IsCanceled);
+    }
+
+    [Fact]
+    public async Task A_positive_delay_really_waits_and_a_cancellation_cuts_it_short()
+    {
+        TimeSpan start = SystemFightClock.Instance.Now;
+        await SystemFightClock.Instance.DelayAsync(TimeSpan.FromMilliseconds(60), CancellationToken.None);
+        Assert.True(SystemFightClock.Instance.Now - start >= TimeSpan.FromMilliseconds(40), "应当真的等了一会儿");
+
+        using var cts = new CancellationTokenSource();
+        Task long30 = SystemFightClock.Instance.DelayAsync(TimeSpan.FromSeconds(30), cts.Token);
+        Assert.False(long30.IsCompleted);
+        cts.CancelAfter(TimeSpan.FromMilliseconds(30));
+        Task finished = await Task.WhenAny(long30, Task.Delay(TimeSpan.FromSeconds(10)));
+        Assert.Same(long30, finished);
+        Assert.True(long30.IsCanceled);
+    }
+}

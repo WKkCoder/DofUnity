@@ -388,4 +388,296 @@ public class OnlineFightDriverTests
         Assert.Equal(0, rig.Session.Commands(42));
         Assert.True(rig.Runner.Ended);
     }
+
+    // ======== 心跳、发送失败 ========
+
+    [Fact]
+    public async Task A_heartbeat_during_the_wait_is_answered_by_the_runner_with_the_product_reply()
+    {
+        var rig = new FightRig(2, withholdClear: true);
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(2);
+        await rig.WaitAnswered(2);
+        await rig.WaitParked();
+
+        rig.Session.Push(CombatKit.Heartbeat());
+        await CombatKit.WaitUntil(() => rig.Session.Commands((int)OnlineHeartbeat.ReplyPacketId) == 1, "心跳回包发出");
+        rig.Cts.Cancel();
+        OnlineFightSummary s = await rig.Done(run);
+
+        // 回的是产品既有的那一帧(类 1、包号 0、八个零字节),驱动没有另造;计数进了汇总
+        (PacketClass Class, ushort Id, byte[] Payload) reply = rig.Session.Sent.Single(x => x.Class == PacketClass.Cmd && x.Id == OnlineHeartbeat.ReplyPacketId);
+        Assert.Equal(OnlineHeartbeat.ReplyPayload, reply.Payload);
+        Assert.Equal(new byte[8], reply.Payload);
+        Assert.Equal(1, s.HeartbeatsAnswered);
+        Assert.Equal(OnlineFightOutcome.Cancelled, s.Outcome);
+    }
+
+    [Fact]
+    public async Task A_send_exception_is_a_fault_and_only_its_type_name_is_reported()
+    {
+        var rig = new FightRig(2);
+        rig.Session.FailureOfSend = index => new IOException("secret-detail-12345");
+        Task<OnlineFightSummary> run = await rig.Start();
+
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineFightOutcome.Faulted, s.Outcome);
+        Assert.Equal("IOException", s.FaultType);
+        Assert.Equal(OnlineDungeonCombatOutcome.Faulted, s.RunnerOutcome);
+        Assert.False(s.ReturnReady);
+        string text = string.Join("\n", rig.Log.Lines);
+        Assert.DoesNotContain("secret", text);
+        Assert.Contains(rig.Log.Lines, l => l.StartsWith(OnlineFightLog.Prefix + " end outcome=Faulted ") && l.EndsWith(" exception=IOException"));
+    }
+
+    [Fact]
+    public async Task A_frame_that_cannot_be_encoded_ends_the_run_as_faulted_with_the_send_counted_as_blocked()
+    {
+        var rig = new FightRig(2);
+        rig.Session.StatusOfSend = index => FrameStatus.EncryptFailed;
+        Task<OnlineFightSummary> run = await rig.Start();
+
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineFightOutcome.Faulted, s.Outcome);
+        Assert.Null(s.FaultType);
+        Assert.Equal(OnlineDungeonCombatOutcome.SendFailed, s.RunnerOutcome);
+        Assert.Equal(0, s.Sent);
+        Assert.Equal(1, s.Blocked);
+        Assert.Equal(OnlineFightKillVerdict.None, s.KillVerdict);
+    }
+
+    // ======== 清图通知先到、被拒的各种先后 ========
+
+    [Fact]
+    public async Task Once_the_server_says_the_map_is_cleared_the_remaining_monsters_are_not_posted()
+    {
+        // 服务端的表里只有前三只:三只确认之后表空了,它就说清图;后两只不必再报。
+        // 结算命令无人应答,跑器不会提前收场,所以驱动必须自己在节奏等待到点之后看到清图、不再排击杀。
+        var rig = new FightRig(5, table: CombatKit.Sequential(5).Take(3));
+        rig.Session.Respond = (cls, id, payload) => id == 49 ? null : rig.Server.Handle(cls, id, payload);
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(3);
+        await rig.WaitEvent(OnlineCombatEventKind.MapCleared);
+        await rig.Step();                           // 节奏等待到点:驱动醒来先看到清图
+        await rig.PumpUntil(() => rig.Log.Lines.Any(l => l.Contains("phase=settleWait")));
+        await rig.WaitParked();
+
+        rig.Clock.Advance(Window + TimeSpan.FromSeconds(1));
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineFightOutcome.SettleIncomplete, s.Outcome);
+        Assert.Equal(5, s.Monsters);
+        Assert.Equal(3, s.Posted);
+        Assert.Equal(3, s.Sent);
+        Assert.Equal(3, s.Confirmed);
+        Assert.Equal(0, s.Blocked);
+        Assert.True(s.ClearNoticeSeen);
+        Assert.Equal(3, rig.Server.Kills.Length);
+        Assert.Equal(rig.Kills(0, 3).Concat(new[] { "clear" }).ToArray(), rig.Server.Journal);
+    }
+
+    [Fact]
+    public async Task A_refusal_of_the_last_monster_is_noticed_while_waiting_for_the_clear_notice()
+    {
+        // 最后一只被拒,服务端也不会说清图:驱动在等清图的小步里发现被拒,不必等满窗口
+        var rig = new FightRig(3, withholdClear: true, table: CombatKit.Sequential(3).Where(id => id != CombatKit.BaseId + 2));
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(3);
+        await rig.WaitAnswered(3);
+        await rig.Step();                           // 等清图的一个小步
+
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineFightOutcome.RefusedStop, s.Outcome);
+        Assert.Equal(3, s.Sent);
+        Assert.Equal(2, s.Confirmed);
+        Assert.Equal(1, s.Refused);
+        Assert.Equal(2, s.FirstRefusedLocal);
+        Assert.False(s.ClearNoticeSeen);
+        Assert.True(s.Elapsed < Window, "没有等满清图窗口");
+        Assert.Equal(0, rig.Session.Commands(49));
+    }
+
+    [Fact]
+    public async Task A_refusal_outranks_a_closed_session_in_the_default_mode()
+    {
+        var rig = new FightRig(4, table: CombatKit.Sequential(4).Where(id => id != CombatKit.BaseId + 1));
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(2);                     // 第 0 只确认、第 1 只被拒
+        await rig.WaitAnswered(2);
+
+        rig.Session.Closed = true;                  // 被拒之后连接又被掐断:原因先于后果,结局记被拒
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineFightOutcome.RefusedStop, s.Outcome);
+        Assert.Equal(OnlineDungeonCombatOutcome.ConnectionClosed, s.RunnerOutcome);
+        Assert.Equal(1, s.FirstRefusedLocal);
+        Assert.Equal(1, s.Refused);
+    }
+
+    [Fact]
+    public async Task Continuing_after_refusals_without_a_clear_notice_ends_as_a_missing_notice_and_logs_only_the_first_refusal()
+    {
+        // 表是空的:每一只都被拒;继续模式照排,没有清图通知,窗口耗尽
+        var rig = new FightRig(3, continueOnRefuse: true, table: new int[0]);
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(3);
+        await rig.WaitAnswered(3);
+        await rig.WaitParked();
+
+        rig.Clock.Advance(Window + TimeSpan.FromSeconds(1));
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineFightOutcome.NoClearNotice, s.Outcome);
+        Assert.Equal(3, s.Sent);
+        Assert.Equal(0, s.Confirmed);
+        Assert.Equal(3, s.Refused);
+        Assert.Equal(0, s.FirstRefusedLocal);
+        Assert.Equal(OnlineFightKillVerdict.Refused, s.KillVerdict);
+        Assert.Single(rig.Log.Lines, l => l.StartsWith(OnlineFightLog.Prefix + " refused "));
+    }
+
+    // ======== 两段窗口的起点与精度 ========
+
+    [Fact]
+    public async Task The_settlement_window_is_counted_from_the_clear_notice_not_from_the_start()
+    {
+        var rig = new FightRig(1, withholdClear: true, clearWait: TimeSpan.FromSeconds(100), settleWait: TimeSpan.FromSeconds(10));
+        rig.Session.Respond = (cls, id, payload) => id == 49 ? null : rig.Server.Handle(cls, id, payload);
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(1);
+        await rig.WaitAnswered(1);
+        await rig.WaitParked();
+
+        rig.Clock.Advance(TimeSpan.FromSeconds(60));            // 等清图等了 60 秒,窗口 100 秒,还在等
+        await rig.WaitParked();
+        Assert.False(run.IsCompleted);
+        rig.Session.Push(rig.Server.ReleaseClear());            // 服务端这时才说清图
+        await rig.WaitEvent(OnlineCombatEventKind.MapCleared);
+        await rig.Step();                                       // 驱动醒来看到清图,开始等结算
+        await CombatKit.WaitUntil(() => rig.Log.Lines.Any(l => l.Contains("phase=settleWait")), "进入等结算");
+        await rig.WaitParked();
+        Assert.False(run.IsCompleted, "结算窗口从清图通知起算,不是从开始起算");
+
+        rig.Clock.Advance(TimeSpan.FromSeconds(9.9));
+        await rig.WaitParked();
+        Assert.False(run.IsCompleted, "10 秒窗口还差 100 毫秒");
+        rig.Clock.Advance(TimeSpan.FromSeconds(0.1));
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineFightOutcome.SettleIncomplete, s.Outcome);
+        Assert.True(s.ClearNoticeSeen);
+        Assert.Equal(OnlineFightSettlement.None, s.Settlement);
+        Assert.Equal(1, rig.Session.Commands(49));
+    }
+
+    [Fact]
+    public async Task The_clear_window_option_is_honoured_to_the_millisecond()
+    {
+        // 7.03 秒不是 50 毫秒步长的整数倍:最后一步必须缩短到刚好到点
+        var rig = new FightRig(1, withholdClear: true, clearWait: TimeSpan.FromMilliseconds(7030));
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(1);
+        await rig.WaitAnswered(1);
+        await rig.WaitParked();
+
+        rig.Clock.Advance(TimeSpan.FromSeconds(7));
+        await rig.WaitParked();
+        Assert.False(run.IsCompleted, "还差 30 毫秒");
+        rig.Clock.Advance(TimeSpan.FromMilliseconds(30));       // 驱动请求的最后一个小步正好是 30 毫秒
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineFightOutcome.NoClearNotice, s.Outcome);
+        Assert.Contains(TimeSpan.FromMilliseconds(30), rig.Clock.Requests);
+    }
+
+    // ======== 跑器自己先超时 ========
+
+    [Fact]
+    public async Task A_runner_that_times_out_first_is_mapped_by_the_phase_it_was_in()
+    {
+        // 战斗中:跑器的整段上限先到(真时间),清图通知没来
+        var fighting = new FightRig(2, withholdClear: true, runnerOverallSeconds: 0.5);
+        Task<OnlineFightSummary> run1 = await fighting.Start();
+        await fighting.PostKills(2);
+        OnlineFightSummary s1 = await fighting.Done(run1);
+        Assert.Equal(OnlineDungeonCombatOutcome.Timeout, s1.RunnerOutcome);
+        Assert.Equal(OnlineFightOutcome.NoClearNotice, s1.Outcome);
+        Assert.False(s1.ClearNoticeSeen);
+
+        // 结算中:服务端对结算命令一声不吭,跑器的结算上限先到
+        var settling = new FightRig(1, runnerSettlementSeconds: 0.3);
+        settling.Session.Respond = (cls, id, payload) => id == 49 ? null : settling.Server.Handle(cls, id, payload);
+        Task<OnlineFightSummary> run2 = await settling.Start();
+        await settling.PostKills(1);
+        OnlineFightSummary s2 = await settling.Pump(run2);
+        Assert.Equal(OnlineDungeonCombatOutcome.Timeout, s2.RunnerOutcome);
+        Assert.Equal(OnlineFightOutcome.SettleIncomplete, s2.Outcome);
+        Assert.True(s2.ClearNoticeSeen);
+        Assert.Equal(OnlineCombatPhase.Settling, s2.Phase);
+    }
+
+    // ======== 只能跑一次、日志 ========
+
+    [Fact]
+    public async Task A_driver_runs_once_and_refuses_a_runner_that_has_already_run()
+    {
+        var rig = new FightRig(1);
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(1);
+        await rig.Pump(run);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Driver.RunAsync());
+        var second = new OnlineFightDriver(rig.Runner, rig.Map, rig.Options);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => second.RunAsync());
+    }
+
+    [Fact]
+    public async Task The_driver_lines_name_the_phases_in_order_and_no_line_carries_a_server_number()
+    {
+        var rig = new FightRig(3);
+        Task<OnlineFightSummary> run = await rig.Start();
+        await rig.PostKills(3);
+        await rig.Pump(run);
+
+        string[] lines = rig.Log.Lines;
+        string[] own = lines.Where(l => l.StartsWith(OnlineFightLog.Prefix)).ToArray();
+        Assert.Equal(
+            new[]
+            {
+                OnlineFightLog.Prefix + " begin monsters=3 paceMs=400 clearWaitMs=25000 settleWaitMs=25000 continueOnRefuse=0",
+                OnlineFightLog.Prefix + " phase=kills posted=0",
+                OnlineFightLog.Prefix + " phase=clearWait posted=3",
+                OnlineFightLog.Prefix + " phase=settleWait posted=3",
+                OnlineFightLog.Prefix + " end outcome=AllDone monsters=3 sent=3 confirmed=3 refused=0 blocked=0 clearNotice=1 settlement=complete returnReady=1 posted=3 pending=0 heartbeats=0 runner=ReturnReady",
+            },
+            own);
+        // 跑器自己的行也走同一个回调
+        Assert.Contains(lines, l => l.StartsWith(OnlineCombatLog.Prefix + " begin monsters=3 "));
+        Assert.Contains(lines, l => l.StartsWith(OnlineCombatLog.Prefix + " done outcome=ReturnReady "));
+        // 任何一行里都没有合成的服务端怪编号、记录里的各项数值
+        for (int i = 0; i < 3; i++)
+        {
+            foreach (int number in new[] { CombatKit.BaseId + i, CombatKit.FieldA(i), CombatKit.FieldB(i), CombatKit.FieldD(i) })
+            {
+                Assert.DoesNotContain(lines, l => l.Contains(number.ToString()));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task A_log_callback_that_throws_does_not_disturb_the_run()
+    {
+        var rig = new FightRig(2);
+        Task<OnlineFightSummary> run = Task.Run(() => rig.Driver.RunAsync(line => throw new InvalidOperationException("log sink broke"), rig.Cts.Token));
+        await CombatKit.WaitUntil(() => rig.Runner.Machine != null, "跑器起来了");
+        await rig.PostKills(2);
+
+        OnlineFightSummary s = await rig.Pump(run);
+
+        Assert.Equal(OnlineFightOutcome.AllDone, s.Outcome);
+        Assert.Equal(2, s.Confirmed);
+    }
 }

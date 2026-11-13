@@ -328,6 +328,8 @@ namespace Dnf.Net.Session
 
         // 三段:排击杀、等清图、等结算。只在这里"定结局"的那几种(被拒即停、两段超时)写进 state.Verdict;
         // 跑器自己收场、结算收齐、被取消都不在这里定,留给 Summarize 按最终状态判。
+        // 每一圈的开头先看清图阶段、再看跑器收场没有:跑器在结算收齐后自己收场时,驱动仍会经过"等结算"这一段再返回,阶段行始终一样。
+        // 等待(WaitAsync)被跑器的收场提前唤醒时不单独处理,由下一圈开头的检查返回。
         private async Task DriveAsync(Task<OnlineDungeonCombatResult> runTask, RunState state, Action<string> log, CancellationToken token)
         {
             int total = _map.Monsters.Count;
@@ -336,14 +338,14 @@ namespace Dnf.Net.Session
             for (int i = 0; i < total; i++)
             {
                 token.ThrowIfCancellationRequested();
-                if (runTask.IsCompleted)
-                {
-                    return;
-                }
                 OnlineDungeonCombat machine = _runner.Machine;
                 if (machine.Phase >= OnlineCombatPhase.Cleared)
                 {
                     break;                                  // 服务端已经说清图了:没有怪可杀,不再排
+                }
+                if (runTask.IsCompleted)
+                {
+                    return;
                 }
                 if (NoteRefusal(machine, state, log) && !_continueOnRefuse)
                 {
@@ -360,10 +362,7 @@ namespace Dnf.Net.Session
 
                 if (i + 1 < total && _paceMs > 0)
                 {
-                    if (!await WaitAsync(runTask, TimeSpan.FromMilliseconds(_paceMs), token).ConfigureAwait(false))
-                    {
-                        return;
-                    }
+                    await WaitAsync(runTask, TimeSpan.FromMilliseconds(_paceMs), token).ConfigureAwait(false);
                 }
             }
 
@@ -372,14 +371,14 @@ namespace Dnf.Net.Session
             while (true)
             {
                 token.ThrowIfCancellationRequested();
-                if (runTask.IsCompleted)
-                {
-                    return;
-                }
                 OnlineDungeonCombat machine = _runner.Machine;
                 if (machine.Phase >= OnlineCombatPhase.Cleared)
                 {
                     break;
+                }
+                if (runTask.IsCompleted)
+                {
+                    return;
                 }
                 if (NoteRefusal(machine, state, log) && !_continueOnRefuse)
                 {
@@ -392,10 +391,7 @@ namespace Dnf.Net.Session
                     state.Verdict = OnlineFightOutcome.NoClearNotice;
                     return;
                 }
-                if (!await WaitAsync(runTask, Shorter(_poll, left), token).ConfigureAwait(false))
-                {
-                    return;
-                }
+                await WaitAsync(runTask, Shorter(_poll, left), token).ConfigureAwait(false);
             }
 
             // 清图通知到了:结算命令由跑器自己发(闸门在状态机里),这里只等两段结算通知收齐。
@@ -404,11 +400,11 @@ namespace Dnf.Net.Session
             while (true)
             {
                 token.ThrowIfCancellationRequested();
-                if (runTask.IsCompleted)
+                if (_runner.Machine.Phase == OnlineCombatPhase.Settled)
                 {
                     return;
                 }
-                if (_runner.Machine.Phase == OnlineCombatPhase.Settled)
+                if (runTask.IsCompleted)
                 {
                     return;
                 }
@@ -418,10 +414,7 @@ namespace Dnf.Net.Session
                     state.Verdict = OnlineFightOutcome.SettleIncomplete;
                     return;
                 }
-                if (!await WaitAsync(runTask, Shorter(_poll, left), token).ConfigureAwait(false))
-                {
-                    return;
-                }
+                await WaitAsync(runTask, Shorter(_poll, left), token).ConfigureAwait(false);
             }
         }
 
@@ -440,21 +433,19 @@ namespace Dnf.Net.Session
             return true;
         }
 
-        // 等 delay(取驱动的时钟);跑器先收场就立刻返回 false;取消令牌触发抛 OperationCanceledException。
+        // 等 delay(取驱动的时钟);跑器先收场就立刻返回(由调用方下一圈开头的检查收场);取消令牌触发抛 OperationCanceledException。
         // 每次等待自带一个小令牌,等完就取消它,免得假时钟里或真定时器里留下没人等的延时。
-        private async Task<bool> WaitAsync(Task runTask, TimeSpan delay, CancellationToken token)
+        private async Task WaitAsync(Task runTask, TimeSpan delay, CancellationToken token)
         {
             using (CancellationTokenSource step = CancellationTokenSource.CreateLinkedTokenSource(token))
             {
                 Task delayTask = _clock.DelayAsync(delay, step.Token);
                 Task winner = await Task.WhenAny(runTask, delayTask).ConfigureAwait(false);
                 step.Cancel();
-                if (winner == runTask)
+                if (winner != runTask)
                 {
-                    return false;
+                    await delayTask.ConfigureAwait(false);
                 }
-                await delayTask.ConfigureAwait(false);
-                return true;
             }
         }
 
