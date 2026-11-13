@@ -13,7 +13,7 @@ namespace Dnf.Client.Tests;
 /// 回城。会话与服务端是联网层测试共用的内存假实现(<see cref="CombatFakeSession"/>、<see cref="FakeCombatServer"/>),不连任何真实服务;
 /// 怪编号是 9100 起的合成值,怪物编号是夹具里的合成编号(1 完整、3 造不出来)。
 /// </summary>
-public class OnlineDungeonRoomTests
+public partial class OnlineDungeonRoomTests
 {
     private const int Ok = HostedRoomFixture.Buildable;
     private const int Bad = HostedRoomFixture.Unbuildable;
