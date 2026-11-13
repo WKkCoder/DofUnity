@@ -229,6 +229,58 @@ internal static class ItemWire
         return b.ToArray();
     }
 
+    /// <summary>
+    /// 紧凑装备记录(22 字节):u8 槽号 + 物品号 + u32 长度 4 + 4 字节扩展信息 + u8 packed + 清除装扮 + 附魔索引。
+    /// </summary>
+    public static NoticePayloadBuilder AppendCompact(this NoticePayloadBuilder b, int slot, long itemId, long expansion = 0, int packed = 0, long clearAvatar = 0, long enchant = 0)
+    {
+        return b.U8(slot).U32(itemId).U32(4).U32(expansion).U8(packed).U32(clearAvatar).U32(enchant);
+    }
+
+    /// <summary>紧凑装备列表:u8 个数 + 记录;<paramref name="trailing"/> 非 null 时再写列表之后的尾字节。</summary>
+    public static NoticePayloadBuilder AppendCompactList(this NoticePayloadBuilder b, int? trailing, params (int Slot, long ItemId, int Packed)[] records)
+    {
+        b.U8(records.Length);
+        foreach ((int slot, long itemId, int packed) in records)
+        {
+            b.AppendCompact(slot, itemId, 0, packed);
+        }
+        if (trailing.HasValue)
+        {
+            b.U8(trailing.Value);
+        }
+        return b;
+    }
+
+    /// <summary>详细装备列表:u8 个数 + 详细记录。</summary>
+    public static NoticePayloadBuilder AppendDetailList(this NoticePayloadBuilder b, params ItemSpec[] entries)
+    {
+        b.U8(entries.Length);
+        foreach (ItemSpec e in entries)
+        {
+            b.AppendDetailEntry(e);
+        }
+        return b;
+    }
+
+    /// <summary>
+    /// 用户信息公共视图(模式 0):u8 0 + u16 个数 + u16 uid + u32 名字长度 + 名字 + 6 个 u8 + 紧凑装备列表 + 尾字节 + 非物品尾巴。
+    /// </summary>
+    public static byte[] PublicViewPacket(int count, int uid, byte[] name, byte[] header6, int trailing, byte[] tail, params (int Slot, long ItemId, int Packed)[] records)
+    {
+        return new NoticePayloadBuilder().U8(0).U16(count).U16(uid).U32(name.Length).Raw(name).Raw(header6)
+            .AppendCompactList(trailing, records).Raw(tail).ToArray();
+    }
+
+    /// <summary>
+    /// 用户信息本人详细视图(模式 1):u8 1 + u16 个数 + u16 X + u32 Y + u32 统计块长度 + 统计块 + u8 + 详细装备列表 + 非物品尾巴。
+    /// </summary>
+    public static byte[] SelfViewPacket(int count, int x, long y, byte[] stat, int selfByte, byte[] tail, params ItemSpec[] entries)
+    {
+        return new NoticePayloadBuilder().U8(1).U16(count).U16(x).U32(y).U32(stat.Length).Raw(stat).U8(selfByte)
+            .AppendDetailList(entries).Raw(tail).ToArray();
+    }
+
     /// <summary>在包体后追加 4 字节 PI 尾,再补零到块长的整数倍(直连帧载荷的形态,笔记 §1.1 注)。</summary>
     public static byte[] DirectFramePayload(byte[] body, int packetId)
     {
