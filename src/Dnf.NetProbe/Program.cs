@@ -35,7 +35,11 @@ internal static class Program
         {
             return await Orchestrated(args);
         }
-        Console.WriteLine("用法: dnf-netprobe offline <首包文件> | live [--register] [--channel-port N] [--data-version N] [--seconds N] | orchestrated [仓库根]");
+        if (args.Length >= 1 && args[0] == "channel")
+        {
+            return await ChannelProbe.RunAsync(args);
+        }
+        Console.WriteLine("用法: dnf-netprobe offline <首包文件> | live [--register] [--channel-port N] [--data-version N] [--seconds N] | orchestrated [仓库根] | channel [仓库根] [--channel-port N] [--version V]");
         return 64;
     }
 
