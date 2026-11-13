@@ -33,6 +33,8 @@ namespace Dnf.Net.Session
     public sealed class ItemUpdateNotice
     {
         private readonly IReadOnlyList<ItemUpdateOperation> _operations;
+        private readonly IReadOnlyList<ItemUpdateOperation> _upserts;
+        private readonly IReadOnlyList<ushort> _deletes;
 
         internal ItemUpdateNotice(
             ItemSpace space,
@@ -44,7 +46,35 @@ namespace Dnf.Net.Session
         {
             Space = space;
             DeclaredEntryCount = declaredEntryCount;
-            _operations = Array.AsReadOnly(operations ?? new ItemUpdateOperation[0]);
+            ItemUpdateOperation[] all = operations ?? new ItemUpdateOperation[0];
+            _operations = Array.AsReadOnly(all);
+
+            // 按线上顺序把操作拆成"换成这个条目"与"清空该槽"两份视图(一次扫描,各自按原有先后排列)。
+            int deleteCount = 0;
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i].IsDelete)
+                {
+                    deleteCount++;
+                }
+            }
+            ItemUpdateOperation[] upserts = new ItemUpdateOperation[all.Length - deleteCount];
+            ushort[] deletes = new ushort[deleteCount];
+            int upsertIndex = 0;
+            int deleteIndex = 0;
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i].IsDelete)
+                {
+                    deletes[deleteIndex++] = all[i].Slot;
+                }
+                else
+                {
+                    upserts[upsertIndex++] = all[i];
+                }
+            }
+            _upserts = Array.AsReadOnly(upserts);
+            _deletes = Array.AsReadOnly(deletes);
             Currency = currency ?? ItemCurrency.Empty;
             ConsumedByteCount = consumedByteCount;
             TrailingByteCount = trailingByteCount;
@@ -56,8 +86,20 @@ namespace Dnf.Net.Session
         /// <summary>包头声明的条目个数(含货币槽与删除条目)。</summary>
         public int DeclaredEntryCount { get; }
 
-        /// <summary>槽操作(不含货币槽),按线上顺序。</summary>
+        /// <summary>槽操作(不含货币槽),按线上顺序。归约(叠在已有状态上)请用它:同一槽先删后放、先放后删的先后次序只有这里有。</summary>
         public IReadOnlyList<ItemUpdateOperation> Operations => _operations;
+
+        /// <summary>
+        /// "把该槽换成这个条目"的操作(<see cref="Operations"/> 里不是删除的那些),保持线上相对顺序;
+        /// 每项的 <see cref="ItemUpdateOperation.Entry"/> 不为 null。丢失了与删除操作之间的先后次序,只适合"看这个包放了什么"。
+        /// </summary>
+        public IReadOnlyList<ItemUpdateOperation> Upserts => _upserts;
+
+        /// <summary>
+        /// "清空该槽"的槽号(<see cref="Operations"/> 里的删除操作),保持线上相对顺序,同一槽出现几次就有几项。
+        /// 丢失了与放入操作之间的先后次序,只适合"看这个包清了哪些槽"。
+        /// </summary>
+        public IReadOnlyList<ushort> Deletes => _deletes;
 
         /// <summary>
         /// 货币刷新(只有空间 0 的槽 0、1、2 产生):包里出现的货币槽有值,其余为 null。

@@ -91,6 +91,51 @@ public class ItemUpdateParserTests
     }
 
     [Fact]
+    public void UpsertsAndDeletesSplitTheOperationsAndKeepTheirOwnWireOrder()
+    {
+        ItemUpdateNotice n = ParseOk(UpdatePacket(0, Item(9, ItemA), Item(6, DeleteMarker), Item(5, ItemB), Item(12, DeleteMarker), Item(7, ItemC)));
+        Assert.Equal(5, n.Operations.Count);
+        Assert.Equal(3, n.Upserts.Count);
+        Assert.Equal(new ushort[] { 9, 5, 7 }, n.Upserts.Select(o => o.Slot).ToArray());
+        Assert.Equal(new uint[] { 900001u, 900002u, 900003u }, n.Upserts.Select(o => o.Entry.ItemId).ToArray());
+        Assert.All(n.Upserts, o => Assert.False(o.IsDelete));
+        Assert.Equal(2, n.Deletes.Count);
+        Assert.Equal(new ushort[] { 6, 12 }, n.Deletes.ToArray());
+    }
+
+    [Fact]
+    public void ADeleteOnlyPacketHasDeletesButNoUpsertsAndAnUpsertOnlyPacketTheOpposite()
+    {
+        ItemUpdateNotice deleteOnly = ParseOk(UpdatePacket(0, Item(4, DeleteMarker), Item(4, DeleteMarker)));
+        Assert.Empty(deleteOnly.Upserts);
+        Assert.Equal(new ushort[] { 4, 4 }, deleteOnly.Deletes.ToArray());
+
+        ItemUpdateNotice upsertOnly = ParseOk(UpdatePacket(0, Item(4, ItemA)));
+        Assert.Single(upsertOnly.Upserts);
+        Assert.Empty(upsertOnly.Deletes);
+    }
+
+    [Fact]
+    public void ACurrencyOnlyOrEmptyPacketHasNeitherUpsertsNorDeletes()
+    {
+        ItemUpdateNotice currencyOnly = ParseOk(UpdatePacket(0, Pseudo(1, 777)));
+        Assert.Empty(currencyOnly.Upserts);
+        Assert.Empty(currencyOnly.Deletes);
+
+        ItemUpdateNotice empty = ParseOk(UpdatePacket(0));
+        Assert.Empty(empty.Upserts);
+        Assert.Empty(empty.Deletes);
+    }
+
+    [Fact]
+    public void UpsertAndDeleteViewsAreReadOnly()
+    {
+        ItemUpdateNotice n = ParseOk(UpdatePacket(0, Item(5, ItemA), Item(6, DeleteMarker)));
+        Assert.True(((System.Collections.IList)n.Upserts).IsReadOnly);
+        Assert.True(((System.Collections.IList)n.Deletes).IsReadOnly);
+    }
+
+    [Fact]
     public void TheSameSlotTwiceInOnePacketKeepsTheWireOrderSoTheLaterOneWinsWhenApplied()
     {
         ItemUpdateNotice a = ParseOk(UpdatePacket(0, Item(5, ItemA), Item(5, DeleteMarker)));
