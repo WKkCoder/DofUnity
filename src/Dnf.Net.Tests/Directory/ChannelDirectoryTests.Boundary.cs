@@ -453,6 +453,19 @@ public sealed partial class ChannelDirectoryTests
             Assert.Equal(0xff00ff00u, e.ArgbColor);
         }
 
+        // 负载 ≤ 0 时不看容量:容量也 ≤ 0、或容量小到有效分母为 0((int)(1*0.7f) = 0),照样判顺畅 0%,不是满载/拥挤
+        foreach (int load in new[] { 0, -3 })
+        {
+            foreach (int max in new[] { 0, -1, 1 })
+            {
+                ChannelCongestionEvaluation e = ChannelCongestionEvaluator.Evaluate(load, max, 50, 95.0f);
+                Assert.Equal(ChannelCongestionTier.Comfortable, e.Tier);
+                Assert.False(e.IsFull);
+                Assert.Equal(0, e.EffectivePercent);
+                Assert.Equal(0xff00ff00u, e.ArgbColor);
+            }
+        }
+
         // 容量 ≤ 0 而负载 > 0:满载,100%
         foreach (int max in new[] { 0, -1 })
         {
