@@ -57,6 +57,16 @@ internal sealed class HostedGatedRoomFixture : IDisposable
     public RoomCombatSession Create(IReadOnlyList<RoomMonsterSpawn> templates, Func<RoomMap, IReadOnlyList<RoomMonsterSpawn>> spawnPlan, IEnumerable<GateSide> gates,
         bool heroVitals = false, double heroX = 300, double heroY = 100)
     {
+        RoomSession room = CreateRoomSession(templates, gates, heroX, heroY);
+        return RoomCombatSession.Create(Assets, room, 1, heroVitals, null, spawnPlan: spawnPlan);
+    }
+
+    /// <summary>
+    /// 只拼出一间全新的房间会话(地图、出口、主角、镜头),不摆怪物也不接战斗:宿主自己拼房间、再交给 <see cref="HostedRoomCombat"/> 摆怪的做法,
+    /// 测试从这里拿房间。<see cref="Create"/> 就是它加上 <see cref="RoomCombatSession.Create"/>。
+    /// </summary>
+    public RoomSession CreateRoomSession(IReadOnlyList<RoomMonsterSpawn> templates, IEnumerable<GateSide> gates, double heroX = 300, double heroY = 100)
+    {
         var tiles = new List<TileFile>();
         for (int i = 0; i < 5; i++)
         {
@@ -82,8 +92,7 @@ internal sealed class HostedGatedRoomFixture : IDisposable
         AvatarOutfit outfit = AvatarOutfit.CreateDefault(Assets, cls, AvatarFixture.EquipRoot, AvatarFixture.WeaponEqu);
         // 可走区域与生产路径一样是房间瓦片的通行表(整间都能走,边缘就是房间的边):上下出口靠"顶着可走带的边缘往外走"触发,没有边缘就走不出去
         TownHero hero = TownHero.Create(Assets, AvatarFixture.ChrPath, outfit, new RoomWalkArea(map, content.Objects), heroX, heroY, false, TownHero.DungeonRestTag);
-        var room = new RoomSession(Assets, content, hero, new TownCamera(0, map.MaxCameraX, hero.X));
-        return RoomCombatSession.Create(Assets, room, 1, heroVitals, null, spawnPlan: spawnPlan);
+        return new RoomSession(Assets, content, hero, new TownCamera(0, map.MaxCameraX, hero.X));
     }
 
     public void Dispose()

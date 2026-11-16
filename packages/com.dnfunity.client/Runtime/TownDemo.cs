@@ -903,7 +903,8 @@ namespace Dnf.Client
         /// <summary>
         /// 联网多房间里造一间房:按这一格的出口码与服务端给的地图编号挑房间地图(<see cref="OnlineDungeonRoom.PickEntryMap"/>),出口物件按迷宫给(与离线副本同一条规则,
         /// <see cref="OnlineDungeonRoom.GateKindAt"/>),主角站在 <see cref="DemoRoom.DefaultSpawn"/>(换房时再由 <see cref="HostedRoomRun.EnterRoom"/> 摆到进来的那扇门),
-        /// 房间会话与离线联网房间同一条造法(<see cref="RoomCombatSession.Create"/> 带出生点计划)。挑不出地图返回 null。
+        /// 房间会话与离线联网房间同一条造法(<see cref="HostedRoomCombat.CreateSession"/> 转 <c>RoomCombatSession.Create</c> 带出生点计划;
+        /// 不能在宿主里直接调后者:它的签名里有宿主程序集没有引用的 Dnf.Game 的类型,Unity 编译不过)。挑不出地图返回 null。
         /// </summary>
         private RoomCombatSession CreateNetRoomSession(OnlineRoomEntry entry, Func<RoomMap, IReadOnlyList<RoomMonsterSpawn>> plan, DungeonRoomPool pool, HeroProgress progress)
         {
@@ -916,7 +917,7 @@ namespace Dnf.Client
             List<RoomGate> gates = DemoRoom.BuildGates(_assets, map, entry.Maze.GateSet, side => OnlineDungeonRoom.GateKindAt(entry.Maze, entry.CellX, entry.CellY, side));
             DemoRoom.DefaultSpawn(map, out double x, out double y);
             RoomSession room = DemoRoom.CreateRoom(_assets, map, gates, DemoRoom.DefaultOutfit(_assets, progress?.WeaponPath ?? DemoHero.StarterWeapon), x, y, false);
-            return RoomCombatSession.Create(_assets, room, _seed, !_noDamage, progress, spawnPlan: plan);
+            return HostedRoomCombat.CreateSession(_assets, room, _seed, !_noDamage, progress, plan);
         }
 
         /// <summary>流程的副本工厂先问这里:有造好的联网房间就交出去(只交一次),否则返回 null,工厂照旧造离线副本。</summary>
