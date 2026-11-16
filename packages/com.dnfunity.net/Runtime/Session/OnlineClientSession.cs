@@ -53,18 +53,46 @@ namespace Dnf.Net.Session
         void Dispatch(Action callback);
     }
 
-    /// <summary>网关登录与取游戏服地址的结果；令牌和地址只留在会话内部。</summary>
+    /// <summary>
+    /// 网关登录与取游戏服地址的结果；令牌和地址只留在会话内部。
+    /// 失败时另带"网关那一步到底是什么结局"的三个只读属性(<see cref="GatewayOutcome"/>、<see cref="GatewayErrorCode"/>、<see cref="RetryAfterSeconds"/>),
+    /// 让界面能把"口令错、账号被封、被限流、网络或协议出错、本地输入不合规"分开说,而不是一律是"网关登录失败";它们只有枚举与秒数,不含令牌、地址或口令。
+    /// </summary>
     public sealed class OnlineLoginResult
     {
         internal OnlineLoginResult(OnlineStage stage, OnlineFailure failure)
+            : this(stage, failure, null)
+        {
+        }
+
+        /// <param name="gateway">导致这个结果的那一次网关调用(登录或取游戏服地址)的结果;为 null 时三个属性取默认值。</param>
+        internal OnlineLoginResult(OnlineStage stage, OnlineFailure failure, GatewayResult gateway)
         {
             Stage = stage;
             Failure = failure;
+            if (gateway != null)
+            {
+                GatewayOutcome = gateway.Outcome;
+                GatewayErrorCode = gateway.ErrorCode;
+                RetryAfterSeconds = gateway.RetryAfterSeconds;
+            }
         }
 
         public OnlineStage Stage { get; }
         public OnlineFailure Failure { get; }
         public bool IsSuccess => Failure == OnlineFailure.None;
+
+        /// <summary>
+        /// 那一次网关调用的结局类别:登录失败时是登录调用的,取游戏服地址失败时是取地址调用的,成功时是 <see cref="Gateway.GatewayOutcome.Success"/>。
+        /// 注意取地址那一步"调用成功但地址不可用"(没有文本或不是 IP)时也是 Success,此时 <see cref="Failure"/> 才是 <see cref="OnlineFailure.NoGameServerAddress"/>。
+        /// </summary>
+        public GatewayOutcome GatewayOutcome { get; }
+
+        /// <summary>服务端业务错误(<see cref="Gateway.GatewayOutcome.ServerError"/>)的错误枚举;其它情况是 <see cref="Gateway.GatewayErrorCode.None"/>。</summary>
+        public GatewayErrorCode GatewayErrorCode { get; }
+
+        /// <summary>被限流(<see cref="Gateway.GatewayOutcome.RateLimited"/>)时建议等待的秒数(至少 1);其它情况是 0。</summary>
+        public int RetryAfterSeconds { get; }
     }
 
     /// <summary>连频道、收启动包与游戏登录的结果。</summary>
@@ -325,20 +353,20 @@ namespace Dnf.Net.Session
                     GatewayResult login = await gateway.LoginAsync(account, password, cancellationToken).ConfigureAwait(false);
                     if (!login.IsSuccess || login.Token == null)
                     {
-                        return new OnlineLoginResult(OnlineStage.GatewayLogin, OnlineFailure.GatewayLoginFailed);
+                        return new OnlineLoginResult(OnlineStage.GatewayLogin, OnlineFailure.GatewayLoginFailed, login);
                     }
                     ReportStage(OnlineStage.GameServerAddress);
                     GatewayResult ip = await gateway.GetGameServerIpAsync(cancellationToken).ConfigureAwait(false);
                     if (!ip.IsSuccess || ip.Text == null || !IPAddress.TryParse(ip.Text.Trim(), out IPAddress address))
                     {
-                        return new OnlineLoginResult(OnlineStage.GameServerAddress, OnlineFailure.NoGameServerAddress);
+                        return new OnlineLoginResult(OnlineStage.GameServerAddress, OnlineFailure.NoGameServerAddress, ip);
                     }
                     _settings.Account = account;
                     _settings.Password = password;
                     _token = login.Token;
                     _address = address;
                     State = OnlineClientSessionState.LoggedIn;
-                    return new OnlineLoginResult(OnlineStage.GameServerAddress, OnlineFailure.None);
+                    return new OnlineLoginResult(OnlineStage.GameServerAddress, OnlineFailure.None, ip);
                 }
             }
             finally
