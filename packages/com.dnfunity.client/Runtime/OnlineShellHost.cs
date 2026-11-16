@@ -36,6 +36,22 @@ namespace Dnf.Client
         public int ClickY;
     }
 
+    /// <summary>宿主这一帧要对画面做什么(<see cref="OnlineShellHost.TakeViewChange"/> 的结论;宿主只照做,不自己判断)。</summary>
+    public enum OnlineShellViewChange
+    {
+        /// <summary>什么都不用做。</summary>
+        None = 0,
+
+        /// <summary>外壳拿到(或从游戏里拿回)了屏幕:用 <see cref="OnlineShellHost.Flow"/> 的 Scene 造新视图;游戏还开着的话先把它冻住(不再推进)。</summary>
+        ShowShell,
+
+        /// <summary>第一次进入游戏:造游戏流程并换成它的画面。</summary>
+        StartGame,
+
+        /// <summary>外壳带着新会话再次进入游戏(掉线重登、换角色之后):恢复之前冻住的游戏流程。</summary>
+        ResumeGame,
+    }
+
     /// <summary>把一帧输入交给外壳。顺序:先文字(同一帧里先打字再按回车是常见的),再按键,最后点击。</summary>
     public static class OnlineShellInput
     {
@@ -98,6 +114,10 @@ namespace Dnf.Client
         private readonly OnlineShellFlow _flow;
         private readonly OnlineShellBackend _backend;
         private bool _disposed;
+        private int _shownSerial = -1;          // 宿主已经为它造过视图的外壳阶段序号
+        private bool _gameShown;                // 游戏现在占着屏幕
+        private bool _gameStarted;              // 游戏流程至少开过一次(再进游戏是恢复,不是重开)
+        private bool _rememberPending = true;   // 自从上次停在登录界面以来,还没交出过"登录成功的账号"
 
         /// <summary>造真实的宿主:后端用 <paramref name="setup"/> 的连接配置(没有配置时后端什么网络操作也不做)。</summary>
         public static OnlineShellHost Create(OnlineShellSetup setup, CharacterSelectScene art, Action<string> log)
@@ -158,6 +178,55 @@ namespace Dnf.Client
             OnlineShellInput.Apply(_flow, input);
             _flow.Advance(deltaMs);
             _flow.Poll(nowMs);
+            if (_flow.Stage == OnlineShellStage.Login)
+            {
+                _rememberPending = true;     // 停在登录界面:下一次登录成功的账号可以记下来
+            }
+        }
+
+        /// <summary>
+        /// 每帧 <see cref="Tick"/> 之后问一次:屏幕该换了吗。外壳阶段每变一次(序号变了)要换一次视图;进入游戏时第一次是 <see cref="OnlineShellViewChange.StartGame"/>,
+        /// 之后(掉线重登、换角色回来)是 <see cref="OnlineShellViewChange.ResumeGame"/>;从游戏里掉回外壳是 <see cref="OnlineShellViewChange.ShowShell"/>
+        /// (阶段序号只增不减,进过游戏再回外壳时序号一定不同于上次造外壳视图时的)。取走即清:同一个变化只说一次。
+        /// </summary>
+        public OnlineShellViewChange TakeViewChange()
+        {
+            if (_flow.Stage == OnlineShellStage.InGame)
+            {
+                if (_gameShown)
+                {
+                    return OnlineShellViewChange.None;
+                }
+                _gameShown = true;
+                if (_gameStarted)
+                {
+                    return OnlineShellViewChange.ResumeGame;
+                }
+                _gameStarted = true;
+                return OnlineShellViewChange.StartGame;
+            }
+            _gameShown = false;
+            if (_flow.StageSerial == _shownSerial)
+            {
+                return OnlineShellViewChange.None;
+            }
+            _shownSerial = _flow.StageSerial;
+            return OnlineShellViewChange.ShowShell;
+        }
+
+        /// <summary>
+        /// 登录成功之后第一次问时交出登录用的账号(之后为 null,直到再回到登录界面又登录成功):宿主据此记下"上次用的账号"(只记账号,口令从不记)。
+        /// 还停在登录界面、或这一轮登录的账号已经交出过,返回 null。
+        /// </summary>
+        public string TakeLoggedInUsername()
+        {
+            if (!_rememberPending || _flow.Stage == OnlineShellStage.Login)
+            {
+                return null;
+            }
+            _rememberPending = false;
+            string name = _flow.Login.Username;
+            return string.IsNullOrEmpty(name) ? null : name;
         }
 
         /// <summary>扩展点:进入游戏之后换角色(回到选频道,重连、重新取角色列表)。</summary>

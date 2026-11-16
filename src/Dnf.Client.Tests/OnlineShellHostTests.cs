@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Dnf.Net.Gateway;
 using Dnf.Net.Session;
@@ -55,6 +56,33 @@ public sealed class OnlineShellHostTests
         public void Until(Func<bool> done)
         {
             HostPump.Until(Host, ref Now, done);
+        }
+
+        /// <summary>像 TownDemo 那样:每帧 Tick 之后问一次屏幕要不要换,把不是 None 的结论按顺序记下来。</summary>
+        public List<OnlineShellViewChange> Changes { get; } = new();
+
+        public void Frame(OnlineShellFrameInput input = default)
+        {
+            Tick(input);
+            OnlineShellViewChange change = Host.TakeViewChange();
+            if (change != OnlineShellViewChange.None)
+            {
+                Changes.Add(change);
+            }
+        }
+
+        public void UntilFrames(Func<bool> done)
+        {
+            var watch = Stopwatch.StartNew();
+            while (!done())
+            {
+                Frame();
+                if (watch.Elapsed.TotalSeconds > 10)
+                {
+                    Assert.Fail("the condition was not reached within 10 seconds (stage " + Host.Stage + ")");
+                }
+                Thread.Sleep(1);
+            }
         }
 
         public void Type(string text)
@@ -436,6 +464,196 @@ public sealed class OnlineShellHostTests
         Assert.Equal(0, rig.Rig.Port(0).ConnectCalls);
         Assert.True(rig.Rig.Port(0).WaitDisposed());
         Assert.False(rig.Host.Flow.Busy);
+    }
+
+    // ---- 屏幕变化:什么时候换视图、什么时候开游戏 / 恢复游戏 ----
+
+    [Fact]
+    public void A_fresh_host_asks_for_the_shell_view_once_and_then_stays_quiet()
+    {
+        using var rig = new HostRig();
+
+        Assert.Equal(OnlineShellViewChange.ShowShell, rig.Host.TakeViewChange());
+        Assert.Equal(OnlineShellViewChange.None, rig.Host.TakeViewChange());
+        for (int i = 0; i < 5; i++)
+        {
+            rig.Frame();
+        }
+
+        Assert.Empty(rig.Changes);
+    }
+
+    [Fact]
+    public void Typing_on_the_login_screen_does_not_ask_for_a_new_view()
+    {
+        using var rig = new HostRig();
+        rig.Host.TakeViewChange();
+
+        rig.Frame(new OnlineShellFrameInput { Tab = true });
+        rig.Frame(new OnlineShellFrameInput { Text = "abc" });
+        rig.Frame(new OnlineShellFrameInput { Text = "\b" });
+
+        Assert.Empty(rig.Changes);
+    }
+
+    [Fact]
+    public void Each_stage_the_shell_moves_through_before_the_game_asks_for_a_shell_view_and_the_game_start_comes_exactly_once_at_the_end()
+    {
+        using var rig = new HostRig();
+        rig.Host.TakeViewChange();
+
+        rig.Press(tab: rig.Host.Flow.Login.Focus == LoginField.Username);
+        rig.Type(BackendRig.Password);
+        rig.Press(enter: true);
+        rig.UntilFrames(() => rig.Host.Stage == OnlineShellStage.CharacterSelect);
+        Assert.NotEmpty(rig.Changes);
+        Assert.All(rig.Changes, c => Assert.Equal(OnlineShellViewChange.ShowShell, c));
+
+        rig.Press(enter: true);
+        rig.UntilFrames(() => rig.Host.InGame);
+        for (int i = 0; i < 5; i++)
+        {
+            rig.Frame();
+        }
+
+        Assert.Equal(OnlineShellViewChange.StartGame, rig.Changes[^1]);
+        Assert.Single(rig.Changes, c => c == OnlineShellViewChange.StartGame);
+        Assert.DoesNotContain(OnlineShellViewChange.ResumeGame, rig.Changes);
+    }
+
+    [Fact]
+    public void While_the_game_is_running_the_host_has_nothing_more_to_say()
+    {
+        using var rig = new HostRig();
+        rig.ReachInGame();
+        Assert.Equal(OnlineShellViewChange.StartGame, rig.Host.TakeViewChange());
+
+        for (int i = 0; i < 10; i++)
+        {
+            rig.Frame();
+        }
+
+        Assert.Equal(OnlineShellViewChange.None, rig.Host.TakeViewChange());
+        Assert.Empty(rig.Changes);
+    }
+
+    [Fact]
+    public void A_connection_loss_gives_the_screen_back_to_the_shell_and_the_next_entry_resumes_the_game_instead_of_restarting_it()
+    {
+        using var rig = new HostRig();
+        rig.ReachInGame();
+        Assert.Equal(OnlineShellViewChange.StartGame, rig.Host.TakeViewChange());
+
+        rig.Rig.Port(0).RaiseLost();
+        rig.UntilFrames(() => rig.Host.Stage == OnlineShellStage.Login);
+        Assert.Equal(OnlineShellViewChange.ShowShell, rig.Changes[0]);
+        Assert.All(rig.Changes, c => Assert.Equal(OnlineShellViewChange.ShowShell, c));
+        rig.Changes.Clear();
+
+        rig.Host.Flow.Login.Prefill(BackendRig.User, BackendRig.Password);
+        rig.Press(enter: true);
+        rig.UntilFrames(() => rig.Host.Stage == OnlineShellStage.CharacterSelect);
+        rig.Press(enter: true);
+        rig.UntilFrames(() => rig.Host.InGame);
+
+        Assert.Equal(OnlineShellViewChange.ResumeGame, rig.Changes[^1]);
+        Assert.Single(rig.Changes, c => c == OnlineShellViewChange.ResumeGame);
+        Assert.DoesNotContain(OnlineShellViewChange.StartGame, rig.Changes);
+    }
+
+    [Fact]
+    public void Swapping_the_character_gives_the_screen_back_to_the_shell_and_coming_back_resumes_the_game()
+    {
+        using var rig = new HostRig();
+        rig.ReachInGame();
+        Assert.Equal(OnlineShellViewChange.StartGame, rig.Host.TakeViewChange());
+
+        rig.Host.SwapCharacter();
+        rig.UntilFrames(() => rig.Host.Stage == OnlineShellStage.CharacterSelect);
+        Assert.NotEmpty(rig.Changes);
+        Assert.All(rig.Changes, c => Assert.Equal(OnlineShellViewChange.ShowShell, c));
+        rig.Changes.Clear();
+
+        rig.Press(enter: true);
+        rig.UntilFrames(() => rig.Host.InGame);
+
+        Assert.Equal(OnlineShellViewChange.ResumeGame, rig.Changes[^1]);
+        Assert.DoesNotContain(OnlineShellViewChange.StartGame, rig.Changes);
+    }
+
+    [Fact]
+    public void Leaving_the_game_asks_for_the_shell_view_exactly_once_even_though_the_old_view_was_the_games()
+    {
+        using var rig = new HostRig();
+        rig.ReachInGame();
+        Assert.Equal(OnlineShellViewChange.StartGame, rig.Host.TakeViewChange());
+
+        rig.Host.Flow.NotifyDisconnected();
+        rig.Frame();
+        rig.Frame();
+        rig.Frame();
+
+        Assert.Equal(new[] { OnlineShellViewChange.ShowShell }, rig.Changes.ToArray());
+    }
+
+    // ---- 登录成功的账号:交一次,只在登录成功之后 ----
+
+    [Fact]
+    public void The_logged_in_username_is_handed_out_once_and_only_after_a_successful_login()
+    {
+        using var rig = new HostRig();
+        Assert.Null(rig.Host.TakeLoggedInUsername());
+
+        rig.ReachCharacterSelect();
+
+        Assert.Equal(BackendRig.User, rig.Host.TakeLoggedInUsername());
+        Assert.Null(rig.Host.TakeLoggedInUsername());
+    }
+
+    [Fact]
+    public void A_failed_login_hands_out_no_username()
+    {
+        using var rig = new HostRig(onPort: p =>
+            p.OnLogin = (user, password, ct) => Task.FromResult(
+                new OnlineLoginReport(OnlineFailure.GatewayLoginFailed, GatewayOutcome.ServerError, GatewayErrorCode.WrongCredentials, 0)));
+
+        rig.Type("not-the-password");
+        rig.Press(enter: true);
+        rig.Until(() => rig.Host.Flow.Notice != null && rig.Host.Flow.Notice.Kind == OnlineNoticeKind.WrongCredentials);
+
+        Assert.Null(rig.Host.TakeLoggedInUsername());
+    }
+
+    [Fact]
+    public void After_a_loss_the_next_successful_login_hands_out_its_own_username()
+    {
+        using var rig = new HostRig();
+        rig.ReachInGame();
+        Assert.Equal(BackendRig.User, rig.Host.TakeLoggedInUsername());
+
+        rig.Rig.Port(0).RaiseLost();
+        rig.Until(() => rig.Host.Stage == OnlineShellStage.Login);
+        Assert.Null(rig.Host.TakeLoggedInUsername());
+
+        rig.Host.Flow.Login.Prefill("second_player", BackendRig.Password);
+        rig.Press(enter: true);
+        rig.Until(() => rig.Host.Stage == OnlineShellStage.CharacterSelect);
+
+        Assert.Equal("second_player", rig.Host.TakeLoggedInUsername());
+        Assert.Null(rig.Host.TakeLoggedInUsername());
+    }
+
+    [Fact]
+    public void Swapping_the_character_does_not_hand_the_username_out_again()
+    {
+        using var rig = new HostRig();
+        rig.ReachInGame();
+        Assert.Equal(BackendRig.User, rig.Host.TakeLoggedInUsername());
+
+        rig.Host.SwapCharacter();
+        rig.Until(() => rig.Host.Stage == OnlineShellStage.CharacterSelect);
+
+        Assert.Null(rig.Host.TakeLoggedInUsername());
     }
 
     // ---- 构造 ----
