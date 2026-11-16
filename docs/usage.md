@@ -100,6 +100,7 @@ src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe live [--register] [--seconds N
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe orchestrated [仓库根] [--stay N]  # 与 Unity 宿主同一条编排:网关登录 → 取游戏服地址 → 连频道 → 游戏登录 → 逐槽选角 → 进城;--stay N 进城后再挂 N 秒(心跳保活)
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe fight [仓库根] --dungeon <副本号 0–65535> <模式 0–4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S]  # 无头:进城 → 进副本 → 对起始地图的怪逐只发击杀 → 等清图通知 → 等两段结算;只打脱敏的 PROBE_FIGHT 行,退出码 0 才是收齐;认证失败退出码 5 且绝不重试(E-416)
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe fight [仓库根] --permits-only  # 进城后只打副本许可表(副本号与档位,只给你自己的终端看、不落库)就退出,不进副本;用来挑单房间副本
+src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe channel [仓库根] [--channel-port N] [--version V]  # 只读:网关健康检查 → 登录 → 取目录服务地址 → 连选频道目录服务走四步 → 只打组数、频道总数、推荐规则数、有效端口数与各档位计数;每次运行是一次网关登录,还没有联网跑过(E-423、E-424)
 ```
 
     Unity 开发版宿主(第 9 条的播放器)加联网参数:`-dnfnet` 先在后台把上面那条编排跑完、再进入城镇(`-dnfnetroot <仓库根>` 指定读本地凭据的位置,`-dnfnetport <端口>` 改频道端口);
