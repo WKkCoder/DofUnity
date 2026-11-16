@@ -6,7 +6,8 @@ namespace Dnf.Cli.Analysis;
 
 /// <summary>
 /// login-shot:联网登录界面(<see cref="LoginScreen"/>,<c>-dnfonline</c> 的第一屏,r18-onlineshell)在界面打开 --time 毫秒时的 800×600 画面,写成 PNG。
-/// 没有汉字字体,标签是点阵字库的英文大写占位(Unity 里有字体时是中文)。账号、密码与提示全是合成的:
+/// 这条命令没有汉字字体,文字是点阵字库的英文大写占位(版面、配色、形状与有字体时完全一样,只是字换成了占位);
+/// 中文的样子看 Unity 一侧的 EditMode 截图测试 <c>OnlineShellShotTests</c>(系统汉字字体,图写到 out/onlineshell/)。账号、密码与提示全是合成的:
 /// --user 预填账号(默认 player_01;不会打印),--typed N 让密码框里有 N 个字符(只画 N 个圆点,密码本身从不画),
 /// --notice 显示某一类提示(<see cref="OnlineNoticeKind"/> 的名字,不分大小写,连字符可写可不写;--countdown 秒 是"限流"提示的倒计时),
 /// --busy 画请求在途的样子,--change-password 画修改密码的形态。

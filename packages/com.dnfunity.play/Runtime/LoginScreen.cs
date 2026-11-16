@@ -50,8 +50,9 @@ namespace Dnf.Play
     }
 
     /// <summary>
-    /// 联网登录界面(<see cref="ISceneSource"/>):账号框、密码框(只画与字数相同的圆点,从不画密码本身)、"进入游戏"、"注册"与可选的"修改密码",
-    /// 背景是选角界面的底图(见 <see cref="OnlineShellArt.AddBackground"/>)。
+    /// 联网登录界面(<see cref="ISceneSource"/>):背景是选角界面的底图(见 <see cref="OnlineShellArt.AddBackground"/>)加暗角,上方是游戏名的标题字,
+    /// 中间一张玻璃卡片:账号框、密码框(只画与字数相同的圆点,从不画密码本身)、提示条、金色的"进入游戏"、"注册"与"修改密码",底部是按键说明。
+    /// 版面与配色全是 <see cref="ShellPaint"/> 现算的形状,不读任何素材。
     /// 只管输入与画面:Tab 切换输入框,回车提交,鼠标点输入框与按钮;玩家按下提交只是记下一个待办动作(<see cref="PendingAction"/>),
     /// 由外壳(<see cref="OnlineShellFlow"/>)在轮询里取走(<see cref="TakeAction"/>)并发请求。请求在途时(<see cref="Busy"/>)提交类动作一律忽略
     /// (按钮置灰、重复点击无效);界面上不做任何自动重试。错误与提示由外壳放进来(<see cref="SetNotice"/>)并显示在界面上。
@@ -69,27 +70,55 @@ namespace Dnf.Play
         public const int MaxPasswordLength = 64;
 
         // ---- 版面(800×600 画布)
-        public const int PanelX = 220;
-        public const int PanelY = 140;
-        public const int PanelWidth = 360;
-        public const int PanelHeight = 310;
-        public const int FieldX = PanelX + 24;
-        public const int FieldWidth = 312;
-        public const int FieldHeight = 32;
-        private const int LabelOffset = 20;
-        private const int FieldSpacing = 62;
-        private const int FirstFieldY = PanelY + 76;
+        public const int PanelWidth = 400;
+        public const int PanelX = (ScreenWidth - PanelWidth) / 2;
+        public const int PanelY = 128;
+        public const int Padding = 32;
+        public const int FieldX = PanelX + Padding;
+        public const int FieldWidth = PanelWidth - Padding * 2;
+        public const int FieldHeight = 44;
 
-        private const uint PanelBorderColor = 0x3A5A8Au;
-        private const uint PanelFillColor = 0x101C30u;
-        private const uint FieldFillColor = 0x0A1220u;
-        private const uint FieldBorderColor = 0x4A6A9Au;
-        private const uint ButtonColor = CharacterSelectArt.FallbackButtonColor;
-        private const uint ButtonDisabledColor = 0x2A2F38u;
-        private const uint DisabledTextColor = 0x8A8F98u;
+        /// <summary>输入框左端标签格的宽度。</summary>
+        public const int LabelCellWidth = 80;
+
+        private const int FieldSpacing = 56;
+        private const int FirstFieldY = PanelY + 106;
+        private const int FieldRadius = 9;
+        private const int PrimaryHeight = 46;
+        private const int SecondaryHeight = 34;
+        private const int BannerPx = 46;
+        private const int BannerY = 22;
+        private const int BannerBand = 74;
+        private const int BannerGlowInsetX = 20;
+        private const int BannerGlowInsetY = 15;
+        private const int BannerGlowSpread = 34;
         private const int BlinkMs = 500;
 
+        /// <summary>密码圆点的直径与相邻两个圆点的间距(像素)。</summary>
+        public const int MaskSize = 8;
+        public const int MaskStep = 14;
+
+        /// <summary>文字区(账号文字、密码圆点、占位文字)离标签格右边与输入框右边的留白。</summary>
+        public const int TextInset = 14;
+
+        /// <summary>文字区的左端 x(三个输入框相同)。</summary>
+        public const int TextLeft = FieldX + LabelCellWidth + TextInset;
+
+        /// <summary>一个密码框里最多画几个圆点(再多的字符不再画)。</summary>
+        public const int MaskCapacity = (FieldWidth - LabelCellWidth - TextInset * 2) / MaskStep;
+
+        private static readonly ShellBox FieldStyle = new ShellBox(0xFF0B1426u, 0xFF0E1A30u, 0xFF3A5A8Au, 0xFF2B456Eu, 1);
+        private static readonly ShellBox FieldFocusStyle = new ShellBox(0xFF0B1426u, 0xFF0E1A30u, 0xFFFFD25Eu, 0xFFE0A93Eu, 1);
+        private static readonly ShellBox CellStyle = new ShellBox(0xFF1B2D4Eu, 0xFF15233Fu, 0, 0, 0);
+        private static readonly ShellBox CellFocusStyle = new ShellBox(0xFF2D2A22u, 0xFF231F18u, 0, 0, 0);
+        private static readonly ShellBox PrimaryStyle = new ShellBox(0xFFFFD36Bu, 0xFFE59A2Bu, 0xFFFFE9A8u, 0xFFB8741Au, 1, 46, 0);
+        private static readonly ShellBox PrimaryOffStyle = new ShellBox(0xFF46536Bu, 0xFF363F52u, 0xFF5A6882u, 0xFF2F3748u, 1);
+        private static readonly ShellBox SecondaryStyle = new ShellBox(0xE01A2C4Au, 0xE0132039u, 0xFF4B72ABu, 0xFF35568Au, 1, 14, 0);
+        private static readonly ShellBox SecondaryOffStyle = new ShellBox(0xB018243Au, 0xB0131C2Eu, 0xFF34425Cu, 0xFF2A3650u, 1);
+        private static readonly ShellBox PillStyle = new ShellBox(0xFFFFE08Au, 0xFFE0952Au, 0, 0, 0);
+
         private readonly OverlayArt _art;
+        private readonly ShellPaint _paint;
         private readonly ISpriteSource _sprites;
         private string _username = string.Empty;
         private string _password = string.Empty;
@@ -106,6 +135,7 @@ namespace Dnf.Play
         {
             _sprites = sprites;
             _art = new OverlayArt { Localize = false, Fonts = fonts };
+            _paint = new ShellPaint(_art);
         }
 
         public string Username => _username;
@@ -130,27 +160,39 @@ namespace Dnf.Play
 
         // ------------------------------------------------------------------ 几何(点击测试与测试共用)
 
+        /// <summary>卡片的高度:修改密码形态多一个输入框,比登录形态高一格。</summary>
+        public static int PanelHeightOf(LoginMode mode)
+        {
+            return mode == LoginMode.Login ? 388 : 396;
+        }
+
+        /// <summary>提示条(出错、提示、等待)的位置与大小:紧接在最后一个输入框下面,占满输入框的宽度。</summary>
+        public static HitRect NoticeRect(LoginMode mode)
+        {
+            return new HitRect(FieldX, FirstFieldY + FieldSpacing * (mode == LoginMode.Login ? 2 : 3), FieldWidth, OnlineShellArt.NoticeBarHeight);
+        }
+
         /// <summary>输入框的位置与大小(账号、密码/旧密码、新密码从上到下)。</summary>
         public static HitRect FieldRect(LoginField field)
         {
             return new HitRect(FieldX, FirstFieldY + FieldSpacing * (int)field, FieldWidth, FieldHeight);
         }
 
-        /// <summary>按钮的位置与大小。登录形态有登录、注册、修改密码三个;修改密码形态有确认与返回两个。</summary>
+        /// <summary>按钮的位置与大小。登录形态有登录(整行宽的金色大按钮)、注册、修改密码三个;修改密码形态有确认与返回两个。</summary>
         public static HitRect ButtonRect(LoginButton button)
         {
             switch (button)
             {
                 case LoginButton.Login:
-                    return new HitRect(FieldX, PanelY + 232, 112, 36);
+                    return new HitRect(FieldX, PanelY + 262, FieldWidth, PrimaryHeight);
                 case LoginButton.Register:
-                    return new HitRect(FieldX + 122, PanelY + 232, 80, 36);
+                    return new HitRect(FieldX, PanelY + 322, 162, SecondaryHeight);
                 case LoginButton.OpenChangePassword:
-                    return new HitRect(FieldX + 212, PanelY + 232, 100, 36);
+                    return new HitRect(FieldX + 174, PanelY + 322, 162, SecondaryHeight);
                 case LoginButton.Confirm:
-                    return new HitRect(FieldX, PanelY + 262, 150, 36);
+                    return new HitRect(FieldX, PanelY + 318, 206, PrimaryHeight);
                 case LoginButton.Back:
-                    return new HitRect(FieldX + 162, PanelY + 262, 150, 36);
+                    return new HitRect(FieldX + 218, PanelY + 318, 118, PrimaryHeight);
                 default:
                     return new HitRect(0, 0, 0, 0);
             }
@@ -394,105 +436,173 @@ namespace Dnf.Play
         {
             var sprites = new List<SceneSprite>();
             int order = 0;
-            bool cjk = _art.HasFonts;
+            bool cjk = _paint.HasFonts;
+            bool changing = _mode == LoginMode.ChangePassword;
             bool caretOn = (timeMs / BlinkMs) % 2 == 0;
             OnlineShellArt.AddBackground(sprites, ref order, _art, _sprites);
+            OnlineShellArt.AddVignette(sprites, ref order, _paint);
+            AddBanner(sprites, ref order, cjk);
+            OnlineShellArt.AddCard(sprites, ref order, _paint, PanelX, PanelY, PanelWidth, PanelHeightOf(_mode), "login-panel");
+            AddHeader(sprites, ref order, changing, cjk);
 
-            sprites.Add(OverlayArt.Place(_art.Solid(PanelWidth, PanelHeight, PanelBorderColor), PanelX, PanelY, order++, "login-panel-border"));
-            sprites.Add(OverlayArt.Place(_art.Solid(PanelWidth - 4, PanelHeight - 4, PanelFillColor), PanelX + 2, PanelY + 2, order++, "login-panel"));
-
-            bool changing = _mode == LoginMode.ChangePassword;
-            OnlineShellArt.AddText(sprites, ref order, _art,
-                OnlineShellText.Label(changing ? OnlineShellLabel.ChangePasswordTitle : OnlineShellLabel.LoginTitle, cjk),
-                FieldX, PanelY + 16, 3, OverlayArt.Yellow, "login-title");
-
-            AddField(sprites, ref order, LoginField.Username, OnlineShellText.Label(OnlineShellLabel.Username, cjk), cjk, caretOn);
-            AddField(sprites, ref order, LoginField.Password,
-                OnlineShellText.Label(changing ? OnlineShellLabel.OldPassword : OnlineShellLabel.Password, cjk), cjk, caretOn);
+            AddField(sprites, ref order, LoginField.Username, OnlineShellLabel.Username, OnlineShellLabel.UsernamePlaceholder, cjk, caretOn);
+            AddField(sprites, ref order, LoginField.Password, changing ? OnlineShellLabel.OldPassword : OnlineShellLabel.Password,
+                changing ? OnlineShellLabel.OldPasswordPlaceholder : OnlineShellLabel.PasswordPlaceholder, cjk, caretOn);
             if (changing)
             {
-                AddField(sprites, ref order, LoginField.NewPassword, OnlineShellText.Label(OnlineShellLabel.NewPassword, cjk), cjk, caretOn);
+                AddField(sprites, ref order, LoginField.NewPassword, OnlineShellLabel.NewPassword, OnlineShellLabel.NewPasswordPlaceholder, cjk, caretOn);
             }
 
-            int noticeY = PanelY + (changing ? 240 : 186);
+            HitRect slot = NoticeRect(_mode);
             if (_busy)
             {
-                OnlineShellArt.AddText(sprites, ref order, _art, OnlineShellText.Label(OnlineShellLabel.Waiting, cjk), FieldX, noticeY, cjk ? 2 : 1, OverlayArt.Yellow, "login-busy");
+                OnlineShellArt.AddNoticeBar(sprites, ref order, _paint, ShellTone.Wait, OnlineShellText.Label(OnlineShellLabel.Waiting, cjk),
+                    slot.X, slot.Y, slot.Width, timeMs, "login-busy");
             }
             else if (_notice != null)
             {
-                OnlineShellArt.AddText(sprites, ref order, _art, OnlineShellText.Notice(_notice, cjk), FieldX, noticeY, cjk ? 2 : 1,
-                    OnlineShellArt.NoticeColor(_notice), "login-notice");
+                OnlineShellArt.AddNoticeBar(sprites, ref order, _paint, OnlineShellArt.ToneOf(_notice), OnlineShellText.Notice(_notice, cjk),
+                    slot.X, slot.Y, slot.Width, timeMs, "login-notice");
+            }
+            else
+            {
+                // 没有提示也没有请求在途时,这一格里写账号的规则(省得玩家试错)
+                SpriteFrame rule = _paint.Line(OnlineShellText.Label(OnlineShellLabel.AccountRule, cjk), 14, 0x7C93B8u, ShellPaint.Navy, slot.Width - 4);
+                OnlineShellArt.Add(sprites, ref order, rule, slot.X + 2, slot.Y + (slot.Height - (rule == null ? 0 : rule.Height)) / 2, "login-rule");
             }
 
             if (changing)
             {
-                AddButton(sprites, ref order, LoginButton.Confirm, OnlineShellLabel.Confirm, "confirm", cjk);
-                AddButton(sprites, ref order, LoginButton.Back, OnlineShellLabel.Back, "back", cjk);
+                AddButton(sprites, ref order, LoginButton.Confirm, OnlineShellLabel.Confirm, "confirm", cjk, true);
+                AddButton(sprites, ref order, LoginButton.Back, OnlineShellLabel.Back, "back", cjk, false);
             }
             else
             {
-                AddButton(sprites, ref order, LoginButton.Login, OnlineShellLabel.EnterGame, "login", cjk);
-                AddButton(sprites, ref order, LoginButton.Register, OnlineShellLabel.Register, "register", cjk);
-                AddButton(sprites, ref order, LoginButton.OpenChangePassword, OnlineShellLabel.ChangePassword, "change-password", cjk);
+                AddButton(sprites, ref order, LoginButton.Login, OnlineShellLabel.EnterGame, "login", cjk, true);
+                AddButton(sprites, ref order, LoginButton.Register, OnlineShellLabel.Register, "register", cjk, false);
+                AddButton(sprites, ref order, LoginButton.OpenChangePassword, OnlineShellLabel.ChangePassword, "change-password", cjk, false);
             }
 
-            OnlineShellArt.AddCentered(sprites, ref order, _art,
-                OnlineShellText.Label(changing ? OnlineShellLabel.ChangePasswordHint : OnlineShellLabel.LoginHint, cjk),
-                ScreenWidth / 2, ScreenHeight - 40, cjk ? 2 : 1, OverlayArt.White, "login-hint");
+            OnlineShellLabel hint = _busy ? OnlineShellLabel.BusyHint : (changing ? OnlineShellLabel.ChangePasswordHint : OnlineShellLabel.LoginHint);
+            OnlineShellArt.AddHints(sprites, ref order, _paint, OnlineShellText.Hints(hint, cjk), ScreenWidth / 2, OnlineShellArt.HintTop, "login-hint");
             return sprites;
         }
 
-        private void AddField(List<SceneSprite> sprites, ref int order, LoginField field, string label, bool cjk, bool caretOn)
+        /// <summary>卡片上方的游戏名标题字(在一条固定的带里居中),下面一条两头渐隐的金线和一颗菱形。</summary>
+        private void AddBanner(List<SceneSprite> sprites, ref int order, bool cjk)
+        {
+            SpriteFrame banner = _paint.Banner(OnlineShellText.Label(OnlineShellLabel.GameTitle, cjk), BannerPx, 0xFFF3C6u, ShellPaint.Gold, 0xE58B22u, 0x24130Au);
+            if (banner != null)
+            {
+                int bx = ScreenWidth / 2 - banner.Width / 2;
+                int by = BannerY + (BannerBand - banner.Height) / 2;
+                // 光晕比标题字四边各缩进一点;字很小的时候(字体给不出像样的字形)缩进跟着变小,光晕自己至少 2 像素,不会画不出来
+                int insetX = Math.Max(0, Math.Min(BannerGlowInsetX, (banner.Width - 2) / 2));
+                int insetY = Math.Max(0, Math.Min(BannerGlowInsetY, (banner.Height - 2) / 2));
+                SpriteFrame glow = _paint.Glow(Math.Max(2, banner.Width - insetX * 2), Math.Max(2, banner.Height - insetY * 2), 20, BannerGlowSpread, 0xE08A1Eu, 62, true);
+                OnlineShellArt.Add(sprites, ref order, glow, bx + insetX - BannerGlowSpread, by + insetY - BannerGlowSpread, "login-banner-glow");
+                OnlineShellArt.Add(sprites, ref order, banner, bx, by, "login-banner");
+            }
+            int ruleY = BannerY + BannerBand - 2;
+            OnlineShellArt.Add(sprites, ref order, _paint.Rule(300, 2, ShellPaint.Gold, 0, 235, 0), ScreenWidth / 2 - 150, ruleY, "login-banner-rule");
+            OnlineShellArt.Add(sprites, ref order, _paint.Diamond(10, ShellPaint.GoldPale), ScreenWidth / 2 - 5, ruleY - 4, "login-banner-gem");
+        }
+
+        /// <summary>卡片的标题(左边一条金色竖条)与副标题。</summary>
+        private void AddHeader(List<SceneSprite> sprites, ref int order, bool changing, bool cjk)
+        {
+            OnlineShellArt.Add(sprites, ref order, _paint.Box(4, 26, 2, PillStyle), FieldX - 14, PanelY + 28, "login-title-bar");
+            OnlineShellArt.Add(sprites, ref order, _paint.Rule(FieldWidth, 1, 0x7FA6E0u, 150, 60, 0), FieldX, PanelY + 90, "login-divider");
+            OnlineShellArt.Add(sprites, ref order,
+                _paint.Line(OnlineShellText.Label(changing ? OnlineShellLabel.ChangePasswordTitle : OnlineShellLabel.LoginTitle, cjk), 26, ShellPaint.Ink, ShellPaint.Navy, FieldWidth, true),
+                FieldX, PanelY + 24, "login-title");
+            OnlineShellArt.Add(sprites, ref order,
+                _paint.Line(OnlineShellText.Label(changing ? OnlineShellLabel.ChangePasswordSubtitle : OnlineShellLabel.LoginSubtitle, cjk), 14, ShellPaint.Muted, ShellPaint.Navy, FieldWidth),
+                FieldX, PanelY + 62, "login-subtitle");
+        }
+
+        private static string FieldName(LoginField field)
+        {
+            return field == LoginField.Username ? "username" : (field == LoginField.Password ? "password" : "new-password");
+        }
+
+        private void AddField(List<SceneSprite> sprites, ref int order, LoginField field, OnlineShellLabel label, OnlineShellLabel placeholder, bool cjk, bool caretOn)
         {
             HitRect box = FieldRect(field);
-            string name = field == LoginField.Username ? "username" : field == LoginField.Password ? "password" : "new-password";
+            string name = FieldName(field);
             bool focused = _focus == field;
-            OnlineShellArt.AddText(sprites, ref order, _art, label, box.X, box.Y - LabelOffset, cjk ? 2 : 1, CharacterSelectArt.CaptionColor, "login-label-" + name);
-            sprites.Add(OverlayArt.Place(_art.Solid(box.Width, box.Height, focused ? OverlayArt.Yellow : FieldBorderColor), box.X, box.Y, order++, "login-box-border-" + name));
-            sprites.Add(OverlayArt.Place(_art.Solid(box.Width - 2, box.Height - 2, FieldFillColor), box.X + 1, box.Y + 1, order++, "login-box-" + name));
+            if (focused)
+            {
+                OnlineShellArt.Add(sprites, ref order, _paint.Glow(box.Width, box.Height, FieldRadius, 8, ShellPaint.Gold, 90, false), box.X - 8, box.Y - 8, "login-focus-" + name);
+            }
+            OnlineShellArt.Add(sprites, ref order, _paint.Box(box.Width, box.Height, FieldRadius, focused ? FieldFocusStyle : FieldStyle), box.X, box.Y, "login-box-" + name);
+            OnlineShellArt.Add(sprites, ref order,
+                _paint.Box(LabelCellWidth, box.Height - 2, FieldRadius - 1, focused ? CellFocusStyle : CellStyle, ShellCorners.Left), box.X + 1, box.Y + 1, "login-cell-" + name);
+            SpriteFrame text = _paint.Line(OnlineShellText.Label(label, cjk), 16, focused ? ShellPaint.Gold : ShellPaint.Muted, ShellPaint.Navy, LabelCellWidth - 6);
+            if (text != null)
+            {
+                OnlineShellArt.Add(sprites, ref order, text, box.X + (LabelCellWidth - text.Width) / 2, box.Y + (box.Height - text.Height) / 2, "login-label-" + name);
+            }
 
-            int textX = box.X + 8;
+            int textX = TextLeft;
+            int textWidth = box.Width - LabelCellWidth - TextInset * 2;
             int endX = textX;
             if (field == LoginField.Username)
             {
-                SpriteFrame text = OnlineShellArt.DataText(_art, _username, cjk ? 2 : 1, OverlayArt.White);
-                if (text != null)
+                SpriteFrame value = _paint.Data(_username, 17, ShellPaint.Ink, ShellPaint.Navy, textWidth);
+                if (value != null)
                 {
-                    sprites.Add(OverlayArt.Place(text, textX, box.Y + (box.Height - text.Height) / 2, order++, "login-username-text"));
-                    endX = textX + text.Width;
+                    OnlineShellArt.Add(sprites, ref order, value, textX, box.Y + (box.Height - value.Height) / 2, "login-username-text");
+                    endX = textX + value.Width;
                 }
             }
             else
             {
                 string secret = field == LoginField.Password ? _password : _newPassword;
-                int visible = Math.Min(secret.Length, (box.Width - 16) / MaskStep);
-                SpriteFrame dot = _art.Solid(MaskSize, MaskSize, OverlayArt.White);
+                int visible = Math.Min(secret.Length, MaskCapacity);
+                SpriteFrame dot = _paint.Dot(MaskSize, ShellPaint.Ink);
                 for (int i = 0; i < visible; i++)
                 {
-                    sprites.Add(OverlayArt.Place(dot, textX + i * MaskStep, box.Y + (box.Height - MaskSize) / 2, order++, "login-password-mask"));
+                    OnlineShellArt.Add(sprites, ref order, dot, textX + i * MaskStep, box.Y + (box.Height - MaskSize) / 2, "login-password-mask");
                 }
                 endX = textX + visible * MaskStep;
+                if (secret.Length > 0)
+                {
+                    endX -= MaskStep - MaskSize;
+                }
+            }
+            bool empty = field == LoginField.Username ? _username.Length == 0 : (field == LoginField.Password ? _password.Length == 0 : _newPassword.Length == 0);
+            if (empty)
+            {
+                SpriteFrame hint = _paint.Line(OnlineShellText.Label(placeholder, cjk), 16, ShellPaint.Faint, ShellPaint.Navy, textWidth);
+                if (hint != null)
+                {
+                    OnlineShellArt.Add(sprites, ref order, hint, textX + 6, box.Y + (box.Height - hint.Height) / 2, "login-placeholder-" + name);
+                }
             }
             if (focused && caretOn)
             {
-                sprites.Add(OverlayArt.Place(_art.Solid(2, 18, OverlayArt.White), endX + 2, box.Y + (box.Height - 18) / 2, order++, "login-caret"));
+                OnlineShellArt.Add(sprites, ref order, _art.Solid(2, 20, ShellPaint.Ink), endX + (empty ? 0 : 4), box.Y + (box.Height - 20) / 2, "login-caret");
             }
         }
 
-        private const int MaskSize = 8;
-        private const int MaskStep = 12;
-
-        private void AddButton(List<SceneSprite> sprites, ref int order, LoginButton button, OnlineShellLabel label, string tag, bool cjk)
+        private void AddButton(List<SceneSprite> sprites, ref int order, LoginButton button, OnlineShellLabel label, string tag, bool cjk, bool primary)
         {
             HitRect rect = ButtonRect(button);
             bool disabled = _busy;
-            sprites.Add(OverlayArt.Place(_art.Solid(rect.Width, rect.Height, disabled ? ButtonDisabledColor : ButtonColor), rect.X, rect.Y, order++,
-                "login-button-" + tag + (disabled ? "-disabled" : string.Empty)));
-            SpriteFrame text = _art.Text(OnlineShellText.Label(label, cjk), cjk ? 2 : 1, disabled ? DisabledTextColor : CharacterSelectArt.ButtonTextColor);
+            if (primary && !disabled)
+            {
+                OnlineShellArt.Add(sprites, ref order, _paint.Glow(rect.Width, rect.Height, 10, 10, 0x000000u, 120, true), rect.X - 10, rect.Y - 5, "login-button-shadow-" + tag);
+            }
+            ShellBox style = primary ? (disabled ? PrimaryOffStyle : PrimaryStyle) : (disabled ? SecondaryOffStyle : SecondaryStyle);
+            OnlineShellArt.Add(sprites, ref order, _paint.Box(rect.Width, rect.Height, primary ? 10 : 8, style), rect.X, rect.Y,
+                "login-button-" + tag + (disabled ? "-disabled" : string.Empty));
+            uint color = primary ? (disabled ? 0x8A97ADu : ShellPaint.Warm) : (disabled ? ShellPaint.Faint : 0xD6E4FFu);
+            uint edge = primary ? (disabled ? 0x3A4558u : 0xF0B640u) : ShellPaint.Navy;
+            SpriteFrame text = _paint.Line(OnlineShellText.Label(label, cjk), primary ? 20 : 16, color, edge, rect.Width - 16, primary);
             if (text != null)
             {
-                sprites.Add(OverlayArt.Place(text, rect.X + (rect.Width - text.Width) / 2, rect.Y + (rect.Height - text.Height) / 2, order++, "login-button-text-" + tag));
+                OnlineShellArt.Add(sprites, ref order, text, rect.X + (rect.Width - text.Width) / 2, rect.Y + (rect.Height - text.Height) / 2, "login-button-text-" + tag);
             }
         }
     }

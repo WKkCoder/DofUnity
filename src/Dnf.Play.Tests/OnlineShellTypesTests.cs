@@ -345,6 +345,107 @@ public class OnlineShellTypesTests
         Assert.Equal("修改密码", OnlineShellText.Label(OnlineShellLabel.ChangePassword, true));
     }
 
+    [Theory]
+    [InlineData(OnlineShellLabel.GameTitle, "地下城与勇士")]
+    [InlineData(OnlineShellLabel.LoginTitle, "账号登录")]
+    [InlineData(OnlineShellLabel.LoginSubtitle, "登录后选择服务器与角色")]
+    [InlineData(OnlineShellLabel.ChangePasswordTitle, "修改密码")]
+    [InlineData(OnlineShellLabel.ChangePasswordSubtitle, "输入旧密码与新密码")]
+    [InlineData(OnlineShellLabel.OldPassword, "旧密码")]
+    [InlineData(OnlineShellLabel.NewPassword, "新密码")]
+    [InlineData(OnlineShellLabel.Confirm, "确认修改")]
+    [InlineData(OnlineShellLabel.Back, "返回")]
+    [InlineData(OnlineShellLabel.UsernamePlaceholder, "请输入账号")]
+    [InlineData(OnlineShellLabel.PasswordPlaceholder, "请输入密码")]
+    [InlineData(OnlineShellLabel.OldPasswordPlaceholder, "请输入旧密码")]
+    [InlineData(OnlineShellLabel.NewPasswordPlaceholder, "请输入新密码")]
+    [InlineData(OnlineShellLabel.Waiting, "请稍候…")]
+    [InlineData(OnlineShellLabel.ServerSelect, "正在选择服务器…")]
+    [InlineData(OnlineShellLabel.ChannelConnecting, "正在连接频道…")]
+    [InlineData(OnlineShellLabel.Loading, "正在进入游戏…")]
+    public void The_designed_login_page_and_status_screens_say_these_chinese_words(OnlineShellLabel label, string text)
+    {
+        Assert.Equal(text, OnlineShellText.Label(label, true));
+    }
+
+    [Fact]
+    public void The_account_rule_states_the_real_limits_in_both_languages()
+    {
+        string zh = OnlineShellText.Label(OnlineShellLabel.AccountRule, true);
+        string en = OnlineShellText.Label(OnlineShellLabel.AccountRule, false);
+
+        Assert.Contains(OnlineShellValidation.UsernameMinLength + " 到 " + OnlineShellValidation.UsernameMaxLength, zh);
+        Assert.Contains(OnlineShellValidation.UsernameMinLength + "-" + OnlineShellValidation.UsernameMaxLength, en);
+        Assert.Contains(OnlineShellValidation.UsernameMinLength + " 到 " + OnlineShellValidation.UsernameMaxLength,
+            OnlineShellText.Notice(new OnlineNotice(OnlineNoticeKind.InvalidUsername), true));
+    }
+
+    private static readonly OnlineShellLabel[] HintLabels =
+    {
+        OnlineShellLabel.LoginHint, OnlineShellLabel.ChangePasswordHint, OnlineShellLabel.ChannelHint, OnlineShellLabel.ChannelHintCancel,
+        OnlineShellLabel.LoadingHint, OnlineShellLabel.CharacterSelectHint, OnlineShellLabel.BusyHint,
+    };
+
+    [Fact]
+    public void Hints_are_key_caps_with_what_the_key_does_and_the_flat_label_is_the_same_hints_in_one_line()
+    {
+        foreach (OnlineShellLabel label in HintLabels)
+        {
+            foreach (bool cjk in new[] { false, true })
+            {
+                ShellHint[] hints = OnlineShellText.Hints(label, cjk);
+
+                Assert.NotEmpty(hints);
+                Assert.All(hints, h => Assert.False(string.IsNullOrEmpty(h.Key) || string.IsNullOrEmpty(h.Text), label + "/" + cjk));
+                Assert.Equal(string.Join("    ", hints.Select(h => h.Key + " " + h.Text)), OnlineShellText.Label(label, cjk));
+                if (!cjk)
+                {
+                    Assert.All(hints, h => Assert.True(GlyphSafe(h.Key) && GlyphSafe(h.Text), label.ToString()));
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void Hint_keys_are_written_as_they_are_printed_on_the_keyboard()
+    {
+        Assert.Equal(new[] { "Tab", "Enter" }, OnlineShellText.Hints(OnlineShellLabel.LoginHint, true).Select(h => h.Key).ToArray());
+        Assert.Equal(new[] { "TAB", "ENTER" }, OnlineShellText.Hints(OnlineShellLabel.LoginHint, false).Select(h => h.Key).ToArray());
+        Assert.Equal(new[] { "Tab", "Enter", "Esc" }, OnlineShellText.Hints(OnlineShellLabel.ChangePasswordHint, true).Select(h => h.Key).ToArray());
+        Assert.Equal(new[] { "Enter", "Esc" }, OnlineShellText.Hints(OnlineShellLabel.ChannelHint, true).Select(h => h.Key).ToArray());
+        Assert.Equal(new[] { "方向键", "Enter", "Esc" }, OnlineShellText.Hints(OnlineShellLabel.CharacterSelectHint, true).Select(h => h.Key).ToArray());
+        Assert.Equal(new[] { "ARROWS", "ENTER", "ESC" }, OnlineShellText.Hints(OnlineShellLabel.CharacterSelectHint, false).Select(h => h.Key).ToArray());
+        ShellHint busy = Assert.Single(OnlineShellText.Hints(OnlineShellLabel.BusyHint, true));
+        Assert.Equal(("Esc", "取消"), (busy.Key, busy.Text));
+        Assert.Equal("Esc 取消", OnlineShellText.Label(OnlineShellLabel.BusyHint, true));
+    }
+
+    [Fact]
+    public void Labels_that_are_not_hints_have_no_hint_entries()
+    {
+        foreach (OnlineShellLabel label in Enum.GetValues<OnlineShellLabel>().Where(l => !HintLabels.Contains(l)))
+        {
+            Assert.Empty(OnlineShellText.Hints(label, true));
+            Assert.Empty(OnlineShellText.Hints(label, false));
+        }
+        Assert.Empty(OnlineShellText.Hints((OnlineShellLabel)999, true));
+    }
+
+    [Fact]
+    public void Chinese_text_uses_full_width_punctuation_only()
+    {
+        char[] ascii = { ',', ':', ';', '!', '?', '(', ')' };
+        foreach (OnlineShellLabel label in Enum.GetValues<OnlineShellLabel>())
+        {
+            Assert.True(OnlineShellText.Label(label, true).IndexOfAny(ascii) < 0, label.ToString());
+        }
+        foreach (OnlineNoticeKind kind in Enum.GetValues<OnlineNoticeKind>().Where(k => k != OnlineNoticeKind.None))
+        {
+            string text = OnlineShellText.Notice(new OnlineNotice(kind, seconds: 5, detail: "x"), true);
+            Assert.True(text.IndexOfAny(ascii) < 0, kind + ":" + text);
+        }
+    }
+
     [Fact]
     public void Every_notice_kind_has_english_placeholder_text_the_bitmap_font_can_draw_and_chinese_text_all_different()
     {
@@ -390,9 +491,9 @@ public class OnlineShellTypesTests
     }
 
     [Theory]
-    [InlineData(12, "请求过于频繁,请 12 秒后再试", "TOO MANY REQUESTS   RETRY IN 12 S")]
-    [InlineData(1, "请求过于频繁,请 1 秒后再试", "TOO MANY REQUESTS   RETRY IN 1 S")]
-    [InlineData(0, "请求过于频繁,请 1 秒后再试", "TOO MANY REQUESTS   RETRY IN 1 S")]
+    [InlineData(12, "请求过于频繁，请 12 秒后再试", "TOO MANY REQUESTS   RETRY IN 12 S")]
+    [InlineData(1, "请求过于频繁，请 1 秒后再试", "TOO MANY REQUESTS   RETRY IN 1 S")]
+    [InlineData(0, "请求过于频繁，请 1 秒后再试", "TOO MANY REQUESTS   RETRY IN 1 S")]
     public void The_rate_limit_text_counts_down_in_seconds_and_never_shows_zero(int seconds, string zh, string en)
     {
         var notice = new OnlineNotice(OnlineNoticeKind.RateLimited, seconds: seconds);
@@ -408,7 +509,7 @@ public class OnlineShellTypesTests
         var without = new OnlineNotice(OnlineNoticeKind.NotConfigured);
         var empty = new OnlineNotice(OnlineNoticeKind.NotConfigured, detail: string.Empty);
 
-        Assert.Equal("未配置连接:缺少 server_url", OnlineShellText.Notice(withDetail, true));
+        Assert.Equal("未配置连接：缺少 server_url", OnlineShellText.Notice(withDetail, true));
         Assert.Equal("未配置连接", OnlineShellText.Notice(without, true));
         Assert.Equal("未配置连接", OnlineShellText.Notice(empty, true));
         Assert.Equal("NOT CONFIGURED", OnlineShellText.Notice(withDetail, false));

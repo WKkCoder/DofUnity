@@ -48,6 +48,141 @@ internal sealed class RecordingFonts : IGlyphFonts
     }
 }
 
+/// <summary>
+/// 字号会影响字宽的合成字体集:全角字的前进宽度是字号、其余是字号的一半,字形是一个实心方块(宽 = 前进宽度减 1);
+/// 记下被问过的字号。用来验证"放不下就缩小字号、再放不下就截断"这类和字宽有关的排版。
+/// </summary>
+internal sealed class SizedFonts : IGlyphFonts
+{
+    public List<int> Requested { get; } = new List<int>();
+
+    public IGlyphSource ForSize(int pixelSize)
+    {
+        Requested.Add(pixelSize);
+        return new Source(pixelSize);
+    }
+
+    private sealed class Source : IGlyphSource
+    {
+        private readonly int _px;
+
+        public Source(int px)
+        {
+            _px = px;
+        }
+
+        public int PixelSize => _px;
+
+        public int Ascent => _px - _px / 4;
+
+        public int Descent => _px / 4;
+
+        public int LineHeight => _px + 2;
+
+        public bool TryGetGlyph(int codePoint, out GlyphBitmap glyph)
+        {
+            int advance = GlyphText.IsWide(codePoint) ? _px : _px / 2;
+            if (codePoint == ' ')
+            {
+                glyph = GlyphBitmap.Blank(advance);
+                return true;
+            }
+            int w = Math.Max(1, advance - 1);
+            int h = Math.Max(1, _px * 3 / 4);
+            var alpha = new byte[w * h];
+            Array.Fill(alpha, (byte)255);
+            glyph = new GlyphBitmap(w, h, 0, Ascent, advance, alpha);
+            return true;
+        }
+    }
+}
+
+/// <summary>
+/// 字形小得离谱的字体集(每个字都是 1 × 1 像素、前进宽度 1):用来验证画面在字体给不出像样字形时也画得出来(标题字小得连光晕都放不下),
+/// 而不是抛异常。
+/// </summary>
+internal sealed class TinyFonts : IGlyphFonts
+{
+    public IGlyphSource ForSize(int pixelSize) => new Source(pixelSize);
+
+    private sealed class Source : IGlyphSource
+    {
+        public Source(int px)
+        {
+            PixelSize = px;
+        }
+
+        public int PixelSize { get; }
+
+        public int Ascent => 1;
+
+        public int Descent => 0;
+
+        public int LineHeight => 1;
+
+        public bool TryGetGlyph(int codePoint, out GlyphBitmap glyph)
+        {
+            glyph = new GlyphBitmap(1, 1, 0, 1, 1, new byte[] { 255 });
+            return true;
+        }
+    }
+}
+
+/// <summary>什么字体也给不出来的字体集(<see cref="IGlyphFonts.ForSize"/> 永远返回 null):用来验证退回点阵字库。</summary>
+internal sealed class NoFonts : IGlyphFonts
+{
+    public IGlyphSource ForSize(int pixelSize) => null;
+}
+
+/// <summary>画面测试里常用的帧比较与取像素。</summary>
+internal static class ShellFrames
+{
+    public static bool Same(SpriteFrame a, SpriteFrame b)
+    {
+        return a != null && b != null && a.Width == b.Width && a.Height == b.Height && a.Rgba.AsSpan().SequenceEqual(b.Rgba);
+    }
+
+    public static (int R, int G, int B, int A) Pixel(SpriteFrame frame, int x, int y)
+    {
+        int o = (y * frame.Width + x) * 4;
+        return (frame.Rgba[o], frame.Rgba[o + 1], frame.Rgba[o + 2], frame.Rgba[o + 3]);
+    }
+
+    /// <summary>有多少个像素不是全透明。</summary>
+    public static int Inked(SpriteFrame frame)
+    {
+        int count = 0;
+        for (int i = 3; i < frame.Rgba.Length; i += 4)
+        {
+            if (frame.Rgba[i] != 0)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /// <summary>有多少个像素是完全不透明、颜色恰好是 <paramref name="rgb"/>。</summary>
+    public static int Solid(SpriteFrame frame, uint rgb)
+    {
+        byte r = (byte)((rgb >> 16) & 0xFF), g = (byte)((rgb >> 8) & 0xFF), b = (byte)(rgb & 0xFF);
+        int count = 0;
+        for (int i = 0; i < frame.Rgba.Length; i += 4)
+        {
+            if (frame.Rgba[i] == r && frame.Rgba[i + 1] == g && frame.Rgba[i + 2] == b && frame.Rgba[i + 3] == 255)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    public static bool HasColor(SpriteFrame frame, uint rgb) => Solid(frame, rgb) > 0;
+
+    /// <summary>两个数相差不超过 <paramref name="tolerance"/>。</summary>
+    public static bool Near(int actual, int expected, int tolerance = 2) => Math.Abs(actual - expected) <= tolerance;
+}
+
 /// <summary>联网外壳测试用的假图包:只放要测的帧。</summary>
 internal sealed class ShellFakeSprites : ISpriteSource
 {

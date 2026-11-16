@@ -13,7 +13,9 @@ public class OnlineShellFullFlowTests
         return a.Width == b.Width && a.Height == b.Height && a.Rgba.AsSpan().SequenceEqual(b.Rgba);
     }
 
-    private static SpriteFrame Expect(string text, int scale, uint color) => new OverlayArt().Text(text, scale, color);
+    private static SpriteFrame Expect(string text, int scale, uint fill, uint edge = ShellPaint.Navy) => new OverlayArt().Text(text, scale, fill, edge);
+
+    private static uint Tone(ShellTone tone) => OnlineShellArt.ToneTextColor(tone);
 
     private static string[] Tags(ISceneSource scene) => scene.Build(0).Select(s => s.AnimationPath).ToArray();
 
@@ -40,9 +42,11 @@ public class OnlineShellFullFlowTests
         rig.Fill("player_01", "synthetic-pw");
         rig.Submit();
         Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
-        Assert.True(SameFrame(Expect("CONNECTING...", 3, OverlayArt.White), One(rig.Flow.Scene, "online-status-title").Frame));
-        Assert.True(SameFrame(Expect("ESC CANCEL", 1, OverlayArt.White), One(rig.Flow.Scene, "online-status-hint").Frame));
+        Assert.True(SameFrame(Expect("CONNECTING...", 2, ShellPaint.Ink), One(rig.Flow.Scene, "online-status-title").Frame));
+        Assert.True(SameFrame(Expect("CANCEL", 1, ShellPaint.Muted), One(rig.Flow.Scene, "online-status-hint-text-0").Frame));
+        Assert.True(SameFrame(Expect("ESC", 1, ShellPaint.Ink), One(rig.Flow.Scene, "online-status-hint-keytext-0").Frame));
         Assert.Contains("online-background", Tags(rig.Flow.Scene));
+        Assert.Contains("online-status-spinner", Tags(rig.Flow.Scene));
 
         // 3. 连上了:选角占位界面(底图来自选角界面,两个占位角色)
         rig.Pump(1);
@@ -96,13 +100,13 @@ public class OnlineShellFullFlowTests
         rig.Fill();
         rig.Submit();
         Assert.Equal(OnlineShellStage.ServerSelect, rig.Flow.Stage);
-        Assert.True(SameFrame(Expect("SELECTING SERVER...", 3, OverlayArt.White), One(rig.Flow.Scene, "online-status-title").Frame));
+        Assert.True(SameFrame(Expect("SELECTING SERVER...", 2, ShellPaint.Ink), One(rig.Flow.Scene, "online-status-title").Frame));
 
         rig.Flow.ChooseServer();
         rig.Poll();
         Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
         Assert.Equal(0, rig.Backend.ConnectCalls);
-        Assert.True(SameFrame(Expect("CONNECTING...", 3, OverlayArt.White), One(rig.Flow.Scene, "online-status-title").Frame));
+        Assert.True(SameFrame(Expect("CONNECTING...", 2, ShellPaint.Ink), One(rig.Flow.Scene, "online-status-title").Frame));
 
         rig.Flow.ChooseChannel(new ChannelTarget(31001));
         rig.Pump(2);
@@ -125,8 +129,10 @@ public class OnlineShellFullFlowTests
         rig.Pump(2);
 
         Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
-        Assert.True(SameFrame(Expect("GAME LOGIN REJECTED", 2, OverlayArt.Orange), One(rig.Flow.Scene, "online-status-notice").Frame));
-        Assert.True(SameFrame(Expect("ENTER RETRY   ESC BACK", 1, OverlayArt.White), One(rig.Flow.Scene, "online-status-hint").Frame));
+        Assert.True(SameFrame(Expect("GAME LOGIN REJECTED", 1, Tone(ShellTone.Error)), One(rig.Flow.Scene, "online-status-notice").Frame));
+        Assert.Contains("online-status-icon", Tags(rig.Flow.Scene));
+        Assert.True(SameFrame(Expect("RETRY", 1, ShellPaint.Muted), One(rig.Flow.Scene, "online-status-hint-text-0").Frame));
+        Assert.True(SameFrame(Expect("BACK", 1, ShellPaint.Muted), One(rig.Flow.Scene, "online-status-hint-text-1").Frame));
 
         var retry = new TaskCompletionSource<OnlineConnectOutcome>();
         rig.Backend.OnConnect = (t, ct) => retry.Task;
@@ -135,7 +141,9 @@ public class OnlineShellFullFlowTests
         Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
         Assert.True(rig.Flow.Busy);
         Assert.DoesNotContain("online-status-notice", Tags(rig.Flow.Scene));
-        Assert.True(SameFrame(Expect("ESC CANCEL", 1, OverlayArt.White), One(rig.Flow.Scene, "online-status-hint").Frame));
+        Assert.Contains("online-status-spinner", Tags(rig.Flow.Scene));
+        Assert.DoesNotContain("online-status-hint-text-1", Tags(rig.Flow.Scene));
+        Assert.True(SameFrame(Expect("CANCEL", 1, ShellPaint.Muted), One(rig.Flow.Scene, "online-status-hint-text-0").Frame));
 
         retry.SetResult(OnlineConnectOutcome.Ok(ShellTestData.Roster(1)));
         rig.Pump(1);
@@ -151,11 +159,12 @@ public class OnlineShellFullFlowTests
         rig.Submit();
 
         Assert.Equal(OnlineShellStage.Login, rig.Flow.Stage);
-        Assert.True(SameFrame(Expect("TOO MANY REQUESTS   RETRY IN 10 S", 1, OverlayArt.Orange), One(rig.Flow.Scene, "login-notice").Frame));
+        Assert.True(SameFrame(Expect("TOO MANY REQUESTS   RETRY IN 10 S", 1, Tone(ShellTone.Error)), One(rig.Flow.Scene, "login-notice").Frame));
         rig.Poll(1000);
-        Assert.True(SameFrame(Expect("TOO MANY REQUESTS   RETRY IN 9 S", 1, OverlayArt.Orange), One(rig.Flow.Scene, "login-notice").Frame));
+        Assert.True(SameFrame(Expect("TOO MANY REQUESTS   RETRY IN 9 S", 1, Tone(ShellTone.Error)), One(rig.Flow.Scene, "login-notice").Frame));
         rig.Poll(9000);
         Assert.DoesNotContain("login-notice", Tags(rig.Flow.Scene));
+        Assert.Contains("login-rule", Tags(rig.Flow.Scene));                  // 提示没了,提示位上换回账号规则
     }
 
     [Fact]
@@ -189,13 +198,13 @@ public class OnlineShellFullFlowTests
         rig.Poll();
 
         Assert.Equal(OnlineShellStage.CharacterSelect, rig.Flow.Stage);
-        Assert.True(SameFrame(Expect("CANNOT ENTER WITH THIS CHARACTER", 2, OverlayArt.Orange), One(rig.Flow.Scene, "online-select-notice").Frame));
+        Assert.True(SameFrame(Expect("CANNOT ENTER WITH THIS CHARACTER", 1, Tone(ShellTone.Error)), One(rig.Flow.Scene, "online-select-notice").Frame));
         Assert.Equal(2, rig.Flow.Scene.Build(0).Count(s => s.AnimationPath == "select-char-name"));
 
         var empty = new ShellRig();
         empty.ReachCharacterSelect(0);
         Assert.Contains("select-char-empty", Tags(empty.Flow.Scene));
-        Assert.True(SameFrame(Expect("NO CHARACTER", 2, OverlayArt.Yellow), One(empty.Flow.Scene, "online-select-notice").Frame));
+        Assert.True(SameFrame(Expect("NO CHARACTER", 1, Tone(ShellTone.Info)), One(empty.Flow.Scene, "online-select-notice").Frame));
     }
 
     [Fact]
@@ -210,8 +219,8 @@ public class OnlineShellFullFlowTests
         rig.Poll();
 
         Assert.Equal(OnlineShellStage.Loading, rig.Flow.Stage);
-        Assert.True(SameFrame(Expect("ENTERING GAME...", 3, OverlayArt.White), One(rig.Flow.Scene, "online-status-title").Frame));
-        Assert.True(SameFrame(Expect("ESC CANCEL", 1, OverlayArt.White), One(rig.Flow.Scene, "online-status-hint").Frame));
+        Assert.True(SameFrame(Expect("ENTERING GAME...", 2, ShellPaint.Ink), One(rig.Flow.Scene, "online-status-title").Frame));
+        Assert.True(SameFrame(Expect("CANCEL", 1, ShellPaint.Muted), One(rig.Flow.Scene, "online-status-hint-text-0").Frame));
     }
 
     [Fact]
@@ -230,7 +239,7 @@ public class OnlineShellFullFlowTests
 
         Assert.Equal(OnlineShellStage.Login, rig.Flow.Stage);
         Assert.Contains("login-title", Tags(rig.Flow.Scene));
-        Assert.True(SameFrame(Expect("DISCONNECTED FROM SERVER", 1, OverlayArt.Orange), One(rig.Flow.Scene, "login-notice").Frame));
+        Assert.True(SameFrame(Expect("DISCONNECTED FROM SERVER", 1, Tone(ShellTone.Error)), One(rig.Flow.Scene, "login-notice").Frame));
         Assert.Equal(string.Empty, rig.Flow.Login.Password);
         Assert.Equal("player_01", rig.Flow.Login.Username);
     }
@@ -248,7 +257,9 @@ public class OnlineShellFullFlowTests
         rig.Pump(2);
         rig.Flow.Scene.Build(0);                                   // 选角占位界面
 
-        Assert.True(fonts.Asked("登录"));
+        Assert.True(fonts.Asked("地下城与勇士"));
+        Assert.True(fonts.Asked("账号登录"));
+        Assert.True(fonts.Asked("请输入账号"));
         Assert.True(fonts.Asked("正在连接频道"));
         Assert.Equal("Player_01", rig.Backend.LastUser);          // 发给后端的是原样的账号(显示用的转换不动它)
     }
