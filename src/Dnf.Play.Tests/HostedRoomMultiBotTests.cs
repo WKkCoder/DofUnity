@@ -246,6 +246,25 @@ public class HostedRoomMultiBotTests
         Assert.Equal(3, d.Run.RoomsEntered);
     }
 
+    [Fact]
+    public void Entering_a_new_room_on_its_own_restarts_the_no_progress_clock()
+    {
+        // 没有怪也没有出口的两间房:自动机什么也不做,命中、击杀、上报一个数都不会动,只有"进了新房间"这一件事能算进展
+        using var d = new Dungeon(new RoomPlan(0, LeftRight, null, null), new RoomPlan(0, LeftRight, null, GateSide.Left)) { AnswerAfterSteps = -1 };
+        var bot = new HostedRoomBot(noProgressLimitMs: 5000.0);
+
+        Idle(bot, d.Run, 3000);
+        Assert.False(bot.Stopped, bot.LogLine());
+        d.Run.EnterRoom(d.Rig.NewRoom(0, LeftRight), 1, 901, GateSide.Left, null);
+        double enteredAt = bot.ElapsedMs;
+        Idle(bot, d.Run, 3000);                                                   // 一共 6 秒,但进新房间重新计了时:只过了 3 秒
+
+        Assert.False(bot.Stopped, bot.LogLine());
+        Drive(bot, d.Run, () => bot.Stopped, "再等满一个上限才停手");
+        Assert.Equal(HostedBotStop.NoSettlement, bot.Reason);
+        Assert.True(bot.ElapsedMs - enteredAt >= 5000.0 - 2 * FrameMs, "从进新房间那一刻起等满一个上限:" + bot.LogLine());
+    }
+
     // ------------------------------------------------------------------ 放弃、出口走不成
 
     [Fact]
@@ -267,6 +286,22 @@ public class HostedRoomMultiBotTests
         string line = bot.LogLine();
         Assert.Contains("reason=Aborted", line);
         Assert.EndsWith(" abort=MoveRefused", line);
+    }
+
+    [Fact]
+    public void After_the_host_aborted_the_run_the_bot_does_not_take_another_step_towards_the_door()
+    {
+        using var d = new Dungeon(new RoomPlan(1, LeftRight, GateSide.Right, null), new RoomPlan(1, LeftRight, null, GateSide.Left)) { AnswerAfterSteps = -1 };
+        var bot = new HostedRoomBot();
+        Drive(bot, d.Run, () => d.Run.RoomCleared, "清房成立(主角离门还远,正要往门走)");
+        (double x, double y) at = (d.Run.Hero.X, d.Run.Hero.Y);
+        Assert.True(at.x < HostedGatedRoomFixture.GatePosition(GateSide.Right)[0] - 300, "主角离右出口还远");
+
+        d.Run.Abort(HostedAbort.MoveTimeout);
+        bot.Advance(d.Run, FrameMs);
+
+        Assert.Equal(HostedBotStop.Aborted, bot.Reason);
+        Assert.Equal(at, (d.Run.Hero.X, d.Run.Hero.Y));                           // 放弃了:这一拍也不再往门走
     }
 
     [Fact]

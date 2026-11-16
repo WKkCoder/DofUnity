@@ -171,6 +171,24 @@ public class HostedRoomMazePlanTests
     }
 
     [Fact]
+    public void Plan_breaks_the_other_ties_too_Right_before_Up_and_Left_before_Down()
+    {
+        // 二乘二全通:任何两个对角格之间都有两条同样长的路
+        int[] open = { R | D, L | D, U | R, U | L };
+        DungeonMaze toTopRight = Maze(2, 2, open, new[] { (0, 0) }, new[] { (1, 0) });
+        HostedMazeStep rightFirst = HostedRoomMazePlan.Plan(One(toTopRight), 0, 1, Seen((0, 1)), false);   // (0,1) → (1,0):右-上 与 上-右:右优先
+        Assert.Equal((GateSide.Right, 1, 1), (rightFirst.Side, rightFirst.TargetX, rightFirst.TargetY));
+
+        DungeonMaze toBottomLeft = Maze(2, 2, open, new[] { (0, 0) }, new[] { (0, 1) });
+        HostedMazeStep leftFirst = HostedRoomMazePlan.Plan(One(toBottomLeft), 1, 0, Seen((1, 0)), false);  // (1,0) → (0,1):左-下 与 下-左:左优先
+        Assert.Equal((GateSide.Left, 0, 0), (leftFirst.Side, leftFirst.TargetX, leftFirst.TargetY));
+
+        DungeonMaze toTopLeft = Maze(2, 2, open, new[] { (0, 0) }, new[] { (0, 0) });
+        HostedMazeStep upFirst = HostedRoomMazePlan.Plan(One(toTopLeft), 1, 1, Seen((1, 1)), false);       // (1,1) → (0,0):上-左 与 左-上:上优先
+        Assert.Equal((GateSide.Up, 1, 0), (upFirst.Side, upFirst.TargetX, upFirst.TargetY));
+    }
+
+    [Fact]
     public void Plan_never_steps_on_a_visited_cell()
     {
         IReadOnlyList<DungeonMaze> mazes = One(Grid32());

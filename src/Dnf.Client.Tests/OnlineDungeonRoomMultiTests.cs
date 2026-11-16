@@ -399,6 +399,62 @@ public class OnlineDungeonRoomMultiTests
         Assert.DoesNotContain(rig.HostLog.Lines, l => l.Contains("abort"));
     }
 
+    [Fact]
+    public async Task A_refusal_in_a_later_room_is_noticed_like_the_first_one_because_every_room_counts_its_own_refusals()
+    {
+        // 前两间房各有一只只有服务端知道的怪:每间房的第一次换房都被回错误码 20。联网层的拒绝额度按房间算(进新房间重新数),
+        // 第二间的第一次被拒与第一间的第一次被拒在状态机里都是"1",宿主两次都要看见,不能拿上一间的数当这一间的
+        FakeMultiRoomServer.RoomPlan[] plans =
+        {
+            new FakeMultiRoomServer.RoomPlan(0, 0, CombatKit.Sequential(1), new[] { 9150 }),
+            new FakeMultiRoomServer.RoomPlan(1, 0, CombatKit.Sequential(1, RoomKit.SecondBaseId), new[] { 9350 }),
+            new FakeMultiRoomServer.RoomPlan(1, 1, CombatKit.Sequential(1, RoomKit.ThirdBaseId)),
+        };
+        using Rig rig = await Rig.Start(plans, One(LRight()));
+
+        await rig.Drive(() => rig.Run.MoveRefusals == 1, "第一间的换房被拒", 10000);
+        Assert.Equal(0, rig.Run.RoomIndex);
+        Assert.Empty(rig.Server.RemoveHidden());
+        await rig.Drive(() => rig.Run.RoomIndex == 1 && rig.Run.MoveRefusals == 2, "第二间的换房也被拒、宿主也看见了", 10000);
+        Assert.False(rig.Run.Aborted);
+        Assert.Empty(rig.Server.RemoveHidden());
+        await rig.Drive(() => rig.Run.Choice == SettlementChoice.ReturnToTown, "两次都再换一次成功、打穿剩下的房间");
+
+        Assert.Equal((4, 2, 3), (rig.Run.MoveRequests, rig.Run.MoveRefusals, rig.Run.RoomsEntered));
+        Assert.False(rig.Run.Failed);
+        Assert.Equal(
+            new[]
+            {
+                Host + "align status=Aligned mazes=1 plan=Step exit=Right",
+                Host + "move status=Posted room=0 attempt=1 exit=Right",
+                Host + "move status=Refused room=0 refusals=1",
+                Host + "move status=Posted room=0 attempt=2 exit=Right",
+                Host + "enter status=Ready room=1 spawned=1 expected=1 extra=0 exit=Down",
+                Host + "move status=Posted room=1 attempt=3 exit=Down",
+                Host + "move status=Refused room=1 refusals=1",
+                Host + "move status=Posted room=1 attempt=4 exit=Down",
+                Host + "enter status=Ready room=2 spawned=1 expected=1 extra=0 exit=none",
+            },
+            rig.HostLog.Lines);
+    }
+
+    [Fact]
+    public async Task The_planner_never_walks_back_through_a_cell_it_has_left_so_a_dead_end_boss_candidate_is_the_last_room()
+    {
+        // 4×2 的迷宫:A(0,0) → B(1,0) → C(2,0) → Y(3,0),B 下面还挂着一格 X(1,1);首领候选格是 X 与 Y。
+        // 服务端的三间房是 A、B、X(X 是最后一间)。X 离 B 一步、比 Y 近,规划先去 X;到了 X 之后唯一的路是回 B,而 B 是走过的格:
+        // 记着走过的格就不会回头(X 是最后一间、没有出口),不记就会在 X 里多开一个朝上的出口,主角杀光之后还会往回走
+        DungeonMaze maze = Maze(4, 2, new[] { R, L | R | D, L | R, L, 0, U, 0, 0 }, new[] { (0, 0) }, new[] { (1, 1), (3, 0) });
+        using Rig rig = await Rig.Start(Plans(1, 1, 1), One(maze));
+
+        await rig.Drive(() => rig.Run.Choice == SettlementChoice.ReturnToTown, "三间房打穿");
+
+        Assert.Equal(new GateSide?[] { GateSide.Right, GateSide.Down, null }, rig.Entries.Select(e => e.Exit).ToArray());
+        Assert.Equal((3, 2), (rig.Run.RoomsEntered, rig.Run.MoveRequests));
+        Assert.Equal(Host + "enter status=Ready room=2 spawned=1 expected=1 extra=0 exit=none", rig.HostLog.Lines[^1]);
+        Assert.False(rig.Run.Failed);
+    }
+
     // ================================================================== 失败出口:每一种都有明确的结局和日志,宿主回城
 
     [Fact]

@@ -66,6 +66,20 @@ public class HostedRoomDoorWalkerTests
         Assert.Equal(steps, walker.Steps);
     }
 
+    [Theory]
+    [InlineData(GateSide.Up, 560.0, 120.0)]
+    [InlineData(GateSide.Down, 560.0, 60.0)]
+    public void The_walk_to_an_up_or_down_exit_goes_straight_out_without_the_pathfinder_taking_over(GateSide side, double heroX, double heroY)
+    {
+        using var fx = new HostedGatedRoomFixture();
+        RoomCombatSession room = Room(fx, new[] { GateSide.Up, GateSide.Down }, heroX, heroY);
+        var walker = new HostedRoomDoorWalker();
+
+        WalkUntilTriggered(walker, room, side);
+
+        Assert.Equal(0, walker.PathEngaged);                                      // 走错方向最终也能靠寻路走到,所以得盯着"没有接管"
+    }
+
     [Fact]
     public void Standing_in_front_of_a_side_exit_the_walker_only_pushes_towards_it()
     {
@@ -134,6 +148,65 @@ public class HostedRoomDoorWalkerTests
         Assert.Equal(firstSteps + secondSteps, walker.Steps);                     // 同一个走位对象,步数累计
         Assert.Equal(0, walker.PathEngaged);                                      // 没有障碍:一直是直线走过去,没有接管寻路
         Assert.Equal(0, walker.PathBlockedSteps);
+    }
+
+    [Fact]
+    public void Switching_to_another_room_forgets_how_long_the_hero_had_been_stuck_in_the_previous_one()
+    {
+        using var fx = new HostedGatedRoomFixture();
+        RoomCombatSession first = Room(fx, new[] { GateSide.Right }, 1090, 100);
+        RoomCombatSession second = Room(fx, new[] { GateSide.Right }, 1090, 100);
+        var walker = new HostedRoomDoorWalker();
+
+        for (int i = 0; i < 25; i++)
+        {
+            walker.Next(first, GateSide.Right, out _, out _);                     // 主角一步也没动(没有 Update):想动却挪不动,"卡住"的步数一路涨
+        }
+        for (int i = 0; i < 20; i++)
+        {
+            Assert.True(walker.Next(second, GateSide.Right, out int dx, out int dy));
+            Assert.Equal((1, 0), (dx, dy));                                       // 新房间从头数:不会借着上一间攒的步数提前上下晃
+        }
+    }
+
+    [Fact]
+    public void A_hero_that_keeps_moving_without_getting_closer_makes_the_walker_take_the_path_after_the_stall_limit()
+    {
+        using var fx = new HostedGatedRoomFixture();
+        RoomCombatSession room = Room(fx, new[] { GateSide.Right }, 1050, 100);
+        var walker = new HostedRoomDoorWalker();
+
+        for (int i = 0; i < DungeonBot.StallSteps; i++)
+        {
+            walker.Next(room, GateSide.Right, out _, out _);
+            room.Update(10, -1, 0, false, false);                                 // 主角自己一直往远离出口的方向走:动着(不算卡住)、但离出口越来越远
+        }
+        Assert.Equal(0, walker.PathEngaged);                                      // 第一步只是起算,要连着 StallSteps 步没变近才接管
+
+        walker.Next(room, GateSide.Right, out _, out _);
+        Assert.Equal(1, walker.PathEngaged);
+    }
+
+    [Fact]
+    public void A_hero_that_cannot_move_for_a_while_is_shaken_up_and_down_and_the_direction_flips_every_forty_steps()
+    {
+        // 与离线自动机同一套摆脱卡住的做法:想动却一步没动超过 30 步,上下晃 40 步(晃的方向每 40 步换一次)
+        using var fx = new HostedGatedRoomFixture();
+        RoomCombatSession room = Room(fx, new[] { GateSide.Right }, 1090, 100);
+        var walker = new HostedRoomDoorWalker();
+
+        var dirsY = new List<int>();
+        for (int i = 0; i < 80; i++)
+        {
+            Assert.True(walker.Next(room, GateSide.Right, out int dx, out int dy));
+            Assert.Equal(1, dx);
+            dirsY.Add(dy);                                                        // 主角没有 Update:想动却一步没动
+        }
+
+        Assert.All(dirsY.Take(31), dy => Assert.Equal(0, dy));                    // 前 31 步只顶着出口(卡住的步数还没超过 30)
+        Assert.All(dirsY.Skip(31).Take(8), dy => Assert.Equal(1, dy));            // 第 32 步起上下晃,先往下
+        Assert.All(dirsY.Skip(39).Take(40), dy => Assert.Equal(-1, dy));          // 第 40 步起换方向,再过 40 步(第 80 步)又换回来
+        Assert.Equal(1, dirsY[79]);
     }
 
     [Fact]

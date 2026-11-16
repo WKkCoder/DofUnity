@@ -1,5 +1,6 @@
 using Dnf.Game;
 using Dnf.Render;
+using Dnf.Render.Tests;
 
 namespace Dnf.Play.Tests;
 
@@ -452,7 +453,7 @@ public class HostedRoomMultiRunTests
         int hpBefore = old.Vitals.Hp;
         var revive = new HeroRevive(null, new ReviveCoins(1));
         old.Revive = revive;
-        rig.Run.CommandsEnabled = false;
+        rig.Run.CommandsEnabled = true;                                                // 新房间自己缺省是关的:开着的要带过去才分得出来
         RoomCombatSession next = rig.NewRoom(1, new[] { GateSide.Left }, vitals: true);
         int freshHp = next.Vitals.Hp;
         Assert.NotEqual(freshHp, hpBefore);                                            // 老房间被打过,新房间是满的:带过去才分得出来
@@ -461,7 +462,29 @@ public class HostedRoomMultiRunTests
 
         Assert.Equal(hpBefore, next.Vitals.Hp);                                        // 生命值跟着人走
         Assert.Same(revive, next.Revive);                                              // 复活窗口全局只有一份
-        Assert.False(rig.Run.CommandsEnabled);                                         // "不接受指令"的开关带到新房间
+        Assert.True(rig.Run.CommandsEnabled);                                          // "接受指令"的开关带到新房间
+    }
+
+    [Fact]
+    public void Entering_a_room_carries_the_buffs_the_skill_cooldowns_and_the_held_skill_keys()
+    {
+        using var rig = new Rig(1);
+        RoomCombatSession old = rig.Run.Room;
+        old.Buffs.Apply(AvatarFixture.JumpBuffSkill, BuffStat.JumpPower, 30, 30000);
+        HeroSkillSlot upper = old.Skills.SlotOf(SkillKeys.S);
+        Assert.NotNull(upper);                                                         // 夹具里的角色有快捷槽
+        upper.CooldownLeftMs = 900.0;
+        rig.Run.SkillsHeld = SkillKeys.S;
+        RoomCombatSession next = rig.NewRoom(1, new[] { GateSide.Left });
+        Assert.False(next.Buffs.Has(AvatarFixture.JumpBuffSkill));                    // 新房间是干净的:带过去才分得出来
+        Assert.Equal(0.0, next.Skills.SlotOf(SkillKeys.S).CooldownLeftMs);
+        Assert.Equal(SkillKeys.None, next.SkillsHeld);
+
+        rig.Run.EnterRoom(next, 1, 905, GateSide.Left, null);
+
+        Assert.True(next.Buffs.Has(AvatarFixture.JumpBuffSkill));                     // 增益跟着人走
+        Assert.Equal(900.0, next.Skills.SlotOf(SkillKeys.S).CooldownLeftMs);          // 冷却不因换房清零
+        Assert.Equal(SkillKeys.S, rig.Run.SkillsHeld);                                // 按着的技能键也带到新房间
     }
 
     [Fact]
