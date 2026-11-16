@@ -185,6 +185,27 @@ namespace Dnf.Cli
         /// <summary>charselect-shot --no-avatars:不画角色头像(只剩底座、框与文字),拿来和带头像的画面相减量出头像的位置。</summary>
         public bool NoAvatars { get; set; }
 
+        /// <summary>login-shot --user:账号框里预填的账号(只用合成的名字,默认 player_01;不会打印出来)。</summary>
+        public string LoginUser { get; set; } = "player_01";
+
+        /// <summary>login-shot --typed:密码框里已经输了几个字符(0 到密码上限;只画这么多个圆点,密码本身从不画)。</summary>
+        public int LoginTyped { get; set; }
+
+        /// <summary>login-shot --notice:界面上显示哪一类提示(<c>OnlineNoticeKind</c> 的名字,不分大小写,连字符可写可不写);没有就不显示。</summary>
+        public string? LoginNotice { get; set; }
+
+        /// <summary>login-shot --countdown:提示是"限流"时显示的倒计时秒数。</summary>
+        public int LoginCountdown { get; set; }
+
+        /// <summary>login-shot --change-password:画修改密码的形态(默认画登录形态)。</summary>
+        public bool LoginChangePassword { get; set; }
+
+        /// <summary>login-shot --busy:画请求在途的样子(按钮置灰、显示等待)。</summary>
+        public bool LoginBusy { get; set; }
+
+        /// <summary>login-shot --no-art:不读数据目录,背景是纯色(整个画面都是合成的,不含任何原版内容)。</summary>
+        public bool LoginNoArt { get; set; }
+
         /// <summary>bag-shot --tab:背包窗口翻到第几个页签(0 到 3,默认 0 = 装备页)。</summary>
         public int BagTab { get; set; }
 
@@ -306,6 +327,8 @@ namespace Dnf.Cli
             "      (城镇图册里一块区域的 800×600 画面:主角在登录落脚点,房间式合成,证据 E-095;Unity 的 -dnftownarea 离屏渲染以它为 CPU 参照)\n" +
             "  dnf charselect-shot --png <输出.png> [--time <毫秒>] [--chars N(1 到 12,默认 1)] [--select N] [--no-avatars]\n" +
             "      (选角界面在界面打开 --time 毫秒时的 800×600 画面,证据 E-096:名册是 N 个默认角色,--select 选中第几个(从 1 数);Unity 的 -dnfflowfrom char 离屏渲染以它为 CPU 参照)\n" +
+            "  dnf login-shot --png <输出.png> [--time <毫秒>] [--user <合成账号>] [--typed N] [--notice <类别> [--countdown 秒]] [--busy] [--change-password] [--no-art]\n" +
+            "      (联网登录界面(-dnfonline 的第一屏)在界面打开 --time 毫秒时的 800×600 画面:账号预填 --user(不打印),密码框里有 --typed 个字符(只画圆点),--notice 显示某一类提示(wrong-credentials、rate-limited 配 --countdown 等),--busy 画请求在途,--change-password 画修改密码形态;没有汉字字体,标签是英文占位;背景是选角底图(用户数据,只在本机看,不入库),--no-art 不读数据、背景纯色)\n" +
             "  dnf town-check [--town N]\n" +
             "      (城镇图册检查:读 town.lst 与每座 .twn,汇总区域类型、出口的去处与对称性、到地下城入口的路线;--town N 逐区域打印出口矩形、触发方向与按规则算出的落脚点(本机查看,数值不入库))\n" +
             "  dnf arrival-check [--dungeon <副本定义>] [--hero-id N] [--scan 起:止 --expect 房间:侧:x:y:容差,…] [--probe 房间:侧:y,…]\n" +
@@ -593,6 +616,27 @@ namespace Dnf.Cli
                     case "--no-avatars":
                         opts.NoAvatars = true;
                         break;
+                    case "--user":
+                        opts.LoginUser = NextValue(args, ref i);
+                        break;
+                    case "--typed":
+                        opts.LoginTyped = int.TryParse(NextValue(args, ref i), out int typed) && typed >= 0 ? typed : throw new UserError("--typed 需要非负整数");
+                        break;
+                    case "--notice":
+                        opts.LoginNotice = NextValue(args, ref i);
+                        break;
+                    case "--countdown":
+                        opts.LoginCountdown = int.TryParse(NextValue(args, ref i), out int countdown) && countdown >= 0 ? countdown : throw new UserError("--countdown 需要非负整数(秒)");
+                        break;
+                    case "--change-password":
+                        opts.LoginChangePassword = true;
+                        break;
+                    case "--busy":
+                        opts.LoginBusy = true;
+                        break;
+                    case "--no-art":
+                        opts.LoginNoArt = true;
+                        break;
                     case "--tab":
                         opts.BagTab = int.TryParse(NextValue(args, ref i), out int bagTab) && bagTab >= 0 && bagTab <= 3 ? bagTab : throw new UserError("--tab 需要 0 到 3 的整数");
                         break;
@@ -798,6 +842,8 @@ namespace Dnf.Cli
                     return TownShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "charselect-shot":
                     return CharSelectShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "login-shot":
+                    return LoginShot.Run(opts);
                 case "fit-map":
                     return MapFit.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "fit-sprite":
