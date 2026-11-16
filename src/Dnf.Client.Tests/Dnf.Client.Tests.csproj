@@ -35,6 +35,11 @@
     <Compile Include="..\Dnf.Net.Tests\FrameCipherDoubles.cs" Link="FrameCipherDoubles.cs" />
     <Compile Include="..\Dnf.Net.Tests\NoticePayloadBuilder.cs" Link="NoticePayloadBuilder.cs" />
     <Compile Include="..\Dnf.Net.Tests\GatewayTestSupport.cs" Link="GatewayTestSupport.cs" />
+    <!-- 联网外壳(r18-onlineshell)的测试夹具:假网关(内存里的服务端一侧)、合成的角色列表数据,与外壳阶段机的假后端/测试台(Play 层测试共用) -->
+    <Compile Include="..\Dnf.Net.Tests\GatewayFakeServer.cs" Link="GatewayFakeServer.cs" />
+    <Compile Include="..\Dnf.Net.Tests\UserInfoTestData.cs" Link="UserInfoTestData.cs" />
+    <Compile Include="..\Dnf.Play.Tests\OnlineShellTestKit.cs" Link="OnlineShellTestKit.cs" />
+    <Compile Include="..\Dnf.Render.Tests\BlockFont.cs" Link="BlockFont.cs" />
     <!-- 合成数据构造器与"迷你职业 + 迷你怪物"夹具,以及联网副本房间的夹具(与 Play 层测试共用) -->
     <Compile Include="..\Dnf.Data.Tests\TestData.cs" Link="TestData.cs" />
     <Compile Include="..\Dnf.Render.Tests\AvatarFixture.cs" Link="AvatarFixture.cs" />
