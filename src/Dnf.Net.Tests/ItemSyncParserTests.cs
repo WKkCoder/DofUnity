@@ -155,6 +155,126 @@ public class ItemSyncParserTests
         Assert.Null(s.Cera);
     }
 
+    // ---- 类字节既不是 0(通知)也不是 1(命令)的帧 ----
+    // PacketHeader.Class 是 (PacketClass)ClassByte,可以是任意字节(服务端接收时不按类拒收,取值原样保留)。
+    // 聚合器只认类 0 的通知与类 1 的 587,其余类一律只算"看过"——哪怕包号与载荷都合法,也不能被当成通知解析。
+
+    /// <summary>每个通知类物品包各一份合法载荷(包号、正文);按通知类送进去全都解得通。</summary>
+    private static (int Id, byte[] Body)[] LegalNotiBodies()
+    {
+        return new (int, byte[])[]
+        {
+            (SpaceId, BagSpacePacket(8, 100, 200, 300, Item(5, ItemA))),
+            (UpdateId, UpdatePacket(0, Item(6, ItemB))),
+            (CeraId, CeraBody),
+            (PetTableId, OnePetTable(9001)),
+            (CoolTimeId, OnePair),
+            (EffectId, TwoPairs),
+            (LockId, EmptyLockTable),
+            (ExpandId, ExpandBody(9001)),
+            (MaxLevelId, MaxLevelBody),
+            (HotkeyId, HotkeyBody()),
+        };
+    }
+
+    private static DecodedFrame FrameOfClass(byte cls, int id, byte[] body)
+    {
+        DecodedFrame frame = FrameOf(cls, id, DirectFramePayload(body, id));
+        Assert.Equal(cls, frame.Header.ClassByte);
+        return frame;
+    }
+
+    private static void AssertNothingWasTakenIntoTheSnapshot(ItemSyncSnapshot s)
+    {
+        Assert.Null(s.Bag);
+        Assert.Null(s.AvatarBag);
+        Assert.Null(s.Cargo);
+        Assert.Null(s.PetBag);
+        Assert.Null(s.AccountCargo);
+        Assert.Null(s.BodyEquip);
+        Assert.Null(s.Cera);
+        Assert.Null(s.AvatarCoin);
+        Assert.Null(s.CoolTimeItems);
+        Assert.Null(s.EffectItems);
+        Assert.Null(s.ItemLocks);
+        Assert.Null(s.MaxEquipLevel);
+        Assert.Null(s.HotkeyOption);
+        Assert.Null(s.SelfView);
+        Assert.Null(s.Creatures);
+        Assert.Empty(s.PublicViews);
+        Assert.Empty(s.ExpandEquips);
+        Assert.True(s.Currency.IsEmpty);
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(255)]
+    public void FramesOfAClassThatIsNeitherNotiNorCmdAreOnlyCountedAsSeenWhateverTheirPacketIdAndPayload(byte cls)
+    {
+        (int Id, byte[] Body)[] legal = LegalNotiBodies();
+
+        // 对照:同样的载荷按通知类(类字节 0)全都解得通——说明下面的"只算看过"不是夹具本身有毛病。
+        ItemSyncSnapshot control = Parse(legal.Select(f => FrameOfClass(0, f.Id, f.Body)).ToArray());
+        Assert.Equal(legal.Length, control.FramesSeen);
+        Assert.Equal(legal.Length, control.FramesParsed);
+        Assert.Equal(0, control.FramesMalformed);
+        Assert.NotNull(control.Bag);
+        Assert.NotNull(control.Cera);
+
+        // 同样的包号与载荷换成未知类,再加一个 587(它只在类 1 才是装扮币应答)。
+        DecodedFrame[] frames = legal.Select(f => FrameOfClass(cls, f.Id, f.Body))
+            .Append(FrameOfClass(cls, CoinId, CoinBody)).ToArray();
+        ItemSyncSnapshot s = Parse(frames);
+        Assert.Equal(frames.Length, s.FramesSeen);
+        Assert.Equal(0, s.FramesParsed);
+        Assert.Equal(0, s.FramesMalformed);
+        Assert.Equal(0, s.FramesKindUnresolved);
+        AssertNothingWasTakenIntoTheSnapshot(s);
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(255)]
+    public void AnUnknownClassCeraFrameAndSpaceFrameLeaveTheSnapshotFieldsAtTheirDefaults(byte cls)
+    {
+        // 点券包(53)与物品空间包(13)各一帧,类字节是 2 或 255:计入"看过",不计解析成功、不计错位、不计缺回调,快照对应字段仍是默认。
+        ItemSyncSnapshot s = Parse(
+            FrameOfClass(cls, CeraId, CeraBody),
+            FrameOfClass(cls, SpaceId, BagSpacePacket(8, 1, 2, 3, Item(5, ItemA))));
+        Assert.Equal(2, s.FramesSeen);
+        Assert.Equal(0, s.FramesParsed);
+        Assert.Equal(0, s.FramesMalformed);
+        Assert.Equal(0, s.FramesKindUnresolved);
+        Assert.Null(s.Cera);
+        Assert.Null(s.Bag);
+        Assert.True(s.Currency.IsEmpty);
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(255)]
+    public void FramesOfAnUnknownClassNeverChangeTheStateBuiltByTheFramesAroundThem(byte cls)
+    {
+        byte[] otherCera = (byte[])CeraBody.Clone();
+        otherCera[1] = 0x99;
+        ItemSyncSnapshot s = Parse(
+            Noti(SpaceId, BagSpacePacket(8, 100, 200, 300, Item(5, ItemA))),
+            // 若被当成通知:会把整个背包换成槽 7 的一份、再删掉槽 5、改掉金币、改掉点券。
+            FrameOfClass(cls, SpaceId, BagSpacePacket(16, 1, 2, 3, Item(7, ItemC))),
+            FrameOfClass(cls, UpdateId, UpdatePacket(0, Item(5, DeleteMarker), Pseudo(0, 7))),
+            Noti(CeraId, CeraBody),
+            FrameOfClass(cls, CeraId, otherCera));
+        Assert.Equal(5, s.FramesSeen);
+        Assert.Equal(2, s.FramesParsed);
+        Assert.Equal(0, s.FramesMalformed);
+        Assert.Equal(new[] { 5 }, Slots(s.Bag));
+        Assert.Equal(8, s.Bag.Capacity);
+        Assert.Equal(1, s.Bag.FullPacketCount);
+        Assert.Equal(0, s.Bag.UpdatePacketCount);
+        Assert.Equal(100u, s.Currency.Gold);
+        Assert.Equal(0x10u, s.Cera.Cera);
+    }
+
     [Fact]
     public void TheClassOfTheFrameDecidesWhichPacketItIs()
     {

@@ -214,6 +214,76 @@ public class ItemUpdateParserTests
         AssertRejected(UpdatePacket(0, odd), ItemParseStatus.Malformed);
     }
 
+    // 货币槽的物品号必须恰好等于槽号。反例刻意取"物品号不大、但不等于槽号"(0 与 1、1 与 0、2 与 3),
+    // 以及"低 16 位等于槽号、高位不同"(槽 1 配 0x10001):只检查"物品号不超过 0xFFFF"或只比低 16 位的弱化写法都会把它们放过去。
+    // 数字全是字面值。配错的货币槽前后各有一个合法操作(放入、删除标记),所以拒绝只可能来自这条检查。
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(1, 0)]
+    [InlineData(2, 3)]
+    [InlineData(1, 0x10001)]
+    public void ACurrencySlotWhoseItemIdIsNotTheSlotRejectsTheWholeUpdate(int slot, int itemId)
+    {
+        byte[] payload = UpdatePacket(0,
+            Item(5, ItemA),
+            new ItemSpec { Slot = slot, ItemId = itemId, Data = 50 },
+            Item(6, DeleteMarker));
+        AssertRejected(payload, ItemParseStatus.Malformed);
+    }
+
+    [Fact]
+    public void ThreeCurrencySlotsWhoseItemIdsEqualTheirSlotsAreTakenIntoTheCurrencyNotTheOperations()
+    {
+        byte[] payload = UpdatePacket(0,
+            new ItemSpec { Slot = 0, ItemId = 0, Data = 1100 },
+            new ItemSpec { Slot = 1, ItemId = 1, Data = 2200 },
+            new ItemSpec { Slot = 2, ItemId = 2, Data = 3300 },
+            Item(3, ItemA));
+        ItemUpdateNotice n = ParseOk(payload);
+        Assert.Equal(4, n.DeclaredEntryCount);
+        Assert.Equal(1100u, n.Currency.Gold);
+        Assert.Equal(2200u, n.Currency.CoinTotal);
+        Assert.Equal(3300u, n.Currency.WinPoint);
+        // 货币不进操作表:表里只有槽 3 的放入。
+        ItemUpdateOperation only = Assert.Single(n.Operations);
+        Assert.False(only.IsDelete);
+        Assert.Equal(3, only.Slot);
+        Assert.Equal(900001u, only.Entry.ItemId);
+    }
+
+    // 货币刷新只属于背包(空间 0):其它空间的槽 0 到 2 即使"物品号不等于槽号"也是普通操作,按线上顺序全部收下,货币保持为空。
+    // 装扮背包带两个固定块,宠物栏与身上装备需要物品类型回调(这里一律答 Other),所以每种空间的夹具都是自洽的、只差"是不是背包"。
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(7)]
+    [InlineData(0x0C)]
+    public void SlotsZeroToTwoOutsideTheBagWithForeignItemIdsAreOrdinaryOperations(int space)
+    {
+        (int Slot, long ItemId)[] wire = { (0, 1), (1, 0), (2, 3), (1, 0x10001) };
+        ItemSpec[] items = wire.Select(w =>
+        {
+            ItemSpec s = Item(w.Slot, w.ItemId);
+            if (space == 1)
+            {
+                s.SocketBlock = Socket();
+                s.ExpansionBlock = Expansion();
+            }
+            return s;
+        }).ToArray();
+        DictionaryKindResolver resolver = new DictionaryKindResolver()
+            .With(1, ResolvedItemKind.Other).With(0, ResolvedItemKind.Other)
+            .With(3, ResolvedItemKind.Other).With(0x10001, ResolvedItemKind.Other);
+
+        ItemUpdateNotice n = ParseOk(UpdatePacket(space, items), resolver);
+        Assert.Equal(4, n.DeclaredEntryCount);
+        Assert.True(n.Currency.IsEmpty);
+        Assert.Equal(new[] { 0, 1, 2, 1 }, n.Operations.Select(o => (int)o.Slot).ToArray());
+        Assert.All(n.Operations, o => Assert.False(o.IsDelete));
+        Assert.Equal(new uint[] { 1, 0, 3, 0x10001 }, n.Operations.Select(o => o.Entry.ItemId).ToArray());
+    }
+
     [Fact]
     public void ADeleteMarkerInACurrencySlotIsRejectedBecauseTheServerNeverWritesIt()
     {

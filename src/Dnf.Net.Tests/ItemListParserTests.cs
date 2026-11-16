@@ -135,6 +135,83 @@ public class ItemListParserTests
         AssertRejected(payload, ItemParseStatus.Malformed);
     }
 
+    // 货币伪条目的物品号必须恰好等于槽号。反例刻意取"物品号不大、但不等于槽号"(0 与 1、1 与 0、2 与 3),
+    // 以及"低 16 位等于槽号、高位不同"(槽 1 配 0x10001):只检查"物品号不超过 0xFFFF"或只比低 16 位的弱化写法都会把它们放过去。
+    // 数字全是字面值。包里三个货币槽都在,只有一个配错,后面还跟一个普通条目,所以拒绝只可能来自这条检查。
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(1, 0)]
+    [InlineData(2, 3)]
+    [InlineData(1, 0x10001)]
+    public void ACurrencySlotWhoseItemIdIsNotTheSlotRejectsTheWholeBagPacket(int slot, int itemId)
+    {
+        NoticePayloadBuilder b = new NoticePayloadBuilder().U8(0).U16(8).U16(4);
+        for (int s = 0; s < 3; s++)
+        {
+            b.AppendBagEntry(new ItemSpec { Slot = s, ItemId = s == slot ? itemId : s, Data = 100 + s });
+        }
+        b.AppendBagEntry(Item(5, ItemA));
+        AssertRejected(b.ToArray(), ItemParseStatus.Malformed);
+    }
+
+    [Fact]
+    public void ThreeCurrencySlotsWhoseItemIdsEqualTheirSlotsAreTakenIntoTheCurrencyNotTheEntryTable()
+    {
+        byte[] payload = new NoticePayloadBuilder().U8(0).U16(8).U16(4)
+            .AppendBagEntry(new ItemSpec { Slot = 0, ItemId = 0, Data = 1100 })
+            .AppendBagEntry(new ItemSpec { Slot = 1, ItemId = 1, Data = 2200 })
+            .AppendBagEntry(new ItemSpec { Slot = 2, ItemId = 2, Data = 3300 })
+            .AppendBagEntry(Item(3, ItemA))
+            .ToArray();
+        ItemListNotice n = ParseOk(payload);
+        Assert.Equal(4, n.DeclaredEntryCount);
+        Assert.Equal(1100u, n.Currency.Gold);
+        Assert.Equal(2200u, n.Currency.CoinTotal);
+        Assert.Equal(3300u, n.Currency.WinPoint);
+        // 货币不进条目表:表里只有槽 3 的普通条目。
+        ItemEntry only = Assert.Single(n.Entries);
+        Assert.Equal(3, only.Slot);
+        Assert.Equal(900001u, only.ItemId);
+    }
+
+    // 货币拆分只属于背包(空间 0):其它空间的槽 0 到 2 即使"物品号不等于槽号"也是普通条目,按线上顺序全部收下,货币为 null。
+    // 装扮背包带两个固定块,宠物栏需要物品类型回调(这里一律答 Other),所以每种空间的夹具都是自洽的、只差"是不是背包"。
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(7)]
+    [InlineData(0x0C)]
+    public void SlotsZeroToTwoOutsideTheBagWithForeignItemIdsAreOrdinaryEntries(int space)
+    {
+        (int Slot, long ItemId)[] wire = { (0, 1), (1, 0), (2, 3), (1, 0x10001) };
+        ItemSpec[] items = wire.Select(w =>
+        {
+            ItemSpec s = Item(w.Slot, w.ItemId);
+            if (space == 1)
+            {
+                s.SocketBlock = Socket();
+                s.ExpansionBlock = Expansion();
+            }
+            return s;
+        }).ToArray();
+        byte[] payload = space switch
+        {
+            1 => AvatarSpacePacket(items),
+            2 => CargoSpacePacket(8, items),
+            7 => PetSpacePacket(items),
+            _ => AccountCargoSpacePacket(1, 2, items),
+        };
+        DictionaryKindResolver resolver = new DictionaryKindResolver()
+            .With(1, ResolvedItemKind.Other).With(0, ResolvedItemKind.Other)
+            .With(3, ResolvedItemKind.Other).With(0x10001, ResolvedItemKind.Other);
+
+        ItemListNotice n = ParseOk(payload, resolver);
+        Assert.Equal(4, n.DeclaredEntryCount);
+        Assert.Null(n.Currency);
+        Assert.Equal(new[] { 0, 1, 2, 1 }, n.Entries.Select(e => (int)e.Slot).ToArray());
+        Assert.Equal(new uint[] { 1, 0, 3, 0x10001 }, n.Entries.Select(e => e.ItemId).ToArray());
+    }
+
     [Fact]
     public void BagEntriesWithC3AndRandomOptionVariantsAreAllParsedInOnePacket()
     {
