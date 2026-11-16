@@ -130,6 +130,27 @@ public class OnlineShellFlowTests
     }
 
     [Fact]
+    public void The_flow_itself_refuses_a_second_request_even_if_the_screens_busy_flag_was_cleared_from_outside()
+    {
+        var rig = new ShellRig();
+        var gate = Gate<OnlineAuthOutcome>();
+        rig.Backend.OnLogin = (u, p, ct) => gate.Task;
+        rig.Fill();
+        rig.Submit();
+        Assert.True(rig.Flow.Busy);
+
+        rig.Flow.Login.SetBusy(false);                      // 界面的"忙"标志被外面改掉了(登录界面对象是公开的):这时界面自己不再挡回车
+        rig.Submit();
+
+        Assert.Equal(1, rig.Backend.LoginCalls);            // 阶段机自己还有一道:有请求在途就不发第二个
+        Assert.True(rig.Flow.Busy);
+        gate.SetResult(OnlineAuthOutcome.Ok());
+        rig.Pump(3);
+        Assert.Equal(OnlineShellStage.CharacterSelect, rig.Flow.Stage);
+        Assert.Equal(1, rig.Backend.LoginCalls);
+    }
+
+    [Fact]
     public void A_successful_login_clears_the_password_and_moves_on_to_the_server_stage()
     {
         var rig = new ShellRig(o => o.AutoPassPlaceholders = false);
@@ -293,6 +314,28 @@ public class OnlineShellFlowTests
         Assert.Equal(1, rig.Backend.RegisterCalls);
         Assert.Equal(0, rig.Backend.ChangePasswordCalls);
         Assert.Equal(OnlineNoticeKind.RateLimited, rig.Flow.Notice.Kind);
+    }
+
+    [Fact]
+    public void A_submit_handled_in_the_very_poll_where_the_hold_ends_goes_through_but_one_millisecond_earlier_does_not()
+    {
+        var rig = new ShellRig();
+        rig.Backend.OnLogin = (u, p, ct) => Task.FromResult(OnlineAuthOutcome.Fail(OnlineNoticeKind.RateLimited, 5));
+        rig.Fill();
+        rig.Submit();                                       // t=1000,冷却到 t=6000
+        Assert.Equal(5, rig.Flow.Notice.Seconds);
+
+        rig.Poll(4999);                                     // t=5999:还差 1 毫秒
+        rig.Flow.Key(OnlineShellKey.Enter);
+        rig.Poll();
+        Assert.Equal(1, rig.Backend.LoginCalls);
+        Assert.Equal(OnlineNoticeKind.RateLimited, rig.Flow.Notice.Kind);
+
+        rig.Backend.OnLogin = (u, p, ct) => Task.FromResult(OnlineAuthOutcome.Ok());
+        rig.Flow.Key(OnlineShellKey.Enter);                 // 回车只记意图;下面这次轮询恰好到点,意图在清冷却之前处理
+        rig.Poll(1);                                        // t=6000
+
+        Assert.Equal(2, rig.Backend.LoginCalls);
     }
 
     // ------------------------------------------------------------------------------------------------ 本地输入检查与未配置(都不发请求)
@@ -783,6 +826,24 @@ public class OnlineShellFlowTests
 
         Assert.Equal(OnlineShellStage.ServerSelect, rig.Flow.Stage);
         Assert.Equal(0, rig.Backend.DisconnectCalls);
+    }
+
+    [Fact]
+    public void Enter_at_the_channel_stage_only_retries_after_a_failure_and_never_starts_the_first_connection()
+    {
+        var rig = new ShellRig(o => o.AutoPassPlaceholders = false);
+        rig.Fill();
+        rig.Submit();
+        rig.Flow.ChooseServer();
+        rig.Poll();
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+
+        rig.Flow.Key(OnlineShellKey.Enter);                 // 还没有选定频道、也没有失败可重试:回车什么都不做
+        rig.Pump(3);
+
+        Assert.Equal(0, rig.Backend.ConnectCalls);
+        Assert.False(rig.Flow.Busy);
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
     }
 
     [Fact]
@@ -1530,6 +1591,33 @@ public class OnlineShellFlowTests
         Assert.Equal(2, rig.Backend.LoginCalls);
         Assert.Equal("pw-two", rig.Backend.LastPassword);
         Assert.Equal(OnlineShellStage.CharacterSelect, rig.Flow.Stage);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Going_back_to_login_always_clears_the_password_boxes_even_when_something_was_written_into_them_meanwhile(bool viaDisconnect)
+    {
+        var rig = new ShellRig();
+        rig.ReachCharacterSelect();
+        // 离开登录之后外壳不再把键盘交给输入框,但登录界面对象是公开的(宿主为本机开发预填时直接写它):回到登录时一律清掉
+        rig.Flow.Login.Prefill("player_01", "left-behind");
+        Assert.Equal("left-behind", rig.Flow.Login.Password);
+
+        if (viaDisconnect)
+        {
+            rig.Backend.RaiseDisconnected();
+        }
+        else
+        {
+            rig.Flow.Key(OnlineShellKey.Escape);
+        }
+        rig.Poll();
+
+        Assert.Equal(OnlineShellStage.Login, rig.Flow.Stage);
+        Assert.Equal(string.Empty, rig.Flow.Login.Password);
+        Assert.Equal(string.Empty, rig.Flow.Login.NewPassword);
+        Assert.Equal("player_01", rig.Flow.Login.Username);     // 账号可以留着
     }
 
     [Fact]

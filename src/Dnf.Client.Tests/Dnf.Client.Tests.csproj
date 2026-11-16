@@ -37,6 +37,7 @@
     <Compile Include="..\Dnf.Net.Tests\GatewayTestSupport.cs" Link="GatewayTestSupport.cs" />
     <!-- 联网外壳(r18-onlineshell)的测试夹具:假网关(内存里的服务端一侧)、合成的角色列表数据,与外壳阶段机的假后端/测试台(Play 层测试共用) -->
     <Compile Include="..\Dnf.Net.Tests\GatewayFakeServer.cs" Link="GatewayFakeServer.cs" />
+    <Compile Include="..\Dnf.Net.Tests\GatewayLoopbackServer.cs" Link="GatewayLoopbackServer.cs" />
     <Compile Include="..\Dnf.Net.Tests\UserInfoTestData.cs" Link="UserInfoTestData.cs" />
     <Compile Include="..\Dnf.Play.Tests\OnlineShellTestKit.cs" Link="OnlineShellTestKit.cs" />
     <Compile Include="..\Dnf.Render.Tests\BlockFont.cs" Link="BlockFont.cs" />

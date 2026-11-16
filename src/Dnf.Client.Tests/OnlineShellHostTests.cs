@@ -160,12 +160,20 @@ public sealed class OnlineShellHostTests
     public void Shift_makes_the_Tab_go_backwards()
     {
         var rig = new ShellRig();
+        rig.Flow.Login.SetMode(LoginMode.ChangePassword);     // 三个输入框(焦点落在旧密码框):只有两个框时往前与往后落在同一个框上,看不出方向
+        Assert.Equal(LoginField.Password, rig.Flow.Login.Focus);
+
         OnlineShellInput.Apply(rig.Flow, new OnlineShellFrameInput { Tab = true });
+        Assert.Equal(LoginField.NewPassword, rig.Flow.Login.Focus);
+
+        OnlineShellInput.Apply(rig.Flow, new OnlineShellFrameInput { Tab = true, Shift = true });
         Assert.Equal(LoginField.Password, rig.Flow.Login.Focus);
 
         OnlineShellInput.Apply(rig.Flow, new OnlineShellFrameInput { Tab = true, Shift = true });
-
         Assert.Equal(LoginField.Username, rig.Flow.Login.Focus);
+
+        OnlineShellInput.Apply(rig.Flow, new OnlineShellFrameInput { Tab = true, Shift = true });    // 从第一个框往回绕到最后一个
+        Assert.Equal(LoginField.NewPassword, rig.Flow.Login.Focus);
     }
 
     [Fact]

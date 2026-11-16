@@ -352,6 +352,19 @@ public sealed class OnlineShellBackendTests
     }
 
     [Fact]
+    public async Task A_successful_selection_without_a_snapshot_line_logs_nothing_at_all()
+    {
+        var rig = new BackendRig(onPort: p =>
+            p.OnSelect = (slot, ct) => Task.FromResult(new OnlineSelectReport(true, false, null)));
+        await GatewayTestSupport.Bounded(rig.Backend.LoginAsync(BackendRig.User, BackendRig.Password, default));
+
+        OnlineSelectOutcome result = await GatewayTestSupport.Bounded(rig.Backend.SelectCharacterAsync(0, default));
+
+        Assert.True(result.Entered);
+        Assert.Empty(rig.LogsSnapshot());                  // 没有快照行就不写日志(也不往日志去处塞空值)
+    }
+
+    [Fact]
     public async Task A_log_sink_that_throws_does_not_break_the_selection()
     {
         var rig = new BackendRig();
@@ -619,5 +632,26 @@ public sealed class OnlineShellBackendTests
 
         Assert.IsType<HttpGatewayTransport>(transport);
         (transport as IDisposable)?.Dispose();
+    }
+
+    [Fact]
+    public async Task The_http_transport_factory_does_not_follow_redirects()
+    {
+        // 重定向指向同一个服务器的另一个路径:被跟随的话服务器会收到第二个请求(只连测试进程内的回环服务器)
+        using var server = new LoopbackServer((request, stream, ct) =>
+            LoopbackServer.WriteResponseAsync(stream, 302, Array.Empty<byte>(), new[] { "Location: /elsewhere" }, ct));
+        Assert.True(GatewayOptions.TryCreate(server.BaseUrl, GatewayTestSupport.HexLower(GatewayTestSupport.SynthKey()), TimeSpan.FromSeconds(5), out GatewayOptions options, out _));
+        IGatewayTransport transport = OnlineShellBackend.CreateHttpTransport(options);
+        try
+        {
+            GatewayHttpResponse response = await GatewayTestSupport.Bounded(transport.GetTextAsync(server.BaseUrl + "/health"));
+
+            Assert.Equal(302, response.StatusCode);
+            Assert.Single(server.Requests);
+        }
+        finally
+        {
+            (transport as IDisposable)?.Dispose();
+        }
     }
 }
