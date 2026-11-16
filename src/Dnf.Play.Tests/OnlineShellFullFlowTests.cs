@@ -151,6 +151,50 @@ public class OnlineShellFullFlowTests
     }
 
     [Fact]
+    public void A_cancelled_connect_shows_the_cancelled_notice_with_the_retry_hints_and_a_retry_brings_the_cancel_hint_back()
+    {
+        var rig = new ShellRig();
+        var gate = new TaskCompletionSource<OnlineConnectOutcome>();
+        rig.Backend.OnConnect = (t, ct) => gate.Task;
+        rig.Fill();
+        rig.Submit();
+        rig.Pump(1);
+        Assert.True(SameFrame(Expect("CANCEL", 1, ShellPaint.Muted), One(rig.Flow.Scene, "online-status-hint-text-0").Frame));
+        Assert.DoesNotContain("online-status-hint-text-1", Tags(rig.Flow.Scene));
+
+        rig.Flow.Key(OnlineShellKey.Escape);
+        rig.Pump(1);
+
+        // 取消之后:停在选频道画面,"已取消"的说明条(一般说明的语气),底部是"Enter 重试 / Esc 返回登录"(点阵占位里是 ENTER RETRY / ESC BACK),没有转圈
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+        Assert.False(rig.Flow.Busy);
+        Assert.True(SameFrame(Expect("CANCELLED", 1, Tone(ShellTone.Info)), One(rig.Flow.Scene, "online-status-notice").Frame));
+        Assert.Contains("online-status-icon", Tags(rig.Flow.Scene));
+        Assert.DoesNotContain("online-status-spinner", Tags(rig.Flow.Scene));
+        Assert.True(SameFrame(Expect("ENTER", 1, ShellPaint.Ink), One(rig.Flow.Scene, "online-status-hint-keytext-0").Frame));
+        Assert.True(SameFrame(Expect("RETRY", 1, ShellPaint.Muted), One(rig.Flow.Scene, "online-status-hint-text-0").Frame));
+        Assert.True(SameFrame(Expect("ESC", 1, ShellPaint.Ink), One(rig.Flow.Scene, "online-status-hint-keytext-1").Frame));
+        Assert.True(SameFrame(Expect("BACK", 1, ShellPaint.Muted), One(rig.Flow.Scene, "online-status-hint-text-1").Frame));
+
+        var retry = new TaskCompletionSource<OnlineConnectOutcome>();
+        rig.Backend.OnConnect = (t, ct) => retry.Task;
+        rig.Flow.Key(OnlineShellKey.Enter);
+        rig.Pump(1);                                              // 重试在途:说明条清掉,转圈回来,底部换回"取消"
+
+        Assert.True(rig.Flow.Busy);
+        Assert.Equal(2, rig.Backend.ConnectCalls);
+        Assert.DoesNotContain("online-status-notice", Tags(rig.Flow.Scene));
+        Assert.Contains("online-status-spinner", Tags(rig.Flow.Scene));
+        Assert.DoesNotContain("online-status-hint-text-1", Tags(rig.Flow.Scene));
+        Assert.True(SameFrame(Expect("ESC", 1, ShellPaint.Ink), One(rig.Flow.Scene, "online-status-hint-keytext-0").Frame));
+        Assert.True(SameFrame(Expect("CANCEL", 1, ShellPaint.Muted), One(rig.Flow.Scene, "online-status-hint-text-0").Frame));
+
+        retry.SetResult(OnlineConnectOutcome.Ok(ShellTestData.Roster(1)));
+        rig.Pump(1);
+        Assert.Equal(OnlineShellStage.CharacterSelect, rig.Flow.Stage);
+    }
+
+    [Fact]
     public void A_failed_login_shows_the_category_on_the_login_screen_and_the_countdown_ticks()
     {
         var rig = new ShellRig();

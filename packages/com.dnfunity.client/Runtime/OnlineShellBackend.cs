@@ -326,10 +326,19 @@ namespace Dnf.Client
             }
         }
 
-        /// <summary>联网用的网关传输:不跟随重定向、不走系统代理(与联网层登录用的是同一套,游戏服与网关都在自有网络上)。</summary>
+        /// <summary>联网用的网关传输:用 <see cref="CreateGatewayHandler"/> 的处理器(不跟随重定向、不走系统代理;与联网层登录用的是同一套,游戏服与网关都在自有网络上)。</summary>
         internal static IGatewayTransport CreateHttpTransport(GatewayOptions options)
         {
-            return new HttpGatewayTransport(new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false }, options.Timeout);
+            return new HttpGatewayTransport(CreateGatewayHandler(), options.Timeout);
+        }
+
+        /// <summary>
+        /// 网关传输的 HTTP 处理器:一律不走系统代理(登录请求带着口令,不能让系统代理截走或记录)、不跟随重定向(3xx 响应原样交给调用方)。
+        /// 单独成方法是为了让这两条硬规矩能被测试直接钉住。
+        /// </summary>
+        internal static HttpClientHandler CreateGatewayHandler()
+        {
+            return new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false };
         }
 
         private OnlineEntrySettings CopyTemplate()

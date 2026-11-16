@@ -1,3 +1,4 @@
+using System.Reflection;
 using Dnf.Net.Session;
 using Dnf.Net.Tests;
 
@@ -242,6 +243,35 @@ public sealed class OnlineShellSetupTests : IDisposable
     }
 
     [Fact]
+    public void A_dev_setup_keeps_the_account_and_password_out_of_the_session_template_and_out_of_the_object_it_holds()
+    {
+        WriteDev();
+
+        OnlineShellSetup setup = OnlineShellSetupLoader.Load(true, RepoDir, 0, DataDir, null, null);
+
+        // 夹具里确实有凭据可泄漏:登录界面的预填拿到了账号与口令
+        Assert.False(string.IsNullOrEmpty(setup.PrefillUser));
+        Assert.False(string.IsNullOrEmpty(setup.PrefillPassword));
+        Assert.Equal("dev_account_1", setup.PrefillUser);
+        Assert.Equal("dev-pass-synthetic", setup.PrefillPassword);
+
+        // 会话的入参模板里却一个字也没有(登录时用界面里输入的);两条分开断言
+        OnlineEntrySettings template = setup.CreateSettings();
+        Assert.Equal(string.Empty, template.Account);
+        Assert.Equal(string.Empty, template.Password);
+
+        // CreateSettings 只抄一张固定的字段表(网关、鼠标口令密文、数据版本、频道端口、槽数),本来就不抄账号与口令,
+        // 所以光看它的返回值,"读出来之后把账号与口令抹掉"那两行还在不在是看不出来的:
+        // 这里直接看启动设置自己长期持有的那份入参对象,别让凭据在进程里多留一份(账号与口令各抹一行,各自一条断言)
+        FieldInfo held = typeof(OnlineShellSetup).GetField("_settings", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(held);
+        var retained = Assert.IsType<OnlineEntrySettings>(held.GetValue(setup));
+        Assert.Equal(string.Empty, retained.Account);
+        Assert.Equal(string.Empty, retained.Password);
+        Assert.Equal(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, retained.MouseCipher);          // 同一个对象:其余内容没丢
+    }
+
+    [Fact]
     public void The_dev_channel_port_argument_is_used_when_valid_and_ignored_otherwise()
     {
         WriteDev();
@@ -341,5 +371,77 @@ public sealed class OnlineShellSetupTests : IDisposable
         Assert.Equal("OnlineShellSetup", text);
         Assert.DoesNotContain(DevAccount, text);
         Assert.DoesNotContain(DevPassword, text);
+    }
+}
+
+/// <summary>
+/// 没有持久数据目录就当没有配置文件:不拿相对路径去读进程当前目录里的同名文件。
+/// 要在进程当前目录里放一份真的配置文件(固定文件名,而且不许改进程当前目录),所以放进专属的集合:
+/// 同一集合里的测试不会并行,用完在 finally 里还原。别的测试类在产品行为正确时从不碰当前目录里的这个文件。
+/// </summary>
+[Collection("OnlineShellConfigFileInCurrentDirectory")]
+public sealed class OnlineShellSetupCurrentDirectoryTests
+{
+    private static string[] ValidLines()
+    {
+        return new[]
+        {
+            "# synthetic test configuration",
+            "server_url = http://gateway.example.invalid:18080",
+            "aes_key = " + GatewayTestSupport.HexLower(GatewayTestSupport.SynthKey(5)),
+            "mouse_cipher = A1B2C3D4E5F60718",
+        };
+    }
+
+    [Fact]
+    public void Without_a_persistent_data_path_a_config_file_of_the_same_name_in_the_current_directory_is_not_read()
+    {
+        // 不拿相对路径去读进程当前目录里的同名文件:这里放的就是"空目录名解析出来的那个路径"(进程当前目录下的 dnf-online.conf)
+        string decoy = Path.GetFullPath(OnlineConnectionConfig.PathUnder(string.Empty));
+        byte[] before = File.Exists(decoy) ? File.ReadAllBytes(decoy) : null;     // 万一原来就有一份(别人留下的):用完原样还原,不删
+        string data = Path.Combine(Path.GetTempPath(), "dnf-shell-cwd-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            File.WriteAllLines(decoy, ValidLines());
+            Directory.CreateDirectory(data);
+            File.WriteAllLines(OnlineConnectionConfig.PathUnder(data), ValidLines());
+
+            // 当前目录里的这份本身是合法的配置:真去读就会读成功
+            Assert.True(OnlineConnectionConfig.TryLoad(decoy, out _, out OnlineConnectionProblem problem), problem.ToString());
+            // 对照:同一份内容放在持久数据目录里、传该目录时读得到
+            OnlineShellSetup control = OnlineShellSetupLoader.Load(false, null, 0, data, null, null);
+            Assert.True(control.Configured);
+            Assert.Equal(OnlineShellConfigSource.ConfigFile, control.Source);
+
+            foreach (bool devBuild in new[] { false, true })
+            {
+                foreach (string noPath in new string[] { null, string.Empty })
+                {
+                    string which = (devBuild ? "开发版" : "用户版") + "/" + (noPath == null ? "null" : "空串");
+
+                    OnlineShellSetup setup = OnlineShellSetupLoader.Load(devBuild, null, 0, noPath, null, null);
+
+                    Assert.False(setup.Configured, which);
+                    Assert.Equal(OnlineShellConfigSource.None, setup.Source);
+                    Assert.Equal("找不到连接配置文件 dnf-online.conf", setup.ConfigDetail);
+                    Assert.Null(setup.CreateSettings());
+                }
+            }
+        }
+        finally
+        {
+            if (before == null)
+            {
+                File.Delete(decoy);
+            }
+            else
+            {
+                File.WriteAllBytes(decoy, before);
+            }
+            if (Directory.Exists(data))
+            {
+                Directory.Delete(data, true);
+            }
+        }
     }
 }

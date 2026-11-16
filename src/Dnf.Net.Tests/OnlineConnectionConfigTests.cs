@@ -347,6 +347,45 @@ public sealed class OnlineConnectionConfigTests
         Assert.Contains(OnlineConnectionConfig.FileName, OnlineConnectionConfig.Describe(OnlineConnectionProblem.FileMissing));
     }
 
+    [Fact]
+    public void Describe_spells_out_the_exact_sentence_for_every_item_that_states_a_requirement_with_a_length_or_a_range()
+    {
+        // 这几句话里的数字(长度、范围)与格式要求就是给使用者看的"该怎么填":写错了会误导人去改配置,所以整句钉死(期望值是字面量,不引用产品里的常量)
+        Assert.Equal("server_url 不合规(要 http 或 https 开头的完整地址)", OnlineConnectionConfig.Describe(OnlineConnectionProblem.GatewayUrlInvalid));
+        Assert.Equal("aes_key 不合规(要 64 个十六进制字符)", OnlineConnectionConfig.Describe(OnlineConnectionProblem.AesKeyInvalid));
+        Assert.Equal("mouse_cipher 不合规(要 16 个十六进制字符)", OnlineConnectionConfig.Describe(OnlineConnectionProblem.MouseCipherInvalid));
+        Assert.Equal("data_version 不合规(要 0 到 4294967295 的整数)", OnlineConnectionConfig.Describe(OnlineConnectionProblem.DataVersionInvalid));
+        Assert.Equal("channel_port 不合规(要 1 到 65535 的整数)", OnlineConnectionConfig.Describe(OnlineConnectionProblem.ChannelPortInvalid));
+    }
+
+    [Fact]
+    public void Describe_text_of_the_remaining_problems_is_not_empty_and_names_its_item()
+    {
+        // 其余的(找不到/读不了文件、缺少哪一项)不钉整句,只要求"有话说、点名对应的配置项(或配置文件名)",并且各不相同(上一条已整句钉住的几项也一并在表里)
+        var named = new (OnlineConnectionProblem Problem, string Item)[]
+        {
+            (OnlineConnectionProblem.FileMissing, "dnf-online.conf"),
+            (OnlineConnectionProblem.FileUnreadable, "dnf-online.conf"),
+            (OnlineConnectionProblem.GatewayUrlMissing, "server_url"),
+            (OnlineConnectionProblem.GatewayUrlInvalid, "server_url"),
+            (OnlineConnectionProblem.AesKeyMissing, "aes_key"),
+            (OnlineConnectionProblem.AesKeyInvalid, "aes_key"),
+            (OnlineConnectionProblem.MouseCipherMissing, "mouse_cipher"),
+            (OnlineConnectionProblem.MouseCipherInvalid, "mouse_cipher"),
+            (OnlineConnectionProblem.DataVersionInvalid, "data_version"),
+            (OnlineConnectionProblem.ChannelPortInvalid, "channel_port"),
+        };
+        var seen = new HashSet<string>();
+        foreach ((OnlineConnectionProblem problem, string item) in named)
+        {
+            string message = OnlineConnectionConfig.Describe(problem);
+
+            Assert.False(string.IsNullOrWhiteSpace(message), problem.ToString());
+            Assert.Contains(item, message);
+            Assert.True(seen.Add(message), problem + " 的文案与前面某一项重复");
+        }
+    }
+
     // ---------- 读文件 ----------
 
     private static string TempDirectory()

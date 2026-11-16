@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using Dnf.Net.Gateway;
 using Dnf.Net.Session;
 using Dnf.Net.Tests;
@@ -632,6 +633,55 @@ public sealed class OnlineShellBackendTests
 
         Assert.IsType<HttpGatewayTransport>(transport);
         (transport as IDisposable)?.Dispose();
+    }
+
+    [Fact]
+    public void The_gateway_http_handler_never_uses_the_system_proxy_and_never_follows_redirects()
+    {
+        // 项目的硬规矩:登录请求带着口令,不能让系统代理截走或记录,所以网关的 HTTP 传输一律不走系统代理、不跟随重定向。
+        // 这里直接看处理器本身(不绑任何套接字),两条各自断言,哪一条被放开都能看出来
+        using HttpClientHandler handler = OnlineShellBackend.CreateGatewayHandler();
+
+        Assert.False(handler.UseProxy);
+        Assert.False(handler.AllowAutoRedirect);
+        Assert.Null(handler.Proxy);                     // 也没有悄悄指定某个代理
+    }
+
+    [Fact]
+    public void The_real_http_transport_is_built_on_a_handler_that_uses_no_proxy_and_follows_no_redirects()
+    {
+        // 上一条只看了处理器工厂本身;这里确认真正的传输用的就是那种处理器(同样不绑套接字)。
+        // 传输里的 HttpClient 与它的处理器都是私有的,只能反射去看:先取传输的 HttpClient,再按类型找 HttpMessageInvoker 里存处理器的那个字段
+        Assert.True(GatewayOptions.TryCreate("http://localhost", GatewayTestSupport.HexLower(GatewayTestSupport.SynthKey()), TimeSpan.FromSeconds(1), out GatewayOptions options, out _));
+        IGatewayTransport transport = OnlineShellBackend.CreateHttpTransport(options);
+        try
+        {
+            FieldInfo clientField = typeof(HttpGatewayTransport).GetField("_http", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(clientField);
+            var client = Assert.IsType<HttpClient>(clientField.GetValue(transport));
+
+            FieldInfo handlerField = Assert.Single(
+                typeof(HttpMessageInvoker).GetFields(BindingFlags.Instance | BindingFlags.NonPublic),
+                f => f.FieldType == typeof(HttpMessageHandler));
+            var handler = Assert.IsType<HttpClientHandler>(handlerField.GetValue(client));
+
+            Assert.False(handler.UseProxy);
+            Assert.False(handler.AllowAutoRedirect);
+        }
+        finally
+        {
+            (transport as IDisposable)?.Dispose();
+        }
+    }
+
+    [Fact]
+    public void Every_call_to_the_gateway_handler_factory_gives_a_fresh_handler()
+    {
+        // 传输被释放时连带释放它的处理器:各个传输之间不能共用同一个处理器对象
+        using HttpClientHandler first = OnlineShellBackend.CreateGatewayHandler();
+        using HttpClientHandler second = OnlineShellBackend.CreateGatewayHandler();
+
+        Assert.NotSame(first, second);
     }
 
     [Fact]

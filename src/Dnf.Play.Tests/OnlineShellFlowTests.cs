@@ -1026,6 +1026,357 @@ public class OnlineShellFlowTests
         Assert.Equal(1, rig.Backend.ConnectCalls);
     }
 
+    // ---- 选频道:取消之后(用户停在"已取消"的画面里,要能按 Enter 重试)----
+
+    /// <summary>状态画面(选服务器、连频道、加载共用)现在显示的底部按键说明:每项"键名 说明"一个元素(中文界面的写法,文字取自文字表)。</summary>
+    private static string[] StatusHints(OnlineShellFlow flow)
+    {
+        var status = Assert.IsType<OnlineShellStatusScreen>(flow.Scene);
+        return OnlineShellText.Hints(status.Hint, true).Select(h => h.Key + " " + h.Text).ToArray();
+    }
+
+    /// <summary>
+    /// 走到"选频道阶段、频道连接在途":连接一直挂起不完成,<paramref name="gates"/> 按发起顺序收下每一次连接请求的闸门(哪一次完成由测试决定)。
+    /// 不自动放行占位阶段时,手动经过选服务器、再给出频道目标。
+    /// </summary>
+    private static ShellRig ConnectingRig(List<TaskCompletionSource<OnlineConnectOutcome>> gates, bool autoPass = true)
+    {
+        var rig = new ShellRig(o => o.AutoPassPlaceholders = autoPass);
+        rig.Backend.OnConnect = (t, ct) =>
+        {
+            TaskCompletionSource<OnlineConnectOutcome> gate = Gate<OnlineConnectOutcome>();
+            gates.Add(gate);
+            return gate.Task;
+        };
+        rig.Fill();
+        rig.Submit();
+        if (!autoPass)
+        {
+            rig.Flow.ChooseServer();
+            rig.Poll();
+            rig.Flow.ChooseChannel(new ChannelTarget(31004));
+            rig.Poll();
+        }
+
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+        Assert.True(rig.Flow.Busy);
+        Assert.Equal(1, rig.Backend.ConnectCalls);
+        Assert.Single(gates);
+        return rig;
+    }
+
+    [Fact]
+    public void After_cancelling_a_channel_connect_the_screen_holds_with_the_retry_hints_and_nothing_reconnects_by_itself()
+    {
+        var gates = new List<TaskCompletionSource<OnlineConnectOutcome>>();
+        ShellRig rig = ConnectingRig(gates);
+        Assert.Equal(new[] { "Esc 取消" }, StatusHints(rig.Flow));                     // 连接在途:底部只有"取消"
+
+        rig.Flow.Key(OnlineShellKey.Escape);
+        rig.Poll();
+
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+        Assert.False(rig.Flow.Busy);
+        Assert.Equal(OnlineNoticeKind.Cancelled, rig.Flow.Notice.Kind);
+        Assert.Equal(new[] { "Enter 重试", "Esc 返回登录" }, StatusHints(rig.Flow));      // 取消之后换成"重试 / 返回登录"那一组
+        Assert.Equal(1, rig.Backend.ConnectCalls);
+
+        // 推进多轮(轮询与动画的假时间从十几毫秒到远超超时):取消不会被自动重连悄悄撤销,提示与按键说明也停在原处
+        foreach (int step in new[] { 16, 100, 250, 500, 1000, 2000, 7000, 90000 })
+        {
+            rig.Flow.Advance(step);
+            rig.Poll(step);
+            Assert.Equal(1, rig.Backend.ConnectCalls);
+            Assert.False(rig.Flow.Busy);
+        }
+        Assert.Equal(new[] { "login", "connect" }, rig.Backend.Calls);
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+        Assert.Equal(OnlineNoticeKind.Cancelled, rig.Flow.Notice.Kind);
+        Assert.Equal(new[] { "Enter 重试", "Esc 返回登录" }, StatusHints(rig.Flow));
+        Assert.Equal("DNF_ONLINE stage=channel event=fail reason=cancelled", rig.Lines[^1]);
+    }
+
+    [Fact]
+    public void After_a_cancel_only_enter_retries_and_other_keys_typing_and_clicks_do_not_connect()
+    {
+        var gates = new List<TaskCompletionSource<OnlineConnectOutcome>>();
+        ShellRig rig = ConnectingRig(gates);
+        rig.Flow.Key(OnlineShellKey.Escape);
+        rig.Poll();
+        Assert.Equal(OnlineNoticeKind.Cancelled, rig.Flow.Notice.Kind);
+
+        foreach (OnlineShellKey key in new[]
+        {
+            OnlineShellKey.Tab, OnlineShellKey.ShiftTab, OnlineShellKey.Up, OnlineShellKey.Down,
+            OnlineShellKey.Left, OnlineShellKey.Right, OnlineShellKey.Space,
+        })
+        {
+            rig.Flow.Key(key);
+            rig.Poll(100);
+        }
+        rig.Flow.Type("abc 123");
+        rig.Flow.Click(400, 300);                            // 卡片中央
+        rig.Flow.Click(400, 560);                            // 底部按键说明那一排
+        rig.Flow.Click(0, 0);
+        rig.Flow.ChooseServer();                             // 选服务器的扩展点:在选频道阶段不起作用
+        rig.Pump(5);
+
+        Assert.Equal(1, rig.Backend.ConnectCalls);
+        Assert.Equal(new[] { "login", "connect" }, rig.Backend.Calls);
+        Assert.False(rig.Flow.Busy);
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+        Assert.Equal(OnlineNoticeKind.Cancelled, rig.Flow.Notice.Kind);
+        Assert.Equal(new[] { "Enter 重试", "Esc 返回登录" }, StatusHints(rig.Flow));
+        Assert.Equal("player_01", rig.Flow.Login.Username);  // 打的字没有落进登录界面
+    }
+
+    [Fact]
+    public void Enter_after_a_cancel_retries_the_connect_once_clears_the_notice_and_brings_the_cancel_hint_back()
+    {
+        var gates = new List<TaskCompletionSource<OnlineConnectOutcome>>();
+        ShellRig rig = ConnectingRig(gates);
+        CancellationToken cancelled = rig.Backend.LastToken;
+        rig.Flow.Key(OnlineShellKey.Escape);
+        rig.Poll();
+        Assert.True(cancelled.IsCancellationRequested);
+        Assert.Equal(1, rig.Backend.ConnectCalls);
+
+        rig.Flow.Key(OnlineShellKey.Enter);
+        rig.Poll();
+
+        Assert.Equal(2, rig.Backend.ConnectCalls);                                      // 重试 = 再连一次
+        Assert.Equal(0, rig.Backend.SwitchCalls);                                       // 取消时连接就不算数了:重试走"连接"而不是"换频道"
+        Assert.Equal(new[] { "login", "connect", "connect" }, rig.Backend.Calls);
+        Assert.Equal(2, gates.Count);
+        Assert.True(rig.Flow.Busy);
+        Assert.Null(rig.Flow.Notice);                                                   // 提示清空
+        Assert.Equal(new[] { "Esc 取消" }, StatusHints(rig.Flow));                      // 按键说明回到连接中的"取消"
+        Assert.False(rig.Backend.LastToken.IsCancellationRequested);                    // 新的一次用新的令牌
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+        Assert.Equal(0, rig.Backend.DisconnectCalls);
+        Assert.Equal("DNF_ONLINE stage=channel event=fail reason=cancelled", rig.Lines[^1]);   // 重试本身不记阶段变化
+
+        // 第一次(已取消)那个请求迟到的失败结果被丢弃:不影响在途的第二次
+        gates[0].SetResult(OnlineConnectOutcome.Fail(OnlineNoticeKind.ConnectFailed));
+        rig.Pump(3);
+        Assert.True(rig.Flow.Busy);
+        Assert.Null(rig.Flow.Notice);
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+
+        // 第二次完成:走到选角
+        OnlineCharacterList roster = ShellTestData.Roster(3);
+        gates[1].SetResult(OnlineConnectOutcome.Ok(roster));
+        rig.Pump(2);
+        Assert.Equal(OnlineShellStage.CharacterSelect, rig.Flow.Stage);
+        Assert.Same(roster, rig.Flow.Characters);
+        Assert.Equal(2, rig.Backend.ConnectCalls);
+        Assert.Null(rig.Flow.Notice);
+    }
+
+    [Fact]
+    public void Enter_while_a_channel_connect_is_in_flight_never_starts_another_one_not_even_after_a_retry()
+    {
+        var gates = new List<TaskCompletionSource<OnlineConnectOutcome>>();
+        ShellRig rig = ConnectingRig(gates);
+
+        // 第一次连接在途(没取消):连按 Enter(同一帧两下、跨多次轮询)都不发第二次连接
+        for (int i = 0; i < 4; i++)
+        {
+            rig.Flow.Key(OnlineShellKey.Enter);
+            rig.Flow.Key(OnlineShellKey.Enter);
+            rig.Poll(200);
+        }
+        Assert.Equal(1, rig.Backend.ConnectCalls);
+        Assert.True(rig.Flow.Busy);
+        Assert.Equal(new[] { "Esc 取消" }, StatusHints(rig.Flow));
+
+        // 取消再重试多轮:每一次重试恰好多一次连接,重试在途时再按 Enter 也不多
+        for (int cycle = 1; cycle <= 3; cycle++)
+        {
+            rig.Flow.Key(OnlineShellKey.Escape);
+            rig.Poll();
+            Assert.Equal(cycle, rig.Backend.ConnectCalls);
+            Assert.False(rig.Flow.Busy);
+            Assert.Equal(new[] { "Enter 重试", "Esc 返回登录" }, StatusHints(rig.Flow));
+
+            rig.Flow.Key(OnlineShellKey.Enter);
+            rig.Poll();
+            Assert.Equal(cycle + 1, rig.Backend.ConnectCalls);
+            Assert.True(rig.Flow.Busy);
+            Assert.Equal(new[] { "Esc 取消" }, StatusHints(rig.Flow));
+
+            for (int i = 0; i < 3; i++)
+            {
+                rig.Flow.Key(OnlineShellKey.Enter);
+                rig.Poll(300);
+            }
+            Assert.Equal(cycle + 1, rig.Backend.ConnectCalls);
+        }
+        Assert.Equal(4, gates.Count);
+        Assert.Equal(0, rig.Backend.SwitchCalls);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_second_escape_after_a_cancel_goes_to_login_when_the_placeholders_auto_pass_and_to_the_server_stage_otherwise(bool autoPass)
+    {
+        var gates = new List<TaskCompletionSource<OnlineConnectOutcome>>();
+        ShellRig rig = ConnectingRig(gates, autoPass);
+        rig.Flow.Key(OnlineShellKey.Escape);
+        rig.Poll();
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);                   // 第一次 Esc 只取消在途的连接
+        Assert.False(rig.Flow.Busy);
+        Assert.Equal(0, rig.Backend.DisconnectCalls);
+        int serial = rig.Flow.StageSerial;
+
+        rig.Flow.Key(OnlineShellKey.Escape);
+        rig.Poll();
+
+        Assert.Equal(serial + 1, rig.Flow.StageSerial);
+        Assert.Null(rig.Flow.Notice);
+        if (autoPass)
+        {
+            Assert.Equal(OnlineShellStage.Login, rig.Flow.Stage);
+            Assert.Same(rig.Flow.Login, rig.Flow.Scene);
+            Assert.Equal(1, rig.Backend.DisconnectCalls);                               // 回登录放弃会话
+            Assert.Equal(string.Empty, rig.Flow.Login.Password);
+            Assert.Equal("DNF_ONLINE stage=login event=enter reason=back", rig.Lines[^1]);
+        }
+        else
+        {
+            Assert.Equal(OnlineShellStage.ServerSelect, rig.Flow.Stage);
+            Assert.Equal(0, rig.Backend.DisconnectCalls);                               // 回选服务器:会话还在
+            Assert.Equal("DNF_ONLINE stage=server event=enter reason=back", rig.Lines[^1]);
+        }
+
+        rig.Pump(5);                                                                     // 之后不会自己再动、也不会连接
+        Assert.Equal(serial + 1, rig.Flow.StageSerial);
+        Assert.Equal(1, rig.Backend.ConnectCalls);
+        Assert.Equal(new[] { "login", "connect" }.Concat(autoPass ? new[] { "disconnect" } : new string[0]), rig.Backend.Calls);
+    }
+
+    [Fact]
+    public void A_channel_choice_made_while_a_connect_is_in_flight_starts_nothing_and_is_not_remembered_for_the_retry()
+    {
+        var gates = new List<TaskCompletionSource<OnlineConnectOutcome>>();
+        ShellRig rig = ConnectingRig(gates, autoPass: false);                           // 玩家手动选了 31004,连接在途
+        CancellationToken first = rig.Backend.LastToken;
+
+        rig.Flow.ChooseChannel(new ChannelTarget(31005));                               // 在途时又选了别的频道:不理会
+        rig.Poll();
+        rig.Flow.ChooseChannel(new ChannelTarget(31006));
+        rig.Pump(3);
+
+        Assert.Equal(1, rig.Backend.ConnectCalls);
+        Assert.Equal(0, rig.Backend.SwitchCalls);
+        Assert.Single(gates);
+        Assert.False(first.IsCancellationRequested);                                    // 在途的那次没被打断
+        Assert.Equal(31004, rig.Backend.LastTarget.Port);
+        Assert.True(rig.Flow.Busy);
+
+        // 取消再重试:重试连的还是玩家真正发起连接的那个频道,被忽略的选择没有被悄悄记下
+        rig.Flow.Key(OnlineShellKey.Escape);
+        rig.Poll();
+        rig.Flow.Key(OnlineShellKey.Enter);
+        rig.Poll();
+
+        Assert.Equal(2, rig.Backend.ConnectCalls);
+        Assert.Equal(31004, rig.Backend.LastTarget.Port);
+    }
+
+    [Fact]
+    public void After_a_cancel_or_a_failure_enter_retries_the_channel_the_player_chose_and_not_the_default_one()
+    {
+        var gates = new List<TaskCompletionSource<OnlineConnectOutcome>>();
+        ShellRig rig = ConnectingRig(gates, autoPass: false);                           // 玩家手动选了 31004(流程的默认频道是另一个端口)
+        Assert.Equal(31004, rig.Backend.LastTarget.Port);
+
+        rig.Flow.Key(OnlineShellKey.Escape);                                            // 取消后重试
+        rig.Poll();
+        rig.Flow.Key(OnlineShellKey.Enter);
+        rig.Poll();
+        Assert.Equal(2, rig.Backend.ConnectCalls);
+        Assert.Equal(31004, rig.Backend.LastTarget.Port);
+
+        gates[1].SetResult(OnlineConnectOutcome.Fail(OnlineNoticeKind.ConnectFailed));  // 失败后重试
+        rig.Pump(2);
+        Assert.Equal(OnlineNoticeKind.ConnectFailed, rig.Flow.Notice.Kind);
+        rig.Flow.Key(OnlineShellKey.Enter);
+        rig.Poll();
+        Assert.Equal(3, rig.Backend.ConnectCalls);
+        Assert.Equal(31004, rig.Backend.LastTarget.Port);
+        Assert.Equal(0, rig.Backend.SwitchCalls);
+    }
+
+    [Fact]
+    public void Cancelling_a_channel_switch_drops_the_link_so_the_retry_connects_again_instead_of_switching_again()
+    {
+        var rig = new ShellRig();
+        rig.ReachInGame();                                                              // 一路自动放行进了游戏:连接已经建过一次
+        var gate = Gate<OnlineConnectOutcome>();
+        rig.Backend.OnSwitch = (t, ct) => gate.Task;
+        rig.Flow.SwapCharacter();
+        rig.Poll();                                                                     // 换角色 → 选频道:连接还在,所以在途的是"换频道"
+        Assert.Equal(1, rig.Backend.SwitchCalls);
+        Assert.Equal(1, rig.Backend.ConnectCalls);
+        Assert.True(rig.Flow.Busy);
+        CancellationToken switching = rig.Backend.LastToken;
+
+        rig.Flow.Key(OnlineShellKey.Escape);
+        rig.Poll();
+
+        Assert.True(switching.IsCancellationRequested);
+        Assert.False(rig.Flow.Busy);
+        Assert.Equal(OnlineNoticeKind.Cancelled, rig.Flow.Notice.Kind);
+        Assert.Equal(new[] { "Enter 重试", "Esc 返回登录" }, StatusHints(rig.Flow));
+        Assert.Equal(0, rig.Backend.DisconnectCalls);
+
+        var retry = Gate<OnlineConnectOutcome>();
+        rig.Backend.OnConnect = (t, ct) => retry.Task;
+        rig.Flow.Key(OnlineShellKey.Enter);
+        rig.Poll();
+
+        // 被取消的换频道让连接的状态不明:重试重新连接一次,而不是对着可能已作废的连接再换一次
+        Assert.Equal(2, rig.Backend.ConnectCalls);
+        Assert.Equal(1, rig.Backend.SwitchCalls);
+        Assert.True(rig.Flow.Busy);
+        Assert.Equal(new[] { "Esc 取消" }, StatusHints(rig.Flow));
+
+        retry.SetResult(OnlineConnectOutcome.Ok(ShellTestData.Roster(2)));
+        rig.Pump(2);
+        Assert.Equal(OnlineShellStage.CharacterSelect, rig.Flow.Stage);
+    }
+
+    [Fact]
+    public void With_manual_placeholders_going_back_to_the_server_stage_after_a_cancel_leaves_no_retry_state_for_the_next_channel_stage()
+    {
+        var gates = new List<TaskCompletionSource<OnlineConnectOutcome>>();
+        ShellRig rig = ConnectingRig(gates, autoPass: false);                           // 玩家手动选了 31004,连接在途
+        rig.Flow.Key(OnlineShellKey.Escape);                                            // 取消 → 停住
+        rig.Poll();
+        rig.Flow.Key(OnlineShellKey.Escape);                                            // 再 Esc → 回选服务器(会话还在)
+        rig.Poll();
+        Assert.Equal(OnlineShellStage.ServerSelect, rig.Flow.Stage);
+
+        rig.Flow.ChooseServer();                                                        // 重新选服务器 → 又到选频道,这回还没选频道
+        rig.Poll();
+
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+        Assert.Null(rig.Flow.Notice);
+        Assert.False(rig.Flow.Busy);
+        Assert.DoesNotContain("Enter 重试", StatusHints(rig.Flow));                      // 上一轮取消留下的"重试"状态不带过来
+        rig.Flow.Key(OnlineShellKey.Enter);                                             // 没有要重试的东西:Enter 不会自己去连
+        rig.Pump(5);
+        Assert.Equal(1, rig.Backend.ConnectCalls);
+        Assert.False(rig.Flow.Busy);
+
+        rig.Flow.ChooseChannel(new ChannelTarget(31005));                               // 选了频道才连,连的是新选的
+        rig.Poll();
+        Assert.Equal(2, rig.Backend.ConnectCalls);
+        Assert.Equal(31005, rig.Backend.LastTarget.Port);
+    }
+
     [Fact]
     public void A_connect_timeout_holds_with_a_network_notice_and_can_be_retried()
     {
@@ -1659,6 +2010,87 @@ public class OnlineShellFlowTests
         Assert.Equal(OnlineShellStage.CharacterSelect, rig.Flow.Stage);
         Assert.Same(second, rig.Flow.Characters);
         Assert.Contains("DNF_ONLINE stage=ingame event=ok reason=swap_character", rig.Lines);
+    }
+
+    [Fact]
+    public void With_manual_placeholders_swapping_the_character_lands_on_the_channel_stage_not_the_server_stage_and_connects_nothing_by_itself()
+    {
+        var rig = new ShellRig(o => o.AutoPassPlaceholders = false);
+        rig.Fill();
+        rig.Submit();                                              // 登录成功 → 选服务器(不自动放行,停在那里)
+        rig.Flow.ChooseServer();
+        rig.Poll();
+        rig.Flow.ChooseChannel(new ChannelTarget(31004));
+        rig.Pump(3);                                               // 连上 → 选角
+        rig.Flow.Key(OnlineShellKey.Enter);
+        rig.Pump(3);                                               // 进游戏
+        Assert.Equal(OnlineShellStage.InGame, rig.Flow.Stage);
+        Assert.Equal(new[] { "login", "connect", "select" }, rig.Backend.Calls);
+        int serial = rig.Flow.StageSerial;
+
+        rig.Flow.SwapCharacter();
+        rig.Poll();
+
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);               // 回的是选频道,不是选服务器
+        Assert.True(rig.Flow.StageSerial > serial);
+        Assert.Equal(serial + 1, rig.Flow.StageSerial);                             // 只换了一次阶段:没有经过选服务器
+        Assert.IsType<OnlineShellStatusScreen>(rig.Flow.Scene);
+        Assert.False(rig.Flow.Busy);
+        Assert.Equal(new[]
+        {
+            "DNF_ONLINE stage=ingame event=ok reason=swap_character",
+            "DNF_ONLINE stage=channel event=enter reason=swap_character",
+        }, rig.Lines.TakeLast(2));
+
+        rig.Pump(5);                                                                // 不自动放行:阶段不会自己动,也不会自己去连
+        rig.Poll(5000);
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+        Assert.Equal(serial + 1, rig.Flow.StageSerial);
+        Assert.Equal(1, rig.Backend.ConnectCalls);
+        Assert.Equal(0, rig.Backend.SwitchCalls);
+        Assert.Equal(new[] { "login", "connect", "select" }, rig.Backend.Calls);
+        Assert.Equal(0, rig.Backend.DisconnectCalls);
+
+        // 同一个假后端:在选频道里选一个频道 → 已有连接所以是换频道 → 新的角色列表 → 选角
+        OnlineCharacterList second = ShellTestData.Roster(4);
+        rig.Backend.OnSwitch = (t, ct) => Task.FromResult(OnlineConnectOutcome.Ok(second));
+        rig.Flow.ChooseChannel(new ChannelTarget(31005));
+        rig.Poll();
+        Assert.Equal(1, rig.Backend.SwitchCalls);
+        Assert.Equal(new ChannelTarget(31005), rig.Backend.LastTarget);
+        Assert.Equal(1, rig.Backend.ConnectCalls);
+        rig.Pump(2);
+        Assert.Equal(OnlineShellStage.CharacterSelect, rig.Flow.Stage);
+        Assert.Same(second, rig.Flow.Characters);
+        Assert.Equal(0, rig.Backend.DisconnectCalls);
+    }
+
+    [Fact]
+    public void With_auto_passing_placeholders_swapping_the_character_reconnects_through_the_channel_stage_without_visiting_the_server_stage()
+    {
+        var rig = new ShellRig();
+        rig.ReachInGame();
+        int serial = rig.Flow.StageSerial;
+        var gate = Gate<OnlineConnectOutcome>();
+        rig.Backend.OnSwitch = (t, ct) => gate.Task;
+
+        rig.Flow.SwapCharacter();
+        rig.Poll();
+
+        // 自动放行时服务器选择会被自动放过去,光看阶段看不出来绕没绕过它:序号与阶段日志才看得出(绕过去要多出选服务器的进入与放行两步)
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+        Assert.Equal(serial + 1, rig.Flow.StageSerial);
+        Assert.Equal(new[]
+        {
+            "DNF_ONLINE stage=ingame event=ok reason=swap_character",
+            "DNF_ONLINE stage=channel event=enter reason=swap_character",
+        }, rig.Lines.TakeLast(2));
+        Assert.True(rig.Flow.Busy);
+        Assert.Equal(1, rig.Backend.SwitchCalls);
+
+        gate.SetResult(OnlineConnectOutcome.Ok(ShellTestData.Roster(2)));
+        rig.Pump(2);
+        Assert.Equal(OnlineShellStage.CharacterSelect, rig.Flow.Stage);
     }
 
     [Fact]
