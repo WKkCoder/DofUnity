@@ -734,6 +734,29 @@ public class ItemSyncParserTests
         Assert.Equal(2, s.EffectItems.Entries.Count);
     }
 
+    // 只来冷却恢复表(172)或只来效果恢复表(174)时,各自只填自己的属性,另一个保持为空。
+    // 上面"两个表都来"的用例,在冷却表落错属性时会因 CoolTimeItems 为空,在解引用处抛 NullReferenceException 而失败,不是断言失败;
+    // 这里先断言"非空 / 为空",落错属性时报的是断言。
+    [Fact]
+    public void ACoolTimePacketAloneFillsOnlyTheCoolTimeProperty()
+    {
+        ItemSyncSnapshot s = Parse(Noti(CoolTimeId, OnePair));
+        Assert.Equal(1, s.FramesParsed);
+        Assert.NotNull(s.CoolTimeItems);
+        Assert.Single(s.CoolTimeItems.Entries);
+        Assert.Null(s.EffectItems);
+    }
+
+    [Fact]
+    public void AnEffectPacketAloneFillsOnlyTheEffectProperty()
+    {
+        ItemSyncSnapshot s = Parse(Noti(EffectId, TwoPairs));
+        Assert.Equal(1, s.FramesParsed);
+        Assert.Null(s.CoolTimeItems);
+        Assert.NotNull(s.EffectItems);
+        Assert.Equal(2, s.EffectItems.Entries.Count);
+    }
+
     [Fact]
     public void ACoinFailureReplyIsKeptWithItsErrorCode()
     {
