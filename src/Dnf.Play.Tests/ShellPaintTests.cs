@@ -669,6 +669,36 @@ public class ShellPaintTests
         Assert.Equal(0, ShellFrames.Pixel(spinner, 19, 19).A);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)]
+    [InlineData(9)]
+    public void The_spinner_tail_fades_gently_ten_dots_from_solid_to_about_a_sixth(int phase)
+    {
+        (_, ShellPaint paint) = Plain();
+        const int Size = 38;
+        SpriteFrame spinner = paint.Spinner(Size, phase, 0x5B9BFF);
+
+        // 头在 phase 位,后面第 k 个点在 phase - k 位(逆时针);点心在圆环上,点比一像素大得多,点心那个像素的不透明度就是这个点的浓淡
+        float c = Size / 2f;
+        float ring = c - Math.Max(1.4f, Size * 0.115f) - 0.5f;
+        var alphas = new int[10];
+        for (int k = 0; k < 10; k++)
+        {
+            int place = ((phase - k) % 10 + 10) % 10;
+            double angle = place * (2.0 * Math.PI / 10) - Math.PI / 2.0;
+            alphas[k] = ShellFrames.Pixel(spinner, (int)Math.Floor(c + ring * Math.Cos(angle)), (int)Math.Floor(c + ring * Math.Sin(angle))).A;
+        }
+
+        Assert.Equal(255, alphas[0]);
+        for (int k = 1; k < 10; k++)
+        {
+            Assert.True(alphas[k] < alphas[k - 1], $"尾巴第 {k} 个点应比前一个淡:{string.Join(",", alphas)}");
+        }
+        Assert.InRange(alphas[4], 150, 172);                                                    // 中段还很实
+        Assert.InRange(alphas[9], 38, 52);                                                      // 尾巴末端淡但看得见
+    }
+
     [Fact]
     public void The_spinner_needs_a_size_of_at_least_eight()
     {
@@ -802,6 +832,50 @@ public class ShellPaintTests
         SpriteFrame without = paint.Banner("AC", 46, 1, 2, 3, 4);
 
         Assert.True(withGap.Width > without.Width);
+    }
+
+    [Theory]
+    [InlineData(46, 3)]
+    [InlineData(28, 2)]
+    [InlineData(14, 1)]
+    [InlineData(13, 1)]
+    public void The_banner_spaces_its_letters_by_a_fourteenth_of_the_size_and_at_least_one_pixel(int px, int tracking)
+    {
+        ShellPaint paint = WithFonts(new SizedFonts());
+
+        // 全角字前进一个字号,字形比前进少 1 像素;最后一个字的笔位退回一个字距,整张图再各加 6 像素的边
+        SpriteFrame three = paint.Banner("地下城", px, 1, 2, 3, 4);
+        SpriteFrame one = paint.Banner("地", px, 1, 2, 3, 4);
+
+        Assert.Equal(3 * (px + tracking) - tracking + 12, three.Width);
+        Assert.Equal(px + 12, one.Width);
+    }
+
+    [Theory]
+    [InlineData(46, true)]
+    [InlineData(28, true)]
+    [InlineData(27, false)]
+    [InlineData(20, false)]
+    public void The_banner_glyphs_are_made_exactly_one_pixel_bolder_from_28_pixels_up(int px, bool bold)
+    {
+        ShellPaint paint = WithFonts(new SizedFonts());
+        // 填充三段同色(白),描边红:字形是个实心方块,左上角在 (6, 6)、宽 px - 1、高 px * 3 / 4;加粗就是白色再向外多一像素
+        SpriteFrame banner = paint.Banner("地", px, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFF0000);
+        int right = 6 + px - 1;
+        int bottom = 6 + px * 3 / 4;
+        int midY = 6 + px * 3 / 8;
+        int midX = 6 + (px - 1) / 2;
+
+        (int R, int G, int B, int A) white = (255, 255, 255, 255);
+        (int R, int G, int B, int A) red = (255, 0, 0, 255);
+        Assert.Equal(white, ShellFrames.Pixel(banner, 6, midY));                                // 字形本身
+        Assert.Equal(white, ShellFrames.Pixel(banner, right - 1, midY));
+        Assert.Equal(bold ? white : red, ShellFrames.Pixel(banner, 5, midY));                  // 字形外一像素:加粗是白,否则是描边
+        Assert.Equal(bold ? white : red, ShellFrames.Pixel(banner, right, midY));
+        Assert.Equal(bold ? white : red, ShellFrames.Pixel(banner, midX, 5));
+        Assert.Equal(bold ? white : red, ShellFrames.Pixel(banner, midX, bottom));
+        Assert.Equal(red, ShellFrames.Pixel(banner, 4, midY));                                  // 字形外两像素:都是描边(只多一像素)
+        Assert.Equal(red, ShellFrames.Pixel(banner, right + 1, midY));
     }
 
     // ------------------------------------------------------------------------------------------------ 缓存是画笔自己的

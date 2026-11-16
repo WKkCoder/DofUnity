@@ -726,19 +726,31 @@ public class LoginScreenTests
     [Fact]
     public void The_game_title_sits_centred_in_its_band_above_the_card_with_a_rule_and_a_gem_under_it()
     {
-        var screen = new LoginScreen();
+        AssertTitleBand(new LoginScreen());
+    }
+
+    [Fact]
+    public void The_game_title_is_centred_in_its_band_with_a_chinese_font_too()
+    {
+        AssertTitleBand(new LoginScreen(null, new SizedFonts()));
+    }
+
+    private static void AssertTitleBand(LoginScreen screen)
+    {
         List<SceneSprite> sprites = screen.Build(0);
 
         SceneSprite banner = One(sprites, "login-banner");
+        int bandBottom = LoginScreen.BannerY + LoginScreen.BannerBand;
         Assert.True(Math.Abs(banner.ScreenX + banner.Frame.Width / 2 - LoginScreen.ScreenWidth / 2) <= 1);
-        Assert.True(banner.ScreenY >= 0);
+        Assert.True(banner.ScreenY >= LoginScreen.BannerY && banner.ScreenY + banner.Frame.Height <= bandBottom, "整个标题在带里");
+        Assert.True(Math.Abs(banner.ScreenY + banner.Frame.Height / 2 - (LoginScreen.BannerY + LoginScreen.BannerBand / 2)) <= 1, "标题在带里垂直居中");
         SceneSprite rule = One(sprites, "login-banner-rule");
         Assert.Equal((LoginScreen.ScreenWidth / 2 - 150, 300, 2), (rule.ScreenX, rule.Frame.Width, rule.Frame.Height));
-        Assert.True(banner.ScreenY + banner.Frame.Height <= rule.ScreenY + rule.Frame.Height);
+        Assert.Equal(bandBottom, rule.ScreenY + rule.Frame.Height);                                      // 金线的下沿就是带的底边
         Assert.True(rule.ScreenY + rule.Frame.Height < LoginScreen.PanelY);
         SceneSprite gem = One(sprites, "login-banner-gem");
         Assert.Equal((LoginScreen.ScreenWidth / 2 - 5, 10, 10), (gem.ScreenX, gem.Frame.Width, gem.Frame.Height));
-        Assert.True(gem.ScreenY < rule.ScreenY && gem.ScreenY + gem.Frame.Height > rule.ScreenY);        // 菱形压在金线中间
+        Assert.Equal(rule.ScreenY + rule.Frame.Height / 2, gem.ScreenY + gem.Frame.Height / 2);          // 菱形压在金线正中
         SceneSprite glow = One(sprites, "login-banner-glow");
         Assert.True(glow.SortKey < banner.SortKey);                                                      // 光晕垫在字下面
     }

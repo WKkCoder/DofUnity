@@ -87,8 +87,10 @@ namespace Dnf.Play
         private const int PrimaryHeight = 46;
         private const int SecondaryHeight = 34;
         private const int BannerPx = 46;
-        private const int BannerY = 22;
-        private const int BannerBand = 74;
+
+        /// <summary>游戏名标题字所在那条带的顶端与高度:标题字在带里垂直居中,带的底边是标题下那条金线的下沿。</summary>
+        public const int BannerY = 22;
+        public const int BannerBand = 74;
         private const int BannerGlowInsetX = 20;
         private const int BannerGlowInsetY = 15;
         private const int BannerGlowSpread = 34;
