@@ -836,8 +836,8 @@ namespace Dnf.Client
                 _netRoom = new OnlineDungeonRoom(_netCombat);
                 _netRun = _netRoom.CreateRun(
                     plan => DemoCombat.CreateSession(_assets, roomMap, DemoHero.StarterWeapon, _seed, !_noDamage, progress, plan),
-                    DungeonSession.SettlementDelayMs);
-                Debug.Log(_netRoom.LogLine() + " mapMatched=" + exact + (_netRun == null ? " fallback=town" : string.Empty));
+                    DungeonSession.SettlementDelayMs, BuildNetMultiRoom(dungeonPath, pool, progress));
+                Debug.Log(_netRoom.LogLine() + " mapMatched=" + exact + (_netRoom.MultiRoom ? " multi=on" : string.Empty) + (_netRun == null ? " fallback=town" : string.Empty));
                 if (_netRun == null)
                 {
                     return false;
@@ -864,6 +864,59 @@ namespace Dnf.Client
             {
                 return -1;
             }
+        }
+
+        /// <summary>
+        /// 联网多房间(r18-hostmulti)的材料:这个副本定义里的默认迷宫(任务迷宫不用)、造房间的工厂(<see cref="CreateNetRoomSession"/>)、地图登记与首领图的查询、日志出口。
+        /// 读不出默认迷宫(或读脚本时出了意外)返回 null,联网房间走与以前一字不变的单房间路径;对位、规划与换房的全部逻辑在 <see cref="OnlineDungeonRoom"/>。
+        /// </summary>
+        private OnlineMultiRoomSetup BuildNetMultiRoom(string dungeonPath, DungeonRoomPool pool, HeroProgress progress)
+        {
+            try
+            {
+                var mazes = new List<DungeonMaze>();
+                foreach (DungeonMaze maze in DungeonMaze.ParseAll(dungeonPath, _assets.ReadScript(dungeonPath)))
+                {
+                    if (maze.QuestConnection < 0)
+                    {
+                        mazes.Add(maze);
+                    }
+                }
+                if (mazes.Count == 0)
+                {
+                    return null;
+                }
+                return new OnlineMultiRoomSetup(mazes, (entry, plan) => CreateNetRoomSession(entry, plan, pool, progress))
+                {
+                    MapAllowsExits = (mapId, exits) => pool.ById(mapId)?.HasDirection(exits) ?? true,
+                    IsBossMap = mapId => pool.ById(mapId)?.IsBoss ?? false,
+                    Log = line => Debug.Log(line),
+                };
+            }
+            catch (Exception e)
+            {
+                Debug.Log(OnlineDungeonRoom.LogPrefix + " multi failed exception=" + e.GetType().Name + " fallback=single");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 联网多房间里造一间房:按这一格的出口码与服务端给的地图编号挑房间地图(<see cref="OnlineDungeonRoom.PickEntryMap"/>),出口物件按迷宫给(与离线副本同一条规则,
+        /// <see cref="OnlineDungeonRoom.GateKindAt"/>),主角站在 <see cref="DemoRoom.DefaultSpawn"/>(换房时再由 <see cref="HostedRoomRun.EnterRoom"/> 摆到进来的那扇门),
+        /// 房间会话与离线联网房间同一条造法(<see cref="RoomCombatSession.Create"/> 带出生点计划)。挑不出地图返回 null。
+        /// </summary>
+        private RoomCombatSession CreateNetRoomSession(OnlineRoomEntry entry, Func<RoomMap, IReadOnlyList<RoomMonsterSpawn>> plan, DungeonRoomPool pool, HeroProgress progress)
+        {
+            string mapPath = OnlineDungeonRoom.PickEntryMap(pool.Rooms, entry.MapId, entry.Exits, entry.Monsters > 0, CountRoomMonsters, out _);
+            if (mapPath == null)
+            {
+                return null;
+            }
+            RoomMap map = RoomMap.Read(_assets, mapPath);
+            List<RoomGate> gates = DemoRoom.BuildGates(_assets, map, entry.Maze.GateSet, side => OnlineDungeonRoom.GateKindAt(entry.Maze, entry.CellX, entry.CellY, side));
+            DemoRoom.DefaultSpawn(map, out double x, out double y);
+            RoomSession room = DemoRoom.CreateRoom(_assets, map, gates, DemoRoom.DefaultOutfit(_assets, progress?.WeaponPath ?? DemoHero.StarterWeapon), x, y, false);
+            return RoomCombatSession.Create(_assets, room, _seed, !_noDamage, progress, spawnPlan: plan);
         }
 
         /// <summary>流程的副本工厂先问这里:有造好的联网房间就交出去(只交一次),否则返回 null,工厂照旧造离线副本。</summary>
