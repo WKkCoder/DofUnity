@@ -6,8 +6,11 @@ namespace Dnf.Play.Tests;
 /// 验收后补的流程层测试(变异存活项):选服务器、选频道两个阶段里
 /// ① 方向键怎么接到界面的 <c>Move</c>(一行 = 网格的列数)、
 /// ② 选频道阶段的空格(就绪 = 回车;读失败/没有频道 = 直连默认频道;忙时不发第二次连接)、
-/// ③ 选频道里读不到目录之后的"重试"(读取中界面是"正在读"、Esc 取消后回到读失败页)。
-/// 期望值都是手算的字面量:选服务器网格 2 列、选频道网格 3 列;频道端口 = 30000 + 序号,默认频道端口 31999。
+/// ③ 选频道里读不到目录之后的"重试"(读取中界面是"正在读"、Esc 取消后回到读失败页)、
+/// ④ 选频道界面的忙标志只有"刷新"才是"刷新中"(登录后第一次读目录、读失败或没有频道之后的"重试"都不是刷新:读取挂着时忙标志是"不忙")、
+/// ⑤ 重新读目录时旧提示要先清掉(读取一开始就清,不是等读完才变;重试与刷新都一样)。
+/// 期望值都是手算的字面量:选服务器网格 2 列、选频道网格 3 列;频道端口 = 30000 + 序号,默认频道端口 31999;
+/// ④⑤ 用 <c>PickerData.Many(2, 3)</c>(合成的 "服务器1"、"服务器2",各 3 个频道)。
 /// </summary>
 public sealed class OnlineShellPickerKeyTests
 {
@@ -352,5 +355,262 @@ public sealed class OnlineShellPickerKeyTests
         Assert.Equal(PickerPhase.Ready, rig.Channel.Phase);
         Assert.Equal(2, rig.Channel.Channels.Count);
         Assert.Equal(reads + 2, rig.Directory.LoadCalls);
+    }
+
+    // ------------------------------------------------------------------ 读目录挂着时的现场:忙标志与提示(④⑤ 共用)
+
+    /// <summary>走到"选服务器停在读失败页":第一次读目录失败(网络错误),阶段机与界面上都有这条失败提示。</summary>
+    private static PickerRig ReachFailedServerScreen()
+    {
+        var rig = new PickerRig(PickerData.Many(2, 3));
+        rig.Directory.OnLoad = ct => Task.FromResult(ServerDirectoryResult.Fail(OnlineNoticeKind.NetworkError));
+        rig.ReachServerSelect();
+        Assert.Equal(PickerPhase.Failed, rig.Server.Phase);
+        Assert.NotNull(rig.Flow.Notice);
+        Assert.Equal(OnlineNoticeKind.NetworkError, rig.Flow.Notice.Kind);
+        Assert.NotNull(rig.Server.Notice);
+        Assert.Equal(OnlineNoticeKind.NetworkError, rig.Server.Notice.Kind);
+        Assert.Equal(1, rig.Directory.LoadCalls);
+        return rig;
+    }
+
+    /// <summary>让接下来的读目录一直挂着(不完成),返回之后用来放行它的完成源。</summary>
+    private static TaskCompletionSource<ServerDirectoryResult> HangDirectory(PickerRig rig)
+    {
+        var pending = new TaskCompletionSource<ServerDirectoryResult>();
+        rig.Directory.OnLoad = ct => pending.Task;
+        return pending;
+    }
+
+    /// <summary>在读失败页(或没有频道页)上发起"重试":回车、重试按钮,或选频道界面的刷新按钮(那里它与重试是同一个意图)。</summary>
+    private static void RetryRead(PickerRig rig, bool onServerScreen, string how)
+    {
+        switch (how)
+        {
+            case "enter":
+                rig.Key(OnlineShellKey.Enter);
+                break;
+            case "retry-button":
+                ClickCenter(rig, onServerScreen ? ServerSelectScreen.RetryRect() : ChannelSelectScreen.RetryRect());
+                break;
+            default:
+                ClickCenter(rig, ChannelSelectScreen.RefreshRect());
+                break;
+        }
+    }
+
+    // ------------------------------------------------------------------ ④ 忙标志:只有"刷新"才是"刷新中"
+
+    [Fact]
+    public void While_the_first_directory_read_hangs_after_login_the_channel_screen_is_not_busy_and_stays_not_busy_after_it_finishes()
+    {
+        var rig = new PickerRig(PickerData.Many(2, 3));
+        TaskCompletionSource<ServerDirectoryResult> pending = HangDirectory(rig);
+
+        rig.Rig.Fill();
+        rig.Rig.Submit();
+        rig.Pump(3);
+
+        // 登录后第一次读目录在途:选服务器界面是"正在读"、恰好一个在途读取;这不是刷新,选频道界面的忙标志是"不忙"
+        Assert.Equal(OnlineShellStage.ServerSelect, rig.Flow.Stage);
+        Assert.Equal(PickerPhase.Loading, rig.Server.Phase);
+        Assert.True(rig.Flow.Busy);
+        Assert.Equal(1, rig.Directory.LoadCalls);
+        Assert.Equal(ChannelBusy.None, rig.Channel.Busy);
+        rig.Pump(5);                                                  // 再推几帧:忙标志每帧都按在途操作重算,仍然不是"刷新中"
+        Assert.Equal(ChannelBusy.None, rig.Channel.Busy);
+        Assert.True(rig.Flow.Busy);
+
+        pending.SetResult(ServerDirectoryResult.Ok(PickerData.Many(2, 3)));
+        rig.Pump(3);
+
+        Assert.Equal(PickerPhase.Ready, rig.Server.Phase);
+        Assert.False(rig.Flow.Busy);
+        Assert.Equal(ChannelBusy.None, rig.Channel.Busy);
+    }
+
+    [Fact]
+    public void A_refresh_from_the_ready_channel_screen_shows_refreshing_while_it_hangs_and_none_again_after_it_finishes()
+    {
+        var rig = new PickerRig(PickerData.Many(2, 3));
+        rig.ReachChannelSelect();
+        Assert.Equal(PickerPhase.Ready, rig.Channel.Phase);
+        Assert.Equal(ChannelBusy.None, rig.Channel.Busy);
+        TaskCompletionSource<ServerDirectoryResult> pending = HangDirectory(rig);
+
+        ClickCenter(rig, ChannelSelectScreen.RefreshRect());
+
+        // 刷新在途:忙标志是"刷新中"、旧列表还在(就绪、3 个频道)、恰好一个在途读取
+        Assert.True(rig.Flow.Busy);
+        Assert.Equal(2, rig.Directory.LoadCalls);
+        Assert.Equal(ChannelBusy.Refreshing, rig.Channel.Busy);
+        Assert.Equal(PickerPhase.Ready, rig.Channel.Phase);
+        Assert.Equal(3, rig.Channel.Channels.Count);
+        rig.Pump(5);
+        Assert.Equal(ChannelBusy.Refreshing, rig.Channel.Busy);
+
+        pending.SetResult(ServerDirectoryResult.Ok(PickerData.Many(2, 3)));
+        rig.Pump(3);
+
+        Assert.False(rig.Flow.Busy);
+        Assert.Equal(ChannelBusy.None, rig.Channel.Busy);
+        Assert.Equal(PickerPhase.Ready, rig.Channel.Phase);
+        Assert.Equal(3, rig.Channel.Channels.Count);
+    }
+
+    [Theory]
+    [InlineData("server", "enter")]
+    [InlineData("server", "retry-button")]
+    [InlineData("channel-failed", "enter")]
+    [InlineData("channel-failed", "retry-button")]
+    [InlineData("channel-failed", "refresh-button")]
+    [InlineData("channel-empty", "enter")]
+    [InlineData("channel-empty", "retry-button")]
+    public void A_retry_after_a_failed_or_empty_read_is_not_a_refresh_so_the_channel_screen_is_not_busy_while_it_hangs(string screen, string how)
+    {
+        bool onServerScreen = screen == "server";
+        PickerRig rig = onServerScreen ? ReachFailedServerScreen() : screen == "channel-failed" ? ReachFailedChannelScreen() : ReachEmptyChannelScreen();
+        int reads = rig.Directory.LoadCalls;
+        TaskCompletionSource<ServerDirectoryResult> pending = HangDirectory(rig);
+
+        RetryRead(rig, onServerScreen, how);
+
+        // 读取中:恰好一个在途读取;界面是"正在读"(不是还停在失败页)
+        Assert.True(rig.Flow.Busy);
+        Assert.Equal(reads + 1, rig.Directory.LoadCalls);
+        Assert.Equal(onServerScreen ? OnlineShellStage.ServerSelect : OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+        Assert.Equal(PickerPhase.Loading, onServerScreen ? rig.Server.Phase : rig.Channel.Phase);
+        // 这是读失败之后的补读,不是刷新(界面上没有旧列表):选频道界面的忙标志必须是"不忙",不能是"刷新中"
+        Assert.Equal(ChannelBusy.None, rig.Channel.Busy);
+        rig.Pump(5);
+        Assert.Equal(ChannelBusy.None, rig.Channel.Busy);
+        Assert.True(rig.Flow.Busy);
+
+        pending.SetResult(ServerDirectoryResult.Ok(PickerData.Many(2, 3)));
+        rig.Pump(3);
+
+        Assert.False(rig.Flow.Busy);
+        Assert.Equal(ChannelBusy.None, rig.Channel.Busy);
+    }
+
+    // ------------------------------------------------------------------ ⑤ 重新读目录时旧提示要先清掉
+
+    [Theory]
+    [InlineData("enter")]
+    [InlineData("retry-button")]
+    public void Retrying_the_failed_server_screen_clears_the_old_notice_the_moment_the_read_starts(string how)
+    {
+        PickerRig rig = ReachFailedServerScreen();          // 前提:失败页上有一条"网络错误"的提示
+        TaskCompletionSource<ServerDirectoryResult> pending = HangDirectory(rig);
+
+        RetryRead(rig, true, how);
+
+        // 重读开始、还没读完:旧提示已经清掉(三处都是:阶段机、选服务器界面、选频道界面),界面是"正在读"
+        Assert.Equal(OnlineShellStage.ServerSelect, rig.Flow.Stage);
+        Assert.Equal(PickerPhase.Loading, rig.Server.Phase);
+        Assert.True(rig.Flow.Busy);
+        Assert.Equal(2, rig.Directory.LoadCalls);
+        Assert.Null(rig.Flow.Notice);
+        Assert.Null(rig.Server.Notice);
+        Assert.Null(rig.Channel.Notice);
+        rig.Pump(5);                                         // 挂着的这段时间里一直没有提示
+        Assert.Null(rig.Flow.Notice);
+        Assert.Null(rig.Server.Notice);
+
+        pending.SetResult(ServerDirectoryResult.Ok(PickerData.Many(2, 3)));
+        rig.Pump(3);
+
+        Assert.Equal(PickerPhase.Ready, rig.Server.Phase);
+        Assert.Null(rig.Flow.Notice);
+    }
+
+    [Theory]
+    [InlineData("enter")]
+    [InlineData("retry-button")]
+    [InlineData("refresh-button")]
+    public void Retrying_the_failed_channel_screen_clears_the_old_connect_notice_the_moment_the_read_starts(string how)
+    {
+        PickerRig rig = ReachFailedChannelScreen();         // 前提:直连默认频道失败,失败页上有一条"连接失败"的提示
+        Assert.NotNull(rig.Flow.Notice);
+        Assert.Equal(OnlineNoticeKind.ConnectFailed, rig.Flow.Notice.Kind);
+        Assert.NotNull(rig.Channel.Notice);
+        Assert.Equal(OnlineNoticeKind.ConnectFailed, rig.Channel.Notice.Kind);
+        TaskCompletionSource<ServerDirectoryResult> pending = HangDirectory(rig);
+
+        RetryRead(rig, false, how);
+
+        // 重读开始、还没读完:旧提示已经清掉,界面是"正在读"
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+        Assert.Equal(PickerPhase.Loading, rig.Channel.Phase);
+        Assert.True(rig.Flow.Busy);
+        Assert.Equal(2, rig.Directory.LoadCalls);
+        Assert.Null(rig.Flow.Notice);
+        Assert.Null(rig.Channel.Notice);
+        rig.Pump(5);
+        Assert.Null(rig.Flow.Notice);
+        Assert.Null(rig.Channel.Notice);
+
+        pending.SetResult(ServerDirectoryResult.Ok(PickerData.Many(2, 3)));
+        rig.Pump(3);
+
+        Assert.Equal(PickerPhase.Ready, rig.Channel.Phase);
+        Assert.Null(rig.Flow.Notice);
+    }
+
+    [Theory]
+    [InlineData("failed-refresh")]
+    [InlineData("failed-connect")]
+    public void Refreshing_again_while_a_notice_is_showing_clears_it_the_moment_the_read_starts_and_keeps_the_old_list(string source)
+    {
+        var rig = new PickerRig(PickerData.Many(2, 3));
+        rig.ReachChannelSelect();
+        OnlineNoticeKind expected;
+        if (source == "failed-refresh")
+        {
+            // 刷新读失败:保留旧列表、出提示
+            rig.Directory.OnLoad = ct => Task.FromResult(ServerDirectoryResult.Fail(OnlineNoticeKind.NetworkError));
+            ClickCenter(rig, ChannelSelectScreen.RefreshRect());
+            expected = OnlineNoticeKind.NetworkError;
+        }
+        else
+        {
+            // 连频道失败:留在就绪页、旧列表还在、出提示
+            rig.Backend.OnConnect = (t, ct) => Task.FromResult(OnlineConnectOutcome.Fail(OnlineNoticeKind.ConnectFailed));
+            rig.Key(OnlineShellKey.Enter);
+            expected = OnlineNoticeKind.ConnectFailed;
+        }
+        // 前提:就绪页、旧列表(3 个频道)还在,提示可见,没有在途操作
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+        Assert.Equal(PickerPhase.Ready, rig.Channel.Phase);
+        Assert.Equal(3, rig.Channel.Channels.Count);
+        Assert.False(rig.Flow.Busy);
+        Assert.NotNull(rig.Flow.Notice);
+        Assert.Equal(expected, rig.Flow.Notice.Kind);
+        Assert.NotNull(rig.Channel.Notice);
+        Assert.Equal(expected, rig.Channel.Notice.Kind);
+        int reads = rig.Directory.LoadCalls;
+        TaskCompletionSource<ServerDirectoryResult> pending = HangDirectory(rig);
+
+        ClickCenter(rig, ChannelSelectScreen.RefreshRect());
+
+        // 刷新开始、还没读完:提示已经清掉(不是等读完才变),旧列表还在,忙标志是"刷新中"
+        Assert.True(rig.Flow.Busy);
+        Assert.Equal(reads + 1, rig.Directory.LoadCalls);
+        Assert.Null(rig.Flow.Notice);
+        Assert.Null(rig.Channel.Notice);
+        Assert.Equal(ChannelBusy.Refreshing, rig.Channel.Busy);
+        Assert.Equal(PickerPhase.Ready, rig.Channel.Phase);
+        Assert.Equal(3, rig.Channel.Channels.Count);
+        rig.Pump(5);
+        Assert.Null(rig.Flow.Notice);
+        Assert.Null(rig.Channel.Notice);
+
+        pending.SetResult(ServerDirectoryResult.Ok(PickerData.Many(2, 3)));
+        rig.Pump(3);
+
+        Assert.False(rig.Flow.Busy);
+        Assert.Equal(ChannelBusy.None, rig.Channel.Busy);
+        Assert.Null(rig.Flow.Notice);
+        Assert.Equal(3, rig.Channel.Channels.Count);
     }
 }
