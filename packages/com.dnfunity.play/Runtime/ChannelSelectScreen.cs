@@ -441,12 +441,18 @@ namespace Dnf.Play
                     }
                     return true;
                 case Target.Retry:
-                    _pressUntilMs = _ageMs + PressMs;
-                    _action = ChannelSelectAction.Refresh;
+                    if (Busy == ChannelBusy.None)
+                    {
+                        _pressUntilMs = _ageMs + PressMs;
+                        _action = ChannelSelectAction.Refresh;
+                    }
                     return true;
                 case Target.Direct:
-                    _pressUntilMs = _ageMs + PressMs;
-                    _action = ChannelSelectAction.DirectConnect;
+                    if (Busy == ChannelBusy.None)
+                    {
+                        _pressUntilMs = _ageMs + PressMs;
+                        _action = ChannelSelectAction.DirectConnect;
+                    }
                     return true;
                 default:
                     return false;
