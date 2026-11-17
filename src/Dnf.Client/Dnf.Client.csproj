@@ -20,6 +20,10 @@
 
   <ItemGroup>
     <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineDungeonRoom.cs" Link="Runtime\OnlineDungeonRoom.cs" />
+    <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineShellMapping.cs" Link="Runtime\OnlineShellMapping.cs" />
+    <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineShellBackend.cs" Link="Runtime\OnlineShellBackend.cs" />
+    <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineShellSetup.cs" Link="Runtime\OnlineShellSetup.cs" />
+    <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineShellHost.cs" Link="Runtime\OnlineShellHost.cs" />
   </ItemGroup>
 
   <ItemGroup>

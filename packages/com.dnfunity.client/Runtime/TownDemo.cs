@@ -39,6 +39,10 @@ namespace Dnf.Client
     /// 再带 -dnfnetbot(要同时带 -dnfbot、-dnfnet、-dnfnetdungeon,缺一个就只留一行 DNF_NET stage=room bot ignored 提示、当没带)时,联网房间里也由自动机打(r16-onlinebot,
     /// <see cref="FlowBot.HostedRooms"/> → <see cref="HostedRoomBot"/>:决策与离线同一份,带整段超时与无进展上限,不会无限挂机);自动机停手(或收尾时仍在打)写一行 DNF_NET stage=room bot,
     /// 联网结算选定回城时 DNF_NET stage=room return 照旧写一行。不带 -dnfnetbot 时联网房间与以前一字不变(自动机不动它)。
+    /// 带 -dnfonline(没带 -dnfnet、不是离屏出图)时走联网外壳(r18-onlineshell,<see cref="OnlineShellHost"/>,宿主一侧的接线在 TownDemo.OnlineShell.cs):
+    /// 先到登录界面(账号、口令、进入游戏、注册),登录成功后依次过选服务器、选频道(目前自动通过)与选角(占位),进入游戏后交给下面的城镇流程(角色本体先用本地占位);
+    /// 连接配置(网关、密钥等)开发版读 -dnfnetroot 指的本地凭据,正式分发读持久数据目录下的配置文件,缺了就在登录界面提示"未配置连接"、不发任何请求;
+    /// -dnfonlineuser &lt;账号&gt; 预填账号(口令只靠手输)。不带 -dnfonline 时一切与以前一字不变;阶段日志只打 DNF_ONLINE stage= 行(不含账号、口令、地址、角色名)。
     /// 带 -dnfflow 时玩整条流程(<see cref="GameFlow"/>,证据 E-093):从选角(-dnfflowfrom char,证据 E-096:方向键移动选中、回车或空格开始游戏、Esc 或点"结束游戏"退出,点角色格子选中)、
     /// 城镇(town,默认)、副本选择(select)或副本(dungeon)开始;
     /// 城镇走城镇图册(<see cref="AtlasTownWorld"/>,证据 E-095):登录落在赛丽亚房间、走进地图边缘的出口换区域、艾尔文防线走到地下城入口区域再走进右边的出口打开世界地图,
@@ -87,7 +91,7 @@ namespace Dnf.Client
     /// -dnfnosound 关闭;带 -batchmode 的无人值守运行默认静音(整条链路照跑,计数器写进日志的 DNF_AUDIO 行),-dnfsound 才出声;离屏渲染一帧不开声音。
     /// 桌面上画面以整数倍放大并居中(留黑边),所以与原版 800×600 像素一一对应、不糊;手机、平板与开着触屏操作层时改成填满安全区的高度(倍数不是整数,像素略有不均)。
     /// </summary>
-    public sealed class TownDemo : MonoBehaviour
+    public sealed partial class TownDemo : MonoBehaviour
     {
         public const string DefaultMap = "map/elvengard/(r)gate.map";
         public const string PrefsKey = "DnfDir";
@@ -448,6 +452,12 @@ namespace Dnf.Client
                     case "-dnfnet":
                         _netMode = true;
                         break;
+                    case "-dnfonline":
+                        _onlineMode = true;      // 联网外壳(登录 → 选服 → 选频道 → 选角 → 进游戏);要不要生效由 OnlineShellWanted 定
+                        break;
+                    case "-dnfonlineuser":
+                        if (value != null) { _onlineUser = value; i++; }
+                        break;
                     case "-dnfnetroot":
                         if (value != null) { _netRoot = value; i++; }
                         break;
@@ -586,6 +596,11 @@ namespace Dnf.Client
             _message = "Opening the game data…";
             yield return null;
             ResolveNetBot();
+            if (OnlineShellWanted())
+            {
+                yield return OpenOnlineShell(dir);     // -dnfonline:联网外壳,见 TownDemo.OnlineShell.cs
+                yield break;
+            }
             if (_netMode)
             {
                 // 真联网:-dnfnet 时先把网关登录一路跑到选角进城,成功了再按流程进城(角色本体数据先用本地占位)
@@ -1454,6 +1469,7 @@ namespace Dnf.Client
 
         private void DisposeView()
         {
+            DisposeOnlineShell();      // -dnfonline 的外壳与它拥有的联网会话(没带时什么也不做)
             if (_audio != null)
             {
                 UnityObjects.Destroy(_audio.gameObject);
@@ -1490,6 +1506,10 @@ namespace Dnf.Client
         {
             _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(Time.unscaledDeltaTime, 0.0001f), 0.05f);
             if (_state != State.Running || _view == null)
+            {
+                return;
+            }
+            if (!PumpOnlineShell())    // -dnfonline:外壳的输入、阶段机与换画面(没带时什么也不做、返回 true);出错或退出了返回 false
             {
                 return;
             }
@@ -2843,6 +2863,10 @@ namespace Dnf.Client
             switch (_state)
             {
                 case State.Running:
+                    if (ShellOwnsScreen)
+                    {
+                        break;         // 联网外壳占着屏幕:输入由 PumpOnlineShell 读,这里不画调试文字、不响应按键(Esc 不能退出整个程序)
+                    }
                     HandleRunningInput(e);
                     if (_hud)
                     {
