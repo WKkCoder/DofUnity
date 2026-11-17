@@ -469,6 +469,32 @@ public sealed class OnlineShellPickerFlowTests
         Assert.Equal("希洛克", rig.Flow.PickedServer.Name);
     }
 
+    [Fact]
+    public void After_a_direct_connect_the_retried_directory_opens_the_server_that_holds_the_connected_channel()
+    {
+        // 默认频道是第 5 号,在第二个服务器里:直连成功、回到选频道(没有目录,读失败页)、重试读到目录,显示的应该是连着的频道所在的服务器,而不是第一个
+        var rig = new PickerRig(null, options => options.DefaultChannelPort = PickerData.PortOf(5));
+        rig.Directory.OnLoad = ct => Task.FromResult(ServerDirectoryResult.Fail(OnlineNoticeKind.NetworkError));
+        rig.Backend.OnConnect = (t, ct) => Task.FromResult(OnlineConnectOutcome.Ok(ShellTestData.Roster(2)));
+        rig.ReachServerSelect();
+        rig.Key(OnlineShellKey.Space);
+        Assert.Equal(OnlineShellStage.CharacterSelect, rig.Flow.Stage);
+        Assert.Equal(PickerData.Target(5), rig.Backend.LastTarget);
+        rig.Key(OnlineShellKey.Escape);
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+        Assert.Equal(PickerPhase.Failed, rig.Channel.Phase);
+        Assert.Null(rig.Flow.PickedServer);
+
+        rig.Directory.OnLoad = ct => Task.FromResult(ServerDirectoryResult.Ok(PickerData.Directory(PickerData.Server("希洛克", 3), PickerData.Server("卡恩", 2, 4))));
+        rig.Key(OnlineShellKey.Enter);
+
+        Assert.Equal(PickerPhase.Ready, rig.Channel.Phase);
+        Assert.Equal("卡恩", rig.Flow.PickedServer.Name);
+        Assert.Equal("卡恩", rig.Channel.Server.Name);
+        Assert.Equal(1, rig.Channel.Selected);                                  // 第 5 号是卡恩的第二个频道
+        Assert.Equal(PickerData.Target(5), rig.Channel.SelectedChannel.Target);
+    }
+
     // ------------------------------------------------------------------ 选频道:连接
 
     [Fact]
@@ -980,6 +1006,41 @@ public sealed class OnlineShellPickerFlowTests
         Assert.Equal(before + 100, rig.Channel.AgeMs);
         rig.Flow.Hover(ChannelSelectScreen.ChangeServerRect().X + 3, ChannelSelectScreen.ChangeServerRect().Y + 3);
         Assert.NotEmpty(rig.Channel.Build(0));
+    }
+
+    [Fact]
+    public void The_pointer_reaches_the_channel_screen_unshifted_down_to_the_last_pixel()
+    {
+        var rig = new PickerRig(configure: o => o.PickerScene = new ServerPickerScene(PickerSprites.Create()));
+        rig.ReachChannelSelect();
+        Assert.True(rig.Channel.TryItemRect(1, out HitRect second));
+        Assert.True(rig.Channel.TryItemRect(2, out HitRect third));
+
+        rig.Flow.Hover(second.X + second.Width - 1, second.Y + 1);              // 第二个频道(没选中)右边缘的最后一个像素
+        SceneSprite hover = PickerSprites.One(rig.Channel.Build(0), "channel-item-hover");
+        Assert.Equal((second.X, second.Y), (hover.ScreenX, hover.ScreenY));
+
+        rig.Flow.Hover(second.X + second.Width, second.Y + 1);                  // 出去一个像素(两列之间的缝)
+        Assert.False(PickerRig.Has(rig.Channel.Build(0), "channel-item-hover"));
+
+        rig.Flow.Hover(third.X, third.Y + third.Height - 1);                    // 第三个频道左下角的第一个像素
+        hover = PickerSprites.One(rig.Channel.Build(0), "channel-item-hover");
+        Assert.Equal((third.X, third.Y), (hover.ScreenX, hover.ScreenY));
+    }
+
+    [Fact]
+    public void The_pointer_reaches_the_server_screen_unshifted_down_to_the_last_pixel()
+    {
+        var rig = new PickerRig(configure: o => o.PickerScene = new ServerPickerScene(PickerSprites.Create()));
+        rig.ReachServerSelect();
+        Assert.True(rig.Server.TryEntryRect(1, out HitRect second));
+
+        rig.Flow.Hover(second.X + second.Width - 1, second.Y + second.Height - 1);       // 第二个入口右下角的最后一个像素
+        SceneSprite hover = PickerSprites.One(rig.Server.Build(0), "server-entry-hover");
+        Assert.Equal((second.X, second.Y), (hover.ScreenX, hover.ScreenY));
+
+        rig.Flow.Hover(second.X + second.Width, second.Y);                                // 出去一个像素
+        Assert.False(PickerRig.Has(rig.Server.Build(0), "server-entry-hover"));
     }
 
     [Fact]

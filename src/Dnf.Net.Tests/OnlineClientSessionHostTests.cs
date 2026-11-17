@@ -82,6 +82,17 @@ public sealed class OnlineClientSessionHostTests
     }
 
     [Fact]
+    public async Task Connect_and_switch_ignore_the_whitespace_around_an_ip_literal()
+    {
+        (OnlineFlowRig rig, List<IPAddress> addresses) = TrackAddresses();
+        OnlineClientSession client = await LoggedInWithGatewayHost(rig);
+        Assert.True((await Bounded(client.ConnectAsync("  " + OverrideV4 + " ", ChannelPort))).IsSuccess);
+        Assert.Equal(IPAddress.Parse(OverrideV4), addresses[^1]);
+        Assert.True((await Bounded(client.SwitchChannelAsync(" " + OverrideV6 + "  ", AltChannelPort))).IsSuccess);
+        Assert.Equal(IPAddress.Parse(OverrideV6), addresses[^1]);
+    }
+
+    [Fact]
     public async Task Switch_null_host_uses_gateway_address()
     {
         (OnlineFlowRig rig, List<IPAddress> addresses) = TrackAddresses();

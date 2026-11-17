@@ -346,6 +346,23 @@ public sealed class ChannelSelectScreenTests
         screen.SetLoading();
         screen.Confirm();
         Assert.Equal(ChannelSelectAction.None, Take(screen));
+
+        // 读失败(或没有频道)的内容上也一样:"直连默认频道"连接中时界面还显示着失败页,回车不能再排一次重读
+        foreach (ChannelBusy busy in new[] { ChannelBusy.Connecting, ChannelBusy.Refreshing })
+        {
+            screen.SetFailed();
+            screen.SetBusy(busy);
+            screen.Confirm();
+            Assert.Equal(ChannelSelectAction.None, Take(screen));
+
+            screen.SetServer(Srv("希洛克"));
+            screen.SetBusy(busy);
+            screen.Confirm();
+            Assert.Equal(ChannelSelectAction.None, Take(screen));
+        }
+        screen.SetBusy(ChannelBusy.None);
+        screen.Confirm();
+        Assert.Equal(ChannelSelectAction.Refresh, Take(screen));               // 不忙了才是重试
     }
 
     [Fact]
