@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Dnf.Net.ChannelDirectory;
 using Dnf.Net.Gateway;
 using Dnf.Net.Session;
 using Dnf.Net.Tests;
@@ -10,7 +11,7 @@ namespace Dnf.Client.Tests;
 /// 内存里的假会话(不连任何网络):联网层的结果类没有公开构造函数,所以假会话只造"报告"。
 /// 记下被调用的次数与参数、释放发生在哪个线程,释放可以被一道门卡住(模拟真会话 Dispose 会等在途操作)。
 /// </summary>
-internal sealed class FakeSessionPort : IOnlineSessionPort
+internal sealed class FakeSessionPort : IOnlineSessionHostPort
 {
     private readonly object _sync = new();
     private Action _lost;
@@ -24,6 +25,9 @@ internal sealed class FakeSessionPort : IOnlineSessionPort
         OnConnect = (port, ct) => Task.FromResult(new OnlineConnectReport(OnlineFailure.None, OnlineCharacterListStatus.Received, FakeRoster(2)));
         OnSwitch = (port, ct) => Task.FromResult(new OnlineConnectReport(OnlineFailure.None, OnlineCharacterListStatus.Received, FakeRoster(2)));
         OnSelect = (slot, ct) => Task.FromResult(new OnlineSelectReport(true, false, "DNF_NET snapshot slot=" + slot));
+        OnConnectHost = (host, port, ct) => Task.FromResult(new OnlineConnectReport(OnlineFailure.None, OnlineCharacterListStatus.Received, FakeRoster(2)));
+        OnSwitchHost = (host, port, ct) => Task.FromResult(new OnlineConnectReport(OnlineFailure.None, OnlineCharacterListStatus.Received, FakeRoster(2)));
+        OnDirectory = ct => Task.FromResult(new OnlineDirectoryReport(ChannelDirectoryLoadOutcome.Ok, DirectoryTestData.Default()));
     }
 
     public OnlineEntrySettings Settings { get; }
@@ -32,6 +36,11 @@ internal sealed class FakeSessionPort : IOnlineSessionPort
     public Func<int, CancellationToken, Task<OnlineConnectReport>> OnConnect { get; set; }
     public Func<int, CancellationToken, Task<OnlineConnectReport>> OnSwitch { get; set; }
     public Func<int, CancellationToken, Task<OnlineSelectReport>> OnSelect { get; set; }
+
+    /// <summary>带主机的连接、换频道与读目录(r18-serverui 加的那一半接口):默认成功,目录默认是 <see cref="DirectoryTestData.Default"/>。</summary>
+    public Func<string, int, CancellationToken, Task<OnlineConnectReport>> OnConnectHost { get; set; }
+    public Func<string, int, CancellationToken, Task<OnlineConnectReport>> OnSwitchHost { get; set; }
+    public Func<CancellationToken, Task<OnlineDirectoryReport>> OnDirectory { get; set; }
 
     /// <summary>非 null 时 <see cref="Dispose"/> 会卡在它上面,直到被放行。</summary>
     public ManualResetEventSlim DisposeGate { get; set; }
@@ -43,6 +52,10 @@ internal sealed class FakeSessionPort : IOnlineSessionPort
     public int ConnectCalls;
     public int SwitchCalls;
     public int SelectCalls;
+    public int ConnectHostCalls;
+    public int SwitchHostCalls;
+    public int DirectoryCalls;
+    public string LastHost;
     public string LastUser;
     public string LastPassword;
     public int LastPort;
@@ -122,6 +135,31 @@ internal sealed class FakeSessionPort : IOnlineSessionPort
         return OnSwitch(channelPort, cancellationToken);
     }
 
+    public Task<OnlineConnectReport> ConnectAsync(string host, int channelPort, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref ConnectHostCalls);
+        LastHost = host;
+        LastPort = channelPort;
+        LastToken = cancellationToken;
+        return OnConnectHost(host, channelPort, cancellationToken);
+    }
+
+    public Task<OnlineConnectReport> SwitchAsync(string host, int channelPort, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref SwitchHostCalls);
+        LastHost = host;
+        LastPort = channelPort;
+        LastToken = cancellationToken;
+        return OnSwitchHost(host, channelPort, cancellationToken);
+    }
+
+    public Task<OnlineDirectoryReport> LoadDirectoryAsync(CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref DirectoryCalls);
+        LastToken = cancellationToken;
+        return OnDirectory(cancellationToken);
+    }
+
     public Task<OnlineSelectReport> SelectAsync(int slot, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref SelectCalls);
@@ -155,6 +193,38 @@ internal sealed class FakeSessionPort : IOnlineSessionPort
     }
 }
 
+/// <summary>
+/// 只露出旧接口的会话皮(包着一个 <see cref="FakeSessionPort"/>,调用次数记在里面那个上):模拟"不认识主机、读不了目录"的旧实现,
+/// 用来验证后端对带主机的目标、读目录明说失败而不去碰会话。
+/// </summary>
+internal sealed class LegacyOnlyPort : IOnlineSessionPort
+{
+    private readonly FakeSessionPort _inner;
+
+    public LegacyOnlyPort(FakeSessionPort inner)
+    {
+        _inner = inner;
+    }
+
+    public event Action Lost
+    {
+        add => _inner.Lost += value;
+        remove => _inner.Lost -= value;
+    }
+
+    public OnlineClientSession Real => null;
+
+    public Task<OnlineLoginReport> LoginAsync(string username, string password, CancellationToken cancellationToken) => _inner.LoginAsync(username, password, cancellationToken);
+
+    public Task<OnlineConnectReport> ConnectAsync(int channelPort, CancellationToken cancellationToken) => _inner.ConnectAsync(channelPort, cancellationToken);
+
+    public Task<OnlineConnectReport> SwitchAsync(int channelPort, CancellationToken cancellationToken) => _inner.SwitchAsync(channelPort, cancellationToken);
+
+    public Task<OnlineSelectReport> SelectAsync(int slot, CancellationToken cancellationToken) => _inner.SelectAsync(slot, cancellationToken);
+
+    public void Dispose() => _inner.Dispose();
+}
+
 /// <summary>包住假网关的传输,记下它有没有被释放。</summary>
 internal sealed class TrackingTransport : IGatewayTransport, IDisposable
 {
@@ -186,7 +256,7 @@ internal sealed class BackendRig
 
     private readonly object _sync = new();
 
-    public BackendRig(bool configured = true, Action<FakeSessionPort> onPort = null)
+    public BackendRig(bool configured = true, Action<FakeSessionPort> onPort = null, bool legacyOnly = false)
     {
         Key = GatewayTestSupport.SynthKey();
         Assert.True(GatewayOptions.TryCreate("http://localhost", GatewayTestSupport.HexLower(Key), TimeSpan.FromSeconds(2), out GatewayOptions options, out _));
@@ -219,7 +289,7 @@ internal sealed class BackendRig
                 {
                     Ports.Add(port);
                 }
-                return port;
+                return legacyOnly ? new LegacyOnlyPort(port) : port;
             },
             gatewayOptions =>
             {

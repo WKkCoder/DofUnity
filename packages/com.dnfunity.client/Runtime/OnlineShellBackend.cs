@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Dnf.Net.ChannelDirectory;
 using Dnf.Net.Gateway;
 using Dnf.Net.Session;
 using Dnf.Play;
@@ -59,6 +60,19 @@ namespace Dnf.Client
         public string SnapshotLine { get; }
     }
 
+    /// <summary>读频道目录一步的报告(结局与快照;联网层的结果类没有公开构造函数,假会话只能造报告)。</summary>
+    internal readonly struct OnlineDirectoryReport
+    {
+        public OnlineDirectoryReport(ChannelDirectoryLoadOutcome outcome, ChannelDirectorySnapshot snapshot)
+        {
+            Outcome = outcome;
+            Snapshot = snapshot;
+        }
+
+        public ChannelDirectoryLoadOutcome Outcome { get; }
+        public ChannelDirectorySnapshot Snapshot { get; }
+    }
+
     /// <summary>
     /// 一个联网会话的最小接口(<see cref="OnlineClientSession"/> 的一层薄皮):把它的结果对象压成上面几个"报告"。
     /// 存在的唯一理由是测试:联网层的结果类没有公开构造函数,假会话只能造报告;生命周期(一次登录一个新会话、放弃时在后台释放、过期会话的断线事件不算数)就能不连网络地测。
@@ -80,8 +94,23 @@ namespace Dnf.Client
         Task<OnlineSelectReport> SelectAsync(int slot, CancellationToken cancellationToken);
     }
 
+    /// <summary>
+    /// 会话薄皮的加法(选服务器、选频道真界面用,r18-serverui):按主机连频道、换频道,与读频道目录。单独成接口是为了不动 <see cref="IOnlineSessionPort"/> 的成员,
+    /// 只实现旧接口的假会话照样能用(它们连不了带主机的目标、也读不了目录,后端据此明说失败)。
+    /// </summary>
+    internal interface IOnlineSessionHostPort : IOnlineSessionPort
+    {
+        /// <summary><paramref name="host"/> 为 null 时与只收端口的重载相同;非 null 时是 IP 字面量。</summary>
+        Task<OnlineConnectReport> ConnectAsync(string host, int channelPort, CancellationToken cancellationToken);
+
+        Task<OnlineConnectReport> SwitchAsync(string host, int channelPort, CancellationToken cancellationToken);
+
+        /// <summary>用登录拿到的游戏服地址读频道目录(单次、只读、不重试)。</summary>
+        Task<OnlineDirectoryReport> LoadDirectoryAsync(CancellationToken cancellationToken);
+    }
+
     /// <summary>真会话的皮。进城之后心跳由会话自己管(默认自管心跳),这里什么都不用做。</summary>
-    internal sealed class RealOnlineSessionPort : IOnlineSessionPort
+    internal sealed class RealOnlineSessionPort : IOnlineSessionHostPort
     {
         private readonly OnlineClientSession _session;
 
@@ -109,6 +138,22 @@ namespace Dnf.Client
         public async Task<OnlineConnectReport> SwitchAsync(int channelPort, CancellationToken cancellationToken)
         {
             return Report(await _session.SwitchChannelAsync(channelPort, cancellationToken).ConfigureAwait(false));
+        }
+
+        public async Task<OnlineConnectReport> ConnectAsync(string host, int channelPort, CancellationToken cancellationToken)
+        {
+            return Report(await _session.ConnectAsync(host, channelPort, cancellationToken).ConfigureAwait(false));
+        }
+
+        public async Task<OnlineConnectReport> SwitchAsync(string host, int channelPort, CancellationToken cancellationToken)
+        {
+            return Report(await _session.SwitchChannelAsync(host, channelPort, cancellationToken).ConfigureAwait(false));
+        }
+
+        public async Task<OnlineDirectoryReport> LoadDirectoryAsync(CancellationToken cancellationToken)
+        {
+            ChannelDirectoryLoadResult result = await _session.LoadChannelDirectoryAsync(ChannelServiceConstants.DefaultPort, cancellationToken).ConfigureAwait(false);
+            return new OnlineDirectoryReport(result.Outcome, result.Snapshot);
         }
 
         public async Task<OnlineSelectReport> SelectAsync(int slot, CancellationToken cancellationToken)
@@ -142,11 +187,14 @@ namespace Dnf.Client
     /// <item>注册与改密不需要会话,各开一个临时的网关客户端(与登录同一套传输:不跟随重定向、不走系统代理)。</item>
     /// <item><see cref="Disconnect"/> 立刻放弃当前会话、不触发 <see cref="Disconnected"/>;被放弃的旧会话之后再报断线(过期事件)一律不算数。</item>
     /// <item>进城成功之后会话继续活着(<see cref="Session"/>),归宿主管,直到放弃(退出、换角色、断线、回登录)。以后的进副本线从这里拿会话调 <c>EnterExclusiveReceiveAsync</c>。</item>
-    /// <item>要连的频道带主机(<see cref="ChannelTarget.Host"/> 不为 null)现在不支持:联网会话只连网关给的游戏服地址,宁可明说连不上也不悄悄连到另一台。</item>
+    /// <item>要连的频道带主机(<see cref="ChannelTarget.Host"/> 不为 null)时按这个主机连(IP 字面量,不做 DNS;不是合法 IP 就明说连不上,不悄悄连到另一台);
+    /// 主机为 null 用网关给的游戏服地址。假会话只实现旧接口时连不了带主机的目标,同样明说失败。</item>
+    /// <item>同时是频道目录的来源(<see cref="IChannelDirectoryBackend"/>,选服务器、选频道真界面用):用登录拿到的游戏服地址读一次目录,翻成中性目录(<see cref="ChannelDirectoryAdapter"/>);
+    /// 读目录没有会话(还没登录、已放弃)抛 <see cref="InvalidOperationException"/>,与别的网络操作一致。</item>
     /// </list>
     /// 不打印账号、口令、地址、令牌;只在选角成功时记一行进城快照(槽号、等级、职业与计数)。
     /// </summary>
-    public sealed class OnlineShellBackend : IOnlineBackend, IDisposable
+    public sealed class OnlineShellBackend : IOnlineBackend, IChannelDirectoryBackend, IDisposable
     {
         private static readonly TimeSpan DisposeWait = TimeSpan.FromSeconds(1);
 
@@ -418,7 +466,18 @@ namespace Dnf.Client
             }
             if (target.Host != null)
             {
-                return Task.FromResult(OnlineConnectOutcome.Fail(OnlineNoticeKind.ConnectFailed));
+                // 带主机的目标只有认得主机的会话(真会话)连得了;旧接口的假会话不行,明说连不上
+                if (!(slot.Port is IOnlineSessionHostPort hostPort))
+                {
+                    return Task.FromResult(OnlineConnectOutcome.Fail(OnlineNoticeKind.ConnectFailed));
+                }
+                return Task.Run(async () =>
+                {
+                    OnlineConnectReport report = switching
+                        ? await hostPort.SwitchAsync(target.Host, target.Port, cancellationToken).ConfigureAwait(false)
+                        : await hostPort.ConnectAsync(target.Host, target.Port, cancellationToken).ConfigureAwait(false);
+                    return OnlineShellMapping.Connect(report.Failure, report.ListStatus, report.List);
+                }, cancellationToken);
             }
             return Task.Run(async () =>
             {
@@ -426,6 +485,32 @@ namespace Dnf.Client
                     ? await slot.Port.SwitchAsync(target.Port, cancellationToken).ConfigureAwait(false)
                     : await slot.Port.ConnectAsync(target.Port, cancellationToken).ConfigureAwait(false);
                 return OnlineShellMapping.Connect(report.Failure, report.ListStatus, report.List);
+            }, cancellationToken);
+        }
+
+        /// <summary>
+        /// 读频道目录(<see cref="IChannelDirectoryBackend"/>):在线程池上跑、立刻返回任务;结局与快照经 <see cref="ChannelDirectoryAdapter"/> 翻成外壳认的结果。
+        /// 没有会话时任务以 <see cref="InvalidOperationException"/> 失败;会话是只实现旧接口的假会话时以同一个异常失败(它读不了目录)。
+        /// </summary>
+        public Task<ServerDirectoryResult> LoadAsync(CancellationToken cancellationToken)
+        {
+            Slot slot;
+            try
+            {
+                slot = Current();
+            }
+            catch (Exception e)
+            {
+                return Task.FromException<ServerDirectoryResult>(e);
+            }
+            if (!(slot.Port is IOnlineSessionHostPort hostPort))
+            {
+                return Task.FromException<ServerDirectoryResult>(new InvalidOperationException("这个会话读不了频道目录"));
+            }
+            return Task.Run(async () =>
+            {
+                OnlineDirectoryReport report = await hostPort.LoadDirectoryAsync(cancellationToken).ConfigureAwait(false);
+                return ChannelDirectoryAdapter.Result(report.Outcome, report.Snapshot);
             }, cancellationToken);
         }
 
