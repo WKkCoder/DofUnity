@@ -33,6 +33,9 @@ namespace Dnf.Net.Session
 
         /// <summary>收发时抛了异常(类型名在 <see cref="OnlineDungeonCombatResult.FaultType"/>,不带消息)。</summary>
         Faulted,
+
+        /// <summary>已发放弃回城命令(1/45)并在超时前收齐 0/23 与 0/24 回城通知。</summary>
+        GaveUp,
     }
 
     /// <summary>战斗跑器的结果:结局、终了阶段、全部事件与各种计数(都不含载荷内容)。</summary>
@@ -68,6 +71,10 @@ namespace Dnf.Net.Session
             InnerCopiesSkipped = innerCopiesSkipped;
             FramesSeen = framesSeen;
             FaultType = faultType;
+            SettlementResult = machine.SettlementResult;
+            SettlementReward = machine.SettlementReward;
+            UserArea = machine.UserArea;
+            AreaUsers = machine.AreaUsers;
         }
 
         public OnlineDungeonCombatOutcome Outcome { get; }
@@ -142,6 +149,18 @@ namespace Dnf.Net.Session
         /// <summary>收发抛出的异常类型名(没有为 null;只有 <see cref="OnlineDungeonCombatOutcome.Faulted"/> 才有)。</summary>
         public string FaultType { get; }
 
+        /// <summary>最近一次解析成功的通关结果记录(还没收到或解析失败时为 null)。与对应事件上的对象为同一只读实例。</summary>
+        public SettlementNoticeA SettlementResult { get; }
+
+        /// <summary>最近一次解析成功的通关奖励记录(还没收到或解析失败时为 null)。与对应事件上的对象为同一只读实例。</summary>
+        public SettlementNoticeB SettlementReward { get; }
+
+        /// <summary>放弃回城后从 0/23 解析出的只读区域快照(未放弃、没到或载荷读不下来时为 null)。与对应事件上的对象为同一只读实例。</summary>
+        public UserAreaNotice UserArea { get; }
+
+        /// <summary>放弃回城后从 0/24 解析出的只读区域用户快照(未放弃、没到或载荷读不下来时为 null)。与对应事件上的对象为同一只读实例。</summary>
+        public AreaUsersNotice AreaUsers { get; }
+
         /// <summary>是否走到了可以回城。</summary>
         public bool ReturnReady => Outcome == OnlineDungeonCombatOutcome.ReturnReady;
     }
@@ -185,6 +204,7 @@ namespace Dnf.Net.Session
         private readonly ConcurrentQueue<KillRequest> _kills = new ConcurrentQueue<KillRequest>();
         private readonly ConcurrentQueue<MoveRequest> _moves = new ConcurrentQueue<MoveRequest>();
         private int _started;
+        private int _giveUpRequested;
         private volatile bool _ended;
         private volatile OnlineDungeonCombat _machine;
 
@@ -216,6 +236,10 @@ namespace Dnf.Net.Session
             {
                 throw new ArgumentOutOfRangeException(nameof(options), "RoomHandshakeTimeout 必须大于 0 且不超过 int.MaxValue 毫秒");
             }
+            if (_options.GiveUpTimeout <= TimeSpan.Zero || _options.GiveUpTimeout.TotalMilliseconds > int.MaxValue)
+            {
+                throw new ArgumentOutOfRangeException(nameof(options), "GiveUpTimeout 必须大于 0 且不超过 int.MaxValue 毫秒");
+            }
             if (_options.MaxMoveRefusalsPerRoom < 1)
             {
                 throw new ArgumentOutOfRangeException(nameof(options), "MaxMoveRefusalsPerRoom 至少为 1");
@@ -239,7 +263,7 @@ namespace Dnf.Net.Session
         /// </summary>
         public bool PostKill(int localId)
         {
-            if (_ended)
+            if (_ended || Volatile.Read(ref _giveUpRequested) != 0)
             {
                 return false;
             }
@@ -249,7 +273,7 @@ namespace Dnf.Net.Session
 
         /// <summary>
         /// 一只本地怪死了,请求绑定在序号为 <paramref name="room"/> 的房间(<see cref="OnlineDungeonCombat.Room"/>):交给状态机时房间已经不是它,就被本地拦下(<see cref="OnlineCombatBlock.StaleRoom"/>)。
-        /// 线程安全,立刻返回;返回是否收下(战斗已结束返回 false)。
+        /// 线程安全,立刻返回;返回是否收下(战斗已结束或已请求放弃回城返回 false)。
         /// </summary>
         /// <param name="room">请求针对的房间序号,不小于 0。</param>
         /// <param name="localId">该房间对应表里的本地编号。</param>
@@ -260,7 +284,7 @@ namespace Dnf.Net.Session
             {
                 throw new ArgumentOutOfRangeException(nameof(room), "房间序号不能为负");
             }
-            if (_ended)
+            if (_ended || Volatile.Read(ref _giveUpRequested) != 0)
             {
                 return false;
             }
@@ -296,12 +320,26 @@ namespace Dnf.Net.Session
             {
                 throw new ArgumentOutOfRangeException(nameof(room), "房间序号不能为负");
             }
-            if (_ended)
+            if (_ended || Volatile.Read(ref _giveUpRequested) != 0)
             {
                 return false;
             }
             _moves.Enqueue(new MoveRequest(room, request));
             return true;
+        }
+
+        /// <summary>
+        /// 请求放弃本次联网副本并回城(线程安全,立刻返回)。循环线程在下一圈丢弃已排队未发的击杀与换房并只发一次 1/45,
+        /// 之后继续回心跳并等待 0/23 与 0/24 到达后以 <see cref="OnlineDungeonCombatOutcome.GaveUp"/> 收尾。
+        /// 战斗已结束或此前已经请求过放弃时返回 false(之后 <see cref="PostKill(int)"/> 与 <see cref="PostMoveRoom(OnlineMoveRoomRequest)"/> 也返回 false)。
+        /// </summary>
+        public bool PostGiveUp()
+        {
+            if (_ended)
+            {
+                return false;
+            }
+            return Interlocked.Exchange(ref _giveUpRequested, 1) == 0;
         }
 
         /// <summary>
@@ -349,6 +387,7 @@ namespace Dnf.Net.Session
             private TimeSpan _settlementSentAt;
             private TimeSpan _moveSentAt;
             private TimeSpan _loadSentAt;
+            private TimeSpan _giveUpSentAt;
             private int _heartbeats;
             private int _envelopesOpened;
             private int _envelopesUnopened;
@@ -387,6 +426,7 @@ namespace Dnf.Net.Session
                     outcome = OnlineDungeonCombatOutcome.Faulted;
                     fault = e.GetBaseException().GetType().Name;
                 }
+                _owner._ended = true;
 
                 Flush();
                 if (_omittedLines > 0)
@@ -405,79 +445,123 @@ namespace Dnf.Net.Session
                 {
                     _cancel.ThrowIfCancellationRequested();
 
-                    // 一:装载握手——状态机说装载完成命令该发了(进了要握手的房间)就立刻发,不等别的。
-                    // 放在击杀之前是有意的:真客户端是装载完才开打(笔记 E-370:换房 = 换房命令 + 起始地图通知 + 装载完成命令),
-                    // 新房间的头一条击杀命令不能抢在装载完成命令前面;换房之后宿主一看到新房间(例如在 RoomEntered 事件回调里)就排的击杀,最早也只在下一圈、握手命令之后发出
-                    if (_combat.LoadState == OnlineRoomLoadState.ReportDue)
+                    // 零:若已请求放弃回城且尚未发 1/45,立刻丢弃排队未发的击杀与换房,只发一次 1/45
+                    if (Volatile.Read(ref _owner._giveUpRequested) != 0 && !_combat.IsGivingUp)
                     {
-                        OnlineCombatSendResult sent = await _combat.ReportRoomLoadedAsync(_cancel).ConfigureAwait(false);
+                        while (_owner._kills.TryDequeue(out _)) { }
+                        while (_owner._moves.TryDequeue(out _)) { }
+                        OnlineCombatSendResult giveUp = await _combat.RequestGiveUpAsync(_cancel).ConfigureAwait(false);
                         Flush();
-                        if (sent.Outcome == OnlineCombatSendOutcome.FrameFailed)
+                        if (giveUp.Outcome == OnlineCombatSendOutcome.FrameFailed)
                         {
                             return OnlineDungeonCombatOutcome.SendFailed;
                         }
-                        if (sent.Sent)
+                        if (giveUp.Sent)
                         {
-                            _loadSentAt = _watch.Elapsed;
+                            _giveUpSentAt = _watch.Elapsed;
                         }
                     }
 
-                    // 二:宿主排进来的本地击杀,按入队顺序交给状态机的击杀口(拦与不拦由状态机定;带房间序号的请求绑定那个房间)
-                    while (_owner._kills.TryDequeue(out KillRequest kill))
+                    if (!_combat.IsGivingUp)
                     {
-                        OnlineCombatSendResult sent = kill.Room >= 0
-                            ? await _combat.ReportKillAsync(kill.Room, kill.LocalId, _cancel).ConfigureAwait(false)
-                            : await _combat.ReportKillAsync(kill.LocalId, _cancel).ConfigureAwait(false);
-                        Flush();
-                        if (sent.Outcome == OnlineCombatSendOutcome.FrameFailed)
+                        // 一:装载握手——状态机说装载完成命令该发了(进了要握手的房间)就立刻发,不等别的。
+                        // 放在击杀之前是有意的:真客户端是装载完才开打(笔记 E-370:换房 = 换房命令 + 起始地图通知 + 装载完成命令),
+                        // 新房间的头一条击杀命令不能抢在装载完成命令前面;换房之后宿主一看到新房间(例如在 RoomEntered 事件回调里)就排的击杀,最早也只在下一圈、握手命令之后发出
+                        if (_combat.LoadState == OnlineRoomLoadState.ReportDue)
+                        {
+                            OnlineCombatSendResult sent = await _combat.ReportRoomLoadedAsync(_cancel).ConfigureAwait(false);
+                            Flush();
+                            if (sent.Outcome == OnlineCombatSendOutcome.FrameFailed)
+                            {
+                                return OnlineDungeonCombatOutcome.SendFailed;
+                            }
+                            if (sent.Sent)
+                            {
+                                _loadSentAt = _watch.Elapsed;
+                            }
+                        }
+
+                        // 二:宿主排进来的本地击杀,按入队顺序交给状态机的击杀口(拦与不拦由状态机定;带房间序号的请求绑定那个房间)
+                        while (_owner._kills.TryDequeue(out KillRequest kill))
+                        {
+                            OnlineCombatSendResult sent = kill.Room >= 0
+                                ? await _combat.ReportKillAsync(kill.Room, kill.LocalId, _cancel).ConfigureAwait(false)
+                                : await _combat.ReportKillAsync(kill.LocalId, _cancel).ConfigureAwait(false);
+                            Flush();
+                            if (sent.Outcome == OnlineCombatSendOutcome.FrameFailed)
+                            {
+                                return OnlineDungeonCombatOutcome.SendFailed;
+                            }
+                        }
+
+                        // 三:换房——队首的请求等闸门放开才发,一次只发一条
+                        if (await PumpMovesAsync().ConfigureAwait(false) == OnlineCombatSendOutcome.FrameFailed)
                         {
                             return OnlineDungeonCombatOutcome.SendFailed;
                         }
-                    }
 
-                    // 三:换房——队首的请求等闸门放开才发,一次只发一条
-                    if (await PumpMovesAsync().ConfigureAwait(false) == OnlineCombatSendOutcome.FrameFailed)
-                    {
-                        return OnlineDungeonCombatOutcome.SendFailed;
+                        // 四:清图通知到了就发结算命令(闸门在状态机里:只有清图后的阶段才放行)
+                        if (_combat.Phase == OnlineCombatPhase.Cleared)
+                        {
+                            OnlineCombatSendResult sent = await _combat.RequestSettlementAsync(_cancel).ConfigureAwait(false);
+                            Flush();
+                            if (sent.Outcome == OnlineCombatSendOutcome.FrameFailed)
+                            {
+                                return OnlineDungeonCombatOutcome.SendFailed;
+                            }
+                            if (sent.Sent)
+                            {
+                                _settlementSentAt = _watch.Elapsed;
+                            }
+                        }
                     }
-
-                    // 四:清图通知到了就发结算命令(闸门在状态机里:只有清图后的阶段才放行)
-                    if (_combat.Phase == OnlineCombatPhase.Cleared)
+                    else
                     {
-                        OnlineCombatSendResult sent = await _combat.RequestSettlementAsync(_cancel).ConfigureAwait(false);
-                        Flush();
-                        if (sent.Outcome == OnlineCombatSendOutcome.FrameFailed)
-                        {
-                            return OnlineDungeonCombatOutcome.SendFailed;
-                        }
-                        if (sent.Sent)
-                        {
-                            _settlementSentAt = _watch.Elapsed;
-                        }
+                        while (_owner._kills.TryDequeue(out _)) { }
+                        while (_owner._moves.TryDequeue(out _)) { }
                     }
 
                     // 五:终局与超时
-                    if (_combat.Phase == OnlineCombatPhase.Settled)
+                    if (_combat.IsGivingUp)
                     {
-                        return OnlineDungeonCombatOutcome.ReturnReady;
+                        if (_combat.ReturnedToTown)
+                        {
+                            return OnlineDungeonCombatOutcome.GaveUp;
+                        }
+                        TimeSpan nowGiveUp = _watch.Elapsed;
+                        if (_options.OverallTimeout.HasValue && nowGiveUp >= _options.OverallTimeout.Value)
+                        {
+                            return OnlineDungeonCombatOutcome.Timeout;
+                        }
+                        if (nowGiveUp - _giveUpSentAt >= _options.GiveUpTimeout)
+                        {
+                            return OnlineDungeonCombatOutcome.Timeout;
+                        }
                     }
-                    TimeSpan now = _watch.Elapsed;
-                    if (_options.OverallTimeout.HasValue && now >= _options.OverallTimeout.Value)
+                    else
                     {
-                        return OnlineDungeonCombatOutcome.Timeout;
-                    }
-                    if (_combat.Phase == OnlineCombatPhase.Settling && now - _settlementSentAt >= _options.SettlementTimeout)
-                    {
-                        return OnlineDungeonCombatOutcome.Timeout;
-                    }
-                    // 换房与装载完成各等各的回应,谁等过了 RoomHandshakeTimeout 就收尾(进了结算之后换房不再有意义,在途的那一条也不再计时)
-                    if (_combat.Phase == OnlineCombatPhase.Fighting && _combat.MoveInFlight && now - _moveSentAt >= _options.RoomHandshakeTimeout)
-                    {
-                        return OnlineDungeonCombatOutcome.Timeout;
-                    }
-                    if (_combat.LoadState == OnlineRoomLoadState.AwaitingNotice && now - _loadSentAt >= _options.RoomHandshakeTimeout)
-                    {
-                        return OnlineDungeonCombatOutcome.Timeout;
+                        if (_combat.Phase == OnlineCombatPhase.Settled)
+                        {
+                            return OnlineDungeonCombatOutcome.ReturnReady;
+                        }
+                        TimeSpan now = _watch.Elapsed;
+                        if (_options.OverallTimeout.HasValue && now >= _options.OverallTimeout.Value)
+                        {
+                            return OnlineDungeonCombatOutcome.Timeout;
+                        }
+                        if (_combat.Phase == OnlineCombatPhase.Settling && now - _settlementSentAt >= _options.SettlementTimeout)
+                        {
+                            return OnlineDungeonCombatOutcome.Timeout;
+                        }
+                        // 换房与装载完成各等各的回应,谁等过了 RoomHandshakeTimeout 就收尾(进了结算之后换房不再有意义,在途的那一条也不再计时)
+                        if (_combat.Phase == OnlineCombatPhase.Fighting && _combat.MoveInFlight && now - _moveSentAt >= _options.RoomHandshakeTimeout)
+                        {
+                            return OnlineDungeonCombatOutcome.Timeout;
+                        }
+                        if (_combat.LoadState == OnlineRoomLoadState.AwaitingNotice && now - _loadSentAt >= _options.RoomHandshakeTimeout)
+                        {
+                            return OnlineDungeonCombatOutcome.Timeout;
+                        }
                     }
 
                     // 六:收帧(一帧一返回,有帧立刻处理;没有就最多等一个轮询窗口)
@@ -871,6 +955,12 @@ namespace Dnf.Net.Session
                     {
                         sb.Append(" local=").Append(Number(e.LocalId));
                     }
+                    break;
+                case OnlineCombatEventKind.GiveUpSent:
+                    break;
+                case OnlineCombatEventKind.ReturnedToTown:
+                    sb.Append(" userArea=").Append(e.UserArea != null ? "1" : "0");
+                    sb.Append(" areaUsers=").Append(e.AreaUsers != null ? Number(e.AreaUsers.Entries.Count) : "-");
                     break;
             }
             return sb.ToString();
