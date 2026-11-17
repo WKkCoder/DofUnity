@@ -334,6 +334,8 @@ namespace Dnf.Play
             {
                 return sprites;
             }
+            // 联网选角界面自己的提示条(不能进入、暂未开放、正在进入)与这里的提示在同一个位置:外壳有提示时只留外壳的,不叠两条
+            sprites.RemoveAll(s => CharacterSelectArt.IsOwnBar(s.AnimationPath));
             int order = 0;
             foreach (SceneSprite sprite in sprites)
             {
