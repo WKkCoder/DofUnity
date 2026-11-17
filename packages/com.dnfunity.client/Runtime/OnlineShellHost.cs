@@ -119,17 +119,21 @@ namespace Dnf.Client
         private bool _gameStarted;              // 游戏流程至少开过一次(再进游戏是恢复,不是重开)
         private bool _rememberPending = true;   // 自从上次停在登录界面以来,还没交出过"登录成功的账号"
 
-        /// <summary>造真实的宿主:后端用 <paramref name="setup"/> 的连接配置(没有配置时后端什么网络操作也不做)。</summary>
-        public static OnlineShellHost Create(OnlineShellSetup setup, CharacterSelectScene art, Action<string> log)
+        /// <summary>
+        /// 造真实的宿主:后端用 <paramref name="setup"/> 的连接配置(没有配置时后端什么网络操作也不做)。
+        /// <paramref name="characterSelect"/> 非 null 时选角界面用服务器给的真名册(<see cref="OnlineShellOptions.CharacterSelect"/>),为 null 是外壳原来的占位名册。
+        /// </summary>
+        public static OnlineShellHost Create(OnlineShellSetup setup, CharacterSelectScene art, Action<string> log, OnlineCharacterSelectOptions characterSelect = null)
         {
             if (setup == null)
             {
                 throw new ArgumentNullException(nameof(setup));
             }
-            return new OnlineShellHost(setup, new OnlineShellBackend(setup.CreateSettings(), log), art, log, null);
+            return new OnlineShellHost(setup, new OnlineShellBackend(setup.CreateSettings(), log), art, log, null, characterSelect);
         }
 
-        internal OnlineShellHost(OnlineShellSetup setup, OnlineShellBackend backend, CharacterSelectScene art, Action<string> log, IGlyphFonts fonts)
+        internal OnlineShellHost(OnlineShellSetup setup, OnlineShellBackend backend, CharacterSelectScene art, Action<string> log, IGlyphFonts fonts,
+            OnlineCharacterSelectOptions characterSelect = null)
         {
             if (setup == null)
             {
@@ -145,6 +149,7 @@ namespace Dnf.Client
                 Log = log,
                 InitialUsername = setup.PrefillUser,
                 Fonts = fonts,
+                CharacterSelect = characterSelect,
             };
             _flow = new OnlineShellFlow(backend, options);
             if (!string.IsNullOrEmpty(setup.PrefillPassword))

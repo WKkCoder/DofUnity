@@ -79,7 +79,8 @@ namespace Dnf.Client
                 bool dev = Application.isEditor || Debug.isDebugBuild;
                 string remembered = PlayerPrefs.HasKey(OnlineUserPrefsKey) ? PlayerPrefs.GetString(OnlineUserPrefsKey) : null;
                 OnlineShellSetup setup = OnlineShellSetupLoader.Load(dev, _netRoot, _netPort, Application.persistentDataPath, _onlineUser, remembered);
-                _shell = OnlineShellHost.Create(setup, CharacterSelectScene.From(_assets), line => Debug.Log(line));
+                _shell = OnlineShellHost.Create(setup, CharacterSelectScene.ForOnline(_assets), line => Debug.Log(line),
+                    OnlineCharacterSelectSetup.Create(_assets, _fonts != null));
                 _shellDir = dir;
                 _shell.TakeViewChange();         // 第一个视图就是下面造的这一个
                 _view = new TownView(_assets, _shell.Flow.Scene, StageBackground);
