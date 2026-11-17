@@ -51,6 +51,7 @@
     <Compile Include="..\Dnf.Net.Tests\GatewayLoopbackServer.cs" Link="GatewayLoopbackServer.cs" />
     <Compile Include="..\Dnf.Net.Tests\UserInfoTestData.cs" Link="UserInfoTestData.cs" />
     <Compile Include="..\Dnf.Play.Tests\OnlineShellTestKit.cs" Link="OnlineShellTestKit.cs" />
+    <Compile Include="..\Dnf.Play.Tests\ServerPickerTestKit.cs" Link="ServerPickerTestKit.cs" />
     <Compile Include="..\Dnf.Render.Tests\BlockFont.cs" Link="BlockFont.cs" />
   </ItemGroup>
 

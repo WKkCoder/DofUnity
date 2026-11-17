@@ -25,6 +25,7 @@ namespace Dnf.Client
 
         private bool _onlineMode;            // -dnfonline
         private string _onlineUser;          // -dnfonlineuser <账号>:预填登录界面的账号(口令不走命令行)
+        private bool _serverUi;              // -dnfserverui:选服务器、选频道用真界面(不带时这两个阶段是占位、自动放行)
         private OnlineShellHost _shell;      // 联网外壳;进游戏之后它继续拥有联网会话
         private string _shellDir;            // 数据目录(第一次进游戏时开声音要用)
         private GameFlow _frozenFlow;        // 掉线或换角色时外壳拿回屏幕:被冻住的游戏流程
@@ -79,12 +80,13 @@ namespace Dnf.Client
                 bool dev = Application.isEditor || Debug.isDebugBuild;
                 string remembered = PlayerPrefs.HasKey(OnlineUserPrefsKey) ? PlayerPrefs.GetString(OnlineUserPrefsKey) : null;
                 OnlineShellSetup setup = OnlineShellSetupLoader.Load(dev, _netRoot, _netPort, Application.persistentDataPath, _onlineUser, remembered);
-                _shell = OnlineShellHost.Create(setup, CharacterSelectScene.ForOnline(_assets), line => Debug.Log(line),
+                CharacterSelectScene shellArt = CharacterSelectScene.ForOnline(_assets);
+                _shell = OnlineShellHost.Create(setup, shellArt, line => Debug.Log(line), _serverUi, _serverUi ? ServerPickerScene.From(shellArt, _assets.LoadAni) : null,
                     OnlineCharacterSelectSetup.Create(_assets, _fonts != null));
                 _shellDir = dir;
                 _shell.TakeViewChange();         // 第一个视图就是下面造的这一个
                 _view = new TownView(_assets, _shell.Flow.Scene, StageBackground);
-                Debug.Log("DNF_TOWN_DEMO online source=" + setup.Source + " configured=" + setup.Configured + " dev=" + dev);
+                Debug.Log("DNF_TOWN_DEMO online source=" + setup.Source + " configured=" + setup.Configured + " dev=" + dev + " serverui=" + _serverUi);
             }
             catch (Exception e)
             {
@@ -131,8 +133,8 @@ namespace Dnf.Client
                 }
                 if (_shell.QuitRequested)
                 {
-                    Debug.Log("DNF_TOWN_DEMO online quit from character select");
-                    Quit();                      // 选角界面上的"结束游戏"
+                    Debug.Log("DNF_TOWN_DEMO online quit");
+                    Quit();                      // 选角界面(或选频道界面)上的"结束游戏"
                     return false;
                 }
                 switch (_shell.TakeViewChange())
@@ -172,7 +174,14 @@ namespace Dnf.Client
                 Right = Input.GetKeyDown(KeyCode.RightArrow),
                 Space = Input.GetKeyDown(KeyCode.Space),
             };
-            if (Input.GetMouseButtonDown(0) && TryGetCanvasPoint(Input.mousePosition, out int x, out int y))
+            bool onCanvas = TryGetCanvasPoint(Input.mousePosition, out int x, out int y);
+            if (onCanvas)
+            {
+                input.HasPointer = true;         // 悬停的画法(选服务器、选频道界面)用
+                input.PointerX = x;
+                input.PointerY = y;
+            }
+            if (Input.GetMouseButtonDown(0) && onCanvas)
             {
                 input.Click = true;
                 input.ClickX = x;

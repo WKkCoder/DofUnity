@@ -215,8 +215,41 @@ namespace Dnf.Cli
         /// <summary>login-shot --busy:画请求在途的样子(按钮置灰、显示等待)。</summary>
         public bool LoginBusy { get; set; }
 
-        /// <summary>login-shot --no-art:不读数据目录,背景是纯色(整个画面都是合成的,不含任何原版内容)。</summary>
+        /// <summary>login-shot / serverselect-shot --no-art:不读数据目录,背景是纯色(整个画面都是合成的,不含任何原版内容)。</summary>
         public bool LoginNoArt { get; set; }
+
+        /// <summary>serverselect-shot --screen:画哪一张(server 选服务器、channel 选频道;默认 server)。</summary>
+        public string PickerScreen { get; set; } = "server";
+
+        /// <summary>serverselect-shot --servers:合成目录里有几个服务器(默认 1)。</summary>
+        public int PickerServers { get; set; } = 1;
+
+        /// <summary>serverselect-shot --channels:每个服务器有几个频道(默认 1)。</summary>
+        public int PickerChannels { get; set; } = 1;
+
+        /// <summary>serverselect-shot --page:选频道界面翻到第几页(从 1 数,默认 1)。</summary>
+        public int PickerPage { get; set; } = 1;
+
+        /// <summary>serverselect-shot --state:界面的状态(ready、loading、empty、failed、connecting、refreshing;默认 ready)。</summary>
+        public string PickerState { get; set; } = "ready";
+
+        /// <summary>serverselect-shot --start-button:"游戏开始"按钮的样子(normal、hover、pressed;默认 normal)。</summary>
+        public string PickerStart { get; set; } = "normal";
+
+        /// <summary>serverselect-shot --hover:鼠标指针在画布的 x,y(影响悬停的画法)。</summary>
+        public string? PickerHover { get; set; }
+
+        /// <summary>serverselect-shot --server-name:第一个服务器的名字(默认"希洛克";只有登记过素材的名字才画原版插画)。</summary>
+        public string PickerServerName { get; set; } = "希洛克";
+
+        /// <summary>serverselect-shot --no-event:第一个服务器不挂活动角标。</summary>
+        public bool PickerNoEvent { get; set; }
+
+        /// <summary>serverselect-shot --congestion:各频道的档位(smooth、good、normal、crowded、full、noport,逗号分隔,按频道序号循环)。</summary>
+        public string PickerCongestion { get; set; } = "smooth";
+
+        /// <summary>serverselect-shot --tint:把标签精确匹配的精灵的染色 alpha 钉成指定值(标签=0..255,逗号分隔),对拍时钉住基线那一刻的光晕强度。</summary>
+        public string? PickerTints { get; set; }
 
         /// <summary>bag-shot --tab:背包窗口翻到第几个页签(0 到 3,默认 0 = 装备页)。</summary>
         public int BagTab { get; set; }
@@ -343,6 +376,8 @@ namespace Dnf.Cli
             "      --text 装上合成的方块字体让文字走中文那一套(命令行没有汉字字体,只对版面),并打印各文字精灵的位置;不带 --online 时输出与以前逐字节一致\n" +
             "  dnf login-shot --png <输出.png> [--time <毫秒>] [--user <合成账号>] [--typed N] [--notice <类别> [--countdown 秒]] [--busy] [--change-password] [--no-art]\n" +
             "      (联网登录界面(-dnfonline 的第一屏)在界面打开 --time 毫秒时的 800×600 画面:账号预填 --user(不打印),密码框里有 --typed 个字符(只画圆点),--notice 显示某一类提示(wrong-credentials、rate-limited 配 --countdown 等),--busy 画请求在途,--change-password 画修改密码形态;没有汉字字体,标签是英文占位;背景是选角底图(用户数据,只在本机看,不入库),--no-art 不读数据、背景纯色)\n" +
+            "  dnf " + Dnf.Cli.Analysis.ServerSelectShot.Usage + "\n" +
+            "      (选服务器、选频道两张界面(-dnfonline 联网外壳的第二、三屏,r18-serverui,基线 S02-client-00 到 03)在界面打开 --time 毫秒时的 800×600 画面:目录是合成的(--servers 个服务器 × --channels 个频道,档位按 --congestion 循环,默认画基线的内容),--select 选中第几个服务器,--page 翻页,--state 画读目录中/空/失败/连接中/刷新中,--start-button 画大按钮悬停或按下,--hover 放鼠标指针,--tint 把光晕强度钉成指定值;没有汉字字体,文字是英文占位;背景与各件素材来自用户数据(只在本机看,不入库),--no-art 不读数据)\n" +
             "  dnf town-check [--town N]\n" +
             "      (城镇图册检查:读 town.lst 与每座 .twn,汇总区域类型、出口的去处与对称性、到地下城入口的路线;--town N 逐区域打印出口矩形、触发方向与按规则算出的落脚点(本机查看,数值不入库))\n" +
             "  dnf arrival-check [--dungeon <副本定义>] [--hero-id N] [--scan 起:止 --expect 房间:侧:x:y:容差,…] [--probe 房间:侧:y,…]\n" +
@@ -664,6 +699,39 @@ namespace Dnf.Cli
                     case "--no-art":
                         opts.LoginNoArt = true;
                         break;
+                    case "--screen":
+                        opts.PickerScreen = NextValue(args, ref i);
+                        break;
+                    case "--servers":
+                        opts.PickerServers = int.TryParse(NextValue(args, ref i), out int pickerServers) && pickerServers >= 1 && pickerServers <= 40 ? pickerServers : throw new UserError("--servers 需要 1 到 40 的整数");
+                        break;
+                    case "--channels":
+                        opts.PickerChannels = int.TryParse(NextValue(args, ref i), out int pickerChannels) && pickerChannels >= 0 && pickerChannels <= 200 ? pickerChannels : throw new UserError("--channels 需要 0 到 200 的整数");
+                        break;
+                    case "--page":
+                        opts.PickerPage = int.TryParse(NextValue(args, ref i), out int pickerPage) && pickerPage >= 1 ? pickerPage : throw new UserError("--page 需要从 1 数起的正整数");
+                        break;
+                    case "--state":
+                        opts.PickerState = NextValue(args, ref i);
+                        break;
+                    case "--start-button":
+                        opts.PickerStart = NextValue(args, ref i);
+                        break;
+                    case "--hover":
+                        opts.PickerHover = NextValue(args, ref i);
+                        break;
+                    case "--server-name":
+                        opts.PickerServerName = NextValue(args, ref i);
+                        break;
+                    case "--no-event":
+                        opts.PickerNoEvent = true;
+                        break;
+                    case "--congestion":
+                        opts.PickerCongestion = NextValue(args, ref i);
+                        break;
+                    case "--tint":
+                        opts.PickerTints = NextValue(args, ref i);
+                        break;
                     case "--tab":
                         opts.BagTab = int.TryParse(NextValue(args, ref i), out int bagTab) && bagTab >= 0 && bagTab <= 3 ? bagTab : throw new UserError("--tab 需要 0 到 3 的整数");
                         break;
@@ -871,6 +939,8 @@ namespace Dnf.Cli
                     return CharSelectShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "login-shot":
                     return LoginShot.Run(opts);
+                case "serverselect-shot":
+                    return ServerSelectShot.Run(opts);
                 case "fit-map":
                     return MapFit.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "fit-sprite":

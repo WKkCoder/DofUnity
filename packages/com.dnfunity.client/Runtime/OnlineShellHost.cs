@@ -34,6 +34,14 @@ namespace Dnf.Client
         public int ClickX;
 
         public int ClickY;
+
+        /// <summary>鼠标指针这一帧在画布上(<see cref="PointerX"/>、<see cref="PointerY"/> 有效);不在画布上为 false。只影响悬停的画法。</summary>
+        public bool HasPointer;
+
+        /// <summary>指针位置(800×600 画布坐标)。</summary>
+        public int PointerX;
+
+        public int PointerY;
     }
 
     /// <summary>宿主这一帧要对画面做什么(<see cref="OnlineShellHost.TakeViewChange"/> 的结论;宿主只照做,不自己判断)。</summary>
@@ -97,6 +105,14 @@ namespace Dnf.Client
             {
                 flow.Key(OnlineShellKey.Space);
             }
+            if (input.HasPointer)
+            {
+                flow.Hover(input.PointerX, input.PointerY);
+            }
+            else
+            {
+                flow.HoverNone();
+            }
             if (input.Click)
             {
                 flow.Click(input.ClickX, input.ClickY);
@@ -121,19 +137,23 @@ namespace Dnf.Client
 
         /// <summary>
         /// 造真实的宿主:后端用 <paramref name="setup"/> 的连接配置(没有配置时后端什么网络操作也不做)。
+        /// <paramref name="serverUi"/> 为 true 时启用选服务器、选频道的真界面(r18-serverui):外壳不再自动放行这两个阶段(<see cref="OnlineShellOptions.AutoPassPlaceholders"/> 设为 false),
+        /// 后端同时充当频道目录的来源;<paramref name="picker"/> 是真界面的素材(为 null 时用 <paramref name="art"/> 的图包与光束)。
+        /// 为 false(默认)时一切照旧:两个阶段是占位、自动放行,用默认频道端口连接。
         /// <paramref name="characterSelect"/> 非 null 时选角界面用服务器给的真名册(<see cref="OnlineShellOptions.CharacterSelect"/>),为 null 是外壳原来的占位名册。
         /// </summary>
-        public static OnlineShellHost Create(OnlineShellSetup setup, CharacterSelectScene art, Action<string> log, OnlineCharacterSelectOptions characterSelect = null)
+        public static OnlineShellHost Create(OnlineShellSetup setup, CharacterSelectScene art, Action<string> log, bool serverUi = false, ServerPickerScene picker = null,
+            OnlineCharacterSelectOptions characterSelect = null)
         {
             if (setup == null)
             {
                 throw new ArgumentNullException(nameof(setup));
             }
-            return new OnlineShellHost(setup, new OnlineShellBackend(setup.CreateSettings(), log), art, log, null, characterSelect);
+            return new OnlineShellHost(setup, new OnlineShellBackend(setup.CreateSettings(), log), art, log, null, serverUi, picker, characterSelect);
         }
 
         internal OnlineShellHost(OnlineShellSetup setup, OnlineShellBackend backend, CharacterSelectScene art, Action<string> log, IGlyphFonts fonts,
-            OnlineCharacterSelectOptions characterSelect = null)
+            bool serverUi = false, ServerPickerScene picker = null, OnlineCharacterSelectOptions characterSelect = null)
         {
             if (setup == null)
             {
@@ -151,6 +171,12 @@ namespace Dnf.Client
                 Fonts = fonts,
                 CharacterSelect = characterSelect,
             };
+            if (serverUi)
+            {
+                options.AutoPassPlaceholders = false;
+                options.ChannelDirectory = backend;
+                options.PickerScene = picker;
+            }
             _flow = new OnlineShellFlow(backend, options);
             if (!string.IsNullOrEmpty(setup.PrefillPassword))
             {
@@ -165,7 +191,7 @@ namespace Dnf.Client
         /// <summary>外壳已经把控制权交给游戏(<see cref="OnlineShellStage.InGame"/>)。</summary>
         public bool InGame => _flow.Stage == OnlineShellStage.InGame;
 
-        /// <summary>玩家在选角界面点了"结束游戏"。</summary>
+        /// <summary>玩家在选角(或选频道)界面点了"结束游戏"。</summary>
         public bool QuitRequested => _flow.QuitRequested;
 
         /// <summary>

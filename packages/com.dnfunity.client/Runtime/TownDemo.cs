@@ -42,7 +42,7 @@ namespace Dnf.Client
     /// 带 -dnfonline(没带 -dnfnet、不是离屏出图)时走联网外壳(r18-onlineshell,<see cref="OnlineShellHost"/>,宿主一侧的接线在 TownDemo.OnlineShell.cs):
     /// 先到登录界面(账号、口令、进入游戏、注册),登录成功后依次过选服务器、选频道(目前自动通过)与选角(占位),进入游戏后交给下面的城镇流程(角色本体先用本地占位);
     /// 连接配置(网关、密钥等)开发版读 -dnfnetroot 指的本地凭据,正式分发读持久数据目录下的配置文件,缺了就在登录界面提示"未配置连接"、不发任何请求;
-    /// -dnfonlineuser &lt;账号&gt; 预填账号(口令只靠手输)。不带 -dnfonline 时一切与以前一字不变;阶段日志只打 DNF_ONLINE stage= 行(不含账号、口令、地址、角色名)。
+    /// -dnfonlineuser &lt;账号&gt; 预填账号(口令只靠手输);再带 -dnfserverui 时选服务器、选频道用真界面(从频道目录服务读列表,选服务器 → 选频道 → 连接),不带就是上面的占位自动放行。不带 -dnfonline 时一切与以前一字不变;阶段日志只打 DNF_ONLINE stage= 行(不含账号、口令、地址、角色名)。
     /// 带 -dnfflow 时玩整条流程(<see cref="GameFlow"/>,证据 E-093):从选角(-dnfflowfrom char,证据 E-096:方向键移动选中、回车或空格开始游戏、Esc 或点"结束游戏"退出,点角色格子选中)、
     /// 城镇(town,默认)、副本选择(select)或副本(dungeon)开始;
     /// 城镇走城镇图册(<see cref="AtlasTownWorld"/>,证据 E-095):登录落在赛丽亚房间、走进地图边缘的出口换区域、艾尔文防线走到地下城入口区域再走进右边的出口打开世界地图,
@@ -457,6 +457,9 @@ namespace Dnf.Client
                         break;
                     case "-dnfonlineuser":
                         if (value != null) { _onlineUser = value; i++; }
+                        break;
+                    case "-dnfserverui":
+                        _serverUi = true;        // 联网外壳的选服务器、选频道用真界面(r18-serverui);没带 -dnfonline 时没有作用
                         break;
                     case "-dnfnetroot":
                         if (value != null) { _netRoot = value; i++; }

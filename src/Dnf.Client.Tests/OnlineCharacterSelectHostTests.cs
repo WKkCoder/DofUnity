@@ -51,7 +51,7 @@ public sealed class OnlineCharacterSelectHostTests
                 port.OnConnect = (channel, ct) => Task.FromResult(new OnlineConnectReport(OnlineFailure.None, OnlineCharacterListStatus.Received, roster));
             });
             var setup = new OnlineShellSetup(Backend.Template, OnlineShellConfigSource.ConfigFile, null, 31000, BackendRig.User, null);
-            Host = new OnlineShellHost(setup, Backend.Backend, null, _ => { }, null, options);
+            Host = new OnlineShellHost(setup, Backend.Backend, null, _ => { }, null, characterSelect: options);
         }
 
         public BackendRig Backend { get; }

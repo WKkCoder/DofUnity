@@ -284,9 +284,10 @@ public sealed class OnlineShellBackendTests
     }
 
     [Fact]
-    public async Task A_channel_target_with_a_host_is_refused_without_touching_the_session()
+    public async Task A_channel_target_with_a_host_is_refused_by_a_session_that_only_knows_ports_without_touching_it()
     {
-        var rig = new BackendRig();
+        // 只实现旧接口的会话(不认识主机):明说连不上,不悄悄拿端口去连网关给的另一台。认得主机的会话见 OnlineShellBackendHostTests
+        var rig = new BackendRig(legacyOnly: true);
         await GatewayTestSupport.Bounded(rig.Backend.LoginAsync(BackendRig.User, BackendRig.Password, default));
 
         OnlineConnectOutcome connect = await GatewayTestSupport.Bounded(rig.Backend.ConnectChannelAsync(new ChannelTarget(31000, "channel.invalid"), default));
