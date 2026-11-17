@@ -44,6 +44,36 @@ public class CharacterSelectOnlineScreenTests
         Assert.False(screen.Scroll(1));
     }
 
+    // ------------------------------------------------------------------ 缺省的起点(Online 不传 index)
+
+    [Fact]
+    public void WithoutAnIndexTheOnlineScreenSelectsTheFirstCharacter()
+    {
+        CharacterRoster roster = RosterKit.Roster(3);
+        CharacterSelectScreen plain = CharacterSelectScreen.Online(roster, CharSelectKit.Scene());
+        Assert.Equal(0, plain.Index);
+        Assert.Same(roster[0], plain.Selected);
+        Assert.Equal("角色1", plain.Selected.Name);
+        Assert.Equal(0, plain.FirstRow);
+
+        CharacterSelectScreen withFonts = CharacterSelectScreen.Online(roster, CharSelectKit.Scene(), fonts: new SizedFonts());
+        Assert.Equal(0, withFonts.Index);
+        Assert.Same(roster[0], withFonts.Selected);
+        Assert.Equal("角色1", withFonts.Selected.Name);
+    }
+
+    [Fact]
+    public void WithoutAnIndexAnEmptyOnlineRosterSelectsNothing()
+    {
+        CharacterSelectScreen plain = CharacterSelectScreen.Online(RosterKit.Roster(0), CharSelectKit.Scene());
+        Assert.Equal(-1, plain.Index);
+        Assert.Null(plain.Selected);
+
+        CharacterSelectScreen withFonts = CharacterSelectScreen.Online(RosterKit.Roster(0), CharSelectKit.Scene(), fonts: new SizedFonts());
+        Assert.Equal(-1, withFonts.Index);
+        Assert.Null(withFonts.Selected);
+    }
+
     [Theory]
     [InlineData(0, 0, 0)]
     [InlineData(5, 5, 0)]
@@ -161,6 +191,89 @@ public class CharacterSelectOnlineScreenTests
         CharacterSelectScreen screen = Online(25, 8);    // 第 1 行
         Assert.True(screen.Scroll(1));                   // 窗口 1、2:第 1 行还看得见
         Assert.Equal(8, screen.Index);
+    }
+
+    // 14 个角色:三行 6、6、2 个;窗口 2 行,窗口第一行只能是 0 或 1。选中 0 号是进界面默认的状态,最常见的路径
+    private static CharacterSelectScreen Fourteen(int index = 0)
+    {
+        return CharacterSelectScreen.Online(RosterKit.Roster(14), RosterKit.EmptyScene(), index, new SizedFonts());
+    }
+
+    [Fact]
+    public void ScrollingDownFromTheFirstCharacterPullsTheSelectionToTheNearestRowOfItsColumn()
+    {
+        CharacterSelectScreen screen = Fourteen();                  // 进界面默认选中的就是 0 号
+        Assert.Equal((0, 0), (screen.Index, screen.FirstRow));
+
+        Assert.True(screen.Scroll(1));                              // 窗口第 1、2 行:0 号滚出了窗口上沿
+        Assert.Equal(1, screen.FirstRow);
+        Assert.Equal(6, screen.Index);                              // 同一列(第 0 列)、窗口里最近的一行(第 1 行)
+        Assert.Equal("角色7", screen.Selected.Name);
+
+        Assert.True(screen.Scroll(-1));                             // 窗口回到第 0、1 行:6 号在第 1 行,还看得见,不动
+        Assert.Equal(0, screen.FirstRow);
+        Assert.Equal(6, screen.Index);
+    }
+
+    [Fact]
+    public void ScrollingDownKeepsTheColumnOfTheSelectionWhateverItIs()
+    {
+        CharacterSelectScreen screen = Fourteen(5);                 // 第 0 行最右一列
+        Assert.True(screen.Scroll(1));
+        Assert.Equal(1, screen.FirstRow);
+        Assert.Equal(11, screen.Index);                             // 第 1 行最右一列
+    }
+
+    [Fact]
+    public void ScrollingUpPullsASelectionBelowTheWindowToTheNearestRowOfItsColumn()
+    {
+        CharacterSelectScreen screen = Fourteen(12);                // 第 2 行第 0 列:窗口自动滚到第 1、2 行
+        Assert.Equal((12, 1), (screen.Index, screen.FirstRow));
+
+        Assert.True(screen.Scroll(-1));                             // 窗口第 0、1 行:12 号滚出了窗口下沿
+        Assert.Equal(0, screen.FirstRow);
+        Assert.Equal(6, screen.Index);                              // 同一列、窗口里最近的一行(第 1 行)
+
+        screen = Fourteen(13);                                      // 第 2 行第 1 列(名册最后一个)
+        Assert.True(screen.Scroll(-1));
+        Assert.Equal(0, screen.FirstRow);
+        Assert.Equal(7, screen.Index);
+    }
+
+    [Fact]
+    public void ScrollingLeavesASelectionThatIsStillInTheWindowWhereItIs()
+    {
+        CharacterSelectScreen screen = Fourteen(7);                 // 第 1 行第 1 列:窗口在第 0、1 行与第 1、2 行时都看得见
+        Assert.True(screen.Scroll(1));
+        Assert.Equal((1, 7), (screen.FirstRow, screen.Index));
+        Assert.True(screen.Scroll(-1));
+        Assert.Equal((0, 7), (screen.FirstRow, screen.Index));
+    }
+
+    [Fact]
+    public void StartingAfterScrollingAwayFromTheFirstCharacterStartsTheOneOnScreenNotTheHiddenFirst()
+    {
+        CharacterSelectScreen screen = Fourteen();
+        Assert.True(screen.Scroll(1));
+        screen.Confirm();
+
+        Assert.Equal(CharacterSelectOutcome.Start, screen.Outcome);
+        Assert.Equal(6, screen.Index);
+        Assert.Same(screen.Roster[6], screen.Selected);             // 名册里下标 6 的角色,不是滚出窗口的 0 号
+        Assert.Equal("角色7", screen.Selected.Name);
+        Assert.Equal(6, screen.Selected.Online.Slot);               // 选角命令的槽号也是 6
+    }
+
+    [Fact]
+    public void ClickingTheScrollbarArrowThenStartStartsTheCharacterOnScreen()
+    {
+        CharacterSelectScreen screen = Fourteen();
+        Assert.True(screen.Click(CharacterSelectArt.ScrollX + 4, CharacterSelectArt.ScrollBottom + 3));    // 下箭头:窗口往下一行
+        Assert.Equal(1, screen.FirstRow);
+        Assert.True(CharSelectKit.ClickButton(screen, CharacterSelectButton.Start));
+        Assert.Equal(CharacterSelectOutcome.Start, screen.Outcome);
+        Assert.Equal(6, screen.Index);
+        Assert.Equal("角色7", screen.Selected.Name);
     }
 
     [Fact]

@@ -144,6 +144,39 @@ public class CharacterNamesTests
         Assert.Equal(string.Empty, Decode(new byte[] { 0xE6, 0xB5, 0x41 }));
     }
 
+    [Theory]
+    [InlineData(0xE4, 0x41, 0x80)]                                                                       // 第二个字节是 01000001、第三个是续字节:当三字节序列硬解会凑出 U+4040
+    [InlineData(0xE4, 0xC0, 0x80)]                                                                       // 第二个字节是 11000000:会凑出 U+4000
+    [InlineData(0xE4, 0x7F, 0x80)]                                                                       // 第二个字节是 01111111:会凑出 U+4FC0
+    [InlineData(0xE4, 0xFF, 0xBF)]                                                                       // 第二个字节是 11111111:会凑出 U+4FFF
+    [InlineData(0xEF, 0x20, 0x80)]                                                                       // 第二个字节是空格:会凑出 U+F800
+    public void AThreeByteLeadFailsWhenOnlyItsSecondByteIsNotAContinuation(int lead, int second, int third)
+    {
+        // 首字节与第三个字节都过得了关,只有第二个字节坏:全靠"第二个字节是不是 10xxxxxx"这一道检查挡住
+        Assert.Equal(string.Empty, Decode(new byte[] { (byte)lead, (byte)second, (byte)third }, out CharacterNameStatus status));
+        Assert.Equal(CharacterNameStatus.Invalid, status);
+        Assert.Equal(string.Empty, Decode(new byte[] { 0x41, (byte)lead, (byte)second, (byte)third }, out status));                 // 前面有合法的字符
+        Assert.Equal(CharacterNameStatus.Invalid, status);
+        Assert.Equal(string.Empty, Decode(new byte[] { (byte)lead, (byte)second, (byte)third, 0x42 }, out status));                 // 后面还有字符
+        Assert.Equal(CharacterNameStatus.Invalid, status);
+        Assert.Equal(string.Empty, Decode(new byte[] { 0x41, (byte)lead, (byte)second, (byte)third, 0x42 }, out status));           // 前后都有:整个名字作废,不是只丢这一个字
+        Assert.Equal(CharacterNameStatus.Invalid, status);
+    }
+
+    [Theory]
+    [InlineData(0xE4, 0x81, 0x80, "\u4040")]                                                             // 对照 E4 41 80:第二个字节换成合法的续字节,同样的首字节与第三个字节就解得出
+    [InlineData(0xE4, 0x80, 0x80, "\u4000")]                                                             // 对照 E4 C0 80
+    [InlineData(0xE4, 0xBF, 0x80, "\u4FC0")]                                                             // 对照 E4 7F 80
+    [InlineData(0xE4, 0xBF, 0xBF, "\u4FFF")]                                                             // 对照 E4 FF BF
+    [InlineData(0xEF, 0xA0, 0x80, "\uF800")]                                                             // 对照 EF 20 80
+    public void TheSameLeadAndThirdByteDecodeWhenTheSecondByteIsAContinuation(int lead, int second, int third, string expected)
+    {
+        Assert.Equal(expected, Decode(new byte[] { (byte)lead, (byte)second, (byte)third }, out CharacterNameStatus status));
+        Assert.Equal(CharacterNameStatus.Ok, status);
+        Assert.Equal("A" + expected + "B", Decode(new byte[] { 0x41, (byte)lead, (byte)second, (byte)third, 0x42 }, out status));
+        Assert.Equal(CharacterNameStatus.Ok, status);
+    }
+
     [Fact]
     public void AnInvalidNameDoesNotUseThePlaceholder()
     {

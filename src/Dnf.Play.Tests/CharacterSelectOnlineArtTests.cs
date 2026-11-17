@@ -222,6 +222,30 @@ public class CharacterSelectOnlineArtTests
     }
 
     [Fact]
+    public void ANameOrTitleThatIsInTheTranslationTableIsDrawnAsItIsNotTranslated()
+    {
+        // 名字与称号是数据文字、不是界面占位词:就算恰好与 UiText 里某句占位英文一模一样,也要原样画出(这张画面的画笔不翻译)
+        const string phrase = "COOLING DOWN";                                  // 整句例子(TextSystemTests 里也用它),译文是"冷却中"
+        Assert.True(UiText.HasTranslation(phrase));                            // 样本失效(表里没有了)时在这里响亮地报出来,而不是让下面的断言悄悄变弱
+        Assert.NotEqual(phrase, UiText.Translate(phrase));
+
+        var titles = new StubTitles { Name = (job, grow, awakening) => phrase };
+        CharacterRoster roster = OnlineCharacterRoster.From(RosterKit.List(RosterKit.Entry(phrase)), titles);
+        List<SceneSprite> captions = Tagged(Build(CharSelectKit.OnlineOf(roster, new SizedFonts())), "select-char-caption");
+        Assert.Equal(2, captions.Count);
+
+        ShellPaint asIs = PaintOf(new SizedFonts());
+        SpriteFrame name = asIs.Line("Lv1 " + phrase, 12, CharacterSelectArt.CaptionColor, OverlayArt.Black, 115);
+        SpriteFrame job = asIs.Line(phrase, 12, CharacterSelectArt.CaptionColor, OverlayArt.Black, 115);
+        Assert.True(ShellFrames.Same(name, captions[0].Frame), "第一行");
+        Assert.True(ShellFrames.Same(job, captions[1].Frame), "第二行");
+
+        // 对照:把译文画出来是另一张图——上面的"原样"断言分得出译文与原文
+        SpriteFrame translated = asIs.Line(UiText.Translate(phrase), 12, CharacterSelectArt.CaptionColor, OverlayArt.Black, 115);
+        Assert.False(ShellFrames.Same(translated, captions[1].Frame));
+    }
+
+    [Fact]
     public void AnEmptyNameShowsOnlyTheLevel()
     {
         CharacterRoster roster = OnlineCharacterRoster.From(RosterKit.List(RosterKit.EntryBytes(new byte[] { 0xF8 }, level: 9)));    // 非法名字 → 空名字

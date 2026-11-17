@@ -153,6 +153,35 @@ public class CharacterTitlesTests
         Assert.Equal("基础职业", titles.ClassName(1, 0, 1));    // 一转 0 没有觉醒名(也不会被前面没有块号的那行 [awakening name] 占去)
     }
 
+    /// <summary>另一张合成的角色文字表(GB18030):b0、b1 是基础职业与一转名,k11、k12 写在 [growtype 1] 块里,k21、k22 写在 [growtype 2] 块里。</summary>
+    private static StrLibrary BlockStrings()
+    {
+        byte[] table = ItemTextsTests.Gbk("// header\r\nb0>基础职业丙\r\nb1>一转丁\r\nk11>壹块觉醒甲\r\nk12>壹块觉醒乙\r\nk21>贰块觉醒甲\r\nk22>贰块觉醒乙\r\n");
+        return new StrLibrary(p => p == "character/character.kor.str" ? table : null);
+    }
+
+    [Fact]
+    public void TheFirstGrowthBlockHasNoAwakeningNamesEvenIfTheScriptWritesSome()
+    {
+        // [growtype 1] 是基础职业的成长表,没有觉醒名;[growtype N](N ≥ 2)才属于一转 N − 1
+        ScriptLine[] script =
+        {
+            Keyed("[growtype name]", "b0", "b1"),
+            Plain("[growtype 1]"),
+            Keyed("[awakening name]", "k11", "k12"),                // 写在块 1 里:不属于任何一转,更不是基础职业的觉醒名
+            Plain("[growtype 2]"),
+            Keyed("[awakening name]", "k21", "k22"),                // 块 2 → 一转 1
+        };
+        var titles = new DnfCharacterTitles(path => script, BlockStrings());
+
+        Assert.Equal("基础职业丙", titles.ClassName(0, 0, 0));
+        Assert.Equal("基础职业丙", titles.ClassName(0, 0, 1));      // 基础职业没有觉醒名:回落到一转名表第 0 项,不是块 1 里的 k11
+        Assert.Equal("基础职业丙", titles.ClassName(0, 0, 2));      // 也不是 k12
+        Assert.Equal("贰块觉醒甲", titles.ClassName(0, 1, 1));      // 一转 1 的一觉:块 2 的第一个名字
+        Assert.Equal("贰块觉醒乙", titles.ClassName(0, 1, 2));      // 二觉:第二个
+        Assert.Null(titles.ClassName(0, 1, 3));                     // 只有两个觉醒名
+    }
+
     // ------------------------------------------------------------------ 职业各读各的
 
     [Fact]
