@@ -54,6 +54,16 @@ namespace Dnf.Play
 
         /// <summary>外壳自己的画面(登录、状态、提示叠层)用的字体集(测试用);为 null 时用全进程共用的(<see cref="OverlayArt.SharedFonts"/>)。</summary>
         public IGlyphFonts Fonts { get; set; }
+
+        /// <summary>
+        /// 选服务器、选频道真界面的目录来源(可选注入)。为 null(默认)时这两个阶段还是原来的占位,行为不变;
+        /// 不为 null 时这两个阶段显示 <see cref="ServerSelectScreen"/> 与 <see cref="ChannelSelectScreen"/>,
+        /// 此时 <see cref="AutoPassPlaceholders"/> 必须是 false(否则构造抛 <see cref="ArgumentException"/>)。
+        /// </summary>
+        public IChannelDirectoryBackend ChannelDirectory { get; set; }
+
+        /// <summary>真界面的素材(图包、光束、提示条光);为 null 时用 <see cref="Art"/> 的图包与光束,没有 <see cref="Art"/> 就画程序底板。只在 <see cref="ChannelDirectory"/> 不为 null 时有用。</summary>
+        public ServerPickerScene PickerScene { get; set; }
     }
 
     /// <summary>本地的输入检查(没过就不发请求)。账号规则与网关一致:4 到 32 个 ASCII 字母、数字或下划线。</summary>
@@ -122,7 +132,7 @@ namespace Dnf.Play
     /// 所有等待都是"开一个 Task,之后在 <see cref="Poll"/> 里查它完成没有",绝不阻塞渲染线程;阶段只在 <see cref="Poll"/> 里变(输入方法只记意图,断线事件只置标志),
     /// 所以后台线程完成的结果从不在后台线程上被处理。取消与超时放弃在途的任务(它的结果被丢弃),并让后端放弃会话。没有任何自动重试。
     /// </summary>
-    public sealed class OnlineShellFlow
+    public sealed partial class OnlineShellFlow
     {
         private enum OpKind
         {
@@ -131,6 +141,7 @@ namespace Dnf.Play
             ChangePassword,
             Connect,
             Select,
+            Directory,
         }
 
         private sealed class Operation
@@ -182,6 +193,7 @@ namespace Dnf.Play
             ISpriteSource sprites = _options.Art?.Sprites;
             _login = new LoginScreen(sprites, _options.Fonts);
             _status = new OnlineShellStatusScreen(sprites, _options.Fonts);
+            PickerInit();
             _backend.Disconnected += OnBackendDisconnected;
             if (!string.IsNullOrEmpty(_options.InitialUsername))
             {
@@ -258,6 +270,10 @@ namespace Dnf.Play
                 case OnlineShellStage.ServerSelect:
                 case OnlineShellStage.ChannelSelect:
                 case OnlineShellStage.Loading:
+                    if (PickerOwns(Stage) && PickerKey(key))
+                    {
+                        break;
+                    }
                     if (key == OnlineShellKey.Escape)
                     {
                         _backIntent = true;
@@ -293,6 +309,10 @@ namespace Dnf.Play
             {
                 _login.Click(x, y);
             }
+            else if (PickerOwns(Stage))
+            {
+                PickerClick(x, y);
+            }
             else if (Stage == OnlineShellStage.CharacterSelect)
             {
                 if (_options.Art != null && _select.Outcome == CharacterSelectOutcome.None
@@ -312,6 +332,7 @@ namespace Dnf.Play
             {
                 _select.Advance(deltaMs);
             }
+            PickerAdvance(deltaMs);
         }
 
         /// <summary>扩展点(选服务器界面):选定服务器,进入选频道。只在选服务器阶段有效。</summary>
@@ -382,6 +403,7 @@ namespace Dnf.Play
             }
             AutoPass();
             UpdateCountdown();
+            PickerSync();
         }
 
         private void OnBackendDisconnected()
@@ -405,6 +427,7 @@ namespace Dnf.Play
             _serverIntent = false;
             _swapIntent = false;
             _chosenChannel = null;
+            PickerIntents(ref back, ref server, ref chosen);
 
             switch (Stage)
             {
@@ -677,6 +700,9 @@ namespace Dnf.Play
                 case OpKind.Connect:
                     FinishConnect(op, error);
                     break;
+                case OpKind.Directory:
+                    FinishDirectory(op, error);
+                    break;
                 default:
                     FinishSelect(op, error);
                     break;
@@ -874,6 +900,9 @@ namespace Dnf.Play
                     UpdateStatus();
                     Log(OnlineShellStage.ChannelSelect, "fail", notice.Reason);
                     break;
+                case OpKind.Directory:
+                    DirectoryFailed(notice);
+                    break;
                 default:
                     GoToLogin(notice, "timeout");
                     break;
@@ -924,6 +953,7 @@ namespace Dnf.Play
                     _scene = _status;
                     break;
             }
+            PickerEnter(stage);
             UpdateStatus();
             Log(stage, "enter", reason);
         }
@@ -949,6 +979,7 @@ namespace Dnf.Play
             SelectedSlot = -1;
             _select = null;
             _selectScene = null;
+            PickerReset();
             _login.SetBusy(false);
             _login.SetMode(LoginMode.Login);
             _login.ClearSecrets();
@@ -969,6 +1000,7 @@ namespace Dnf.Play
             {
                 _selectScene.Notice = notice;
             }
+            PickerNotice(notice);
         }
 
         private void UpdateStatus()
