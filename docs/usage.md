@@ -107,6 +107,8 @@ src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe channel [仓库根] [--channel
     再加 `-dnfnetdungeon <副本编号 0–65535> <模式 0–4>`(必须同时带 `-dnfnet`)时,进城后在同一条会话上接着走完进副本五步(开始游戏 → 装载通知 → 选副本 → 副本信息 → 起始地图),
     有了结局再接上心跳;不带时联网进城的行为一字不变,参数不合规只打一行说明并忽略。进图后宿主还会按起始地图的怪物记录在房间里摆出同数目、同顺序的本地怪,本地击杀经联网战斗状态机上报,两段结算通知收齐后自动回城(E-403,flow.md §110)。目前只覆盖起始地图一张图:多房间副本里起始房杀光后服务端不会给清图通知,这一局会停在战斗中,所以真服核对请挑单房间副本;击杀与结算的真服回包还没亲见。再加 `-dnfnetbot`(要同时带 `-dnfbot`、`-dnfnet`、`-dnfnetdungeon`,缺一项只打一行写明缺哪项的忽略日志)时,联网房间里由自动机替你打,带整段超时与无进展上限,停手时写一行状态日志(E-407,flow.md §114);批量跑务必带 `-dnfquitafter <秒>` 且大于整段上限(缺省 600 秒),否则进程不会自行退出。
 
+    Unity 开发版宿主还有一套**联网外壳**(E-427,flow.md §123):带 `-dnfonline` 启动先进中文登录界面,登录成功后走 选服务器 → 选频道 → 选角 → 进游戏(选服务器、选频道、选角目前是占位自动通过,进游戏后的英雄仍是本地占位);`-dnfonlineuser <账号>` 预填账号;开发版带 `-dnfnetroot <仓库根>` 才读本地凭据并预填口令,`-dnfnetport <端口>` 改频道端口;正式分发读持久数据目录下的 `dnf-online.conf`(每行 `键 = 值`,`server_url`、`aes_key`、`mouse_cipher` 必填,`data_version`、`channel_port` 可选;没有这个文件时登录界面提示「未配置连接」且不发任何请求)。不带 `-dnfonline` 时一切不变。离屏看登录界面版式:`dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll login-shot --png <输出.png>`(命令行没有汉字字体,出的是英文点阵占位版,版式与中文版相同)。**窗口里的键盘、输入法与鼠标手感还没有人试过——试的时候只用合成账号与本机地址,不要填真实账号、口令或服务器地址。**
+
 ```sh
 open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf 与 ImagePacks2 的目录>" -dnfnet
 open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<同上>" -dnfnet -dnfnetdungeon <副本编号> <模式>
