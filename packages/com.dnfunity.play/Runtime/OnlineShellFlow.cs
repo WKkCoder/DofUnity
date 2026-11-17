@@ -54,6 +54,12 @@ namespace Dnf.Play
 
         /// <summary>外壳自己的画面(登录、状态、提示叠层)用的字体集(测试用);为 null 时用全进程共用的(<see cref="OverlayArt.SharedFonts"/>)。</summary>
         public IGlyphFonts Fonts { get; set; }
+
+        /// <summary>
+        /// 联网选角(真名册):不为 null 时选角阶段把服务端角色列表适配成名册(<see cref="OnlineCharacterRoster"/>:名字、职业称号、不可进入、多于一屏滚动)
+        /// 并用联网模式的选角界面(<see cref="CharacterSelectScreen.Online"/>);为 null(默认)时仍是外壳原来的占位名册(<see cref="OnlineShellRoster.Placeholder"/>)。
+        /// </summary>
+        public OnlineCharacterSelectOptions CharacterSelect { get; set; }
     }
 
     /// <summary>本地的输入检查(没过就不发请求)。账号规则与网关一致:4 到 32 个 ASCII 字母、数字或下划线。</summary>
@@ -930,7 +936,10 @@ namespace Dnf.Play
 
         private void EnterCharacterSelect(int index, OnlineNotice notice, string reason)
         {
-            _select = new CharacterSelectScreen(OnlineShellRoster.Placeholder(Characters), _options.Art, index);
+            OnlineCharacterSelectOptions real = _options.CharacterSelect;
+            _select = real == null
+                ? new CharacterSelectScreen(OnlineShellRoster.Placeholder(Characters), _options.Art, index)
+                : CharacterSelectScreen.Online(OnlineCharacterRoster.From(Characters, real.Titles), _options.Art, index, _options.Fonts);
             _selectScene = new OnlineShellNoticeOverlay(_select, _options.Fonts);
             EnterStage(OnlineShellStage.CharacterSelect, reason);
             SetNotice(notice);

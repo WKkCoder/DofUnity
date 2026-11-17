@@ -185,6 +185,18 @@ namespace Dnf.Cli
         /// <summary>charselect-shot --no-avatars:不画角色头像(只剩底座、框与文字),拿来和带头像的画面相减量出头像的位置。</summary>
         public bool NoAvatars { get; set; }
 
+        /// <summary>charselect-shot --online:联网选角的画法(<c>CharacterSelectScreen.Online</c>,名册由合成的服务端角色列表适配,--chars 可以超过 12 个)。</summary>
+        public bool CharOnline { get; set; }
+
+        /// <summary>charselect-shot --text:联网画法里装上合成的方块字体(命令行没有汉字字体,方块只用来对版面),文字走中文那一套;隐含 --online。</summary>
+        public bool CharText { get; set; }
+
+        /// <summary>charselect-shot --first-row:联网画法里窗口第一行是名册的第几行(0 起,夹进可滚范围)。</summary>
+        public int CharFirstRow { get; set; }
+
+        /// <summary>charselect-shot --char-prompt:联网画法里显示的提示:cannot(不能进入)、deleting(待删除)、na(暂未开放)。</summary>
+        public string? CharPrompt { get; set; }
+
         /// <summary>login-shot --user:账号框里预填的账号(只用合成的名字,默认 player_01;不会打印出来)。</summary>
         public string LoginUser { get; set; } = "player_01";
 
@@ -327,6 +339,8 @@ namespace Dnf.Cli
             "      (城镇图册里一块区域的 800×600 画面:主角在登录落脚点,房间式合成,证据 E-095;Unity 的 -dnftownarea 离屏渲染以它为 CPU 参照)\n" +
             "  dnf charselect-shot --png <输出.png> [--time <毫秒>] [--chars N(1 到 12,默认 1)] [--select N] [--no-avatars]\n" +
             "      (选角界面在界面打开 --time 毫秒时的 800×600 画面,证据 E-096:名册是 N 个默认角色,--select 选中第几个(从 1 数);Unity 的 -dnfflowfrom char 离屏渲染以它为 CPU 参照)\n" +
+            "      联网画法(r18-charui):--online [--text] [--first-row N] [--char-prompt cannot|deleting|na] [--busy],名册是 N 个合成的服务端角色(--chars 可到 40,每 5 个里第 5 个是 X1=1 的不可进入角色),\n" +
+            "      --text 装上合成的方块字体让文字走中文那一套(命令行没有汉字字体,只对版面),并打印各文字精灵的位置;不带 --online 时输出与以前逐字节一致\n" +
             "  dnf login-shot --png <输出.png> [--time <毫秒>] [--user <合成账号>] [--typed N] [--notice <类别> [--countdown 秒]] [--busy] [--change-password] [--no-art]\n" +
             "      (联网登录界面(-dnfonline 的第一屏)在界面打开 --time 毫秒时的 800×600 画面:账号预填 --user(不打印),密码框里有 --typed 个字符(只画圆点),--notice 显示某一类提示(wrong-credentials、rate-limited 配 --countdown 等),--busy 画请求在途,--change-password 画修改密码形态;没有汉字字体,标签是英文占位;背景是选角底图(用户数据,只在本机看,不入库),--no-art 不读数据、背景纯色)\n" +
             "  dnf town-check [--town N]\n" +
@@ -608,13 +622,26 @@ namespace Dnf.Cli
                         opts.TownArea = NextValue(args, ref i);
                         break;
                     case "--chars":
-                        opts.CharCount = int.TryParse(NextValue(args, ref i), out int chars) && chars >= 1 && chars <= 12 ? chars : throw new UserError("--chars 需要 1 到 12 的整数");
+                        // 离线画法最多 12 个(Run 里再检查);--online 的联网画法可以更多(滚动)
+                        opts.CharCount = int.TryParse(NextValue(args, ref i), out int chars) && chars >= 1 && chars <= CharSelectShot.MaxOnlineChars ? chars : throw new UserError("--chars 需要 1 到 12 的整数(--online 时 1 到 " + CharSelectShot.MaxOnlineChars + ")");
                         break;
                     case "--select":
                         opts.SelectIndex = int.TryParse(NextValue(args, ref i), out int selectIndex) && selectIndex >= 1 ? selectIndex : throw new UserError("--select 需要从 1 数起的正整数");
                         break;
                     case "--no-avatars":
                         opts.NoAvatars = true;
+                        break;
+                    case "--online":
+                        opts.CharOnline = true;
+                        break;
+                    case "--text":
+                        opts.CharText = true;
+                        break;
+                    case "--first-row":
+                        opts.CharFirstRow = int.TryParse(NextValue(args, ref i), out int firstRow) && firstRow >= 0 ? firstRow : throw new UserError("--first-row 需要非负整数");
+                        break;
+                    case "--char-prompt":
+                        opts.CharPrompt = NextValue(args, ref i);
                         break;
                     case "--user":
                         opts.LoginUser = NextValue(args, ref i);

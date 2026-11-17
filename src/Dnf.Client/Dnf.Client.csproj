@@ -24,6 +24,7 @@
     <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineShellBackend.cs" Link="Runtime\OnlineShellBackend.cs" />
     <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineShellSetup.cs" Link="Runtime\OnlineShellSetup.cs" />
     <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineShellHost.cs" Link="Runtime\OnlineShellHost.cs" />
+    <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineCharacterSelectSetup.cs" Link="Runtime\OnlineCharacterSelectSetup.cs" />
   </ItemGroup>
 
   <ItemGroup>

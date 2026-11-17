@@ -41,6 +41,16 @@ namespace Dnf.Play
             }
             return new CharacterSelectScene(assets, new DnfCharacterAvatars(assets), assets.LoadAni);
         }
+
+        /// <summary>联网选角的素材:同 <see cref="From"/>,头像换成按职业给基础形象的 <see cref="DnfJobAvatars"/>(外壳阶段机的真名册用)。</summary>
+        public static CharacterSelectScene ForOnline(DnfAssets assets)
+        {
+            if (assets == null)
+            {
+                throw new ArgumentNullException(nameof(assets));
+            }
+            return new CharacterSelectScene(assets, new DnfJobAvatars(assets), assets.LoadAni);
+        }
     }
 
     /// <summary>选角界面上的按钮。</summary>
@@ -183,6 +193,44 @@ namespace Dnf.Play
         /// <summary>滑块的高度:基线上账号的槽位比界面能同时显示的多一点,滑块没有占满轨道(351 / 391);占位名册不会滚动,照这个画。</summary>
         public const int ScrollThumbHeight = 351;
 
+        /// <summary>滚动条的宽(箭头与滑块都是 9 像素)。</summary>
+        public const int ScrollBarWidth = 9;
+
+        /// <summary>两个箭头之间轨道的高度(391)。</summary>
+        public const int ScrollTrackHeight = ScrollBottom - ScrollTop - ScrollArrowHeight;
+
+        /// <summary>
+        /// 联网界面滑块高度的推算:内容高 = 行数 × <see cref="SlotPitchY"/> + 这个留白,滑块高 = 轨道高 × 轨道高 / 内容高。
+        /// 留白 16 是拿基线的 351 / 391(两行)反推的:391 × 391 / (2 × 210 + 16) = 350.65 → 351;三行以上是按同一公式外推(没有基线可对,推断)。
+        /// </summary>
+        public const int ScrollContentPadding = 16;
+
+        /// <summary>滑块图本身的高度(9×23),滑块不会比它更矮。</summary>
+        public const int ScrollThumbMinHeight = 23;
+
+        /// <summary>联网界面里两行字的字号(像素)。</summary>
+        public const int OnlineCaptionPx = 12;
+
+        /// <summary>
+        /// 联网界面里两行字的墨迹中心(汉字字体):水平在槽位框左边 + <see cref="FootDX"/>,垂直在槽位框上沿 + 178、第二行再加 <see cref="CaptionLineStep"/>。
+        /// 依据:基线 S02-client-04 第 0 格两行字的墨迹行是槽位框内 172 到 183 与 185 到 196(各 12 行、行距 13),列中心在槽位框左边 + 60 上下;
+        /// 文字帧按"帧里墨迹包围盒的中心(<see cref="InkCenter"/>) = 这个中心"摆,字体不同(行框高矮、字在行框里的上下位置不同)也对得齐。
+        /// </summary>
+        public const int OnlineCaptionCenterX = FootDX;
+
+        public const int OnlineCaptionCenterY = 178;
+
+        /// <summary>联网界面里小按钮文字的中心(相对按钮左上角):基线上"选择频道/结束游戏"的墨迹中心在 (39, 11) 上下,字号 12。</summary>
+        public const int OnlineButtonCenterX = 39;
+
+        public const int OnlineButtonCenterY = 11;
+
+        /// <summary>
+        /// 联网界面里提示条(不能进入、暂未开放、正在进入)的顶边 y,居中于画布:与外壳自己的提示条是同一个位置(<see cref="OnlineShellNoticeOverlay.NoticeY"/>),
+        /// 条的底边落在"开始"按钮的顶边上,不盖角色的文字(第二行字的墨迹到 491,条从 494 起)。
+        /// </summary>
+        public const int PromptY = StartY - OnlineShellArt.NoticeBarHeight;
+
         public const int StartX = 337;
         public const int StartY = 526;
         public const int StartWidth = 125;
@@ -203,12 +251,17 @@ namespace Dnf.Play
         public const uint FallbackBackdrop = 0x0A1220u;
         public const uint FallbackButtonColor = 0x1A3A60u;
 
+        /// <summary>联网界面里灰着的小按钮在没有按钮图时的底色。</summary>
+        public const uint FallbackDisabledButtonColor = 0x23282Fu;
+
         private readonly ISpriteSource _sprites;
         private SpriteFrame _board;
         private SpriteFrame _track;
         private SpriteFrame _thumb;
         private SpriteFrame _button;
-        private bool _boardTried, _trackTried, _thumbTried, _buttonTried;
+        private SpriteFrame _buttonGrey;
+        private readonly Dictionary<int, SpriteFrame> _thumbsByHeight = new Dictionary<int, SpriteFrame>();
+        private bool _boardTried, _trackTried, _thumbTried, _buttonTried, _buttonGreyTried;
 
         public CharacterSelectArt(ISpriteSource sprites)
         {
@@ -298,6 +351,52 @@ namespace Dnf.Play
             return CharacterSelectButton.None;
         }
 
+        /// <summary>联网界面的滑块高度:<paramref name="totalRows"/> 是名册占的行数(不足一屏按一屏算),推算见 <see cref="ScrollContentPadding"/>。</summary>
+        public static int ThumbHeightFor(int totalRows)
+        {
+            int rows = Math.Max(CharacterRoster.Rows, totalRows);
+            int content = SlotPitchY * rows + ScrollContentPadding;
+            int height = (ScrollTrackHeight * ScrollTrackHeight + content / 2) / content;
+            return Math.Max(ScrollThumbMinHeight, Math.Min(ScrollTrackHeight, height));
+        }
+
+        /// <summary>联网界面滑块上沿的屏幕 y:窗口第一行是 <paramref name="firstRow"/> 时,滑块在轨道里按行均匀地走(第 0 行贴着轨道上沿,最大行贴着下沿)。</summary>
+        public static int ThumbTop(int firstRow, int totalRows)
+        {
+            int maxFirst = Math.Max(CharacterRoster.Rows, totalRows) - CharacterRoster.Rows;
+            int first = Math.Max(0, Math.Min(firstRow, maxFirst));
+            int travel = ScrollTrackHeight - ThumbHeightFor(totalRows);
+            int offset = maxFirst == 0 ? 0 : (travel * first + maxFirst / 2) / maxFirst;
+            return ScrollTop + ScrollArrowHeight + offset;
+        }
+
+        /// <summary>画布坐标落在滚动条的哪一部分(联网界面;<paramref name="firstRow"/> 与 <paramref name="totalRows"/> 决定滑块的位置);不在滚动条上返回 <see cref="CharacterSelectScrollHit.None"/>。</summary>
+        public static CharacterSelectScrollHit HitScroll(int x, int y, int firstRow, int totalRows)
+        {
+            if (x < ScrollX || x >= ScrollX + ScrollBarWidth)
+            {
+                return CharacterSelectScrollHit.None;
+            }
+            if (y >= ScrollTop && y < ScrollTop + ScrollArrowHeight)
+            {
+                return CharacterSelectScrollHit.Up;
+            }
+            if (y >= ScrollBottom && y < ScrollBottom + ScrollArrowHeight)
+            {
+                return CharacterSelectScrollHit.Down;
+            }
+            if (y < ScrollTop + ScrollArrowHeight || y >= ScrollBottom)
+            {
+                return CharacterSelectScrollHit.None;
+            }
+            int top = ThumbTop(firstRow, totalRows);
+            if (y < top)
+            {
+                return CharacterSelectScrollHit.PageUp;
+            }
+            return y >= top + ThumbHeightFor(totalRows) ? CharacterSelectScrollHit.PageDown : CharacterSelectScrollHit.Thumb;
+        }
+
         // ------------------------------------------------------------------ 画
 
         /// <summary>
@@ -306,6 +405,19 @@ namespace Dnf.Play
         /// (光束与头像的动画按它走)。
         /// </summary>
         public void Build(List<SceneSprite> into, ref int order, OverlayArt font, CharacterSelectScene scene, CharacterRoster roster, int selected, long ageMs)
+        {
+            Build(into, ref order, font, scene, roster, selected, ageMs, null);
+        }
+
+        /// <summary>
+        /// 同上面少一个参数的 <c>Build</c>,多一个联网界面的状态:
+        /// <paramref name="view"/> 为 null 就是离线的画法(逐字节不变);不为 null 时窗口从名册的 <see cref="CharacterSelectView.FirstRow"/> 行开始
+        /// (<paramref name="selected"/> 仍是名册序号),文字用 <see cref="CharacterSelectView.Paint"/>(有字体是中文、没有是英文占位),
+        /// 不能进入的角色多一行标记,滚动条的滑块按行数与窗口位置画,"创立角色"与"删除角色"灰着,等待时"游戏开始"灰着并多一条"正在进入…",
+        /// 有提示时多一条提示条。
+        /// </summary>
+        public void Build(List<SceneSprite> into, ref int order, OverlayArt font, CharacterSelectScene scene, CharacterRoster roster, int selected, long ageMs,
+            CharacterSelectView view)
         {
             if (!AddFrame(into, ref order, UiImage, BackgroundFrame, 0, 0, "select-char-background", false))
             {
@@ -329,12 +441,14 @@ namespace Dnf.Play
             AddFrame(into, ref order, UiImage, TitleFrame, TitleX, TitleY, "select-char-title", false);
             AddFrame(into, ref order, FlagImage, FlagFrame, FlagX, FlagY, "select-char-flag", false);
             AddFrame(into, ref order, UiImage, GlowFrame, GlowX, GlowY, "select-char-glow", true);
-            AddScrollbar(into, ref order);
+            AddScrollbar(into, ref order, view, roster);
 
-            for (int i = 0; i < CharacterRoster.Capacity; i++)
+            // 窗口里的格子(0 到 Capacity - 1)对应名册序号 firstIndex + 格号;离线界面 firstIndex 恒为 0
+            int firstIndex = view == null ? 0 : Math.Max(0, Math.Min(view.FirstRow, roster.MaxFirstRow)) * CharacterRoster.Columns;
+            for (int cell = 0; cell < CharacterRoster.Capacity; cell++)
             {
-                SlotOrigin(i, out int sx, out int sy);
-                bool isSelected = i == selected && i < roster.Count;
+                SlotOrigin(cell, out int sx, out int sy);
+                bool isSelected = firstIndex + cell == selected && firstIndex + cell < roster.Count;
                 AddFrame(into, ref order, UiImage, isSelected ? PedestalBrightFrame : PedestalDimFrame, sx + PedestalDX, sy + PedestalDY,
                     isSelected ? "select-char-pedestal-bright" : "select-char-pedestal", true);
                 if (isSelected)
@@ -343,16 +457,32 @@ namespace Dnf.Play
                 }
             }
 
-            for (int i = 0; i < roster.Count; i++)
+            for (int cell = 0; cell < CharacterRoster.Capacity && firstIndex + cell < roster.Count; cell++)
             {
-                AddAvatar(into, ref order, scene, roster[i], i, ageMs);
-                AddCaptions(into, ref order, font, roster[i], i);
+                CharacterSlot slot = roster[firstIndex + cell];
+                AddAvatar(into, ref order, scene, slot, cell, ageMs);
+                if (view == null)
+                {
+                    AddCaptions(into, ref order, font, slot, cell);
+                }
+                else
+                {
+                    AddOnlineCaptions(into, ref order, view, slot, cell);
+                }
             }
 
-            AddButtons(into, ref order, font);
+            if (view == null)
+            {
+                AddButtons(into, ref order, font);
+            }
+            else
+            {
+                AddOnlineButtons(into, ref order, font, view, roster);
+                AddOnlineBar(into, ref order, view, ageMs);
+            }
         }
 
-        private void AddScrollbar(List<SceneSprite> into, ref int order)
+        private void AddScrollbar(List<SceneSprite> into, ref int order, CharacterSelectView view, CharacterRoster roster)
         {
             AddFrame(into, ref order, WindowImage, ScrollUpFrame, ScrollX, ScrollTop, "select-char-scroll-up", false);
             AddFrame(into, ref order, WindowImage, ScrollDownFrame, ScrollX, ScrollBottom, "select-char-scroll-down", false);
@@ -361,10 +491,13 @@ namespace Dnf.Play
             {
                 into.Add(OverlayArt.Place(track, ScrollX, ScrollTop + ScrollArrowHeight, order++, "select-char-scroll-track"));
             }
-            SpriteFrame thumb = Thumb();
+            // 离线:固定的 351 高滑块贴着轨道上沿;联网:按名册行数定高、按窗口位置定 y(两行以内与离线一模一样)
+            int thumbHeight = view == null ? ScrollThumbHeight : ThumbHeightFor(roster.TotalRows);
+            int thumbTop = view == null ? ScrollTop + ScrollArrowHeight : ThumbTop(view.FirstRow, roster.TotalRows);
+            SpriteFrame thumb = view == null ? Thumb() : ThumbOfHeight(thumbHeight);
             if (thumb != null)
             {
-                into.Add(OverlayArt.Place(thumb, ScrollX, ScrollTop + ScrollArrowHeight, order++, "select-char-scroll-thumb"));
+                into.Add(OverlayArt.Place(thumb, ScrollX, thumbTop, order++, "select-char-scroll-thumb"));
             }
         }
 
@@ -411,6 +544,155 @@ namespace Dnf.Play
             into.Add(OverlayArt.Place(text, x + (SmallButtonWidth - text.Width) / 2, SmallButtonY + (SmallButtonHeight - text.Height) / 2, order++, "select-char-button-text"));
         }
 
+        // ------------------------------------------------------------------ 联网界面的文字、按钮与提示条
+
+        /// <summary>灰着的按钮上的字色。</summary>
+        public const uint DisabledButtonTextColor = 0x8A8F99u;
+
+        /// <summary>联网界面提示条(不能进入、暂未开放)的精灵标签;条的各部分是它加 <c>-bar</c>、<c>-accent</c>、<c>-icon</c>。</summary>
+        public const string PromptTag = "select-char-prompt";
+
+        /// <summary>联网界面"正在进入…"条的精灵标签;条的各部分是它加 <c>-bar</c>、<c>-accent</c>、<c>-spinner</c>。</summary>
+        public const string BusyTag = "select-char-busy";
+
+        /// <summary>这个精灵标签是不是联网界面自己的提示条(<see cref="PromptTag"/>、<see cref="BusyTag"/> 与它们的各部分)。</summary>
+        public static bool IsOwnBar(string tag)
+        {
+            return tag != null && (tag.StartsWith(PromptTag, StringComparison.Ordinal) || tag.StartsWith(BusyTag, StringComparison.Ordinal));
+        }
+
+        /// <summary>
+        /// 联网界面的角色文字:第一行 <c>Lv等级 名字</c>、第二行职业称号(<see cref="CaptionColor"/>),不能进入的角色再加第三行红色标记。
+        /// 每行文字的墨迹中心(<see cref="InkCenter"/>)摆在槽位框内的 (<see cref="OnlineCaptionCenterX"/>, <see cref="OnlineCaptionCenterY"/> + 行距 × 行号);放不下 <see cref="SlotWidth"/> 时画笔缩字号、再截断。
+        /// </summary>
+        private static void AddOnlineCaptions(List<SceneSprite> into, ref int order, CharacterSelectView view, CharacterSlot slot, int cell)
+        {
+            SlotOrigin(cell, out int sx, out int sy);
+            bool cjk = view.Cjk;
+            CharacterBlock block = slot.Online == null ? CharacterBlock.None : slot.Online.Block;
+            string[] lines = { CharacterSelectText.Caption(slot, cjk), slot.JobName, CharacterSelectText.Marker(block, cjk) };
+            for (int i = 0; i < lines.Length; i++)
+            {
+                uint color = i == 2 ? ShellPaint.Red : CaptionColor;
+                SpriteFrame text = view.Paint.Line(lines[i], OnlineCaptionPx, color, OverlayArt.Black, SlotWidth - 4);
+                if (text == null)
+                {
+                    continue;
+                }
+                InkCenter(text, out int inkX, out int inkY);
+                into.Add(OverlayArt.Place(text, sx + OnlineCaptionCenterX - inkX,
+                    sy + OnlineCaptionCenterY + CaptionLineStep * i - inkY, order++, i == 2 ? "select-char-marker" : "select-char-caption"));
+            }
+        }
+
+        /// <summary>
+        /// 联网界面的按钮:"游戏开始"在等结果(或名册是空的)时画灰的那一帧,创立、删除两个小按钮灰着(联网版没有这两个功能),选择频道与结束游戏正常。
+        /// 文字用 <see cref="CharacterSelectView.Paint"/>,墨迹中心摆在按钮内的 (<see cref="OnlineButtonCenterX"/>, <see cref="OnlineButtonCenterY"/>)。
+        /// </summary>
+        private void AddOnlineButtons(List<SceneSprite> into, ref int order, OverlayArt font, CharacterSelectView view, CharacterRoster roster)
+        {
+            bool startDisabled = view.Busy || roster.Count == 0;
+            AddFrame(into, ref order, UiImage, startDisabled ? StartDisabledFrame : StartNormalFrame, StartX, StartY,
+                startDisabled ? "select-char-start-disabled" : "select-char-start", false);
+            AddOnlineSmallButton(into, ref order, font, view, CreateButtonX, CharacterSelectButton.Create, true);
+            AddOnlineSmallButton(into, ref order, font, view, DeleteButtonX, CharacterSelectButton.Delete, true);
+            AddOnlineSmallButton(into, ref order, font, view, ChannelButtonX, CharacterSelectButton.Channel, false);
+            AddOnlineSmallButton(into, ref order, font, view, QuitButtonX, CharacterSelectButton.Quit, false);
+        }
+
+        private void AddOnlineSmallButton(List<SceneSprite> into, ref int order, OverlayArt font, CharacterSelectView view, int x, CharacterSelectButton button, bool disabled)
+        {
+            SpriteFrame face = disabled ? ButtonGrey() : Button();
+            face = face ?? font.Solid(SmallButtonWidth, SmallButtonHeight, disabled ? FallbackDisabledButtonColor : FallbackButtonColor);
+            into.Add(OverlayArt.Place(face, x, SmallButtonY, order++, disabled ? "select-char-button-disabled" : "select-char-button"));
+            SpriteFrame text = view.Paint.Line(CharacterSelectText.Button(button, view.Cjk), OnlineCaptionPx, disabled ? DisabledButtonTextColor : ButtonTextColor,
+                OverlayArt.Black, SmallButtonWidth - 8);
+            if (text != null)
+            {
+                InkCenter(text, out int inkX, out int inkY);
+                into.Add(OverlayArt.Place(text, x + OnlineButtonCenterX - inkX, SmallButtonY + OnlineButtonCenterY - inkY, order++, "select-char-button-text"));
+            }
+        }
+
+        private sealed class InkBox
+        {
+            public int CenterX;
+            public int CenterY;
+        }
+
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SpriteFrame, InkBox> InkBoxes =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<SpriteFrame, InkBox>();
+
+        /// <summary>
+        /// 文字帧里有墨迹(含 1 像素描边,不全透明)的最小包围盒的中心,帧坐标、向下取整(奇数宽高时偏左偏上半个像素)。
+        /// 文字帧包着整个行框(上有升部、下有降部的空),不同字体的字在行框里的位置不同,所以按墨迹居中才能与基线上量出的墨迹位置对上;
+        /// 一张帧只扫描一次(画笔缓存的帧每一帧都是同一个对象)。没有任何墨迹的帧取帧中心。
+        /// </summary>
+        public static void InkCenter(SpriteFrame frame, out int centerX, out int centerY)
+        {
+            if (frame == null)
+            {
+                throw new ArgumentNullException(nameof(frame));
+            }
+            if (!InkBoxes.TryGetValue(frame, out InkBox box))
+            {
+                int minX = frame.Width, minY = frame.Height, maxX = -1, maxY = -1;
+                for (int y = 0; y < frame.Height; y++)
+                {
+                    for (int x = 0; x < frame.Width; x++)
+                    {
+                        if (frame.Rgba[(y * frame.Width + x) * 4 + 3] != 0)
+                        {
+                            minX = Math.Min(minX, x);
+                            maxX = Math.Max(maxX, x);
+                            minY = Math.Min(minY, y);
+                            maxY = Math.Max(maxY, y);
+                        }
+                    }
+                }
+                box = maxX < 0
+                    ? new InkBox { CenterX = frame.Width / 2, CenterY = frame.Height / 2 }
+                    : new InkBox { CenterX = (minX + maxX + 1) / 2, CenterY = (minY + maxY + 1) / 2 };
+                try
+                {
+                    InkBoxes.Add(frame, box);
+                }
+                catch (ArgumentException)
+                {
+                    // 别的线程刚加过同一张帧:结果一样,用手上算好的
+                }
+            }
+            centerX = box.CenterX;
+            centerY = box.CenterY;
+        }
+
+        /// <summary>等结果时是一条"正在进入…"(等待语气,转圈);否则有提示就画提示条(不能进入是出错语气,暂未开放是一般说明)。居中于画布,顶边 <see cref="PromptY"/>。</summary>
+        private static void AddOnlineBar(List<SceneSprite> into, ref int order, CharacterSelectView view, long ageMs)
+        {
+            bool cjk = view.Cjk;
+            ShellTone tone;
+            string text;
+            string tag;
+            if (view.Busy)
+            {
+                tone = ShellTone.Wait;
+                text = CharacterSelectText.Busy(cjk);
+                tag = BusyTag;
+            }
+            else if (view.Prompt != CharacterSelectPrompt.None)
+            {
+                tone = view.Prompt == CharacterSelectPrompt.NotAvailable ? ShellTone.Info : ShellTone.Error;
+                text = CharacterSelectText.Prompt(view.Prompt, cjk);
+                tag = PromptTag;
+            }
+            else
+            {
+                return;
+            }
+            int width = OnlineShellArt.NoticeBarWidth(view.Paint, text, 560);
+            OnlineShellArt.AddNoticeBar(into, ref order, view.Paint, tone, text, OnlineShellArt.ScreenWidth / 2 - width / 2, PromptY, width, ageMs, tag);
+        }
+
         /// <summary>按控件原点摆一张图:屏幕左上角 = 原点 + 帧自带的偏移。取到并加进列表返回 true。</summary>
         private bool AddFrame(List<SceneSprite> into, ref int order, string image, int frame, int x, int y, string tag, bool additive)
         {
@@ -450,9 +732,54 @@ namespace Dnf.Play
             if (!_thumbTried)
             {
                 _thumbTried = true;
-                _thumb = ComposeThumb();
+                _thumb = ComposeThumb(ScrollThumbHeight);
             }
             return _thumb;
+        }
+
+        // 联网界面按行数定高的滑块:每种高度合成一次
+        private SpriteFrame ThumbOfHeight(int height)
+        {
+            if (height == ScrollThumbHeight)
+            {
+                return Thumb();
+            }
+            if (!_thumbsByHeight.TryGetValue(height, out SpriteFrame thumb))
+            {
+                thumb = ComposeThumb(height);
+                _thumbsByHeight[height] = thumb;
+            }
+            return thumb;
+        }
+
+        // 联网界面里灰着的小按钮:把按钮图去色并压暗(没有按钮图时是 null)
+        private SpriteFrame ButtonGrey()
+        {
+            if (!_buttonGreyTried)
+            {
+                _buttonGreyTried = true;
+                _buttonGrey = Greyed(Button());
+            }
+            return _buttonGrey;
+        }
+
+        /// <summary>把一张图去色并压暗到 55% 亮度(不透明度不变);为 null 返回 null。</summary>
+        public static SpriteFrame Greyed(SpriteFrame source)
+        {
+            if (source == null)
+            {
+                return null;
+            }
+            var rgba = (byte[])source.Rgba.Clone();
+            for (int i = 0; i + 3 < rgba.Length; i += 4)
+            {
+                int luma = (rgba[i] * 30 + rgba[i + 1] * 59 + rgba[i + 2] * 11) / 100;
+                byte grey = (byte)(luma * 55 / 100);
+                rgba[i] = grey;
+                rgba[i + 1] = grey;
+                rgba[i + 2] = grey;
+            }
+            return new SpriteFrame(source.Width, source.Height, source.OffsetX, source.OffsetY, source.CanvasWidth, source.CanvasHeight, rgba);
         }
 
         private SpriteFrame Button()
@@ -526,8 +853,8 @@ namespace Dnf.Play
             return new SpriteFrame(row.Width, height, 0, 0, row.Width, height, rgba);
         }
 
-        /// <summary>滚动条滑块:滑块图的上 11 行是上沿、其余是下沿,中间重复第 11 行拉到 <see cref="ScrollThumbHeight"/>。</summary>
-        private SpriteFrame ComposeThumb()
+        /// <summary>滚动条滑块:滑块图的上 11 行是上沿、其余是下沿,中间重复第 11 行拉到 <paramref name="height"/>(离线界面是 <see cref="ScrollThumbHeight"/>)。</summary>
+        private SpriteFrame ComposeThumb(int height)
         {
             if (!TryFrame(WindowImage, ScrollThumbFrame, out SpriteFrame cap) || cap.Height < 12)
             {
@@ -535,7 +862,6 @@ namespace Dnf.Play
             }
             const int topRows = 11;
             int bottomRows = cap.Height - topRows;
-            int height = ScrollThumbHeight;
             var rgba = new byte[cap.Width * height * 4];
             Blit(rgba, cap.Width, height, cap, 0, 0, 0, topRows);
             for (int y = topRows; y < height - bottomRows; y++)

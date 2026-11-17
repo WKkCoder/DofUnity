@@ -13,11 +13,24 @@ namespace Dnf.Play
 
         public int Level { get; }
 
+        /// <summary>
+        /// 联网名册(<see cref="OnlineCharacterRoster"/>)给的附加信息:槽号、职业与成长类型、能不能进入、服务端给的装备。
+        /// 离线名册与外壳的占位名册没有它(为 null),界面按 null 走原来的画法。
+        /// </summary>
+        public CharacterSlotOnline Online { get; }
+
         public CharacterSlot(string name, string jobName, int level)
         {
             Name = name ?? throw new ArgumentNullException(nameof(name));
             JobName = jobName ?? throw new ArgumentNullException(nameof(jobName));
             Level = Math.Max(1, level);
+        }
+
+        /// <summary>联网名册的角色:名字、职业称号、等级之外带着 <see cref="Online"/>。</summary>
+        public CharacterSlot(string name, string jobName, int level, CharacterSlotOnline online)
+            : this(name, jobName, level)
+        {
+            Online = online ?? throw new ArgumentNullException(nameof(online));
         }
 
         /// <summary>第一行字:等级加名字,例如 LV1 HERO。</summary>
@@ -43,9 +56,14 @@ namespace Dnf.Play
         private readonly List<CharacterSlot> _slots;
 
         public CharacterRoster(IEnumerable<CharacterSlot> slots)
+            : this(slots, true)
+        {
+        }
+
+        private CharacterRoster(IEnumerable<CharacterSlot> slots, bool enforceCapacity)
         {
             _slots = new List<CharacterSlot>(slots ?? throw new ArgumentNullException(nameof(slots)));
-            if (_slots.Count > Capacity)
+            if (enforceCapacity && _slots.Count > Capacity)
             {
                 throw new ArgumentException("角色数超过槽位数 " + Capacity, nameof(slots));
             }
@@ -58,7 +76,25 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>
+        /// 联网名册:角色数不受 <see cref="Capacity"/> 限制(服务端的角色列表一个不丢);多于 <see cref="Capacity"/> 个时界面按行滚动
+        /// (<see cref="CharacterSelectScreen.FirstRow"/>)。公开的构造函数仍然拒绝超过 <see cref="Capacity"/> 个(离线名册的约定)。
+        /// </summary>
+        public static CharacterRoster Scrollable(IEnumerable<CharacterSlot> slots)
+        {
+            return new CharacterRoster(slots, false);
+        }
+
         public int Count => _slots.Count;
+
+        /// <summary>名册占几行(每行 <see cref="Columns"/> 个,最后一行可以不满;空名册是 0 行)。界面至少显示 <see cref="Rows"/> 行,超出的靠滚动。</summary>
+        public int TotalRows => (_slots.Count + Columns - 1) / Columns;
+
+        /// <summary>角色数超过一屏能显示的 <see cref="Capacity"/> 个,需要滚动。</summary>
+        public bool IsScrollable => _slots.Count > Capacity;
+
+        /// <summary>窗口第一行最大能滚到名册的第几行(0 起):让最后一行落在窗口最下面一行;不需要滚动时是 0。</summary>
+        public int MaxFirstRow => Math.Max(0, TotalRows - Rows);
 
         public CharacterSlot this[int index] => _slots[index];
 
