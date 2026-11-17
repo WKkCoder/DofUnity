@@ -27,9 +27,11 @@ public class HostedRoomMultiRunTests
         public bool Accept { get; set; } = true;
         public bool Done { get; set; }
 
-        public Rig(int monsters, GateSide? exit = GateSide.Right, GateSide[] gates = null, double heroX = 300, double heroY = 100, bool vitals = false, bool wire = true)
+        /// <param name="firstRoom">给了就用它造第一间房(手工拼的房间:怪的种类自己定);不给就是按 <paramref name="monsters"/> 只数造的普通房间。</param>
+        public Rig(int monsters, GateSide? exit = GateSide.Right, GateSide[] gates = null, double heroX = 300, double heroY = 100, bool vitals = false, bool wire = true,
+            Func<HostedGatedRoomFixture, RoomCombatSession> firstRoom = null)
         {
-            RoomCombatSession room = NewRoom(monsters, gates ?? new[] { GateSide.Left, GateSide.Right }, heroX, heroY, vitals);
+            RoomCombatSession room = firstRoom != null ? firstRoom(Fx) : NewRoom(monsters, gates ?? new[] { GateSide.Left, GateSide.Right }, heroX, heroY, vitals);
             Run = new HostedRoomRun(room, id =>
             {
                 Kills.Add((Run.RoomIndex, id));
@@ -627,5 +629,253 @@ public class HostedRoomMultiRunTests
 
         Assert.Empty(rig.Requests);                                                    // 结算收齐了:没有换房的道理
         Assert.True(rig.Run.Finished);
+    }
+
+    // ------------------------------------------------------------------ 验收后补测:清房规则(R27)、换房的朝向与镜头(R14、R15)、开门的倒推时刻(R29)
+
+    /// <summary>
+    /// 手工拼一间房:前 <paramref name="hittable"/> 只是夹具里的 blob(有受击框,打得到),后 <paramref name="ghosts"/> 只是没有任何受击框的"鬼"(永远打不到的占位怪),
+    /// 怪的序号 = 摆放顺序。夹具的怪物目录里没有"打不到"的怪,这一类只能手工拼(与 <c>MonsterScriptTests</c> 里的拼法一样)。
+    /// </summary>
+    internal static RoomCombatSession HandBuiltRoom(HostedGatedRoomFixture fx, int hittable, int ghosts, IEnumerable<GateSide> gates, double heroX = 300, double heroY = 100)
+    {
+        RoomSession room = fx.CreateRoomSession(null, gates, heroX, heroY);
+        MonsterModel normal = MonsterModel.Read(fx.Assets, AvatarFixture.BlobMobPath);
+        MonsterModel ghost = MonsterModel.Read(fx.Assets, AvatarFixture.BlobGhostMobPath);
+        var actors = new List<MonsterActor>();
+        for (int i = 0; i < hittable + ghosts; i++)
+        {
+            RoomMonsterSpawn spawn = HostedRoomFixture.Spawn(HostedRoomFixture.Buildable, 340 + 40 * i);
+            actors.Add(new MonsterActor(i, spawn, i < hittable ? normal : ghost, 1, 100, 222.5, 1500, 0));
+        }
+        var strikes = new[] { new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false) };
+        return new RoomCombatSession(fx.Assets, room, actors, strikes, 1);
+    }
+
+    private static RoomGate GateOf(RoomCombatSession room, GateSide side)
+    {
+        return room.Room.Content.Gates.Single(g => g.Side == side);
+    }
+
+    /// <summary>主角的位置落在矩形 [left, right) × [top, bottom) 里(边界数是调用方手算的字面值)。</summary>
+    private static void AssertHeroInside(TownHero hero, int left, int top, int right, int bottom, string what)
+    {
+        Assert.True(hero.X >= left && hero.X < right && hero.Y >= top && hero.Y < bottom,
+            what + ":主角在 (" + hero.X + ", " + hero.Y + "),应当在 x ∈ [" + left + ", " + right + ")、y ∈ [" + top + ", " + bottom + ")");
+    }
+
+    [Fact]
+    public void A_monster_that_can_never_be_hit_does_not_hold_the_room_back_once_every_monster_that_can_be_hit_is_gone()
+    {
+        // 一只打得到的(序号 0)加一只永远打不到的(序号 1,模型里没有任何受击框);主角站在右出口里
+        using var rig = new Rig(0, firstRoom: fx => HandBuiltRoom(fx, 1, 1, new[] { GateSide.Left, GateSide.Right }, 1090, 100));
+        MonsterActor hittable = rig.Run.Room.Monsters[0];
+        MonsterActor ghost = rig.Run.Room.Monsters[1];
+        Assert.True(hittable.CanEverBeHit);                                            // 夹具自检:一只打得到、一只永远打不到
+        Assert.False(ghost.CanEverBeHit);
+        RoomGate right = GateOf(rig.Run.Room, GateSide.Right);
+
+        rig.Step(30, 1, 0);                                                            // 打得到的还活着:没清房,主角顶着门也不触发,门关着
+        rig.Run.Build(1000);
+        Assert.False(rig.Run.RoomCleared);
+        Assert.Empty(rig.Requests);
+        Assert.Equal(GateState.Closed, right.State);
+
+        HostedRoomFixture.Kill(hittable);                                              // 只打死打得到的那只
+        for (int i = 0; i < 2000 && !rig.Run.RoomCleared; i++)
+        {
+            rig.Step(1);
+        }
+
+        Assert.True(rig.Run.RoomCleared, "打得到的怪都没了,清房就成立(那只永远打不到的不算)");
+        Assert.True(ghost.IsAlive);                                                    // 它还在原地
+        Assert.False(ghost.IsGone);
+        Assert.Equal(GateSide.Right, Assert.Single(rig.Requests).Side);                // 清房成立的那一步出口就触发
+        Assert.True(rig.Run.MovePending);
+        rig.Run.Build(2000);
+        Assert.Equal(GateState.Open, right.State);                                     // 出口也开了
+    }
+
+    [Fact]
+    public void A_monster_that_can_be_hit_and_is_still_alive_keeps_the_room_shut_even_beside_ones_that_cannot_be_hit()
+    {
+        // 两只打得到的(序号 0、1)加一只永远打不到的(序号 2);只打死序号 0 的那只
+        using var rig = new Rig(0, firstRoom: fx => HandBuiltRoom(fx, 2, 1, new[] { GateSide.Left, GateSide.Right }, 1090, 100));
+        RoomGate right = GateOf(rig.Run.Room, GateSide.Right);
+        HostedRoomFixture.Kill(rig.Run.Room.Monsters[0]);
+        rig.Step(500, 1, 0);                                                           // 5 秒:尸体早就消失了,主角一直顶着门
+
+        Assert.True(rig.Run.Room.Monsters[0].IsGone);                                  // 夹具自检
+        Assert.False(rig.Run.RoomCleared);                                             // 序号 1 的那只打得到的还活着
+        Assert.Empty(rig.Requests);
+        rig.Run.Build(1000);
+        Assert.Equal(GateState.Closed, right.State);
+
+        HostedRoomFixture.Kill(rig.Run.Room.Monsters[1]);                              // 再打死它:这时才清房
+        for (int i = 0; i < 2000 && !rig.Run.RoomCleared; i++)
+        {
+            rig.Step(1);
+        }
+        Assert.True(rig.Run.RoomCleared);
+        Assert.Equal(GateSide.Right, Assert.Single(rig.Requests).Side);
+    }
+
+    [Fact]
+    public void A_room_entered_with_only_monsters_that_can_never_be_hit_is_clear_at_once_and_its_exit_shows_open_without_the_animation()
+    {
+        using var rig = new Rig(1, GateSide.Right);
+        RoomCombatSession ghostsOnly = HandBuiltRoom(rig.Fx, 0, 2, new[] { GateSide.Left, GateSide.Right });
+
+        rig.Run.EnterRoom(ghostsOnly, 1, 905, GateSide.Left, GateSide.Right);
+
+        Assert.True(rig.Run.RoomCleared);                                              // 进门时就没有打得到的怪
+        rig.Run.Build(5000);
+        Assert.Equal(GateState.Open, GateOf(ghostsOnly, GateSide.Right).State);
+        Assert.Equal(-3600000L, GateOf(ghostsOnly, GateSide.Right).OpenedAtMs);        // "开了一小时"的样子:没有开门动画
+
+        // 对照:同样的房间多一只打得到的:进门时没清,出口关着
+        RoomCombatSession mixed = HandBuiltRoom(rig.Fx, 1, 2, new[] { GateSide.Left, GateSide.Right });
+        rig.Run.EnterRoom(mixed, 2, 906, GateSide.Left, GateSide.Right);
+        Assert.False(rig.Run.RoomCleared);
+        rig.Run.Build(6000);
+        Assert.Equal(GateState.Closed, GateOf(mixed, GateSide.Right).State);
+    }
+
+    [Theory]
+    [InlineData(GateSide.Up, true, 490, 20, 630, 60)]
+    [InlineData(GateSide.Up, false, 490, 20, 630, 60)]
+    [InlineData(GateSide.Down, true, 490, 150, 630, 190)]
+    [InlineData(GateSide.Down, false, 490, 150, 630, 190)]
+    public void Entering_through_a_top_or_bottom_door_keeps_the_way_the_hero_was_facing(GateSide entry, bool facingLeft, int left, int top, int right, int bottom)
+    {
+        using var rig = new Rig(1);
+        rig.Run.Hero.Place(300, 100, facingLeft, HeroMotion.Rest, 0);
+        Assert.Equal(facingLeft, rig.Run.Hero.FacingLeft);                             // 夹具自检
+        RoomCombatSession next = rig.NewRoom(1, new[] { GateSide.Up, GateSide.Down });
+        Assert.False(next.Hero.FacingLeft);                                            // 新房间的主角自己朝右:朝左只能是"沿用旧房间"的结果
+
+        rig.Run.EnterRoom(next, 1, 905, entry, null);
+
+        Assert.Equal(facingLeft, rig.Run.Hero.FacingLeft);
+        AssertHeroInside(rig.Run.Hero, left, top, right, bottom, entry + " 出口的识别矩形");
+    }
+
+    [Theory]
+    [InlineData(GateSide.Left, true, false, 24, 47, 144, 153)]
+    [InlineData(GateSide.Left, false, false, 24, 47, 144, 153)]
+    [InlineData(GateSide.Right, true, true, 976, 47, 1096, 153)]
+    [InlineData(GateSide.Right, false, true, 976, 47, 1096, 153)]
+    public void Entering_through_a_left_or_right_door_faces_inward_whichever_way_the_hero_was_facing(GateSide entry, bool facingLeftBefore, bool facingLeftAfter,
+        int left, int top, int right, int bottom)
+    {
+        using var rig = new Rig(1);
+        rig.Run.Hero.Place(300, 100, facingLeftBefore, HeroMotion.Rest, 0);
+
+        rig.Run.EnterRoom(rig.NewRoom(1, new[] { GateSide.Left, GateSide.Right }), 1, 905, entry, null);
+
+        Assert.Equal(facingLeftAfter, rig.Run.Hero.FacingLeft);                        // 从左门进朝右、从右门进朝左,与来时朝哪边无关
+        AssertHeroInside(rig.Run.Hero, left, top, right, bottom, entry + " 出口的识别矩形");
+    }
+
+    [Fact]
+    public void Entering_a_room_restarts_the_camera_aimed_at_the_hero_who_landed_at_the_entry_door()
+    {
+        // 房间宽 1120、屏幕宽 800:镜头 x 的范围是 [0, 320];死区是主角在屏幕上 x ∈ [350, 450]
+        using var rig = new Rig(1);
+
+        // 新房间的主角一开始在 x = 1090:镜头 x = 1090 − 400 夹到上限 320。从左门进来(落点 x ∈ [24, 144),屏幕上在死区左边):
+        // 镜头重来,放回 0、再追主角,主角在屏幕 24 到 144,远小于 350,镜头 x = 落点 − 350 < 0,夹到 0
+        RoomCombatSession far = rig.NewRoom(1, new[] { GateSide.Left, GateSide.Right }, heroX: 1090);
+        Assert.Equal(320.0, far.Camera.X);                                             // 夹具自检:镜头原来在最右
+        rig.Run.EnterRoom(far, 1, 905, GateSide.Left, null);
+        Assert.Equal(0.0, far.Camera.X);
+
+        // 反过来:新房间的主角一开始在 x = 100,镜头在最左 0;从右门进来(落点 x ∈ [976, 1096)):镜头 x = 落点 − 450 ≥ 526,夹到上限 320
+        RoomCombatSession near = rig.NewRoom(1, new[] { GateSide.Left, GateSide.Right }, heroX: 100);
+        Assert.Equal(0.0, near.Camera.X);                                              // 夹具自检:镜头原来在最左
+        rig.Run.EnterRoom(near, 2, 906, GateSide.Right, null);
+        Assert.Equal(320.0, near.Camera.X);
+    }
+
+    [Fact]
+    public void Entering_a_room_restarts_the_camera_even_without_an_entry_side()
+    {
+        // 没有进门的一侧时主角留在新房间自己摆的位置 (700, 100):新房间的镜头原来是 700 − 400 = 300(居中);
+        // 重来:放回 0,主角在屏幕 700,超出死区右沿 450,镜头 x = 700 − 450 = 250 —— 与"居中"不同,所以分得出有没有重来
+        using var rig = new Rig(1);
+        RoomCombatSession next = rig.NewRoom(1, new[] { GateSide.Left, GateSide.Right }, heroX: 700);
+        Assert.Equal(300.0, next.Camera.X);                                            // 夹具自检
+
+        rig.Run.EnterRoom(next, 1, 905, null, null);
+
+        Assert.Equal((700.0, 100.0), (rig.Run.Hero.X, rig.Run.Hero.Y));                // 没有进门的一侧:主角不动
+        Assert.Equal(250.0, next.Camera.X);
+    }
+
+    private static RoomGate RightGateOf(Rig rig)
+    {
+        return GateOf(rig.Run.Room, GateSide.Right);
+    }
+
+    [Fact]
+    public void The_exit_gate_opens_back_dated_by_the_time_that_passed_since_the_room_was_cleared()
+    {
+        using var rig = new Rig(1, GateSide.Right);                                    // 主角在 (300, 100),离门远,不会触发出口
+        RoomGate right = RightGateOf(rig);
+
+        rig.Step(70);                                                                  // 怪还活着:700 毫秒过去了(清房之前的时间不能算进"开了多久")
+        rig.KillAll();                                                                 // 尸体消失、清房成立的那一步
+        rig.Step(30);                                                                  // 清房之后又过了 300 毫秒,这期间没有人出过画面
+        rig.Run.Build(5000);
+
+        Assert.Equal(GateState.Open, right.State);
+        Assert.Equal(4700L, right.OpenedAtMs);                                         // 画面上"已经开了 300 毫秒":起点 = 5000 − 300
+    }
+
+    [Fact]
+    public void A_gate_shown_in_the_very_step_the_room_is_cleared_opens_at_the_time_it_was_asked_for()
+    {
+        using var rig = new Rig(1, GateSide.Right);
+        RoomGate right = RightGateOf(rig);
+
+        rig.Step(70);
+        rig.KillAll();
+        rig.Run.Build(5000);                                                           // 清房成立之后立刻出画面:一点时间也没过
+
+        Assert.Equal(5000L, right.OpenedAtMs);
+    }
+
+    [Fact]
+    public void A_room_found_clear_only_when_the_picture_is_asked_for_is_dated_from_that_moment_not_from_the_start()
+    {
+        // 清房是房间会话自己走出来的(没有经过托管的一步):出口检查没看见,出画面时才发现。起点要从发现的这一刻算,不能把进房间以来的 500 毫秒也倒推进去
+        using var rig = new Rig(1, GateSide.Right);
+        RoomGate right = RightGateOf(rig);
+        rig.Step(50);                                                                  // 500 毫秒
+        rig.Slay();
+        for (int i = 0; i < 2000 && !rig.Run.RoomCleared; i++)
+        {
+            rig.Run.Room.Update(10, 0, 0);                                             // 只推进房间会话,不经过托管的一步
+        }
+        Assert.True(rig.Run.RoomCleared);
+
+        rig.Run.Build(5000);
+
+        Assert.Equal(5000L, right.OpenedAtMs);
+    }
+
+    [Fact]
+    public void A_negative_step_never_turns_the_clock_back_when_dating_the_open_gate()
+    {
+        using var rig = new Rig(1, GateSide.Right);
+        RoomGate right = RightGateOf(rig);
+
+        rig.KillAll();
+        rig.Step(10);                                                                  // 清房之后 100 毫秒
+        rig.Run.Update(-500, 0, 0, false, false);                                      // 负的步长:时间不倒退
+        rig.Run.Update(0, 0, 0, false, false);
+        rig.Run.Build(5000);
+
+        Assert.Equal(4900L, right.OpenedAtMs);
     }
 }

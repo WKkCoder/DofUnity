@@ -5,6 +5,7 @@ using Dnf.Net.Tests;
 using Dnf.Play;
 using Dnf.Play.Tests;
 using Dnf.Render;
+using Dnf.Render.Tests;
 
 namespace Dnf.Client.Tests;
 
@@ -884,6 +885,209 @@ public class OnlineDungeonRoomMultiTests
         }
         Assert.Equal(0, rig.Run.MoveRequests);
         Assert.Empty(rig.Server.Moves);
+    }
+
+    // ================================================================== 验收后补测:新房间的核对(格坐标、怪数与编号、落点)
+
+    /// <summary>
+    /// 手工拼一间房:怪的本地编号(<see cref="MonsterActor.Index"/>)由调用方逐只指定(可以重复、可以超出怪表);走公开构造,
+    /// 与 <c>Dnf.Play.Tests</c> 里手拼房间的做法一样。出生点一个挨一个排开,模型是夹具里的 blob。
+    /// </summary>
+    private static RoomCombatSession RoomWithIndexes(HostedGatedRoomFixture fx, IEnumerable<GateSide> gates, params int[] indexes)
+    {
+        RoomSession room = fx.CreateRoomSession(null, gates);
+        MonsterModel model = MonsterModel.Read(fx.Assets, AvatarFixture.BlobMobPath);
+        var actors = new List<MonsterActor>();
+        for (int i = 0; i < indexes.Length; i++)
+        {
+            RoomMonsterSpawn spawn = HostedRoomFixture.Spawn(HostedRoomFixture.Buildable, 340 + 40 * i);
+            actors.Add(new MonsterActor(indexes[i], spawn, model, 1, 100, 222.5, 1500, 0));
+        }
+        var strikes = new[] { new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false), new HeroStrikeInfo(0, 0, false) };
+        return new RoomCombatSession(fx.Assets, room, actors, strikes, 1);
+    }
+
+    /// <summary>
+    /// 把服务端对换房命令回的"新房间起始地图通知"(类 0、包号 29)的载荷按 <paramref name="change"/> 换掉:只换第 <paramref name="nth"/> 次(从 1 数),
+    /// 别的回包原样。联网层在换房在途时认任何解得开的 29 号通知,所以宿主要自己核对格坐标、房间序号与怪表。
+    /// </summary>
+    private static void RewriteNewRoomNotice(Rig rig, Func<byte[], byte[]> change, int nth = 1)
+    {
+        Func<PacketClass, ushort, byte[], IEnumerable<CombatKit.ServerFrame>> inner = rig.Session.Respond;
+        int seen = 0;
+        rig.Session.Respond = (cls, id, payload) =>
+        {
+            var replies = new List<CombatKit.ServerFrame>();
+            foreach (CombatKit.ServerFrame frame in inner(cls, id, payload))
+            {
+                if (frame.Class == CombatKit.Noti && frame.Id == 29 && ++seen == nth)
+                {
+                    replies.Add(new CombatKit.ServerFrame(frame.Class, frame.Id, change((byte[])frame.Payload.Clone())));
+                }
+                else
+                {
+                    replies.Add(frame);
+                }
+            }
+            return replies;
+        };
+    }
+
+    /// <summary>把新房间通知里的格坐标改成 (<paramref name="x"/>, <paramref name="y"/>):只动载荷的前两个字节,其余原样。</summary>
+    private static void RewriteNewRoomCell(Rig rig, int x, int y, int nth = 1)
+    {
+        RewriteNewRoomNotice(rig, payload =>
+        {
+            payload[0] = (byte)x;
+            payload[1] = (byte)y;
+            return payload;
+        }, nth);
+    }
+
+    [Theory]
+    [InlineData(2, 0)]                                                                // 横坐标不对、纵坐标对:请求的是 (1, 0),服务端说进了 (2, 0)
+    [InlineData(0, 0)]                                                                // 横坐标不对:(0, 0) 是迷宫里的起点格,本地解释得了,可不是请求的那一格
+    [InlineData(1, 1)]                                                                // 纵坐标不对、横坐标对:(1, 1) 是迷宫里的首领格,本地也解释得了,可不是请求的那一格
+    public async Task A_new_room_notice_in_a_cell_other_than_the_requested_one_ends_the_run_with_CellMismatch_and_builds_no_room(int cellX, int cellY)
+    {
+        using Rig rig = await Rig.Start(Plans(1, 1, 1), One(LRight()));
+        RewriteNewRoomCell(rig, cellX, cellY);
+
+        await rig.Drive(() => rig.Run.Aborted || rig.Run.RoomIndex == 1, "新房间的格坐标对不上:宿主放弃(不该换进新房间)");
+
+        Assert.True(rig.Run.Aborted, "宿主不该进新房间:" + string.Join(" | ", rig.HostLog.Lines));
+        Assert.Equal(HostedAbort.CellMismatch, rig.Run.AbortReason);
+        Assert.Equal((0, 1), (rig.Run.RoomIndex, rig.Run.RoomsEntered));
+        Assert.Single(rig.Entries);                                                   // 只有起始房间造过:新房间一间也没造
+        Assert.Single(rig.Server.Moves);
+        Assert.StartsWith(Host + "abort reason=CellMismatch room=0 rooms=1 phase=Fighting netEnded=false", rig.HostLog.Lines.Last());
+        Assert.DoesNotContain(rig.HostLog.Lines, l => l.Contains("enter status="));
+    }
+
+    [Fact]
+    public async Task A_new_room_notice_in_exactly_the_requested_cell_is_entered_even_when_the_notice_went_through_the_rewrite()
+    {
+        using Rig rig = await Rig.Start(Plans(1, 1, 1), One(LRight()));
+        RewriteNewRoomCell(rig, 1, 0);                                                // 对照:改成服务端本来就要回的那一格,改写本身不会让宿主放弃
+
+        await rig.Drive(() => rig.Run.Aborted || rig.Run.RoomIndex == 1, "换进新房间");
+
+        Assert.False(rig.Run.Aborted);
+        Assert.Equal(1, rig.Run.RoomIndex);
+        Assert.Contains(Host + "enter status=Ready room=1 spawned=1 expected=1 extra=0 exit=Down", rig.HostLog.Lines);
+    }
+
+    [Theory]
+    [InlineData(new[] { 0, 1 }, false, "enter status=Mismatch room=1 spawned=2 expected=3 extra=0")]                // 少一只:对不上
+    [InlineData(new[] { 0 }, false, "enter status=Mismatch room=1 spawned=1 expected=3 extra=0")]                   // 少两只
+    [InlineData(new[] { 0, 1, 2 }, true, "enter status=Ready room=1 spawned=3 expected=3 extra=0 exit=Down")]       // 正好
+    [InlineData(new[] { 0, 1, 2, 3, 4 }, true, "enter status=Ready room=1 spawned=3 expected=3 extra=2 exit=Down")]  // 多出的(编号超出怪表)不拦,记成 extra
+    [InlineData(new[] { 0, 0, 1 }, false, "enter status=Mismatch room=1 spawned=2 expected=3 extra=1")]             // 同一个编号摆了两只:只算一只,2 号还是缺的
+    [InlineData(new[] { 0, 1, 1, 2 }, true, "enter status=Ready room=1 spawned=3 expected=3 extra=1 exit=Down")]    // 重复多出来的那只算多余,顶不了缺
+    public async Task A_new_room_must_have_every_local_monster_of_the_new_table_at_least_once_and_extras_are_only_counted(int[] indexes, bool entered, string expectedLine)
+    {
+        // 第二间的怪表有 3 条;服务端第二间的房间由测试手拼,怪的本地编号照 indexes 来
+        using Rig rig = await Rig.Start(Plans(1, 3, 1), One(LRight()), new Opts
+        {
+            Factory = (r, entry, plan) =>
+            {
+                r.Entries.Add(entry);
+                return entry.Room == 0 ? r.Fx.Create(Templates(6), plan, Rig.GatesOf(entry)) : RoomWithIndexes(r.Fx, Rig.GatesOf(entry), indexes);
+            },
+        });
+
+        await rig.Drive(() => rig.Run.Aborted || rig.Run.RoomIndex == 1, "换进新房间,或对不上而放弃");
+
+        Assert.Equal(entered, !rig.Run.Aborted);
+        Assert.Equal(entered ? 1 : 0, rig.Run.RoomIndex);
+        Assert.Contains(Host + expectedLine, rig.HostLog.Lines);
+        Assert.Equal(entered ? HostedAbort.None : HostedAbort.RoomMismatch, rig.Run.AbortReason);
+    }
+
+    [Fact]
+    public async Task The_hero_lands_in_the_rectangle_of_the_door_opposite_to_the_one_he_left_by_and_keeps_facing_the_way_he_faced()
+    {
+        using Rig rig = await Rig.Start(Plans(1, 1, 1), One(LRight()));
+
+        // 第一间出右门:站在右出口里,不用推;进第二间的落点在左出口的识别矩形 [24, 144) × [47, 153) 里,朝右
+        rig.Slay();
+        rig.Run.Hero.Place(1090, 100, true, HeroMotion.Rest, 0);
+        await rig.Wait(() => rig.Run.RoomIndex == 1 || rig.Run.Aborted, "换进第二间");
+        Assert.False(rig.Run.Aborted);
+        AssertHeroInside(rig.Run.Hero, 24, 47, 144, 153, "左出口的识别矩形");
+        Assert.False(rig.Run.Hero.FacingLeft);                                        // 从左门进来:朝右(左右出口的朝向由进门的一侧定,不看来时朝哪)
+
+        // 第二间出下门:在下出口的识别矩形里向下顶;进第三间的落点在上出口的识别矩形 [490, 630) × [20, 60) 里,朝向沿用(出门时朝左)
+        rig.Slay();
+        rig.Run.Hero.Place(560, 160, true, HeroMotion.Rest, 0);
+        await CombatKit.WaitUntil(() =>
+        {
+            rig.Run.Update(10, 0, 1, false, false);
+            return rig.Run.RoomIndex == 2 || rig.Run.Aborted;
+        }, "换进第三间");
+        Assert.False(rig.Run.Aborted);
+        AssertHeroInside(rig.Run.Hero, 490, 20, 630, 60, "上出口的识别矩形");
+        Assert.True(rig.Run.Hero.FacingLeft);
+    }
+
+    [Fact]
+    public async Task A_state_machine_two_rooms_ahead_of_the_host_ends_the_run_with_CellMismatch_even_when_the_notice_names_the_cell_the_host_expects()
+    {
+        using Rig rig = await Rig.Start(Plans(1, 1, 1), One(LRight()));
+        RewriteNewRoomCell(rig, 1, 0, nth: 2);                                        // 第二次换房(进第三间)的通知把格坐标说成 (1, 0):宿主此刻要的下一格正是 (1, 0)
+
+        // 宿主一步不走:联网层这头直接打穿第一、二间并换房两次,状态机比宿主快了两间房
+        Assert.True(rig.Runner.PostKill(0, 0));
+        Assert.True(rig.Runner.PostMoveRoom(0, RoomKit.Move(1, 0, 901, 902)));
+        await CombatKit.WaitUntil(() => rig.Machine.Room == 1, "状态机进了第二间");
+        Assert.True(rig.Runner.PostKill(1, 0));
+        Assert.True(rig.Runner.PostMoveRoom(1, RoomKit.Move(1, 1, 903, 904)));
+        await CombatKit.WaitUntil(() => rig.Machine.Room == 2, "状态机进了第三间");
+        Assert.Equal(0, rig.Run.RoomIndex);
+
+        rig.Run.Update(10, 0, 0, false, false);                                       // 宿主这才走一步:状态机在第 2 间、宿主在第 0 间,新房间不是它的"下一间"
+
+        Assert.True(rig.Run.Aborted, "宿主不该把第三间当成下一间:" + string.Join(" | ", rig.HostLog.Lines));
+        Assert.Equal(HostedAbort.CellMismatch, rig.Run.AbortReason);
+        Assert.Equal((0, 1), (rig.Run.RoomIndex, rig.Run.RoomsEntered));
+        Assert.Single(rig.Entries);                                                   // 只有起始房间造过
+        Assert.StartsWith(Host + "abort reason=CellMismatch room=0 rooms=1 phase=Fighting netEnded=false", rig.HostLog.Lines.Last());
+        Assert.DoesNotContain(rig.HostLog.Lines, l => l.Contains("enter status="));
+    }
+
+    [Fact]
+    public async Task A_new_room_notice_without_a_map_number_never_asks_the_host_whether_it_is_a_boss_map()
+    {
+        var asked = new List<int>();
+        using Rig rig = await Rig.Start(Plans(1, 1, 1), One(LRight()), new Opts
+        {
+            Setup = s => s.IsBossMap = mapId =>
+            {
+                lock (asked)
+                {
+                    asked.Add(mapId);
+                }
+                return false;
+            },
+        });
+        // 第二间的通知换成短形(地图类型 0:没有地图编号也没有怪表),格坐标仍是请求的 (1, 0)
+        RewriteNewRoomNotice(rig, payload => new NoticePayloadBuilder().U8(1).U8(0).U8(0).I32(90002).U8(1).U8(2).U8(0).U8(0).U8(0).ToArray());
+
+        await rig.Drive(() => rig.Run.Aborted || rig.Run.RoomIndex == 1, "换进第二间");
+
+        Assert.False(rig.Run.Aborted, "宿主不该放弃:" + string.Join(" | ", rig.HostLog.Lines));
+        Assert.Equal(1, rig.Run.RoomIndex);
+        Assert.Contains(Host + "enter status=Ready room=1 spawned=0 expected=0 extra=0 exit=Down", rig.HostLog.Lines);
+        lock (asked)
+        {
+            Assert.Equal(new[] { 905 }, asked.ToArray());                             // 只有起始地图(905)问过;没有地图编号的新房间不问,更不会拿 -1 去问
+        }
+    }
+
+    private static void AssertHeroInside(TownHero hero, int left, int top, int right, int bottom, string what)
+    {
+        Assert.True(hero.X >= left && hero.X < right && hero.Y >= top && hero.Y < bottom,
+            what + ":主角在 (" + hero.X + ", " + hero.Y + "),应当在 x ∈ [" + left + ", " + right + ")、y ∈ [" + top + ", " + bottom + ")");
     }
 
     // ================================================================== 材料的参数检查

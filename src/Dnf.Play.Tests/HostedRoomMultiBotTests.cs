@@ -319,6 +319,62 @@ public class HostedRoomMultiBotTests
         Assert.Equal(1, rig.Run.Reported);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void When_the_exit_cannot_be_walked_to_in_the_very_beat_the_run_is_aborted_or_settled_that_earlier_reason_is_kept(bool settle)
+    {
+        // 计划的出口在右,但这间房的地图只有左出口的位置(走不过去)。托管的"推进"回调在清房之后第二次被叫的那一拍放弃(或把结算收齐):
+        // 同一拍里自动机既发现出口走不成、又发现放弃/结算,停手的原因要留放弃/结算那个,不能被"出口走不成"盖掉
+        using var rig = new HostedRoomMultiRunTests.Rig(1, GateSide.Right, new[] { GateSide.Left });
+        int clearedCalls = 0;
+        rig.Run.Pump = run =>
+        {
+            if (run.RoomCleared && ++clearedCalls == 2)
+            {
+                if (settle)
+                {
+                    rig.Done = true;
+                }
+                else
+                {
+                    run.Abort(HostedAbort.MoveTimeout);
+                }
+            }
+        };
+        var bot = new HostedRoomBot();
+
+        Drive(bot, rig.Run, () => bot.Stopped, "停手", maxSeconds: 30);
+
+        Assert.Equal(2, clearedCalls);                                            // 夹具自检:放弃/结算就是在"出口走不成"的那一拍发生的
+        Assert.Equal(settle ? HostedBotStop.Settled : HostedBotStop.Aborted, bot.Reason);
+        Assert.Contains("reason=" + (settle ? "Settled" : "Aborted"), bot.LogLine());
+        Assert.Empty(rig.Requests);
+    }
+
+    [Fact]
+    public void Gold_left_on_the_floor_of_a_clear_room_is_picked_up_before_the_bot_heads_for_the_door()
+    {
+        using var d = new Dungeon(new RoomPlan(1, LeftRight, GateSide.Right, null), new RoomPlan(1, LeftRight, null, GateSide.Left)) { AnswerAfterSteps = -1 };
+        var bot = new HostedRoomBot();
+        Drive(bot, d.Run, () => d.Run.RoomCleared, "打死房间里的怪、尸体消失");
+        Assert.Empty(d.Run.Room.Drops);                                           // 夹具自检:这间房的怪没有掉东西,下面的金币是测试自己放的
+        double startX = d.Run.Hero.X;
+        d.Run.Room.SpawnGold(10, startX - 250, d.Run.Hero.Y);                     // 金币落在主角左边 250 像素,门在右边几百像素外
+
+        Idle(bot, d.Run, 150);                                                    // 只走一小会儿:还在去捡金币的路上
+
+        Assert.True(d.Run.Hero.X < startX - 5, "先往左去捡金币,不是往右走向门:主角从 " + startX + " 到了 " + d.Run.Hero.X);
+        Assert.Empty(d.Rig.Requests);
+        Assert.StartsWith("捡金币", bot.Intent);
+
+        Drive(bot, d.Run, () => d.Rig.Requests.Count > 0, "捡完金币、走到门口、触发换房");
+
+        Assert.Equal(1, d.Run.Room.GoldPicked);                                   // 触发换房的时候金币已经在手里
+        Assert.Empty(d.Run.Room.Drops);
+        Assert.Equal(GateSide.Right, Assert.Single(d.Rig.Requests).Side);
+    }
+
     // ------------------------------------------------------------------ 日志
 
     [Fact]
