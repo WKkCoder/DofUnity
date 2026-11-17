@@ -25,9 +25,21 @@ namespace Dnf.Play
 
         /// <summary>
         /// 本地的怪已经全部打死(也都交了),但联网结算连续 <see cref="HostedRoomBot.NoProgressLimitMs"/> 没有来:服务端没有清图
-        /// (多个房间的副本只在最后一间清图,而这里只托管一间)或这边与服务端对不上(起始地图的怪记录有本地造不出来的)。
+        /// (多个房间的副本只在最后一间清图;没有出口可走的单房间托管里,这就是"清图没来")或这边与服务端对不上(起始地图的怪记录有本地造不出来的)。
         /// </summary>
         NoSettlement = 6,
+
+        /// <summary>
+        /// 联网多房间副本:宿主放弃了这一局(<see cref="HostedRoomRun.Aborted"/>,原因在 <see cref="HostedRoomRun.AbortReason"/>:换房被拒到额度、等不到新房间、
+        /// 新房间与服务端怪表对不上、本地迷宫对不上、对端断开……)。优先于 <see cref="Failed"/>(放弃也会让 <see cref="HostedRoomRun.Failed"/> 为真)。流程据此回城。
+        /// </summary>
+        Aborted = 7,
+
+        /// <summary>
+        /// 联网多房间副本:本地的怪已经全部打死、通向下一间的出口也定了,但出口没走成:房间地图里没有这一侧出口的位置(立刻停手),或连续
+        /// <see cref="HostedRoomBot.NoProgressLimitMs"/> 没有触发换房、也没有新的进展(走不到门、门顶不开、换房请求一直没有结果)。
+        /// </summary>
+        NoExit = 8,
     }
 
     /// <summary>
@@ -43,6 +55,11 @@ namespace Dnf.Play
     /// 上限是有限的正数,构造时就拒绝 0、负数、无穷与 NaN。时间按 <see cref="Advance"/> 收到的毫秒累计(宿主把一帧的时间乘上 <c>-dnftimescale</c> 之后再封顶 100 毫秒),不是墙钟。</item>
     /// <item>停手之后不再出手也不再走位,但时间照走(<see cref="HostedRoomRun.Update(double, int, int, bool, bool)"/> 喂 0 方向):结算收齐之后要等回城延迟走完,流程才回城镇。</item>
     /// <item>与 <c>-dnfnodamage</c> 的关系按既有语义:主角没有生命值,永远不会倒下(<see cref="HostedBotStop.HeroDown"/> 不会出现),怪物打不到他,上限照常生效。</item>
+    /// <item><b>多房间(r18-hostmulti)</b>:托管的 <see cref="HostedRoomRun"/> 设了通向下一间的出口(<see cref="HostedRoomRun.ExitSide"/>)时,房间里的怪杀光、金币与物件都处理完(决策是
+    /// <see cref="DungeonBot.NextInRoom"/> 给的"出口"意图)之后,自动机用 <see cref="HostedRoomDoorWalker"/> 走向那扇门,触发换房(请求怎么排、新房间怎么进都是宿主与 <see cref="HostedRoomRun"/> 的事);
+    /// 换房请求排出去之后站着等(<see cref="HostedRoomRun.MovePending"/>),新房间进来接着打。整段上限与无进展上限<b>仍按整局算</b>(进新房间、排换房请求都算进展):
+    /// 新增停手原因 <see cref="HostedBotStop.Aborted"/>(宿主放弃)与 <see cref="HostedBotStop.NoExit"/>(出口没走成)。单房间(没有出口)时这一段不起作用,行为与日志一字不变;
+    /// 多房间时日志行末尾多写 <c>room= rooms= moves= refused= exit=</c>(与放弃时的 <c>abort=</c>),只有序号、只数与状态名。</item>
     /// </list>
     /// 一个实例只管一局(造房间的宿主每局新造一个);不是线程安全的,与房间会话一样只在宿主主线程用。它只是测试工具,不代表原版的 AI,也不绕过任何官方服务。
     /// </summary>
@@ -58,8 +75,16 @@ namespace Dnf.Play
         public const double DefaultNoProgressLimitMs = 60000.0;
 
         private readonly DungeonBot _bot = new DungeonBot(false);
+        private readonly HostedRoomDoorWalker _walker = new HostedRoomDoorWalker();
         private double _debtMs;
-        private long _progressMark = -1;
+        private bool _marked;
+        private int _markHits;
+        private int _markKills;
+        private int _markObjects;
+        private int _markReported;
+        private int _markDropped;
+        private int _markRooms;
+        private int _markMoves;
         private double _progressAtMs;
         private bool _logTaken;
 
@@ -70,6 +95,13 @@ namespace Dnf.Play
         private int _hits;
         private int _kills;
         private bool _heroDown;
+        private bool _multi;
+        private int _roomIndex;
+        private int _rooms;
+        private int _moves;
+        private int _refused;
+        private string _exit = "none";
+        private HostedAbort _abort;
 
         /// <param name="totalLimitMs">整段上限(毫秒):自动机从第一次推进起累计这么久结算还没来就停手。</param>
         /// <param name="noProgressLimitMs">无进展上限(毫秒):连续这么久没有任何进展(命中、击杀、上报、打翻物件)就停手。</param>
@@ -162,22 +194,55 @@ namespace Dnf.Play
             while (beats < DungeonBot.MaxBeatsPerFrame && _debtMs >= CombatScript.StepMs && Reason == HostedBotStop.None)
             {
                 bool attack = _bot.NextInRoom(run.Room, out int dirX, out int dirY);
+                bool noExit = false;
+                if (!attack && WantsExit(run) && !_walker.Next(run.Room, run.ExitSide.Value, out dirX, out dirY))
+                {
+                    noExit = true;      // 房间地图没有这一侧出口的位置:没法走过去,这一步站着,走完这一步就停手
+                }
                 run.Update(CombatScript.StepMs, dirX, dirY, attack, false);
                 _debtMs -= CombatScript.StepMs;
                 beats++;
                 Check(run);
+                if (noExit && Reason == HostedBotStop.None)
+                {
+                    Reason = HostedBotStop.NoExit;
+                }
             }
             return beats;
         }
 
         /// <summary>
+        /// 该走向出口了:托管的房间定了通向下一间的出口、本地怪杀光(出口开了)、没有在等换房结果、没放弃也没结算,
+        /// 而且自动机自己已经没别的事(<see cref="DungeonBot.NextInRoom"/> 给的是"出口"意图:打怪、捡金币、打物件、复活都还没轮到走位)。
+        /// </summary>
+        private bool WantsExit(HostedRoomRun run)
+        {
+            return run.ExitSide.HasValue && run.RoomCleared && !run.MovePending && !run.Aborted && !run.Finished
+                && _bot.Intent != null && _bot.Intent.StartsWith(ExitIntent, StringComparison.Ordinal);
+        }
+
+        /// <summary><see cref="DungeonBot.Intent"/> 在"房间里没有怪、没有金币与物件要处理"时的开头(<see cref="DungeonBot"/> 里就写死在这几个字上)。</summary>
+        private const string ExitIntent = "出口";
+
+        /// <summary>
         /// 一行日志:<c>DNF_NET stage=room bot state=running|stopped reason=… steps=… elapsedMs=… reported=… dropped=… alive=… hits=… kills=… hero=up|down</c>。
+        /// 多房间(<see cref="HostedRoomRun.MultiRoom"/>)时末尾再多写 <c> room=… rooms=… moves=… refused=… exit=Left|Right|Up|Down|none</c>,放弃了还有 <c> abort=…</c>。
         /// 只有状态名与只数(取自最近一次检查),没有服务端编号、地图与坐标。
         /// </summary>
         public string LogLine()
         {
-            return LogPrefix + " state=" + (Stopped ? "stopped" : "running") + " reason=" + Reason + " steps=" + Steps + " elapsedMs=" + (long)ElapsedMs
+            string line = LogPrefix + " state=" + (Stopped ? "stopped" : "running") + " reason=" + Reason + " steps=" + Steps + " elapsedMs=" + (long)ElapsedMs
                 + " reported=" + _reported + " dropped=" + _dropped + " alive=" + _alive + " hits=" + _hits + " kills=" + _kills + " hero=" + (_heroDown ? "down" : "up");
+            if (_multi)
+            {
+                // 多房间:末尾多写换房字段(单房间的行一个字不变)
+                line += " room=" + _roomIndex + " rooms=" + _rooms + " moves=" + _moves + " refused=" + _refused + " exit=" + _exit;
+                if (_abort != HostedAbort.None)
+                {
+                    line += " abort=" + _abort;
+                }
+            }
+            return line;
         }
 
         /// <summary>
@@ -204,14 +269,33 @@ namespace Dnf.Play
             _hits = room.Hits;
             _kills = room.Kills;
             _heroDown = room.HeroDead;
-            // 进展 = 命中、击杀、上报(或被拒收)、打翻物件里任何一个计数动了;血量再厚的怪只要一直在挨打就不算"没进展",由整段上限兜底
-            long mark = (long)room.Hits + room.Kills + room.ObjectsDestroyed + run.Reported + run.Dropped;
-            if (mark != _progressMark)
+            _multi = run.MultiRoom;
+            _roomIndex = run.RoomIndex;
+            _rooms = run.RoomsEntered;
+            _moves = run.MoveRequests;
+            _refused = run.MoveRefusals;
+            _exit = run.ExitSide.HasValue ? run.ExitSide.Value.ToString() : "none";
+            _abort = run.AbortReason;
+            // 进展 = 命中、击杀、上报(或被拒收)、打翻物件、进了新房间、排了换房请求里任何一个计数动了;血量再厚的怪只要一直在挨打就不算"没进展",由整段上限兜底。
+            // 命中、击杀、物件是当前房间的计数(进新房间清零),所以逐项比较而不是加起来比和:换房那一刻有的计数掉回 0 也算动了
+            if (!_marked || room.Hits != _markHits || room.Kills != _markKills || room.ObjectsDestroyed != _markObjects || run.Reported != _markReported
+                || run.Dropped != _markDropped || run.RoomsEntered != _markRooms || run.MoveRequests != _markMoves)
             {
-                _progressMark = mark;
+                _marked = true;
+                _markHits = room.Hits;
+                _markKills = room.Kills;
+                _markObjects = room.ObjectsDestroyed;
+                _markReported = run.Reported;
+                _markDropped = run.Dropped;
+                _markRooms = run.RoomsEntered;
+                _markMoves = run.MoveRequests;
                 _progressAtMs = ElapsedMs;
             }
-            if (run.Failed)
+            if (run.Aborted)
+            {
+                Reason = HostedBotStop.Aborted;
+            }
+            else if (run.Failed)
             {
                 Reason = HostedBotStop.Failed;
             }
@@ -229,7 +313,7 @@ namespace Dnf.Play
             }
             else if (ElapsedMs - _progressAtMs >= NoProgressLimitMs)
             {
-                Reason = _alive > 0 ? HostedBotStop.NoProgress : HostedBotStop.NoSettlement;
+                Reason = _alive > 0 ? HostedBotStop.NoProgress : (run.ExitSide.HasValue ? HostedBotStop.NoExit : HostedBotStop.NoSettlement);
             }
         }
     }
