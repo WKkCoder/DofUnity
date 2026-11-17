@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using Dnf.Net.ChannelDirectory;
 using Dnf.Net.Frame;
 using Dnf.Net.Gateway;
 
@@ -162,6 +163,7 @@ namespace Dnf.Net.Session
     {
         internal Func<GatewayOptions, GatewayClient> GatewayFactory { get; set; }
         internal Func<IPAddress, int, CancellationToken, Task<OnlineChannelLink>> ChannelFactory { get; set; }
+        internal Func<string, int, CancellationToken, Task<ChannelDirectoryLoadResult>> DirectoryLoader { get; set; }
         internal OnlineTownWindows Windows { get; set; }
         internal bool AutoHeartbeat { get; set; } = true;
         internal bool InlineCallbacks { get; set; }
@@ -389,7 +391,41 @@ namespace Dnf.Net.Session
                     throw new InvalidOperationException("当前状态不能连接频道");
                 }
                 await CloseLinkNoGateAsync().ConfigureAwait(false);
-                return await ConnectNoGateAsync(channelPort, cancellationToken).ConfigureAwait(false);
+                return await ConnectNoGateAsync(_address, channelPort, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        /// <summary>
+        /// 连指定频道、收启动包并游戏登录；<paramref name="host"/> 为 null 时与只收端口的重载相同,
+        /// 非 null 时用给定 IP 字面量(不做 DNS)代替网关游戏服地址。
+        /// </summary>
+        public async Task<OnlineConnectResult> ConnectAsync(string host, int channelPort, CancellationToken cancellationToken = default)
+        {
+            using CancellationTokenSource operation = BeginOperation(cancellationToken);
+            cancellationToken = operation.Token;
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                ThrowIfDisposed();
+                if (State != OnlineClientSessionState.LoggedIn)
+                {
+                    throw new InvalidOperationException("当前状态不能连接频道");
+                }
+                await CloseLinkNoGateAsync().ConfigureAwait(false);
+                if (!TryResolveChannelHost(host, out IPAddress address))
+                {
+                    return ConnectFailure(OnlineTownEntry.Fail(OnlineStage.ChannelConnect, OnlineFailure.ConnectFailed,
+                        null, -1, 0, null, null, 0));
+                }
+                if (host == null)
+                {
+                    address = _address;
+                }
+                return await ConnectNoGateAsync(address, channelPort, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -450,12 +486,73 @@ namespace Dnf.Net.Session
                 }
                 await CloseLinkNoGateAsync().ConfigureAwait(false);
                 State = OnlineClientSessionState.LoggedIn;
-                return await ConnectNoGateAsync(channelPort, cancellationToken).ConfigureAwait(false);
+                return await ConnectNoGateAsync(_address, channelPort, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
                 _gate.Release();
             }
+        }
+
+        /// <summary>
+        /// 断开旧频道并用给定 IP 字面量连新频道;<paramref name="host"/> 为 null 时与只收端口的重载相同。
+        /// </summary>
+        public async Task<OnlineConnectResult> SwitchChannelAsync(string host, int channelPort, CancellationToken cancellationToken = default)
+        {
+            using CancellationTokenSource operation = BeginOperation(cancellationToken);
+            cancellationToken = operation.Token;
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                ThrowIfDisposed();
+                if (State == OnlineClientSessionState.ExclusiveReceive)
+                {
+                    throw new InvalidOperationException("独占收包期间不能换频道；先由战斗路径结束并显式断开");
+                }
+                if (_token == null || _address == null || State == OnlineClientSessionState.Created)
+                {
+                    throw new InvalidOperationException("尚未登录，不能换频道");
+                }
+                await CloseLinkNoGateAsync().ConfigureAwait(false);
+                State = OnlineClientSessionState.LoggedIn;
+                if (!TryResolveChannelHost(host, out IPAddress address))
+                {
+                    return ConnectFailure(OnlineTownEntry.Fail(OnlineStage.ChannelConnect, OnlineFailure.ConnectFailed,
+                        null, -1, 0, null, null, 0));
+                }
+                if (host == null)
+                {
+                    address = _address;
+                }
+                return await ConnectNoGateAsync(address, channelPort, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        /// <summary>
+        /// 用登录拿到的游戏服地址拉取频道目录(单次只读,不重试);不占用连频道/选角的门闩,也不改会话状态机。
+        /// </summary>
+        public async Task<ChannelDirectoryLoadResult> LoadChannelDirectoryAsync(
+            int directoryPort = ChannelServiceConstants.DefaultPort,
+            CancellationToken cancellationToken = default)
+        {
+            using CancellationTokenSource operation = BeginOperation(cancellationToken);
+            cancellationToken = operation.Token;
+            ThrowIfDisposed();
+            if (_address == null)
+            {
+                throw new InvalidOperationException("尚未登录，不能读取频道目录");
+            }
+            string host = _address.ToString();
+            if (_hooks.DirectoryLoader != null)
+            {
+                return await _hooks.DirectoryLoader(host, directoryPort, cancellationToken).ConfigureAwait(false);
+            }
+            return await ChannelDirectoryClient.LoadAsync(host, directoryPort, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
         }
 
         /// <summary>关闭当前频道连接；保留网关登录结果，之后可重新 ConnectAsync。释放后调用为空操作。</summary>
@@ -587,14 +684,14 @@ namespace Dnf.Net.Session
                 _link?.Session.Events.Count ?? 0, null, null, _link?.Session.SecondLayerMismatches ?? 0, lastFailure);
         }
 
-        private async Task<OnlineConnectResult> ConnectNoGateAsync(int channelPort, CancellationToken cancellationToken)
+        private async Task<OnlineConnectResult> ConnectNoGateAsync(IPAddress address, int channelPort, CancellationToken cancellationToken)
         {
             _earlyFrames = new List<DecodedFrame>();
             _selectionStageReported = false;
             ReportStage(OnlineStage.ChannelConnect);
             OnlineChannelLink link = _hooks.ChannelFactory != null
-                ? await _hooks.ChannelFactory(_address, channelPort, cancellationToken).ConfigureAwait(false)
-                : await OpenChannelAsync(_address, channelPort, cancellationToken).ConfigureAwait(false);
+                ? await _hooks.ChannelFactory(address, channelPort, cancellationToken).ConfigureAwait(false)
+                : await OpenChannelAsync(address, channelPort, cancellationToken).ConfigureAwait(false);
             if (link == null)
             {
                 return ConnectFailure(OnlineTownEntry.Fail(OnlineStage.ChannelConnect, OnlineFailure.ConnectFailed,
@@ -847,6 +944,22 @@ namespace Dnf.Net.Session
             {
                 throw new ObjectDisposedException(nameof(OnlineClientSession));
             }
+        }
+
+        /// <summary><paramref name="host"/> 为 null 时由调用方使用网关地址;否则必须是可解析的 IP 字面量。</summary>
+        private static bool TryResolveChannelHost(string host, out IPAddress address)
+        {
+            if (host == null)
+            {
+                address = null;
+                return true;
+            }
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                address = null;
+                return false;
+            }
+            return IPAddress.TryParse(host.Trim(), out address);
         }
     }
 }
