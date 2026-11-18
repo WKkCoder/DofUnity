@@ -7,6 +7,8 @@ namespace Dnf.Play.Tests;
 
 /// <summary>
 /// 联网进城后的主角建立、不落盘隔离、不支持职业显式退回、快照交叉核对与战斗/城镇名牌注入测试(纯内存合成夹具)。
+/// 注意:这个类里的测试都不许改全进程共用的静态状态(如 <c>OverlayArt.SharedFonts</c>),因为它与别的测试类并行执行;
+/// 需要改的(战斗名牌注入那一条)在 <see cref="OnlineHeroTestsSharedFonts"/>,放在禁止并行的 <see cref="GlobalStateCollection"/> 里。
 /// </summary>
 public sealed class OnlineHeroTests
 {
@@ -129,43 +131,5 @@ public sealed class OnlineHeroTests
         Assert.DoesNotContain("45", diag);
         Assert.DoesNotContain("44", diag);
         Assert.DoesNotContain("9106", diag);
-    }
-
-    [Fact]
-    public void Room_combat_nameplate_uses_online_progress_name_and_allows_direct_override_with_local_default()
-    {
-        using var fx = new HostedRoomFixture();
-        OnlineCharacterEntry entry = Entry(uid: 9107, name: "剑舞星河", job: 0, growTypeByte: 0x00, level: 10);
-        HeroProgress online = HeroProgress.CreateForOnlineHero(fx.Assets, OnlineHeroProfile.FromEntry(entry, 0));
-        var local = new HeroProgress(ExpTests.Table(), ExpTests.Sp(), CharacterGrowth.Parse(ExpTests.GrowthLines()), null, null);
-
-        Assert.Equal(CharacterRoster.LocalName, local.HeroName);
-        Assert.Equal("剑舞星河", online.HeroName);
-
-        local.HeroName = string.Empty;
-        Assert.Equal(CharacterRoster.LocalName, local.HeroName);
-
-        var fonts = new RecordingFonts();
-        OverlayArt.SharedFonts = fonts;
-        try
-        {
-            RoomCombatSession session = RoomCombatSession.Create(fx.Assets, fx.Room, 1, heroVitals: true, progress: online);
-            _ = session.Build(100);
-            Assert.True(fonts.Asked("剑舞星河"));
-
-            fonts.CodePoints.Clear();
-            session.HeroName = "临时改名";
-            _ = session.Build(200);
-            Assert.True(fonts.Asked("临时改名"));
-
-            fonts.CodePoints.Clear();
-            RoomCombatSession fallback = RoomCombatSession.Create(fx.Assets, fx.Room, 1, heroVitals: true, progress: null);
-            _ = fallback.Build(300);
-            Assert.True(fonts.Asked(CharacterRoster.LocalName));
-        }
-        finally
-        {
-            OverlayArt.SharedFonts = null;
-        }
     }
 }
