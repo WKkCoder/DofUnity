@@ -45,6 +45,7 @@ GHIDRA_HEADLESS_MAXMEM=8G nice -n 10 ~/Applications/ghidra_12.1.4_PUBLIC/support
 | `FixSwitches.java` | 补全没解出的跳转表(`apply` 才写入;只在 `dnffix` 上用) |
 | `RefsIntoRegions.java`、`SampleUndefinedRefs.java`、`RefsFrom.java` | 看引用落在哪里、取样没反汇编的字节 |
 | `Peek.java`、`Xrefs.java`、`TagRefs.java`、`P6Survey.java` | 早先的小工具 |
+| `FindDataType.java` | 按名字(正则)在数据类型管理器里找结构体、枚举、联合与 typedef,打印成员的偏移、类型与名字(只读;工程里没有导入该类型则无输出) |
 
 配套的 Python 小工具(都在 `tools/py/`,只读):`loader_stores.py` 把一个脚本加载函数的汇编清单按标签切段,列出每个标签的处理段写了对象的哪些字段(例如 `.chr` 的 `[jump power]` 落在角色对象的哪个位移,E-073);`vslots.py` 从磁盘读六个核心类的虚表槽;`read_va.py` 按虚拟地址读磁盘字节(读受保护区域要 `DNF_ALLOW_PROTECTED=1`)。
 
