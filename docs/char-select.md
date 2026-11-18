@@ -119,3 +119,10 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll flow-check --from char --shots-at
 tools/unity-build-town.sh macos                    # 构建 + 对拍(含选角三帧)+ 实时走完整条流程(从选角开始)
 tools/play-dungeon.sh flow                         # 自己玩:从选角界面开始(方向键选、回车进、Esc 退出、鼠标点格子与按钮);flowtown 跳过选角直接从城镇开始
 ```
+
+## 12 联网模式(E-429,flow.md §125)
+
+- 联网进选角阶段后画服务端给的真名册(`OnlineCharacterRoster`):一个条目一个槽位、顺序不变、不丢、没有上限,多于 12 个按行滚动(一窗两行,滚动条点箭头滚一行、点轨道翻两行,没做滚轮与拖动);选角命令的槽号是名册位置,不是角色编号。离线名册与离线画法一字不变(离线出图的 SHA256 与改动前逐个相同)。
+- 名字按客户端规则做 UTF-8 解码(`CharacterNames`);职业与成长类型换成中文称号(`DnfCharacterTitles`,运行时读用户自己的数据,读不到给英文占位);头像按职业给基础外观(`DnfJobAvatars`);待删除、名字特殊字符标志为 1、状态字节为 8 的角色被拦住、不发选角请求;「创立角色」「删除角色」置灰、点了提示「暂未开放」。
+- 推断:职业号顺序、觉醒阶段取法、滑块高度模型;没做:从装备组装外观、滚轮、滑块拖动;窗口手感没有人验证过。
+- 命令行:`dnf charselect-shot --png <文件> --online [--text] [--chars N] [--select N] [--first-row R] [--char-prompt cannot|deleting|na] [--busy]`(联网版面,合成名册,最多 40 个)。
