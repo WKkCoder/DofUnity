@@ -1019,6 +1019,7 @@ namespace Dnf.Cli
                     return BreakableCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "skill-check":
                     return SkillCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "skill-census": return SkillCensus.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "awaken-check":
                     return AwakenCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "gate-body-check":

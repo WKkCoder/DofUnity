@@ -20,6 +20,7 @@
     <ProjectReference Include="..\Dnf.Game\Dnf.Game.csproj" />
     <ProjectReference Include="..\Dnf.Render\Dnf.Render.csproj" />
     <ProjectReference Include="..\Dnf.Play\Dnf.Play.csproj" />
+    <ProjectReference Include="..\Dnf.Cli\Dnf.Cli.csproj" />
   </ItemGroup>
 
   <ItemGroup>
