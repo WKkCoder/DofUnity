@@ -283,7 +283,10 @@ namespace Dnf.Client
             _flow.ReturnToCharacterSelect();
         }
 
-        /// <summary>主动退出游戏时先通过联网会话发送断线包再关闭外壳。</summary>
+        /// <summary>
+        /// 主动退出游戏时先关闭联网会话到频道服务器的连接(<see cref="OnlineShellBackend.DisconnectGracefullyAsync"/>,只关这条 TCP、网关登录保留),再关闭外壳并释放后端。
+        /// <b>不发 <c>1/3</c></b>(联网层也没有 <c>1/3</c> 的构造器),真服会不会把这样的收尾当异常掉线是未验证的。调用之后宿主处于已释放状态(再调、再 <see cref="Tick"/> 都是空操作)。
+        /// </summary>
         public async Task DisconnectForQuitAsync(CancellationToken cancellationToken = default)
         {
             if (_disposed)

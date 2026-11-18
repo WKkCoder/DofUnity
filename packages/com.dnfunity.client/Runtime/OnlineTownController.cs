@@ -13,7 +13,7 @@ namespace Dnf.Client
     /// <item>从选中角色(<see cref="OnlineCharacterEntry"/>)、<c>SelectCharacterLoadInfo</c> 与 <c>TownEntrySnapshot</c> 建立 <see cref="OnlineHeroProfile"/> 与起始城镇;</item>
     /// <item>把 <see cref="ITownWorld"/> 包成 <see cref="OnlineTownWorld"/> 处理 <c>1/38</c> 切区、回退与可配置开关;</item>
     /// <item>监听 <c>0/199</c> 踢下线与断线事件,退回登录页而不死循环自动重试;</item>
-    /// <item>处理系统菜单"回选角"(重连当前频道拉新名单)与"退出游戏"(先发断线再退出),确保所有事件退订成对。</item>
+    /// <item>处理系统菜单"回选角"(重连当前频道拉新名单)与"退出游戏"(先退订,再由外壳关闭到频道的连接后退出;不发 <c>1/3</c>,真服怎么看待这种收尾是未验证的),确保所有事件退订成对。</item>
     /// </list>
     /// </summary>
     public sealed class OnlineTownController : IDisposable
@@ -186,7 +186,11 @@ namespace Dnf.Client
             _host.ReturnToCharacterSelect();
         }
 
-        /// <summary>系统菜单选择了"退出游戏":先退订城镇通道,再由外壳发 <c>1/3</c> 断线包。</summary>
+        /// <summary>
+        /// 系统菜单选择了"退出游戏":先退订城镇通道,再由外壳关闭到频道的连接(<see cref="OnlineShellHost.DisconnectForQuitAsync"/> 只是调
+        /// <see cref="OnlineClientSession.DisconnectAsync"/>,关掉这一条 TCP、网关登录保留)。<b>不发 <c>1/3</c></b>(联网层也没有 <c>1/3</c> 的构造器),
+        /// 真服会不会把这样的收尾当异常掉线是未验证的。只执行一次;回选角之后再调是空操作;退出过程抛异常时写 <c>exit quit error</c> 日志,不外抛。
+        /// </summary>
         public async Task QuitGameAsync(CancellationToken cancellationToken = default)
         {
             if (_exiting)
