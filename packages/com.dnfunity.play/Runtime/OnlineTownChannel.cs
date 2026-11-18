@@ -161,7 +161,10 @@ namespace Dnf.Play
         public int? KickReasonCode { get; private set; }
         public AreaChangeResult LastResult { get; private set; }
 
-        /// <summary>发起一次严格单在途的 <c>1/38</c> 切区请求。</summary>
+        /// <summary>
+        /// 发起一次严格单在途的 <c>1/38</c> 切区请求。<paramref name="x"/>、<paramref name="y"/> 是主角到了目标区之后站的落点
+        /// (服务端只把它们交给 <c>set_position</c>,不是源区里的位置);<paramref name="srcVillage"/>、<paramref name="srcArea"/> 才是来源。
+        /// </summary>
         public bool BeginAreaChange(
             TownPlace from,
             TownPlace to,

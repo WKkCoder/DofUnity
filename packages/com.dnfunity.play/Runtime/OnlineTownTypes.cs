@@ -294,7 +294,7 @@ namespace Dnf.Play
             return level <= 1 || (areaInfo != null && areaInfo.Kind == TownAreaKind.DungeonGate);
         }
 
-        /// <summary>把世界浮标夹成协议里的 16 位无符号脚底像素坐标。</summary>
+        /// <summary>把世界浮点坐标夹成协议里的 16 位无符号像素坐标(1/38 里的目标落点 x、y):非数、无穷、不大于 0 的取 0,四舍五入,超过 65535 取 65535。</summary>
         public static ushort FormatCoordinate(double value)
         {
             if (double.IsNaN(value) || double.IsInfinity(value) || value <= 0.0)

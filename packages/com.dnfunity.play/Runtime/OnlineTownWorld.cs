@@ -94,6 +94,12 @@ namespace Dnf.Play
         public bool IsAreaChangePending => _coordinator.HasInFlight;
         public OnlineTownPrompt CurrentPrompt { get; private set; }
 
+        /// <summary>
+        /// 测试接缝(internal,生产里永远是 null):替换"目标区落点"的来源,用来喂图册本身算不出的小数落点(图册里的出口矩形取整数坐标,
+        /// 中心只会是整数或半整数)。为 null 时 <see cref="Through"/> 取图册的 <see cref="TownAtlas.Arrive"/>,与宿主随后建会话放主角用的是同一个来源。
+        /// </summary>
+        internal Func<TownPlace, TownArrival> LandingSource { get; set; }
+
         public TownPlace Start => _inner.Start;
         public TownPlace Return => _inner.Return;
 
@@ -198,7 +204,11 @@ namespace Dnf.Play
                 RollBackToSafeArea(from);
                 return null;
             }
-            ComputeFootCoordinates(from, out ushort px, out ushort py);
+            // 1/38 的 x、y 是"用户到了新区之后站在哪"(服务端只把它们交给 set_position),所以取目标区的落点,
+            // 而不是主角在源区里的脚下位置:落点与宿主随后 Create(innerTarget) 放主角用的是同一个来源(图册的 Arrive),不各算各的。
+            TownArrival landing = LandingSource != null ? LandingSource(innerTarget.Value) : _atlas.Arrive(innerTarget.Value);
+            ushort px = OnlineTownAreaRules.FormatCoordinate(landing.X);
+            ushort py = OnlineTownAreaRules.FormatCoordinate(landing.Y);
             TownAreaInfo dstInfo = _atlas.GetArea(innerTarget.Value.Town, innerTarget.Value.Area);
             if (_coordinator.BeginAreaChange(from, innerTarget.Value, dstInfo, dstVillage, dstArea, px, py, srcVillage, srcArea, _lastNowMs))
             {
@@ -277,25 +287,6 @@ namespace Dnf.Play
                 resettable.ClearPendingExit();
             }
             _activeSession.Update(0.0, 0, 0);
-        }
-
-        private void ComputeFootCoordinates(TownPlace from, out ushort x, out ushort y)
-        {
-            if (_activeSession?.Hero != null)
-            {
-                x = OnlineTownAreaRules.FormatCoordinate(_activeSession.Hero.X);
-                y = OnlineTownAreaRules.FormatCoordinate(_activeSession.Hero.Y);
-                return;
-            }
-            if (_activeSession is ITownExitSource exitSource)
-            {
-                x = OnlineTownAreaRules.FormatCoordinate(exitSource.HeroX);
-                y = OnlineTownAreaRules.FormatCoordinate(exitSource.HeroY);
-                return;
-            }
-            TownArrival arrival = _atlas.Arrive(from);
-            x = OnlineTownAreaRules.FormatCoordinate(arrival.X);
-            y = OnlineTownAreaRules.FormatCoordinate(arrival.Y);
         }
 
         private static bool SameExit(TownPlace? lastFrom, TownExit? lastExit, TownPlace from, TownExit exit)
