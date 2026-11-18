@@ -44,8 +44,14 @@ namespace Dnf.Net.Session
         {
         }
 
-        /// <summary>真会话加自定的保活(测试用:换掉真的心跳泵,看进副本之后保活怎么被调用);<paramref name="keepAlive"/> 为 null 表示不保活。</summary>
-        internal OnlineDungeonRunner(GameClientSession session, Func<CancellationToken, Task<int>> keepAlive)
+        /// <summary>
+        /// 在已进城的真会话上创建并指定进副本之后的保活委托;<paramref name="keepAlive"/> 为 null 表示不保活
+        /// (交互路径在战斗返回后切回会话心跳泵,可传 null 以避免双读者并仍保留真会话的事件汇总行)。
+        /// </summary>
+        /// <param name="session">已进城且就绪的真会话。</param>
+        /// <param name="keepAlive">进副本或战斗结束后的保活委托;null 表示不挂保活泵。</param>
+        /// <exception cref="ArgumentNullException"><paramref name="session"/> 为 null。</exception>
+        public OnlineDungeonRunner(GameClientSession session, Func<CancellationToken, Task<int>> keepAlive)
         {
             if (session == null)
             {

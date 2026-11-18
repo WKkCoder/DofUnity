@@ -85,6 +85,9 @@ namespace Dnf.Net.Session
 
         /// <summary>装载完成命令:此刻没有等着报告的装载握手(还没换过房,或已经报过,或已经完成)。</summary>
         NoLoadPending,
+
+        /// <summary>已发出放弃回城命令(1/45),不再发送击杀、换房、装载完成或结算命令。</summary>
+        GivingUp,
     }
 
     /// <summary>发送类调用的结局。</summary>
@@ -156,6 +159,19 @@ namespace Dnf.Net.Session
         Reward = 2,
     }
 
+    /// <summary>结算通知载荷的解析状态。</summary>
+    public enum OnlineCombatSettlementParseStatus
+    {
+        /// <summary>不适用(不是 <see cref="OnlineCombatEventKind.SettlementArrived"/> 事件)。</summary>
+        NotApplicable = 0,
+
+        /// <summary>载荷解析成功(对应的 <see cref="OnlineCombatEvent.SettlementResult"/> 或 <see cref="OnlineCombatEvent.SettlementReward"/> 不为 null)。</summary>
+        Succeeded = 1,
+
+        /// <summary>载荷解析失败(对应只读记录为 null;放行逻辑不变,状态机照常推进)。</summary>
+        Failed = 2,
+    }
+
     /// <summary>状态机产出的结构化事件的种类。</summary>
     public enum OnlineCombatEventKind
     {
@@ -215,6 +231,12 @@ namespace Dnf.Net.Session
 
         /// <summary>装载完成通知到了并被接受:这个房间的装载握手完成。</summary>
         RoomLoaded,
+
+        /// <summary>放弃回城命令(类 1、包号 45)已发出,等待 0/23 与 0/24 到达。</summary>
+        GiveUpSent,
+
+        /// <summary>放弃回城后收到 0/23 与 0/24 两个包号(能解析出的区域快照附在事件与结果上,读不下来时快照为 null)。</summary>
+        ReturnedToTown,
     }
 
     /// <summary>
@@ -225,7 +247,12 @@ namespace Dnf.Net.Session
     {
         internal OnlineCombatEvent(OnlineCombatEventKind kind, int localId, int serverId, OnlineCombatBlock block,
             OnlineCombatFrameVerdict verdict, OnlineCombatSettlementPart part, PacketClass packetClass, int packetId,
-            int total, int sent, int confirmed, int room, int roomMonsters, int replyCode, int trailingBytes)
+            int total, int sent, int confirmed, int room, int roomMonsters, int replyCode, int trailingBytes,
+            OnlineCombatSettlementParseStatus settlementParseStatus = OnlineCombatSettlementParseStatus.NotApplicable,
+            SettlementNoticeA settlementResult = null,
+            SettlementNoticeB settlementReward = null,
+            UserAreaNotice userArea = null,
+            AreaUsersNotice areaUsers = null)
         {
             Kind = kind;
             LocalId = localId;
@@ -242,6 +269,11 @@ namespace Dnf.Net.Session
             RoomMonsters = roomMonsters;
             ReplyCode = replyCode;
             TrailingBytes = trailingBytes;
+            SettlementParseStatus = settlementParseStatus;
+            SettlementResult = settlementResult;
+            SettlementReward = settlementReward;
+            UserArea = userArea;
+            AreaUsers = areaUsers;
         }
 
         public OnlineCombatEventKind Kind { get; }
@@ -293,6 +325,33 @@ namespace Dnf.Net.Session
 
         /// <summary>新房间起始地图通知读完之后载荷里剩的字节数(仅 <see cref="OnlineCombatEventKind.RoomEntered"/>,其余为 -1;真服复验时拿它对账怪记录步长)。</summary>
         public int TrailingBytes { get; }
+
+        /// <summary>
+        /// 结算通知载荷的解析状态(仅 <see cref="OnlineCombatEventKind.SettlementArrived"/> 时为
+        /// <see cref="OnlineCombatSettlementParseStatus.Succeeded"/> 或 <see cref="OnlineCombatSettlementParseStatus.Failed"/>;
+        /// 其余事件及被忽略的帧为 <see cref="OnlineCombatSettlementParseStatus.NotApplicable"/>)。
+        /// </summary>
+        public OnlineCombatSettlementParseStatus SettlementParseStatus { get; }
+
+        /// <summary>
+        /// 解析出的通关结果记录(仅 <see cref="OnlineCombatEventKind.SettlementArrived"/> 且 <see cref="Part"/> 为
+        /// <see cref="OnlineCombatSettlementPart.Result"/> 且解析成功时非 null;7 字节全零兜底形下 <see cref="SettlementNoticeA.HasBestTimeBlock"/> 为 false)。
+        /// 乱序或重复而被忽略的帧不解析,此属性为 null。
+        /// </summary>
+        public SettlementNoticeA SettlementResult { get; }
+
+        /// <summary>
+        /// 解析出的通关奖励记录(仅 <see cref="OnlineCombatEventKind.SettlementArrived"/> 且 <see cref="Part"/> 为
+        /// <see cref="OnlineCombatSettlementPart.Reward"/> 且解析成功时非 null)。
+        /// 乱序或重复而被忽略的帧不解析,此属性为 null。
+        /// </summary>
+        public SettlementNoticeB SettlementReward { get; }
+
+        /// <summary>放弃回城后从 0/23 解析出的只读区域快照(仅 <see cref="OnlineCombatEventKind.ReturnedToTown"/> 且载荷可解析时非 null)。</summary>
+        public UserAreaNotice UserArea { get; }
+
+        /// <summary>放弃回城后从 0/24 解析出的只读区域用户快照(仅 <see cref="OnlineCombatEventKind.ReturnedToTown"/> 且载荷可解析时非 null)。</summary>
+        public AreaUsersNotice AreaUsers { get; }
     }
 
     /// <summary>对应表里的一只怪:本地编号 ↔ 服务端编号,以及它的击杀进度。</summary>
@@ -426,6 +485,12 @@ namespace Dnf.Net.Session
         /// </summary>
         public TimeSpan RoomHandshakeTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
+        /// <summary>
+        /// 发出放弃回城命令(1/45)后等 0/23 与 0/24 两个回城包号的上限;缺省 15 秒(服务端 1/45 成功无回包,非副本/城镇期望状态时静默不回)。
+        /// 超过就以 <see cref="OnlineDungeonCombatOutcome.Timeout"/> 收尾。
+        /// </summary>
+        public TimeSpan GiveUpTimeout { get; set; } = TimeSpan.FromSeconds(15);
+
         /// <summary>跑器每产出一条事件就在它的循环线程上回调一次;null 不回调。抛出的异常被吞掉。</summary>
         public Action<OnlineCombatEvent> OnEvent { get; set; }
     }
@@ -550,6 +615,14 @@ namespace Dnf.Net.Session
         private PacketClass _frameClass;
         private int _frameId = -1;
         private int _frameServerId = -1;
+        private volatile SettlementNoticeA _settlementResult;
+        private volatile SettlementNoticeB _settlementReward;
+        private bool _givingUp;
+        private bool _seenUserArea;
+        private bool _seenAreaUsers;
+        private bool _returnedToTown;
+        private volatile UserAreaNotice _userArea;
+        private volatile AreaUsersNotice _areaUsers;
 
         /// <summary>
         /// 用起始地图快照建对应表并开始。
@@ -661,6 +734,24 @@ namespace Dnf.Net.Session
         /// <summary>装载握手还没完(命令没发出,或发出了通知还没到):此时换房被 <see cref="OnlineCombatBlock.LoadPending"/> 拦着。</summary>
         public bool LoadPending => _load != OnlineRoomLoadState.None;
 
+        /// <summary>最近一次解析成功的通关结果记录(还没收到或解析失败时为 null)。与对应 <see cref="OnlineCombatEventKind.SettlementArrived"/> 事件上的对象为同一只读实例。</summary>
+        public SettlementNoticeA SettlementResult => _settlementResult;
+
+        /// <summary>最近一次解析成功的通关奖励记录(还没收到或解析失败时为 null)。与对应 <see cref="OnlineCombatEventKind.SettlementArrived"/> 事件上的对象为同一只读实例。</summary>
+        public SettlementNoticeB SettlementReward => _settlementReward;
+
+        /// <summary>是否已发出放弃回城命令(类 1、包号 45)。</summary>
+        public bool IsGivingUp => _givingUp;
+
+        /// <summary>放弃回城发出后是否已收齐 0/23 与 0/24 两个回城通知。</summary>
+        public bool ReturnedToTown => _returnedToTown;
+
+        /// <summary>放弃回城后从 0/23 解析出的只读区域快照(未放弃、没到或载荷读不下来时为 null)。</summary>
+        public UserAreaNotice UserArea => _userArea;
+
+        /// <summary>放弃回城后从 0/24 解析出的只读区域用户快照(未放弃、没到或载荷读不下来时为 null)。</summary>
+        public AreaUsersNotice AreaUsers => _areaUsers;
+
         /// <summary>透传的帧按(类、包号)分的计数,按类、包号升序。</summary>
         public IReadOnlyList<OnlineCombatPacketCount> Passthrough
         {
@@ -723,6 +814,10 @@ namespace Dnf.Net.Session
         /// <param name="localId">本地编号(= 当前房间起始地图怪记录的序号)。</param>
         public async Task<OnlineCombatSendResult> ReportKillAsync(int localId, CancellationToken cancellationToken = default)
         {
+            if (_givingUp)
+            {
+                return BlockKill(localId, OnlineCombatBlock.GivingUp, false);
+            }
             OnlineCombatMonster[] monsters = _monsters;
             if (localId < 0 || localId >= monsters.Length)
             {
@@ -764,6 +859,10 @@ namespace Dnf.Net.Session
         /// <param name="localId">该房间对应表里的本地编号。</param>
         public Task<OnlineCombatSendResult> ReportKillAsync(int room, int localId, CancellationToken cancellationToken = default)
         {
+            if (_givingUp)
+            {
+                return Task.FromResult(BlockKill(localId, OnlineCombatBlock.GivingUp, false));
+            }
             if (room != _room)
             {
                 return Task.FromResult(BlockKill(localId, OnlineCombatBlock.StaleRoom, false));
@@ -777,6 +876,10 @@ namespace Dnf.Net.Session
         /// </summary>
         public async Task<OnlineCombatSendResult> RequestSettlementAsync(CancellationToken cancellationToken = default)
         {
+            if (_givingUp)
+            {
+                return BlockSettlement(OnlineCombatBlock.GivingUp);
+            }
             if (_phase == OnlineCombatPhase.Fighting)
             {
                 return BlockSettlement(OnlineCombatBlock.NotCleared);
@@ -807,6 +910,10 @@ namespace Dnf.Net.Session
         /// <param name="room">请求针对的房间序号。</param>
         public OnlineCombatBlock MoveGate(int room)
         {
+            if (_givingUp)
+            {
+                return OnlineCombatBlock.GivingUp;
+            }
             if (room != _room)
             {
                 return OnlineCombatBlock.StaleRoom;
@@ -899,6 +1006,10 @@ namespace Dnf.Net.Session
         /// <exception cref="InvalidOperationException">自定的载荷工厂返回 null 或长度不是 <see cref="OnlineCombatPayloads.RoomLoadedLength"/>(此时没有发包、状态不变)。</exception>
         public async Task<OnlineCombatSendResult> ReportRoomLoadedAsync(CancellationToken cancellationToken = default)
         {
+            if (_givingUp)
+            {
+                return BlockLoaded(OnlineCombatBlock.GivingUp);
+            }
             if (_load != OnlineRoomLoadState.ReportDue)
             {
                 return BlockLoaded(OnlineCombatBlock.NoLoadPending);
@@ -925,6 +1036,34 @@ namespace Dnf.Net.Session
         }
 
         /// <summary>
+        /// 发放弃回城命令(类 1、包号 45,0 字节空载荷)。已经请求放弃时在本地拦下不重复发(<see cref="OnlineCombatBlock.GivingUp"/>)。
+        /// 发出成功之后进入放弃等待状态:此后击杀、换房、装载完成与结算一律被拦下,等待 0/23 与 0/24 到齐。
+        /// </summary>
+        public async Task<OnlineCombatSendResult> RequestGiveUpAsync(CancellationToken cancellationToken = default)
+        {
+            if (_givingUp)
+            {
+                Blocked++;
+                return new OnlineCombatSendResult(OnlineCombatSendOutcome.Blocked, OnlineCombatBlock.GivingUp, FrameStatus.Ok);
+            }
+
+            FrameStatus status = await _port.SendAsync(
+                PacketClass.Cmd,
+                SessionLifecyclePayloads.GiveUpGamePacketId,
+                SessionLifecyclePayloads.BuildGiveUpGame(),
+                cancellationToken).ConfigureAwait(false);
+            if (status != FrameStatus.Ok)
+            {
+                Blocked++;
+                return new OnlineCombatSendResult(OnlineCombatSendOutcome.FrameFailed, OnlineCombatBlock.FrameFailed, status);
+            }
+
+            _givingUp = true;
+            Raise(OnlineCombatEventKind.GiveUpSent, -1, OnlineCombatBlock.None, OnlineCombatFrameVerdict.Passthrough, OnlineCombatSettlementPart.None);
+            return new OnlineCombatSendResult(OnlineCombatSendOutcome.Sent, OnlineCombatBlock.None, FrameStatus.Ok);
+        }
+
+        /// <summary>
         /// 收到服务端的一帧(已解出类、包号与载荷;信封里的内层帧也走这里)。载荷末尾的会话加密补零不影响判断。
         /// 返回这一帧被怎样对待:<see cref="OnlineCombatFrameVerdict.Passthrough"/> 表示它不在状态机的包集合里(只计了数,调用方自己处理)。
         /// 起始地图通知(29)、装载完成通知(30)与换房失败回包(类 1、48)只在状态机正等着它们的时候才算在包集合里,否则同样透传。
@@ -945,9 +1084,9 @@ namespace Dnf.Net.Session
                     case ClearNoticeId:
                         return OnClear();
                     case ResultNoticeId:
-                        return OnSettlementNotice(OnlineCombatSettlementPart.Result);
+                        return OnSettlementNotice(OnlineCombatSettlementPart.Result, body);
                     case RewardNoticeId:
-                        return OnSettlementNotice(OnlineCombatSettlementPart.Reward);
+                        return OnSettlementNotice(OnlineCombatSettlementPart.Reward, body);
                     case StartMapNoticeId:
                         if (_moveInFlight)
                         {
@@ -958,6 +1097,18 @@ namespace Dnf.Net.Session
                         if (_load == OnlineRoomLoadState.AwaitingNotice)
                         {
                             return OnRoomLoaded();
+                        }
+                        break;
+                    case TownAreaPayloads.UserAreaPacketId:
+                        if (_givingUp)
+                        {
+                            return OnGiveUpTownNotice(true, body);
+                        }
+                        break;
+                    case TownAreaPayloads.AreaUsersPacketId:
+                        if (_givingUp)
+                        {
+                            return OnGiveUpTownNotice(false, body);
                         }
                         break;
                 }
@@ -1089,11 +1240,52 @@ namespace Dnf.Net.Session
             return OnlineCombatFrameVerdict.Accepted;
         }
 
-        private OnlineCombatFrameVerdict OnSettlementNotice(OnlineCombatSettlementPart part)
+        // 放弃命令发出后等 0/23 与 0/24:只认包号(先后不限),载荷读得下来则挂在事件与结果上,读不下来为 null 且不计 Malformed
+        private OnlineCombatFrameVerdict OnGiveUpTownNotice(bool isUserArea, byte[] body)
+        {
+            if (_returnedToTown)
+            {
+                return Ignore(OnlineCombatFrameVerdict.Duplicate, -1);
+            }
+            if (isUserArea)
+            {
+                if (_seenUserArea)
+                {
+                    return Ignore(OnlineCombatFrameVerdict.Duplicate, -1);
+                }
+                _seenUserArea = true;
+                if (TownAreaPayloads.TryParseUserArea(body, out UserAreaNotice userArea))
+                {
+                    _userArea = userArea;
+                }
+            }
+            else
+            {
+                if (_seenAreaUsers)
+                {
+                    return Ignore(OnlineCombatFrameVerdict.Duplicate, -1);
+                }
+                _seenAreaUsers = true;
+                if (TownAreaPayloads.TryParseAreaUsers(body, out AreaUsersNotice areaUsers))
+                {
+                    _areaUsers = areaUsers;
+                }
+            }
+
+            if (_seenUserArea && _seenAreaUsers)
+            {
+                _returnedToTown = true;
+                Raise(OnlineCombatEventKind.ReturnedToTown, -1, OnlineCombatBlock.None, OnlineCombatFrameVerdict.Accepted, OnlineCombatSettlementPart.None,
+                    userArea: _userArea, areaUsers: _areaUsers);
+            }
+            return OnlineCombatFrameVerdict.Accepted;
+        }
+
+        private OnlineCombatFrameVerdict OnSettlementNotice(OnlineCombatSettlementPart part, byte[] body)
         {
             if (_phase < OnlineCombatPhase.Settling)
             {
-                // 结算命令还没发就来了结算通知:乱序,忽略,不缓存
+                // 结算命令还没发就来了结算通知:乱序,忽略,不缓存,也不解析
                 return Ignore(OnlineCombatFrameVerdict.OutOfOrder, -1);
             }
             bool already = part == OnlineCombatSettlementPart.Result ? _haveResult : _haveReward;
@@ -1103,19 +1295,42 @@ namespace Dnf.Net.Session
             }
             if (part == OnlineCombatSettlementPart.Reward && !_haveResult)
             {
-                // 服务端先发结果再发奖励:奖励先到是乱序,忽略,不缓存
+                // 服务端先发结果再发奖励:奖励先到是乱序,忽略,不缓存,也不解析
                 return Ignore(OnlineCombatFrameVerdict.OutOfOrder, -1);
             }
 
+            SettlementNoticeA parsedResult = null;
+            SettlementNoticeB parsedReward = null;
+            OnlineCombatSettlementParseStatus parseStatus;
             if (part == OnlineCombatSettlementPart.Result)
             {
                 _haveResult = true;
+                if (SettlementNoticeAParser.TryParse(body, out parsedResult)
+                    || SettlementNoticeAParser.TryParseTimeoutFallback(body, out parsedResult))
+                {
+                    _settlementResult = parsedResult;
+                    parseStatus = OnlineCombatSettlementParseStatus.Succeeded;
+                }
+                else
+                {
+                    parseStatus = OnlineCombatSettlementParseStatus.Failed;
+                }
             }
             else
             {
                 _haveReward = true;
+                if (SettlementNoticeBParser.TryParse(body, out parsedReward))
+                {
+                    _settlementReward = parsedReward;
+                    parseStatus = OnlineCombatSettlementParseStatus.Succeeded;
+                }
+                else
+                {
+                    parseStatus = OnlineCombatSettlementParseStatus.Failed;
+                }
             }
-            Raise(OnlineCombatEventKind.SettlementArrived, -1, OnlineCombatBlock.None, OnlineCombatFrameVerdict.Accepted, part);
+            Raise(OnlineCombatEventKind.SettlementArrived, -1, OnlineCombatBlock.None, OnlineCombatFrameVerdict.Accepted, part,
+                settlementParseStatus: parseStatus, settlementResult: parsedResult, settlementReward: parsedReward);
             if (_haveResult && _haveReward)
             {
                 _phase = OnlineCombatPhase.Settled;
@@ -1213,13 +1428,19 @@ namespace Dnf.Net.Session
         }
 
         private void Raise(OnlineCombatEventKind kind, int localId, OnlineCombatBlock block, OnlineCombatFrameVerdict verdict, OnlineCombatSettlementPart part,
-            int replyCode = -1, int trailingBytes = -1, bool lookupServerId = true)
+            int replyCode = -1, int trailingBytes = -1, bool lookupServerId = true,
+            OnlineCombatSettlementParseStatus settlementParseStatus = OnlineCombatSettlementParseStatus.NotApplicable,
+            SettlementNoticeA settlementResult = null,
+            SettlementNoticeB settlementReward = null,
+            UserAreaNotice userArea = null,
+            AreaUsersNotice areaUsers = null)
         {
             bool framed = kind == OnlineCombatEventKind.FrameIgnored;
             OnlineCombatMonster[] monsters = _monsters;
             int serverId = framed ? _frameServerId : lookupServerId && localId >= 0 && localId < monsters.Length ? monsters[localId].ServerId : -1;
             _events.Add(new OnlineCombatEvent(kind, localId, serverId, block, verdict, part,
-                framed ? _frameClass : PacketClass.Noti, framed ? _frameId : -1, _totalMonsters, Sent, Confirmed, _room, monsters.Length, replyCode, trailingBytes));
+                framed ? _frameClass : PacketClass.Noti, framed ? _frameId : -1, _totalMonsters, Sent, Confirmed, _room, monsters.Length, replyCode, trailingBytes,
+                settlementParseStatus, settlementResult, settlementReward, userArea, areaUsers));
         }
     }
 }

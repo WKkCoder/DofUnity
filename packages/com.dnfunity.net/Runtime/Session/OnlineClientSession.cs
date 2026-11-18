@@ -168,7 +168,7 @@ namespace Dnf.Net.Session
         internal bool AutoHeartbeat { get; set; } = true;
         internal bool InlineCallbacks { get; set; }
         internal bool ValidateSlot { get; set; } = true;
-        internal TimeSpan HeartbeatPoll { get; set; } = TimeSpan.FromSeconds(5);
+        internal TimeSpan HeartbeatPoll { get; set; } = TimeSpan.FromMilliseconds(50);
         internal TimeSpan HeartbeatTimeout { get; set; } = TimeSpan.FromMinutes(11);
     }
 
@@ -188,9 +188,11 @@ namespace Dnf.Net.Session
         internal IDisposable Connection { get; }
         internal uint LocalAddress { get; }
         internal OnlineObservedStream Observer { get; }
+        private int _disconnectNotified;
         internal bool ReadFault { get; set; }
         internal bool WriteFault { get; set; }
-        internal bool DisconnectNotified { get; set; }
+        internal bool DisconnectNotified => Volatile.Read(ref _disconnectNotified) != 0;
+        internal bool TryMarkDisconnectNotified() => Interlocked.Exchange(ref _disconnectNotified, 1) == 0;
         internal bool ReadFailed => ReadFault || (Observer != null && Observer.ReadFailed);
         internal bool WriteFailed => WriteFault || (Observer != null && Observer.WriteFailed);
 
@@ -285,7 +287,7 @@ namespace Dnf.Net.Session
     /// 方法通过内部门闩串行化；顺序错误抛 <see cref="InvalidOperationException"/>，取消抛 <see cref="OperationCanceledException"/>。
     /// 成功选角后默认自管心跳；进副本前调用 <see cref="EnterExclusiveReceiveAsync"/> 把收包权交给战斗路径。
     /// </summary>
-    public sealed class OnlineClientSession : IDisposable
+    public sealed partial class OnlineClientSession : IDisposable
     {
         private readonly OnlineEntrySettings _settings;
         private readonly OnlineTownEntry _entry;
@@ -294,6 +296,7 @@ namespace Dnf.Net.Session
         private readonly OnlineClientSessionHooks _hooks;
         private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _disposeStop = new CancellationTokenSource();
+        private readonly object _mailboxGate = new object();
         private string _token;
         private IPAddress _address;
         private OnlineChannelLink _link;
@@ -301,6 +304,9 @@ namespace Dnf.Net.Session
         private bool _selectionStageReported;
         private CancellationTokenSource _heartbeatStop;
         private Task _heartbeatTask;
+        private CommandMailbox _activeMailbox;
+        private bool _disposed;
+        private bool _restoreHeartbeatOnLeave;
         private bool _detached;
 
         /// <summary>创建分阶段会话。事件与进度默认串行投递到后台线程；宿主可给 dispatcher 切回主线程。</summary>
@@ -619,8 +625,16 @@ namespace Dnf.Net.Session
                 {
                     throw new InvalidOperationException("只有选角成功后才能进入独占收包");
                 }
-                HeartbeatState = OnlineHeartbeatState.ExclusiveReceive;
-                State = OnlineClientSessionState.ExclusiveReceive;
+                CommandMailbox mailbox;
+                lock (_mailboxGate)
+                {
+                    _restoreHeartbeatOnLeave = HeartbeatState == OnlineHeartbeatState.Running;
+                    HeartbeatState = OnlineHeartbeatState.ExclusiveReceive;
+                    State = OnlineClientSessionState.ExclusiveReceive;
+                    mailbox = _activeMailbox;
+                    _activeMailbox = null;
+                }
+                mailbox?.Close(CommandCloseReason.Stopped);
                 await StopHeartbeatNoGateAsync().ConfigureAwait(false);
             }
             finally
@@ -632,13 +646,15 @@ namespace Dnf.Net.Session
         /// <summary>立即取消心跳并关闭连接；可重复调用，不进行网络重试。</summary>
         public void Dispose()
         {
-            if (State == OnlineClientSessionState.Disposed) return;
+            if (_disposed || State == OnlineClientSessionState.Disposed) return;
             _disposeStop.Cancel();
+            MarkDisposedAndCloseMailbox();
             _gate.Wait();
             try
             {
                 if (State == OnlineClientSessionState.Disposed) return;
                 State = OnlineClientSessionState.Disposed;
+                _restoreHeartbeatOnLeave = false;
                 CancellationTokenSource stop = _heartbeatStop;
                 Task heartbeat = _heartbeatTask;
                 _heartbeatStop = null;
@@ -672,7 +688,9 @@ namespace Dnf.Net.Session
                 outcome.Slot, outcome.Entered ? link?.Session : null, link?.Connection, outcome.FramesSeen,
                 outcome.SecondLayerMismatches, outcome.Snapshot, outcome.DungeonPermissions, outcome.SelectCharacter);
             _detached = true;
+            _restoreHeartbeatOnLeave = false;
             State = OnlineClientSessionState.Disposed;
+            MarkDisposedAndCloseMailbox();
             _heartbeatStop?.Cancel();
             _link = null;
             return result;
@@ -688,6 +706,7 @@ namespace Dnf.Net.Session
         {
             _earlyFrames = new List<DecodedFrame>();
             _selectionStageReported = false;
+            _restoreHeartbeatOnLeave = false;
             ReportStage(OnlineStage.ChannelConnect);
             OnlineChannelLink link = _hooks.ChannelFactory != null
                 ? await _hooks.ChannelFactory(address, channelPort, cancellationToken).ConfigureAwait(false)
@@ -793,13 +812,24 @@ namespace Dnf.Net.Session
             OnlineChannelLink link = _link;
             if (link == null) throw new InvalidOperationException("没有可保活的频道连接");
             var stop = new CancellationTokenSource();
-            _heartbeatStop = stop;
-            HeartbeatState = OnlineHeartbeatState.Running;
-            _heartbeatTask = Task.Run(() => HeartbeatLoopAsync(link, stop.Token));
+            var mailbox = new CommandMailbox();
+            lock (_mailboxGate)
+            {
+                if (_disposed || State == OnlineClientSessionState.Disposed)
+                {
+                    stop.Dispose();
+                    return;
+                }
+                _heartbeatStop = stop;
+                _activeMailbox = mailbox;
+                HeartbeatState = OnlineHeartbeatState.Running;
+            }
+            _heartbeatTask = Task.Run(() => HeartbeatLoopAsync(link, mailbox, stop.Token));
         }
 
         private async Task StopHeartbeatNoGateAsync()
         {
+            CloseActiveMailbox(CommandCloseReason.Stopped);
             CancellationTokenSource stop = _heartbeatStop;
             Task task = _heartbeatTask;
             _heartbeatStop = null;
@@ -810,35 +840,52 @@ namespace Dnf.Net.Session
                 await task.ConfigureAwait(false);
             }
             stop?.Dispose();
-            if (HeartbeatState != OnlineHeartbeatState.ExclusiveReceive)
+            lock (_mailboxGate)
             {
-                HeartbeatState = OnlineHeartbeatState.Disabled;
+                if (HeartbeatState != OnlineHeartbeatState.ExclusiveReceive)
+                {
+                    HeartbeatState = OnlineHeartbeatState.Disabled;
+                }
             }
         }
 
-        private async Task HeartbeatLoopAsync(OnlineChannelLink link, CancellationToken cancellationToken)
+        private async Task HeartbeatLoopAsync(OnlineChannelLink link, CommandMailbox mailbox, CancellationToken cancellationToken)
         {
             Stopwatch idle = Stopwatch.StartNew();
+            CommandCloseReason closeReason = CommandCloseReason.IoFault;
             try
             {
                 while (!link.Session.PeerClosed)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    List<DecodedFrame> window = await link.Session.ReceiveAsync(_hooks.HeartbeatPoll, 0, cancellationToken).ConfigureAwait(false);
+                    if (!await DrainCommandsAsync(link, mailbox).ConfigureAwait(false))
+                    {
+                        return;
+                    }
+                    cancellationToken.ThrowIfCancellationRequested();
+                    List<DecodedFrame> window = await link.Session.ReceiveAsync(_hooks.HeartbeatPoll, 1, cancellationToken).ConfigureAwait(false);
                     if (window.Count > 0)
                     {
                         idle.Restart();
                     }
                     foreach (DecodedFrame frame in window)
                     {
-                        if (!OnlineHeartbeat.IsHeartbeat(frame)) continue;
-                        FrameStatus sent = await link.Session.SendAsync(PacketClass.Cmd, OnlineHeartbeat.ReplyPacketId,
-                            OnlineHeartbeat.ReplyPayload, cancellationToken).ConfigureAwait(false);
-                        if (sent != FrameStatus.Ok)
+                        if (OnlineHeartbeat.IsHeartbeat(frame))
                         {
-                            NotifyDisconnected(link, OnlineDisconnectReason.WriteError);
-                            return;
+                            FrameStatus sent = await link.Session.SendAsync(PacketClass.Cmd, OnlineHeartbeat.ReplyPacketId,
+                                OnlineHeartbeat.ReplyPayload, CancellationToken.None).ConfigureAwait(false);
+                            if (sent != FrameStatus.Ok)
+                            {
+                                NotifyDisconnected(link, OnlineDisconnectReason.WriteError);
+                                return;
+                            }
+                            continue;
                         }
+                        if (frame.Header.Class == PacketClass.Noti && frame.Header.PacketId == AntibotEnvelope.PacketId)
+                        {
+                            continue;
+                        }
+                        DeliverNonHeartbeatFrame(frame);
                     }
                     if (link.ReadFailed || link.Session.LastFrameError != FrameError.None)
                     {
@@ -860,6 +907,7 @@ namespace Dnf.Net.Session
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                closeReason = CommandCloseReason.Stopped;
             }
             catch (IOException)
             {
@@ -871,10 +919,7 @@ namespace Dnf.Net.Session
             }
             finally
             {
-                if (ReferenceEquals(_link, link) && HeartbeatState == OnlineHeartbeatState.Running)
-                {
-                    HeartbeatState = OnlineHeartbeatState.Disabled;
-                }
+                CloseMailboxOnPumpExit(link, mailbox, closeReason);
             }
         }
 
@@ -896,7 +941,10 @@ namespace Dnf.Net.Session
             {
                 return;
             }
-            link.DisconnectNotified = true;
+            if (!link.TryMarkDisconnectNotified())
+            {
+                return;
+            }
             Action<OnlineDisconnectReason> handler = Disconnected;
             if (handler != null)
             {
@@ -908,6 +956,7 @@ namespace Dnf.Net.Session
 
         private async Task CloseLinkNoGateAsync()
         {
+            _restoreHeartbeatOnLeave = false;
             await StopHeartbeatNoGateAsync().ConfigureAwait(false);
             _link?.Dispose();
             _link = null;
