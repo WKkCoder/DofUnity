@@ -708,6 +708,30 @@ public sealed class OnlineTownWorldTests
         Assert.Equal((0.0, 0, 0), Assert.Single(plain.Updates));
     }
 
+    // 每帧的无参记录(宿主在推进会话前调)对"既没有主角、也不是出口来源"的会话,用的是活动地点(Create 时给的那个)的落点,而不是别的:
+    // 先有主角在 (300,260)(记成安全位置),主角没了再记一帧 → 安全位置被活动地点区域 2 的落点 (400,220) 覆盖;回退时主角回到 (400,220)
+    [Fact]
+    public void Every_idle_frame_of_a_session_without_hero_or_exit_source_records_the_arrival_of_the_active_place()
+    {
+        using var rig = NewRig(heroes: true);
+        var plain = new PlainKitSession("kit/plain");
+        rig.Inner.Factory = place => plain;
+        rig.World.Create(new TownPlace(1, 2));   // 活动地点是区域 2:落点 (400, 220)
+        rig.World.Poll(1000);
+
+        plain.Hero = rig.NewHero(300, 260);
+        rig.World.RecordSafePosition();          // 有主角:安全位置 = 主角脚下 (300, 260)
+        plain.Hero = null;
+        rig.World.RecordSafePosition();          // 没有主角也不是出口来源:回到活动地点的落点 (400, 220)
+        plain.Hero = rig.NewHero(640, 230);      // 回退时才又有主角
+        rig.Inner.ThroughBehavior = (_, _, _) => new TownPlace(1, 77);
+
+        Assert.Null(rig.Through(new TownPlace(1, 3), Exit12));
+
+        Assert.Equal(400.0, plain.Hero.X);
+        Assert.Equal(220.0, plain.Hero.Y);
+    }
+
     [Fact]
     public void Recording_without_a_session_does_nothing()
     {
