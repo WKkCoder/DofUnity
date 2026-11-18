@@ -131,6 +131,7 @@ namespace Dnf.Game
             Path = path;
             Kind = kind;
             Part = -1;
+            NeedMaterialId = -1;
             StackableType = StackableTypes.Unknown;
             UsableJobs = new List<string>();
             TextKind = -1;
@@ -227,8 +228,17 @@ namespace Dnf.Game
         /// <summary><c>[price]</c>(没写为 0)。商店买入的单价。</summary>
         public int Price { get; set; }
 
-        /// <summary><c>[value]</c>(没写为 0):商店收购时的基准价,收购价 = 它乘上价格倍率表的一档再除以 1000(见 <see cref="ItemPricing"/>,证据 E-119)。</summary>
+        /// <summary><c>[value]</c>(脚本未写或写为 -1 时按 <see cref="Price"/> 补齐):商店收购时的基准价,收购价 = 它乘上价格倍率表的一档再除以 1000(见 <see cref="ItemPricing"/>,证据 E-119)。</summary>
         public int Value { get; set; }
+
+        /// <summary><c>[need material]</c> 的材料物品编号(没写为 -1)。商店买入除金币外还可用材料兑换或金币加材料复合定价。</summary>
+        public int NeedMaterialId { get; set; }
+
+        /// <summary><c>[need material]</c> 的单件所需材料数量(没写为 0)。</summary>
+        public int NeedMaterialCount { get; set; }
+
+        /// <summary>购买这件物品是否需要消耗兑换材料(<see cref="NeedMaterialId"/> &gt;= 0 且 <see cref="NeedMaterialCount"/> &gt; 0)。</summary>
+        public bool HasNeedMaterial => NeedMaterialId >= 0 && NeedMaterialCount > 0;
 
         /// <summary><c>[finish point price]</c>(没写为 0):不为 0 的物品商店不收(服务端 <c>user_sell_item</c> 的一道检查,证据 E-119)。</summary>
         public int FinishPointPrice { get; set; }
@@ -356,6 +366,7 @@ namespace Dnf.Game
             Price,
             Value,
             FinishPointPrice,
+            NeedMaterial,
             KiriProtectable,
             StackLimit,
             MoveSound,
@@ -386,6 +397,7 @@ namespace Dnf.Game
             ["[price]"] = Field.Price,
             ["[value]"] = Field.Value,
             ["[finish point price]"] = Field.FinishPointPrice,
+            ["[need material]"] = Field.NeedMaterial,
             ["[possible kiri protect]"] = Field.KiriProtectable,
             ["[stack limit]"] = Field.StackLimit,
             ["[move wav]"] = Field.MoveSound,
@@ -419,6 +431,8 @@ namespace Dnf.Game
             Field field = Field.None;
             bool haveString = false;      // 当前标签下是否已经读到第一个字符串(路径、类型名)
             bool haveInt = false;         // 当前标签下是否已经读到第一个整数
+            int rawValue = -1;            // 脚本里显式写出的 [value];未写或写为 -1 时在解析结尾补成 Price
+            int needMaterialInts = 0;     // 当前 [need material] 下已读整数个数(0:材料编号, 1:材料数量)
             bool recoveryPercent = false; // [hp recovery]/[mp recovery] 下:符号字符串是不是 "%"
             int recoveryInts = 0;         // 同上:已经读到几个整数(第一个是数量,第二个是持续毫秒)
             int recoveryAmount = 0;
@@ -431,6 +445,7 @@ namespace Dnf.Game
                     field = tag != null && Fields.TryGetValue(tag, out Field f) ? f : Field.None;
                     haveString = false;
                     haveInt = false;
+                    needMaterialInts = 0;
                     if (field == Field.UsableJob)
                     {
                         info.UsableJobs.Clear();
@@ -543,8 +558,23 @@ namespace Dnf.Game
                     case Field.Value:
                         if (isInt && !haveInt)
                         {
-                            info.Value = t.Value;
+                            rawValue = t.Value;
                             haveInt = true;
+                        }
+                        break;
+                    case Field.NeedMaterial:
+                        if (isInt && needMaterialInts < 2)
+                        {
+                            if (needMaterialInts == 0)
+                            {
+                                info.NeedMaterialId = t.Value;
+                                info.NeedMaterialCount = 0;
+                            }
+                            else
+                            {
+                                info.NeedMaterialCount = t.Value;
+                            }
+                            needMaterialInts++;
                         }
                         break;
                     case Field.FinishPointPrice:
@@ -697,6 +727,7 @@ namespace Dnf.Game
                 // 随机箱的 [booster info] 与礼包的 [package data] 也按块再扫一遍(只认这两个标签,别的字段的读法不动)
                 info.Contents = ItemContents.Read(tokens, strings);
             }
+            info.Value = rawValue == -1 ? info.Price : rawValue;
             return info;
         }
 
