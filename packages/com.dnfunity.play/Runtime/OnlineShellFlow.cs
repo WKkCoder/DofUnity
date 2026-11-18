@@ -175,6 +175,7 @@ namespace Dnf.Play
         private bool _channelIntent;
         private bool _serverIntent;
         private bool _swapIntent;
+        private bool _returnSelectIntent;
         private ChannelTarget _chosenChannel;
 
         // 选频道阶段
@@ -359,6 +360,14 @@ namespace Dnf.Play
             _swapIntent = true;
         }
 
+        /// <summary>
+        /// 宿主:游戏内系统菜单选"回选角"时回到选频道并立刻重连当前频道以取回最新角色列表(即使开着真界面也不停在选频道界面等)。只在进入游戏阶段有效。
+        /// </summary>
+        public void ReturnToCharacterSelect()
+        {
+            _returnSelectIntent = true;
+        }
+
         /// <summary>连接掉线的通知(<see cref="IOnlineBackend.Disconnected"/> 订阅的就是它);可以在任何线程上调,只置标志,处理在 <see cref="Poll"/> 里。</summary>
         public void NotifyDisconnected()
         {
@@ -426,12 +435,14 @@ namespace Dnf.Play
             bool channel = _channelIntent;
             bool server = _serverIntent;
             bool swap = _swapIntent;
+            bool returnSelect = _returnSelectIntent;
             ChannelTarget chosen = _chosenChannel;
             _backIntent = false;
             _retryIntent = false;
             _channelIntent = false;
             _serverIntent = false;
             _swapIntent = false;
+            _returnSelectIntent = false;
             _chosenChannel = null;
             PickerIntents(ref back, ref server, ref chosen);
 
@@ -467,7 +478,13 @@ namespace Dnf.Play
                     }
                     break;
                 case OnlineShellStage.InGame:
-                    if (swap)
+                    if (returnSelect)
+                    {
+                        Log(OnlineShellStage.InGame, "ok", "return_select");
+                        EnterStage(OnlineShellStage.ChannelSelect, "return_select");
+                        StartConnect(_channelTarget ?? _defaultChannel);
+                    }
+                    else if (swap)
                     {
                         Log(OnlineShellStage.InGame, "ok", "swap_character");
                         EnterStage(OnlineShellStage.ChannelSelect, "swap_character");
