@@ -684,6 +684,68 @@ public sealed class OnlineTownControllerTests
         Assert.True(transport.Disposed);
     }
 
+    // ------------------------------------------------------------------ 没有日志去处
+
+    private static OnlineTownController CreateQuiet(TownHostRig rig, ITownCommandTransport custom)
+    {
+        // 不给日志去处:所有日志语句都要容忍它不存在
+        return OnlineTownController.Create(rig.Host, OnlineTownHostTests.BuildAtlas(), customTransport: custom);
+    }
+
+    [Fact]
+    public void Without_a_log_sink_a_kick_seen_by_poll_or_by_flush_still_goes_back_to_login()
+    {
+        using TownHostRig pollRig = EnteredRig();
+        var pollTransport = new OnlineTownHostTests.RecordingTransport();
+        using OnlineTownController polled = CreateQuiet(pollRig, pollTransport);
+        pollTransport.Push(new TownInboundEvent(TownInboundKind.Kicked, reasonCode: 1305));
+        polled.Poll(pollRig.Now += 16);
+        pollRig.Tick();
+        Assert.True(polled.DisconnectLogged);
+        Assert.Equal(OnlineShellStage.Login, pollRig.Host.Stage);
+
+        using TownHostRig flushRig = EnteredRig();
+        var flushTransport = new OnlineTownHostTests.RecordingTransport();
+        using OnlineTownController flushed = CreateQuiet(flushRig, flushTransport);
+        flushTransport.Push(new TownInboundEvent(TownInboundKind.Kicked, reasonCode: 1306));
+        flushed.FlushDisconnectBeforeDispose(flushRig.Now += 16);
+        Assert.True(flushed.DisconnectLogged);
+
+        Assert.DoesNotContain(pollRig.TownLines(), l => l.Contains("event=disconnect"));
+        Assert.DoesNotContain(flushRig.TownLines(), l => l.Contains("event=disconnect"));
+    }
+
+    [Fact]
+    public async Task Without_a_log_sink_returning_to_character_select_and_quitting_work_even_when_the_quit_fails()
+    {
+        using TownHostRig backRig = EnteredRig();
+        OnlineTownController back = CreateQuiet(backRig, new OnlineTownHostTests.RecordingTransport());
+        back.ReturnToCharacterSelect();
+        backRig.Until(() => backRig.Host.Stage == OnlineShellStage.CharacterSelect);
+
+        using TownHostRig quitRig = EnteredRig();
+        var quitTransport = new OnlineTownHostTests.RecordingTransport();
+        OnlineTownController quitting = CreateQuiet(quitRig, quitTransport);
+        await Waits.Bounded(quitting.QuitGameAsync());
+        Assert.True(quitTransport.Disposed);
+        Assert.False(quitRig.Backend.HasSession);
+
+        using TownHostRig failRig = EnteredRig();
+        var failTransport = new OnlineTownHostTests.RecordingTransport();
+        OnlineTownController failing = CreateQuiet(failRig, failTransport);
+        failRig.Port(0).ThrowOnLostRemove = true;
+        try
+        {
+            await Waits.Bounded(failing.QuitGameAsync());
+        }
+        finally
+        {
+            failRig.Port(0).ThrowOnLostRemove = false;
+            failRig.Backend.Dispose();
+        }
+        Assert.True(failTransport.Disposed);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

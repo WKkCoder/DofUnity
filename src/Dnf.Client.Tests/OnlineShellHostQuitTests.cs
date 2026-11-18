@@ -1,4 +1,5 @@
 using Dnf.Net.Session;
+using Dnf.Net.Tests;
 using Dnf.Play;
 
 namespace Dnf.Client.Tests;
@@ -197,5 +198,31 @@ public sealed class OnlineShellHostQuitTests
 
         Assert.Equal(OnlineShellStage.InGame, rig.Host.Stage);
         Assert.Null(rig.Host.Flow.Notice);
+
+        // 不经宿主的每帧推进,直接对阶段机来:释放时阶段机已关闭,不处理断线通知
+        rig.Host.Flow.Poll(rig.Now += 16);
+        Assert.Equal(OnlineShellStage.InGame, rig.Host.Stage);
+        Assert.Null(rig.Host.Flow.Notice);
+    }
+
+    [Fact]
+    public async Task A_second_quit_or_a_plain_dispose_while_a_quit_is_still_closing_does_not_release_the_backend_under_it()
+    {
+        using var rig = new TownHostRig(realSession: true);
+        rig.EnterInGame();
+        var gated = new GatedQuit(rig);
+        Assert.False(gated.Quit.IsCompleted);
+
+        await Waits.Bounded(rig.Host.DisconnectForQuitAsync());
+        rig.Host.Dispose();
+
+        // 第一次退出还卡在关闭连接上:后端没有被另一次退出或释放抢先释放,仍然能登录
+        OnlineAuthOutcome login = await GatewayTestSupport.Bounded(rig.Backend.LoginAsync(BackendRig.User, BackendRig.Password, default));
+        Assert.True(login.Success);
+
+        gated.Release();
+        await Waits.Bounded(gated.Quit);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() =>
+            Waits.Bounded(rig.Backend.LoginAsync(BackendRig.User, BackendRig.Password, default)));
     }
 }
