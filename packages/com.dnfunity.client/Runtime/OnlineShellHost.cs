@@ -1,4 +1,6 @@
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 using Dnf.Net.Session;
 using Dnf.Play;
 using Dnf.Render;
@@ -199,6 +201,15 @@ namespace Dnf.Client
         /// </summary>
         public OnlineClientSession Session => _backend.Session;
 
+        /// <summary>最近一次成功选角进城的结果(<c>Load</c> 含 <c>Village</c> 与 <c>UniqueId</c>);未进城时为 null。</summary>
+        public SelectCharacterResult SelectCharacter => _backend.SelectCharacter;
+
+        /// <summary>最近一次成功选角进城的快照诊断;未进城时为 null。</summary>
+        public TownEntrySnapshot Snapshot => _backend.Snapshot;
+
+        /// <summary>最近一次成功选角收到的副本权限快照;未进城时为 null。</summary>
+        public DungeonPermissionSnapshot DungeonPermissions => _backend.DungeonPermissions;
+
         /// <summary>每帧调一次(渲染线程):先把这一帧的输入交给外壳,再推动选角界面的动画,最后轮询阶段机。<paramref name="nowMs"/> 要单调递增。</summary>
         public void Tick(OnlineShellFrameInput input, double deltaMs, long nowMs)
         {
@@ -264,6 +275,25 @@ namespace Dnf.Client
         public void SwapCharacter()
         {
             _flow.SwapCharacter();
+        }
+
+        /// <summary>扩展点:城镇系统菜单选"回选角",重连当前频道并立刻刷新角色列表。</summary>
+        public void ReturnToCharacterSelect()
+        {
+            _flow.ReturnToCharacterSelect();
+        }
+
+        /// <summary>主动退出游戏时先通过联网会话发送断线包再关闭外壳。</summary>
+        public async Task DisconnectForQuitAsync(CancellationToken cancellationToken = default)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
+            await _backend.DisconnectGracefullyAsync(cancellationToken).ConfigureAwait(false);
+            _flow.Shutdown();
+            _backend.Dispose();
         }
 
         /// <summary>退出:放弃会话(最多等一秒让后台释放做完)。可重复调用。</summary>

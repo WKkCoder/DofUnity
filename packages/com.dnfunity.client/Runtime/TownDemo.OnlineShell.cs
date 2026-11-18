@@ -81,8 +81,9 @@ namespace Dnf.Client
                 string remembered = PlayerPrefs.HasKey(OnlineUserPrefsKey) ? PlayerPrefs.GetString(OnlineUserPrefsKey) : null;
                 OnlineShellSetup setup = OnlineShellSetupLoader.Load(dev, _netRoot, _netPort, Application.persistentDataPath, _onlineUser, remembered);
                 CharacterSelectScene shellArt = CharacterSelectScene.ForOnline(_assets);
+                _onlineSelectOptions = OnlineCharacterSelectSetup.Create(_assets, _fonts != null);
                 _shell = OnlineShellHost.Create(setup, shellArt, line => Debug.Log(line), _serverUi, _serverUi ? ServerPickerScene.From(shellArt, _assets.LoadAni) : null,
-                    OnlineCharacterSelectSetup.Create(_assets, _fonts != null));
+                    _onlineSelectOptions);
                 _shellDir = dir;
                 _shell.TakeViewChange();         // 第一个视图就是下面造的这一个
                 _view = new TownView(_assets, _shell.Flow.Scene, StageBackground);
@@ -120,8 +121,8 @@ namespace Dnf.Client
             {
                 if (_shell.InGame && _flow != null && _flow.Stage == GameStage.CharacterSelect)
                 {
-                    // 游戏里系统菜单选了"回选角":联网时回外壳(选频道 → 选角,重新取角色列表),不进离线的占位选角
-                    _shell.SwapCharacter();
+                    // 游戏里系统菜单选了"回选角":联网时回外壳(重连当前频道并取回新角色列表),不进离线的占位选角
+                    ReturnToOnlineCharacterSelect();
                 }
                 // 游戏占着屏幕时键盘鼠标归游戏(外壳只每帧轮询、发现断线),不把输入给外壳
                 OnlineShellFrameInput input = _shell.InGame ? default(OnlineShellFrameInput) : ReadShellInput();
@@ -190,9 +191,14 @@ namespace Dnf.Client
             return input;
         }
 
-        /// <summary>外壳拿到(或拿回)屏幕:游戏还开着(掉线、换角色)先冻住,再用外壳当前阶段的场景造视图、销毁旧视图。</summary>
+        /// <summary>外壳拿到(或拿回)屏幕:如果因为掉线或踢下线回到登录页先刷一遍断线日志,销毁城镇控制器再切外壳场景。</summary>
         private void ShowShellView()
         {
+            if (_onlineTown != null && _shell != null && _shell.Stage == OnlineShellStage.Login)
+            {
+                _onlineTown.FlushDisconnectBeforeDispose(OnlineNowMs());
+            }
+            DisposeOnlineTown();
             if (_flow != null)
             {
                 FreezeGame();
@@ -203,11 +209,12 @@ namespace Dnf.Client
         }
 
         /// <summary>
-        /// 第一次进游戏:造城镇流程(角色本体先用本地占位,与 -dnfnet 进城之后同一条路),声音与触屏操作层这时才开,
-        /// 再换成流程当前阶段的视图(带名牌与底栏的叠加层,盖掉外壳最后一个视图)。
+        /// 第一次进游戏:按选中角色与服务端 Village 在内存中建在线城镇控制器、主角进度与城镇流程,声音与触屏操作层这时才开。
         /// </summary>
         private void StartOnlineGame()
         {
+            ResetOnlineTownGameState();
+            BeginOnlineTownController();
             StartFlow();
             _audio = TryCreateAudio(_shellDir);
             SwitchView();
@@ -216,30 +223,22 @@ namespace Dnf.Client
         }
 
         /// <summary>
-        /// 外壳带着新会话再次进游戏(掉线重登、换角色之后):恢复被冻住的流程。换角色是从系统菜单的"回选角"来的,流程停在离线占位选角上,
-        /// 这里像离线那样"开始游戏"(确认选中的占位角色 → 登录加载画面 → 城镇落脚点);掉线重登流程停在原来的阶段,接着往下走。
+        /// 外壳带着新会话再次进游戏(掉线重登、换角色之后):用新选中的角色与新会话重建在线城镇控制器与流程,不沿用上一任主角状态。
         /// </summary>
         private void ResumeOnlineGame()
         {
-            if (_frozenFlow == null)
+            ResetOnlineTownGameState();
+            BeginOnlineTownController();
+            StartFlow();
+            if (_audio == null)
             {
-                throw new InvalidOperationException("外壳进了游戏,却没有被冻住的游戏流程可以恢复");
-            }
-            _flow = _frozenFlow;
-            _flowBot = _frozenBot;
-            _frozenFlow = null;
-            _frozenBot = null;
-            if (_flow.Stage == GameStage.CharacterSelect)
-            {
-                _flow.CharacterSelect?.Confirm();
-                _flow.Poll();
+                _audio = TryCreateAudio(_shellDir);
             }
             SwitchView();
-            if (_frozenPaused && !_paused)
+            if (_touch == null)
             {
-                TogglePause();                   // 冻住时窗口开着、游戏暂停着:回来时窗口还开着,接着暂停
+                CreateTouch();
             }
-            _frozenPaused = false;
             Debug.Log("DNF_TOWN_DEMO online resume" + HeroLog());
         }
 
@@ -265,6 +264,9 @@ namespace Dnf.Client
         /// <summary>放弃外壳与它拥有的联网会话(最多等一秒让后台释放做完),冻住的流程一并丢掉。没有外壳时什么也不做。</summary>
         private void DisposeOnlineShell()
         {
+            DisposeOnlineTown();
+            _onlineAtlas = null;
+            _onlineSelectOptions = null;
             if (_shell != null)
             {
                 _shell.Dispose();
