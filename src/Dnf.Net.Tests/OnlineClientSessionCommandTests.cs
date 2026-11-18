@@ -808,4 +808,264 @@ public sealed class OnlineClientSessionCommandTests
             $"frame_ms=[{string.Join(", ", frameMs.Select(x => x.ToString("F2")))}] (avg={frameMs.Average():F2}, max={frameMs.Max():F2})");
         client.Dispose();
     }
+
+    // ======== 评审补强:变异幸存者对应的缺口(每条注释写明它钉住什么) ========
+
+    /// <summary>
+    /// 泵每次只等一帧(<c>ReceiveAsync</c> 的 stopAfterFrames 为 1):HeartbeatPoll 设成 10 秒,一帧非心跳帧在轮询窗口还没到点时就必须交付。
+    /// 若泵改成"收满整个窗口"(0)或"等两帧才返回"(2),这一帧要等 10 秒窗口结束才会交付,5 秒的有界等待会失败。
+    /// </summary>
+    [Fact]
+    public async Task Pump_returns_from_the_receive_window_after_a_single_frame_instead_of_waiting_out_the_poll()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Hooks.HeartbeatPoll = TimeSpan.FromSeconds(10);     // 必须在 Selected 之前
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true);
+        var delivered = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.FrameReceived += f => delivered.TrySetResult(f.PacketId);
+
+        rig.Channels[0].Pipe.Push(DungeonEntryWire.Notice(901, new byte[] { 7 }));
+
+        Assert.Equal(901, await Bounded(delivered.Task));
+        client.Dispose();
+    }
+
+    /// <summary>
+    /// 心跳回复的写不能被取消:回复写到一半(卡在写门里)时停泵(<c>SetHeartbeatAsync(false)</c> 的同步段已经取消了泵的令牌),
+    /// 放开写门之后这条回复必须完整落到线上——半个帧或丢帧会破坏帧边界。若回复的写改成可被泵令牌取消,放开后写门之后的检查会抛取消,线上没有回复。
+    /// </summary>
+    [Fact]
+    public async Task Heartbeat_reply_in_flight_is_written_completely_even_when_the_pump_is_stopped_meanwhile()
+    {
+        OnlineFlowRig rig = CreateGatedRig(out List<GatedRecordingStream> streams, out List<DungeonEntryPipe> pipes);
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true);
+        int repliesBefore = pipes[0].ClientFrames.Count(f => f.Class == PacketClass.Cmd && f.Id == 0);
+        var enteredReplyWrite = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReplyWrite = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        streams[0].OnWriteAsync = async _ =>
+        {
+            enteredReplyWrite.TrySetResult(0);
+            await releaseReplyWrite.Task;
+        };
+
+        pipes[0].Push(DungeonEntryWire.Notice(0, new byte[] { 0 }));          // 心跳请求:泵开始写回复,卡在写门里
+        await Bounded(enteredReplyWrite.Task);
+        streams[0].OnWriteAsync = null;
+        Task stop = client.SetHeartbeatAsync(false);                          // 同步段:关信箱、取消泵令牌;随后等泵退出
+        releaseReplyWrite.TrySetResult(0);
+        await Bounded(stop);
+
+        DungeonEntryClientFrame[] replies = pipes[0].ClientFrames.Where(f => f.Class == PacketClass.Cmd && f.Id == 0).Skip(repliesBefore).ToArray();
+        DungeonEntryClientFrame reply = Assert.Single(replies);
+        Assert.Equal(new byte[8], reply.Plain.Take(8).ToArray());
+        Assert.Equal(OnlineHeartbeatState.Disabled, client.HeartbeatState);
+        client.Dispose();
+    }
+
+    /// <summary>
+    /// 会话还没释放时写流抛 ObjectDisposedException(底层连接被别处关了):按写错误处理——
+    /// 命令以 IOException 结束(InnerException 是那个 ObjectDisposedException,不是 ObjectDisposedException 本身),
+    /// Disconnected(WriteError) 恰好一次,命令没有写出。
+    /// </summary>
+    [Fact]
+    public async Task ObjectDisposedException_from_a_write_on_a_live_session_is_reported_once_as_WriteError_and_wrapped_in_IOException()
+    {
+        OnlineFlowRig rig = CreateGatedRig(out _, out List<DungeonEntryPipe> pipes);
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true);
+        var disconnects = new OnlineDisconnectLog();
+        client.Disconnected += disconnects.Add;
+        var inner = new ObjectDisposedException("synthetic stream disposed");
+        pipes[0].WriteFailure = inner;
+
+        IOException ex = await Assert.ThrowsAsync<IOException>(() => Bounded(client.SendCommandAsync(901, new byte[] { 1 })));
+
+        Assert.Same(inner, ex.InnerException);
+        await WaitUntil(() => disconnects.Count == 1);
+        await WaitUntil(() => client.HeartbeatState == OnlineHeartbeatState.Disabled);
+        Assert.Equal(new[] { OnlineDisconnectReason.WriteError }, disconnects.Reasons);
+        Assert.DoesNotContain(pipes[0].ClientFrames, f => f.Id == 901);
+        client.Dispose();
+    }
+
+    /// <summary>
+    /// 命令载荷的副本:1 字节的载荷要完整发出(只有长度 0 才走"空载荷"分支),入参之后被改也不影响;
+    /// 发出的载荷长度(会话事件里的未补零长度)分别是 1 与 0。
+    /// </summary>
+    [Fact]
+    public async Task SendCommandAsync_sends_a_one_byte_payload_intact_and_an_empty_payload_with_zero_length()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true);
+        DungeonEntryPipe pipe = rig.Channels[0].Pipe;
+
+        byte[] one = { 0x5A };
+        Task<FrameStatus> sendOne = client.SendCommandAsync(901, one);
+        one[0] = 0x00;                                                         // 入参随后被改:发出的仍是 0x5A
+        Assert.Equal(FrameStatus.Ok, await Bounded(sendOne));
+        Assert.Equal(FrameStatus.Ok, await Bounded(client.SendCommandAsync(902, Array.Empty<byte>())));
+
+        DungeonEntryClientFrame oneFrame = pipe.ClientFrames.Single(f => f.Id == 901);
+        Assert.Equal((byte)0x5A, oneFrame.Plain[0]);
+        Assert.All(oneFrame.Plain.Skip(1), b => Assert.Equal(0, b));
+        SessionEvent[] sent = client.GameSession.Events.Where(e => e.Outbound && e.PacketClass == PacketClass.Cmd && (e.PacketId == 901 || e.PacketId == 902)).ToArray();
+        Assert.Equal(new[] { (901, 1), (902, 0) }, sent.Select(e => (e.PacketId, e.PayloadLength)).ToArray());
+        client.Dispose();
+    }
+
+    /// <summary>
+    /// 观察者帧的载荷副本:任意长度(含 1 字节、0 字节)都原样保留;null 当空载荷;
+    /// 构造后改动传入的数组、改动读到的 Payload 数组,都不影响之后的读取。
+    /// </summary>
+    [Fact]
+    public void OnlineReceivedFrame_copies_payloads_of_every_length_and_treats_null_as_empty()
+    {
+        byte[] one = { 0x5A };
+        var oneFrame = new OnlineReceivedFrame(PacketClass.Noti, 905, one, false);
+        one[0] = 0x00;                                                         // 构造之后改动传入的数组:不影响帧
+        Assert.Equal(new byte[] { 0x5A }, oneFrame.Payload);
+        Assert.Equal(1, oneFrame.PayloadLength);
+        byte[] returned = oneFrame.Payload;
+        returned[0] = 0x00;                                                    // 改动读到的副本:后续读取不受影响
+        Assert.Equal(new byte[] { 0x5A }, oneFrame.Payload);
+        Assert.NotSame(oneFrame.Payload, oneFrame.Payload);                    // 每次读都是新副本
+
+        byte[] three = { 1, 2, 3 };
+        var threeFrame = new OnlineReceivedFrame(PacketClass.Cmd, 906, three, true);
+        three[1] = 9;
+        Assert.Equal(new byte[] { 1, 2, 3 }, threeFrame.Payload);
+        Assert.Equal(3, threeFrame.PayloadLength);
+        Assert.True(threeFrame.WasCompressed);
+
+        var emptyFrame = new OnlineReceivedFrame(PacketClass.Cmd, 907, Array.Empty<byte>(), false);
+        Assert.Empty(emptyFrame.Payload);
+        Assert.Equal(0, emptyFrame.PayloadLength);
+
+        var nullFrame = new OnlineReceivedFrame(PacketClass.Cmd, 908, null, false);
+        Assert.Empty(nullFrame.Payload);
+        Assert.Equal(0, nullFrame.PayloadLength);
+    }
+
+    /// <summary>真会话路径上的同一件事:561 信封里内层帧的载荷恰好 1 字节、恰好 0 字节,交付给观察者的载荷长度与内容都对。</summary>
+    [Fact]
+    public async Task Delivered_frames_keep_one_byte_and_zero_length_payloads_exactly()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true);
+        var received = new ConcurrentQueue<OnlineReceivedFrame>();
+        client.FrameReceived += f => received.Enqueue(f);
+        DungeonEntryPipe pipe = rig.Channels[0].Pipe;
+
+        pipe.Push(HostTestKit.RealEnvelope(0, 905, new byte[] { 0x5A }));
+        pipe.Push(HostTestKit.RealEnvelope(0, 906, Array.Empty<byte>()));
+        await WaitUntil(() => received.Count == 2);
+
+        OnlineReceivedFrame[] frames = received.ToArray();
+        Assert.Equal(new[] { 905, 906 }, frames.Select(f => f.PacketId).ToArray());
+        Assert.Equal(new byte[] { 0x5A }, frames[0].Payload);
+        Assert.Equal(1, frames[0].PayloadLength);
+        Assert.Empty(frames[1].Payload);
+        Assert.Equal(0, frames[1].PayloadLength);
+        client.Dispose();
+    }
+
+    /// <summary>
+    /// "释放进行中"窗口:Dispose 已把 _disposed 置位,却还在等门闩(另一个操作持着门闩等泵退出,而泵卡在一条在途命令的写门里),State 还不是 Disposed。
+    /// 窗口里三件事都要对:新命令以 ObjectDisposedException 失败(而不是"心跳泵未运行"的 InvalidOperationException);第二次 Dispose 立刻返回(不去抢门闩);
+    /// 在途命令的写随后抛 ObjectDisposedException,它以 ObjectDisposedException 结束(不是被当成写错误包成 IOException),也不触发 Disconnected。
+    /// </summary>
+    [Fact]
+    public async Task Dispose_in_progress_window_rejects_new_commands_returns_from_a_second_dispose_and_fails_the_in_flight_write_as_disposed()
+    {
+        OnlineFlowRig rig = CreateGatedRig(out List<GatedRecordingStream> streams, out List<DungeonEntryPipe> pipes);
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true);
+        var disconnects = new OnlineDisconnectLog();
+        client.Disconnected += disconnects.Add;
+        var enteredWrite = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWrite = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        streams[0].OnWriteAsync = async _ =>
+        {
+            enteredWrite.TrySetResult(0);
+            await releaseWrite.Task;
+        };
+        Task<FrameStatus> inFlight = client.SendCommandAsync(901, new byte[] { 1 });
+        await Bounded(enteredWrite.Task);
+        streams[0].OnWriteAsync = null;
+        pipes[0].WriteFailure = new ObjectDisposedException("synthetic stream disposed");     // 写门放行后这条在途写抛 ObjectDisposedException
+
+        Task stop = null;
+        Task dispose = null;
+        try
+        {
+            stop = client.SetHeartbeatAsync(false);        // 同步段已关信箱;持着门闩等泵退出,泵卡在写门里,门闩被占住
+            dispose = Task.Run(client.Dispose);            // 置位 _disposed 之后卡在门闩上
+            await WaitUntil(() => client.SendCommandAsync(902, new byte[] { 2 }).Exception?.InnerException is ObjectDisposedException);
+            await Bounded(Task.Run(client.Dispose));       // 第二次 Dispose:释放已在进行,立刻返回
+        }
+        finally
+        {
+            releaseWrite.TrySetResult(0);
+        }
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => Bounded(inFlight));
+        await Bounded(stop);
+        await Bounded(dispose);
+        Assert.Equal(OnlineClientSessionState.Disposed, client.State);
+        Assert.Empty(disconnects.Reasons);
+        Assert.DoesNotContain(pipes[0].ClientFrames, f => f.Id == 902);
+    }
+
+    /// <summary>
+    /// 释放窗口里的 <c>LeaveExclusiveReceiveAsync</c>:Leave 持着门闩、卡在内联的断线回调里(此时 Dispose 已置位 _disposed 并卡在门闩上),
+    /// 回调放开后 Leave 往下走到"恢复心跳":会话已经在释放了,不能再起泵(起了泵就会有一个没人收尾的泵和一个永远是 Running 的心跳状态)。
+    /// 检查点:释放结束后心跳状态必须是 Disabled。万一泵被误起,它的第一笔读在流的"读被发起"钩子里卡住,直到 Dispose 全部做完才放行,
+    /// 使"泵的收尾发生在链路引用清空之后、状态改不回 Disabled"这条路径必然出现;泵起步与 Dispose 推进谁先谁后每轮不同,所以多轮重复。
+    /// 正确实现里泵根本不会起来,钩子从不触发,每轮都是确定性的。
+    /// </summary>
+    [Fact]
+    public async Task Leave_exclusive_receive_inside_the_dispose_window_does_not_restart_the_pump()
+    {
+        for (int round = 0; round < 30; round++)
+        {
+            OnlineFlowRig rig = CreateGatedRig(out List<GatedRecordingStream> streams, out _);
+            rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+            (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true, dispatcher: new OnlineInlineDispatcher());
+            await Bounded(client.EnterExclusiveReceiveAsync());
+            rig.Channels[0].Link.ReadFault = true;          // 独占期间链路出了读错误:Leave 里的断线检查会同步回调 Disconnected
+
+            var enteredHandler = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var releaseHandler = new ManualResetEventSlim(false);
+            using var releasePump = new ManualResetEventSlim(false);
+            client.Disconnected += _ =>
+            {
+                enteredHandler.TrySetResult(0);
+                releaseHandler.Wait(TimeSpan.FromSeconds(5));
+            };
+            streams[0].OnReadStarted = _ => releasePump.Wait(TimeSpan.FromSeconds(5));
+
+            Task leave = Task.Run(() => client.LeaveExclusiveReceiveAsync());
+            Task dispose = null;
+            try
+            {
+                await Bounded(enteredHandler.Task);                     // Leave 持着门闩,卡在内联断线回调里
+                dispose = Task.Run(client.Dispose);                     // 置位 _disposed 之后卡在门闩上
+                await WaitUntil(() => client.SendCommandAsync(901, new byte[] { 1 }).Exception?.InnerException is ObjectDisposedException);
+            }
+            finally
+            {
+                releaseHandler.Set();
+            }
+
+            await Bounded(leave);
+            await Bounded(dispose);
+            Assert.Equal(OnlineClientSessionState.Disposed, client.State);
+            Assert.Equal(OnlineHeartbeatState.Disabled, client.HeartbeatState);
+            releasePump.Set();
+        }
+    }
 }
