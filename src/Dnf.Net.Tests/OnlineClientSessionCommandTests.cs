@@ -80,11 +80,18 @@ public sealed class OnlineClientSessionCommandTests
     {
         private readonly Stream _inner;
         private readonly List<byte[]> _writes = new();
+        private int _readCalls;
 
         public GatedRecordingStream(Stream inner) => _inner = inner;
 
         public Func<byte[], Task> OnWriteAsync { get; set; }
         public Func<int, int> OnReadResult { get; set; }
+
+        /// <summary>每发起一笔读(ReadAsync 被调用,转给底层之前)同步调用一次,参数是发起后的累计读次数;null 为不做事。"读被发起"的事件屏障靠它。</summary>
+        public Action<int> OnReadStarted { get; set; }
+
+        /// <summary>目前为止发起过的读次数(会话至多一笔在途读:新读只在上一笔读完成之后才会发起)。</summary>
+        public int ReadCalls => Volatile.Read(ref _readCalls);
 
         public IReadOnlyList<byte[]> Writes
         {
@@ -105,6 +112,8 @@ public sealed class OnlineClientSessionCommandTests
 
         public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
+            int started = Interlocked.Increment(ref _readCalls);
+            OnReadStarted?.Invoke(started);
             int n = await _inner.ReadAsync(buffer, offset, count, cancellationToken).ConfigureAwait(false);
             Func<int, int> hook = OnReadResult;
             return hook != null ? hook(n) : n;
@@ -376,84 +385,136 @@ public sealed class OnlineClientSessionCommandTests
         client.Dispose();
     }
 
-    [Fact]
-    public async Task Queued_unsent_command_fails_with_IOException_on_pump_disconnect_and_write_error()
+    /// <summary>
+    /// 事件屏障:让心跳泵确定"停在读上"之后测试才动服务端。服务端先发一个心跳请求,等泵回出心跳回包(泵已经起来、并处理完一个窗口),
+    /// 再等到"回包之后发起的新读"。会话至多一笔在途读(<see cref="GameClientSession.ReceiveAsync"/> 新读只在上一笔读完成后才发起),
+    /// 所以此刻泵一定在 ReceiveAsync 里等这一笔读:它回到循环顶排信箱,只可能发生在这一笔读返回之后。
+    /// 调用方须在 Selected 之前把 HeartbeatPoll 设得很长,"轮询到点、泵回到循环顶先排一次信箱"这条旁路才不存在。
+    /// 为什么需要它:Selected(autoHeartbeat: true) 只是把泵 Task.Run 出去就返回,冷进程里泵还没起步时测试线程已经把服务端关了;
+    /// 读返回 0 的钩子于是在泵起步之前把命令塞进信箱,泵起步后第一件事是排信箱,把这条命令成功写了出去(写端还开着),命令没有以 IOException 结束。
+    /// </summary>
+    private static async Task ParkPumpOnReadAsync(GatedRecordingStream stream, DungeonEntryPipe pipe)
     {
-        // 1) 读端返回 0(PeerClosed)时已在信箱里的命令必须以 IOException 结束且不写出
-        OnlineFlowRig rig1 = CreateGatedRig(out List<GatedRecordingStream> streams1, out List<DungeonEntryPipe> pipes1);
-        rig1.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
-        (OnlineClientSession client1, _) = await rig1.Selected(autoHeartbeat: true);
+        int readsAtReply = -1;
+        var replied = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readAfterReply = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        stream.OnWriteAsync = _ =>
+        {
+            // 回包写出之前记下此刻已发起的读数:泵写完回包才会回到循环顶发下一笔读,所以累计数大于它的读一定发起在回包之后
+            Interlocked.CompareExchange(ref readsAtReply, stream.ReadCalls, -1);
+            replied.TrySetResult(0);
+            return Task.CompletedTask;
+        };
+        stream.OnReadStarted = started =>
+        {
+            int at = Volatile.Read(ref readsAtReply);
+            if (at >= 0 && started > at)
+            {
+                readAfterReply.TrySetResult(0);
+            }
+        };
+        pipe.Push(DungeonEntryWire.Notice(0, new byte[] { 0 }));
+        await Bounded(replied.Task);
+        await Bounded(readAfterReply.Task);
+        stream.OnWriteAsync = null;
+        stream.OnReadStarted = null;
+    }
+
+    [Fact]
+    public async Task Queued_unsent_command_fails_with_IOException_when_pump_read_returns_zero_on_peer_close()
+    {
+        // 读端返回 0(PeerClosed)时已在信箱里的命令必须以 IOException 结束且不写出
+        OnlineFlowRig rig = CreateGatedRig(out List<GatedRecordingStream> streams, out List<DungeonEntryPipe> pipes);
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        rig.Hooks.HeartbeatPoll = TimeSpan.FromSeconds(30);   // 必须在 Selected 之前:排除"轮询到点回循环顶排信箱"的旁路
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true);
         Task<FrameStatus> queuedOnClose = null;
         var pushedOnRead = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-        streams1[0].OnReadResult = n =>
+        streams[0].OnReadResult = n =>
         {
             if (n == 0)
             {
-                queuedOnClose = client1.SendCommandAsync(902, new byte[] { 2 });
+                queuedOnClose = client.SendCommandAsync(902, new byte[] { 2 });
                 pushedOnRead.TrySetResult(0);
             }
             return n;
         };
-        pipes1[0].CloseServer();
+
+        await ParkPumpOnReadAsync(streams[0], pipes[0]);   // 泵此刻停在读上:钩子里入信箱的命令只会遇到泵退出时的信箱关闭
+        pipes[0].CloseServer();
         await Bounded(pushedOnRead.Task);
         await Assert.ThrowsAsync<IOException>(() => Bounded(queuedOnClose));
-        Assert.DoesNotContain(pipes1[0].ClientFrames, f => f.Id == 902);
-        client1.Dispose();
+        Assert.DoesNotContain(pipes[0].ClientFrames, f => f.Id == 902);
+        client.Dispose();
+    }
 
-        // 2) 写失败(WriteFailure):第一条抛 IOException,Disconnected(WriteError) 恰好一次,队列第二条也以 IOException 结束
-        OnlineFlowRig rig2 = CreateGatedRig(out List<GatedRecordingStream> streams2, out List<DungeonEntryPipe> pipes2);
-        rig2.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
-        (OnlineClientSession client2, _) = await rig2.Selected(autoHeartbeat: true);
+    [Fact]
+    public async Task Queued_unsent_command_fails_with_IOException_and_single_WriteError_when_pump_write_fails()
+    {
+        // 写失败(WriteFailure):第一条抛 IOException,Disconnected(WriteError) 恰好一次,队列第二条也以 IOException(而不是 InvalidOperationException)结束。
+        // 与泵所处位置无关:泵一直卡在第一条命令的写门里,第二条必然留在信箱里,所以是确定性的。
+        OnlineFlowRig rig = CreateGatedRig(out List<GatedRecordingStream> streams, out List<DungeonEntryPipe> pipes);
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true);
         var disconnects = new OnlineDisconnectLog();
-        client2.Disconnected += disconnects.Add;
+        client.Disconnected += disconnects.Add;
 
         var entered = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-        streams2[0].OnWriteAsync = async _ =>
+        streams[0].OnWriteAsync = async _ =>
         {
             entered.TrySetResult(0);
             await release.Task;
         };
-        Task<FrameStatus> cmd1 = client2.SendCommandAsync(901, new byte[] { 1 });
+        Task<FrameStatus> cmd1 = client.SendCommandAsync(901, new byte[] { 1 });
         await Bounded(entered.Task);
-        streams2[0].OnWriteAsync = null;
-        Task<FrameStatus> cmd2 = client2.SendCommandAsync(902, new byte[] { 2 });
-        pipes2[0].WriteFailure = new IOException("synthetic write error");
+        streams[0].OnWriteAsync = null;
+        Task<FrameStatus> cmd2 = client.SendCommandAsync(902, new byte[] { 2 });
+        pipes[0].WriteFailure = new IOException("synthetic write error");
         release.TrySetResult(0);
 
         await Assert.ThrowsAsync<IOException>(() => Bounded(cmd1));
         await Assert.ThrowsAsync<IOException>(() => Bounded(cmd2));
         await WaitUntil(() => disconnects.Count == 1);
-        await WaitUntil(() => client2.HeartbeatState == OnlineHeartbeatState.Disabled);
+        await WaitUntil(() => client.HeartbeatState == OnlineHeartbeatState.Disabled);
         Assert.Equal(new[] { OnlineDisconnectReason.WriteError }, disconnects.Reasons);
-        Assert.DoesNotContain(pipes2[0].ClientFrames, f => f.Id == 902);
-        client2.Dispose();
+        Assert.DoesNotContain(pipes[0].ClientFrames, f => f.Id == 902);
+        client.Dispose();
+    }
 
-        // 3) 读错误(ReadFault):在读端返回前入队的命令也以 IOException 结束且报 ReadError
-        OnlineFlowRig rig3 = CreateGatedRig(out List<GatedRecordingStream> streams3, out List<DungeonEntryPipe> pipes3);
-        rig3.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
-        (OnlineClientSession client3, _) = await rig3.Selected(autoHeartbeat: true);
-        var disconnects3 = new OnlineDisconnectLog();
-        client3.Disconnected += disconnects3.Add;
+    [Fact]
+    public async Task Queued_unsent_command_fails_with_IOException_and_ReadError_when_pump_read_faults()
+    {
+        // 读错误(ReadFault):在读端返回前入队的命令也以 IOException 结束且报 ReadError
+        OnlineFlowRig rig = CreateGatedRig(out List<GatedRecordingStream> streams, out List<DungeonEntryPipe> pipes);
+        rig.Hooks.HeartbeatTimeout = TimeSpan.FromSeconds(30);
+        rig.Hooks.HeartbeatPoll = TimeSpan.FromSeconds(30);   // 必须在 Selected 之前:排除"轮询到点回循环顶排信箱"的旁路
+        (OnlineClientSession client, _) = await rig.Selected(autoHeartbeat: true);
+        var disconnects = new OnlineDisconnectLog();
+        client.Disconnected += disconnects.Add;
         Task<FrameStatus> queuedOnReadError = null;
-        var enteredRead3 = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-        streams3[0].OnReadResult = n =>
+        var enteredRead = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        streams[0].OnReadResult = n =>
         {
             if (n == 0)
             {
-                queuedOnReadError = client3.SendCommandAsync(902, new byte[] { 3 });
-                enteredRead3.TrySetResult(0);
+                queuedOnReadError = client.SendCommandAsync(902, new byte[] { 3 });
+                enteredRead.TrySetResult(0);
             }
             return n;
         };
-        rig3.Channels[0].Link.ReadFault = true;
-        pipes3[0].CloseServer();
-        await Bounded(enteredRead3.Task);
+
+        await ParkPumpOnReadAsync(streams[0], pipes[0]);
+        // ReadFault 对"下一笔读返回之后"的检查生效,必须紧贴 CloseServer 之前设置:二者之间不能再等任何东西,
+        // 否则泵会在屏障之后的某次检查里先因读错误退出,钩子里入信箱的命令就直接得到 InvalidOperationException。
+        rig.Channels[0].Link.ReadFault = true;
+        pipes[0].CloseServer();
+        await Bounded(enteredRead.Task);
         await Assert.ThrowsAsync<IOException>(() => Bounded(queuedOnReadError));
-        await WaitUntil(() => disconnects3.Count == 1);
-        Assert.Equal(new[] { OnlineDisconnectReason.ReadError }, disconnects3.Reasons);
-        Assert.DoesNotContain(pipes3[0].ClientFrames, f => f.Id == 902);
-        client3.Dispose();
+        await WaitUntil(() => disconnects.Count == 1);
+        Assert.Equal(new[] { OnlineDisconnectReason.ReadError }, disconnects.Reasons);
+        Assert.DoesNotContain(pipes[0].ClientFrames, f => f.Id == 902);
+        client.Dispose();
     }
 
     // ======== 取消语义 ========
