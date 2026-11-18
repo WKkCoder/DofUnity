@@ -255,6 +255,121 @@ public sealed class OnlineTownOverlaySpriteTests
             ("onlinetown-prompt", 164, 55, 506, 18, 7));
     }
 
+    // ───────────────────────── 转圈相位 ─────────────────────────
+
+    /// <summary>某个时刻下等待提示里转圈精灵(标签 <c>onlinetown-prompt-spinner</c>,有且只有一个)的整张帧。</summary>
+    private static SpriteFrame SpinnerFrameAt(long timeMs)
+    {
+        List<SceneSprite> sprites = OnlineTownOverlay.Build(Art(), Profile(0), new OnlineTownPrompt(OnlineTownPromptKind.Waiting), timeMs);
+        Assert.NotNull(sprites);
+        SceneSprite found = null;
+        int count = 0;
+        foreach (SceneSprite sprite in sprites)
+        {
+            if (sprite.AnimationPath == "onlinetown-prompt-spinner")
+            {
+                found = sprite;
+                count++;
+            }
+        }
+        Assert.Equal(1, count);
+        return found.Frame;
+    }
+
+    // 相位 = (把负时间当 0 后 ÷ 80 取整)再对 10 取余,下面全是手算:
+    //   0→0、79→0(还没满 80)、80→1、159→1、160→2、245→3(245 ÷ 80 = 3 余 5)、720→9、799→9、
+    //   800→0(整一圈 10 格)、880→1(11 → 1)、1000→2(12 → 2);
+    //   负数一律当 0:-5→0、-80→0、-170→0(不能当成 -1、-2 再去模成 9、8)
+    // 期望帧用独立构造的 ShellPaint 按"相位字面量"现画(转圈是 20 × 20、等待语气的颜色),逐字节比。
+    [Theory]
+    [InlineData(0L, 0)]
+    [InlineData(79L, 0)]
+    [InlineData(80L, 1)]
+    [InlineData(159L, 1)]
+    [InlineData(160L, 2)]
+    [InlineData(245L, 3)]
+    [InlineData(720L, 9)]
+    [InlineData(799L, 9)]
+    [InlineData(800L, 0)]
+    [InlineData(880L, 1)]
+    [InlineData(1000L, 2)]
+    [InlineData(-5L, 0)]
+    [InlineData(-80L, 0)]
+    [InlineData(-170L, 0)]
+    public void The_waiting_spinner_frame_is_exactly_the_hand_computed_phase_of_the_time(long timeMs, int phase)
+    {
+        SpriteFrame expected = new ShellPaint(Art()).Spinner(20, phase, ShellPaint.ToneColor(ShellTone.Wait));
+
+        SpriteFrame actual = SpinnerFrameAt(timeMs);
+
+        Assert.Equal((20, 20), (actual.Width, actual.Height));
+        Assert.Equal(expected.Rgba, actual.Rgba);
+    }
+
+    // 十个相位两两不同(头在圈上的位置不一样);同一相位的时刻(同一个 80 毫秒格里、整圈 800 毫秒之后、负数)画出来逐字节相同
+    [Fact]
+    public void The_ten_spinner_phases_all_look_different_and_the_same_phase_looks_the_same_at_any_time()
+    {
+        var byPhase = new byte[10][];
+        for (int phase = 0; phase < 10; phase++)
+        {
+            byPhase[phase] = SpinnerFrameAt(phase * 80 + 5).Rgba;
+        }
+        for (int a = 0; a < 10; a++)
+        {
+            for (int b = a + 1; b < 10; b++)
+            {
+                Assert.NotEqual(byPhase[a], byPhase[b]);
+            }
+        }
+
+        // 相位 0:0、5、79、800、1600(20 格)、1679(还是第 20 格)、-5、-80;相位 1:80、159、880、1680(21 格);相位 3:240、245、319、1040(13 格)
+        foreach (long timeMs in new long[] { 0, 5, 79, 800, 1600, 1679, -5, -80 })
+        {
+            Assert.Equal(byPhase[0], SpinnerFrameAt(timeMs).Rgba);
+        }
+        foreach (long timeMs in new long[] { 80, 159, 880, 1680 })
+        {
+            Assert.Equal(byPhase[1], SpinnerFrameAt(timeMs).Rgba);
+        }
+        foreach (long timeMs in new long[] { 240, 245, 319, 1040 })
+        {
+            Assert.Equal(byPhase[3], SpinnerFrameAt(timeMs).Rgba);
+        }
+    }
+
+    // 只有等待提示里的转圈随时间变;底、色条、文字、非等待提示的图标、左上角小条的图标(信息语气只画静态图标)在 0 与 245 毫秒下逐一相同
+    [Theory]
+    [InlineData(OnlineTownPromptKind.Waiting)]
+    [InlineData(OnlineTownPromptKind.Rejected)]
+    [InlineData(OnlineTownPromptKind.ForbiddenMinutes)]
+    [InlineData(OnlineTownPromptKind.UnmappedArea)]
+    public void Only_the_waiting_spinner_changes_with_the_time(OnlineTownPromptKind kind)
+    {
+        List<SceneSprite> early = OnlineTownOverlay.Build(Art(), Profile(0), new OnlineTownPrompt(kind, minutes: 5), 0);
+        List<SceneSprite> late = OnlineTownOverlay.Build(Art(), Profile(0), new OnlineTownPrompt(kind, minutes: 5), 245);
+
+        Assert.Equal(8, early.Count);
+        Assert.Equal(early.Count, late.Count);
+        int changed = 0;
+        for (int i = 0; i < early.Count; i++)
+        {
+            Assert.Equal(early[i].AnimationPath, late[i].AnimationPath);
+            Assert.Equal((early[i].ScreenX, early[i].ScreenY), (late[i].ScreenX, late[i].ScreenY));
+            Assert.Equal((early[i].Frame.Width, early[i].Frame.Height), (late[i].Frame.Width, late[i].Frame.Height));
+            if (early[i].AnimationPath == "onlinetown-prompt-spinner")
+            {
+                Assert.NotEqual(early[i].Frame.Rgba, late[i].Frame.Rgba);
+                changed++;
+            }
+            else
+            {
+                Assert.Equal(early[i].Frame.Rgba, late[i].Frame.Rgba);
+            }
+        }
+        Assert.Equal(kind == OnlineTownPromptKind.Waiting ? 1 : 0, changed);
+    }
+
     // ───────────────────────── 缺参数 ─────────────────────────
 
     [Fact]
