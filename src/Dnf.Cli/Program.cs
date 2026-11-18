@@ -402,6 +402,8 @@ namespace Dnf.Cli
             "      读全库 .act 的 [MOTION]:叠加层([SUB ANI] 一族)与声音([SOUND]、[SOUND PROBABILITY])的结构计数、与主动画帧数的对齐关系,并用事件播放器整套推一遍(逐帧、跳帧补报、收口、循环重装);--json 写出全部计数与顺序摘要,可与 tools/py/act_motion_ref.py compare 逐项对拍;只输出个数与键名。\n" +
             "  dnf act-run-check [--json <文件>]\n" +
             "      从怪物出发看 .act 触发器的运行期覆盖度(证据 E-130):怪物出招的 .act 里有多少带触发器、触发器多少是运行器认得的,这些招式能放出的被动对象(含对象再放对象)与它们自己的 .act,以及被动对象全表的总体情况;只输出个数与标签名。\n" +
+            "  dnf ptl-census [--json <文件>]\n" +
+            "      全库普查 .ptl 标签与块结构、各脚本对 .ptl 的引用以及 .act [PARTICLE] 的三整数参数分布(严格脱敏,只输出计数、标签名、关键字与分桶)。\n" +
             "  dnf ai-check [--dump <文件>] [--json <文件>]\n" +
             "      用 Dnf.Game 的 .ai 解析器读全库 .ai(证据 E-052):能否读完、错误、剩余标记、关键字与运算符直方图,以及 [void] 函数真假两路的返回形状(用来判断真假方向);名表运行时从数据包的 AICharacter/OperatingValue.lst 读。\n" +
             "  dnf ai-eval [--json <文件>]\n" +
@@ -979,6 +981,8 @@ namespace Dnf.Cli
                     return ActMotionCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "act-run-check":
                     return ActRunCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "ptl-census":
+                    return PtlCensus.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "ai-eval":
                     return AiEval.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "mob-check":
