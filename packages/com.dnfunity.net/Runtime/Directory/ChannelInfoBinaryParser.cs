@@ -182,7 +182,7 @@ namespace Dnf.Net.ChannelDirectory
             {
                 len++;
             }
-            return Encoding.ASCII.GetString(buffer, offset, len);
+            return Encoding.UTF8.GetString(buffer, offset, len);
         }
 
         internal static int ReadInt32Le(byte[] buffer, int offset)

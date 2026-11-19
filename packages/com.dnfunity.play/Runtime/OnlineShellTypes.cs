@@ -44,7 +44,7 @@ namespace Dnf.Play
     /// </summary>
     public sealed class ChannelTarget : IEquatable<ChannelTarget>
     {
-        public ChannelTarget(int port, string host = null)
+        public ChannelTarget(int port, string host = null, ushort serverGroup = 0)
         {
             if (port < 1 || port > 65535)
             {
@@ -54,14 +54,22 @@ namespace Dnf.Play
             {
                 throw new ArgumentException("主机不能是空串(要默认就传 null)", nameof(host));
             }
+            if (serverGroup > 17)
+            {
+                throw new ArgumentOutOfRangeException(nameof(serverGroup));
+            }
             Port = port;
             Host = host;
+            ServerGroup = serverGroup;
         }
 
         public int Port { get; }
 
         /// <summary>主机;null 表示用网关给的游戏服地址。</summary>
         public string Host { get; }
+
+        /// <summary>所属服务器组编号（1..17，用于跨服/自由练习等复合频道登录；0 表示未指定）。</summary>
+        public ushort ServerGroup { get; }
 
         public bool Equals(ChannelTarget other)
         {

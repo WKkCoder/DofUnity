@@ -291,7 +291,7 @@ namespace Dnf.Net.ChannelDirectory
                         return ChannelDirectoryLoadResult.Fail(ChannelDirectoryLoadOutcome.DecompressOrDecryptFailed, "脚本包解包失败: " + scriptErr, handshakeStatus: handshakeStatus, versionUpToDate: false);
                     }
                     string scriptText = Encoding.UTF8.GetString(scriptPlain).TrimEnd('\0');
-                    scriptData = ChannelScriptParser.Parse(scriptText);
+                    scriptData = ChannelScriptParser.Parse(scriptText).MergeFallback(fallbackScript);
                 }
 
                 // 4) 0x01 -> 0x03: 拉取压缩+加密的二进制频道列表

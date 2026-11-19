@@ -44,6 +44,12 @@ public sealed class ServerArtTests
         Assert.Equal("cain", ServerArt.Find("Cain").Id);
         Assert.Equal("casillas", ServerArt.Find("卡西利亞斯").Id);       // 繁体写法
         Assert.Equal("casillas", ServerArt.Find("Casillas").Id);
+        Assert.Equal("cerria", ServerArt.Find("seria").Id);
+        Assert.Equal("cerria", ServerArt.Find("Seria").Id);
+        Assert.Equal("lukse", ServerArt.Find("roxy").Id);
+        Assert.Equal("lukse", ServerArt.Find("Roxy").Id);
+        Assert.Equal("kazan", ServerArt.Find("khazan").Id);
+        Assert.Equal("kazan", ServerArt.Find("Khazan").Id);
     }
 
     [Fact]

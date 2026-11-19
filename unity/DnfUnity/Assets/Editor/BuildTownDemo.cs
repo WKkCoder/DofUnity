@@ -25,10 +25,22 @@ namespace DnfUnity.Editor
                 "macos/" + ProductName + ".app", mobile: false);
         }
 
+        public static void BuildMacOSDev()
+        {
+            Build(BuildTarget.StandaloneOSX, NamedBuildTarget.Standalone, ScriptingImplementation.Mono2x,
+                "macos/" + ProductName + ".app", mobile: false, development: true);
+        }
+
         public static void BuildWindows()
         {
             Build(BuildTarget.StandaloneWindows64, NamedBuildTarget.Standalone, ScriptingImplementation.Mono2x,
                 "windows/" + ProductName + ".exe", mobile: false);
+        }
+
+        public static void BuildWindowsDev()
+        {
+            Build(BuildTarget.StandaloneWindows64, NamedBuildTarget.Standalone, ScriptingImplementation.Mono2x,
+                "windows/" + ProductName + ".exe", mobile: false, development: true);
         }
 
         public static void BuildAndroid()
@@ -36,6 +48,13 @@ namespace DnfUnity.Editor
             PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
             Build(BuildTarget.Android, NamedBuildTarget.Android, ScriptingImplementation.IL2CPP,
                 "android/" + ProductName + ".apk", mobile: true);
+        }
+
+        public static void BuildAndroidDev()
+        {
+            PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
+            Build(BuildTarget.Android, NamedBuildTarget.Android, ScriptingImplementation.IL2CPP,
+                "android/" + ProductName + ".apk", mobile: true, development: true);
         }
 
         private static void EnsureScene()
@@ -53,7 +72,7 @@ namespace DnfUnity.Editor
         }
 
         private static void Build(BuildTarget target, NamedBuildTarget named, ScriptingImplementation backend,
-            string relativeOutput, bool mobile)
+            string relativeOutput, bool mobile, bool development = false)
         {
             EnsureScene();
 
@@ -94,15 +113,19 @@ namespace DnfUnity.Editor
                 string output = Path.GetFullPath(Path.Combine("Builds", relativeOutput));
                 Directory.CreateDirectory(Path.GetDirectoryName(output));
 
+                BuildOptions buildOptions = development || string.Equals(Environment.GetEnvironmentVariable("DNF_DEV_BUILD"), "1", StringComparison.Ordinal)
+                    ? BuildOptions.Development
+                    : BuildOptions.None;
+
                 var options = new BuildPlayerOptions
                 {
                     scenes = new[] { ScenePath },
                     locationPathName = output,
                     target = target,
-                    options = BuildOptions.None,
+                    options = buildOptions,
                 };
 
-                Debug.Log("DNF_BUILD start demo target=" + target + " backend=" + backend + " out=" + output);
+                Debug.Log("DNF_BUILD start demo target=" + target + " backend=" + backend + " dev=" + (buildOptions == BuildOptions.Development) + " out=" + output);
                 BuildReport report = BuildPipeline.BuildPlayer(options);
                 BuildSummary s = report.summary;
                 Debug.Log("DNF_BUILD result=" + s.result + " errors=" + s.totalErrors + " warnings=" + s.totalWarnings +

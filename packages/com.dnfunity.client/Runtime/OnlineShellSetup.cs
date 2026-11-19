@@ -67,6 +67,7 @@ namespace Dnf.Client
                 DataVersion = _settings.DataVersion,
                 ChannelPort = _settings.ChannelPort,
                 MaxSlots = _settings.MaxSlots,
+                ServerGroup = _settings.ServerGroup,
             };
         }
 

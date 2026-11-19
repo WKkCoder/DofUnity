@@ -1,3 +1,5 @@
+using System.Text;
+using Dnf.Data;
 using Dnf.Net.ChannelDirectory;
 using Dnf.Play;
 
@@ -312,5 +314,312 @@ public sealed class ChannelDirectoryAdapterTests
         ServerDirectoryResult result = ChannelDirectoryAdapter.Result(ChannelDirectoryLoadOutcome.Ok, DirectoryTestData.Snapshot());
         Assert.True(result.Success);
         Assert.Empty(result.Directory.Servers);
+    }
+
+    // ------------------------------------------------------------------ 真实频道号 / #ch. 前缀清洗 / 本地目录脚本
+
+    [Fact]
+    public void Channel_prefers_ParsedChannelNo_resolves_SlotRule_title_and_strips_machine_prefixes()
+    {
+        var rule = new ChannelServerSlotRule(3, 11, 4, "cname_syn_11", string.Empty, 0, "[zone_alpha]");
+        var entry = new ChannelEntry(
+            "siroco",
+            1,
+            "#ch.11",
+            "#ch.",
+            200,
+            10,
+            "",
+            19011,
+            new ChannelCongestionEvaluation(ChannelCongestionTier.Comfortable, false, 0, 0u),
+            ChannelEntryFlags.HasValidPort | ChannelEntryFlags.HasRecommendLevel,
+            41,
+            85,
+            11,
+            rule);
+
+        // 1) 有字表时解析 <4::cname_syn_11>
+        DirectoryChannel resolved = ChannelDirectoryAdapter.Channel(
+            entry,
+            (kind, key) => kind == 4 && key == "cname_syn_11" ? "合成频道甲" : null);
+        Assert.Equal(11, resolved.Number);
+        Assert.Equal("合成频道甲", resolved.Title);
+        Assert.Equal(41, resolved.RecommendedMinLevel);
+        Assert.Equal(85, resolved.RecommendedMaxLevel);
+        Assert.Equal("ch11.合成频道甲", ServerPickerText.ChannelTitle(resolved, cjk: true));
+        Assert.Equal("ch11", ServerPickerText.ChannelTitle(resolved, cjk: false));
+
+        // 2) 没有字表/字体时清掉 #ch.,不出现 ch11#ch.
+        DirectoryChannel unresolved = ChannelDirectoryAdapter.Channel(entry, resolveString: null);
+        Assert.Equal(11, unresolved.Number);
+        Assert.Equal(string.Empty, unresolved.Title);
+        Assert.Equal("ch11", ServerPickerText.ChannelTitle(unresolved, cjk: true));
+
+        // 3) 字面名称优先作为回退;没有 SlotRule 时清洗 ch./#test.,保留人类前缀
+        var literalRule = new ChannelServerSlotRule(3, 21, -1, string.Empty, "直写频道", 0, "[none]");
+        var literalEntry = new ChannelEntry(
+            "siroco", 2, "#ch.21", "#ch.", 200, 10, "", 19021,
+            new ChannelCongestionEvaluation(ChannelCongestionTier.Comfortable, false, 0, 0u),
+            ChannelEntryFlags.HasValidPort, null, null, 21, literalRule);
+        DirectoryChannel literal = ChannelDirectoryAdapter.Channel(literalEntry);
+        Assert.Equal(21, literal.Number);
+        Assert.Equal("直写频道", literal.Title);
+
+        Assert.Equal(string.Empty, Map(DirectoryTestData.Entry("希洛克", 3, "ch.")).Title);
+        Assert.Equal(string.Empty, Map(DirectoryTestData.Entry("希洛克", 3, "#test.")).Title);
+        Assert.Equal("神殿", Map(DirectoryTestData.Entry("希洛克", 3, "神殿")).Title);
+
+        Assert.Equal((ushort)3, ChannelDirectoryAdapter.Target(DirectoryTestData.Entry("希洛克", 1, port: 31005)).ServerGroup);
+        Assert.Equal((ushort)3, ChannelDirectoryAdapter.Target(DirectoryTestData.Entry("siroco", 1, host: "10.1.2.3", port: 31005)).ServerGroup);
+    }
+
+    [Fact]
+    public void ChannelDirectoryCatalog_FromScripts_extracts_thresholds_slots_and_string_resolver()
+    {
+        ScriptLine[] recommendLines =
+        {
+            new ScriptLine("[channel rate full]", new[]
+            {
+                new ScriptValue(ScriptValueKind.Float, BitConverter.SingleToInt32Bits(87.5f), null),
+            }),
+            new ScriptLine("[channel]", new[]
+            {
+                new ScriptValue(ScriptValueKind.String, 0, "[zone_alpha]"),
+                new ScriptValue(ScriptValueKind.Int, 41, null),
+                new ScriptValue(ScriptValueKind.Int, 85, null),
+            }),
+        };
+
+        ScriptLine[] infoLines =
+        {
+            new ScriptLine("[server]", new[]
+            {
+                new ScriptValue(ScriptValueKind.Int, 3, null),
+                // slot 11 (15 个值)
+                new ScriptValue(ScriptValueKind.Int, 11, null),
+                new ScriptValue(ScriptValueKind.Keyed, 4, "cname_syn_11"),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.String, 0, "[zone_alpha]"),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.String, 0, string.Empty),
+                new ScriptValue(ScriptValueKind.String, 0, string.Empty),
+                new ScriptValue(ScriptValueKind.String, 0, string.Empty),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                // slot 52 (15 个值)
+                new ScriptValue(ScriptValueKind.Int, 52, null),
+                new ScriptValue(ScriptValueKind.Keyed, 4, "cname_syn_52"),
+                new ScriptValue(ScriptValueKind.Int, 13, null),
+                new ScriptValue(ScriptValueKind.String, 0, "[none]"),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.String, 0, string.Empty),
+                new ScriptValue(ScriptValueKind.String, 0, string.Empty),
+                new ScriptValue(ScriptValueKind.String, 0, string.Empty),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+                new ScriptValue(ScriptValueKind.Int, 0, null),
+            }),
+        };
+
+        Func<string, ScriptLine[]> reader = path => path switch
+        {
+            "etc/channelrecommendlevel.etc" => recommendLines,
+            "etc/channel_info.etc" => infoLines,
+            _ => null,
+        };
+
+        ChannelDirectoryCatalog noStrings = ChannelDirectoryCatalog.FromScripts(reader, strings: null);
+        Assert.Null(noStrings.ResolveString);
+        Assert.Equal(87.5f, noStrings.FallbackScript.FullThresholdPercent);
+        Assert.True(noStrings.FallbackScript.HasExplicitFullThreshold);
+        ChannelRecommendLevelRule rec = Assert.Single(noStrings.FallbackScript.RecommendLevels);
+        Assert.Equal("[zone_alpha]", rec.Tag);
+        Assert.Equal(41, rec.MinLevel);
+        Assert.Equal(85, rec.MaxLevel);
+        ChannelServerSlotRule slot11 = noStrings.FallbackScript.FindServerSlot("siroco", 11);
+        Assert.NotNull(slot11);
+        Assert.Equal("cname_syn_11", slot11.TitleStringKey);
+
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        byte[] gbkBook = Encoding.GetEncoding(54936).GetBytes("cname_syn_11>合成频道甲\r\ncname_syn_52>合成频道乙\r\n");
+        var strings = new StrLibrary(p => string.Equals(p, "etc/etc.kor.str", StringComparison.OrdinalIgnoreCase) ? gbkBook : null);
+
+        ChannelDirectoryCatalog withStrings = ChannelDirectoryCatalog.FromScripts(reader, strings);
+        Assert.NotNull(withStrings.ResolveString);
+        Assert.Equal("合成频道甲", withStrings.ResolveString(4, "cname_syn_11"));
+        Assert.Equal("合成频道乙", withStrings.ResolveString(4, "cname_syn_52"));
+    }
+
+    [Fact]
+    public void Map_RoutesSpecialChannels_FiltersPvpHiddenAndUnknown_And_PreservesUnscriptedGroups()
+    {
+        const string scriptText =
+            "[channel] `[deathtower]` 20 70\n" +
+            "[channel] `[granfloris]` 1 20\n" +
+            "[server] 3\n" +
+            "  1 <4::cname_1> 11 `[deathtower]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "  6 <4::cname_6> 3 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "  7 <4::cname_7> 3 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "  9 <4::cname_9> 3 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "  11 <4::cname_11> 0 `[granfloris]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "  52 <4::cname_52> 13 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "  53 <4::cname_53> 8 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "  54 <4::cname_54> 4 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "  55 <4::cname_55> 10 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "  56 <4::cname_56> 16 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "  99 <4::cname_99> 17 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "[/server]\n" +
+            "[server] 1\n" +
+            "  52 <4::cname_52> 13 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "[/server]\n" +
+            "[server] 2\n" +
+            "  6 <4::cname_6> 3 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "[/server]\n";
+        ChannelScriptData script = ChannelScriptParser.Parse(scriptText);
+
+        ChannelDirectorySnapshot snapshot = ChannelDirectorySnapshot.Build(
+            "v1",
+            false,
+            script,
+            new[]
+            {
+                // 注意线缆顺序刻意把交易频道(6,7,9)排在亡者峡谷(1)之前,验证 11 优先、3 补位、上限 3
+                new ChannelWireGroup("siroco", new[]
+                {
+                    new ChannelWireEntry("#ch.6", 200, 10, "", 19006),
+                    new ChannelWireEntry("#ch.7", 200, 10, "", 19007),
+                    new ChannelWireEntry("#ch.9", 200, 10, "", 19009),
+                    new ChannelWireEntry("#ch.1", 200, 10, "", 19001),
+                    new ChannelWireEntry("#ch.11", 200, 10, "", 19011),
+                    new ChannelWireEntry("#ch.52", 200, 150, "", 19052),
+                    new ChannelWireEntry("#ch.53", 200, 20, "", 19053),
+                    new ChannelWireEntry("#ch.54", 200, 20, "", 19054),
+                    new ChannelWireEntry("#ch.55", 200, 20, "", 19055),
+                    new ChannelWireEntry("#ch.56", 200, 20, "", 19056),
+                    new ChannelWireEntry("#ch.99", 200, 20, "", 19099),
+                    new ChannelWireEntry("#ch.88", 200, 20, "", 19088), // 已建表组里未定义 -> 未知频道跳过
+                }),
+                // 卡恩只有 PK 频道上线 -> 灰牌不可选
+                new ChannelWireGroup("cain", new[]
+                {
+                    new ChannelWireEntry("#ch.52", 200, 5, "", 19152),
+                }),
+                // 狄瑞吉只有特殊频道上线 -> 主网格空但特殊栏非空,仍可选
+                new ChannelWireGroup("diregie", new[]
+                {
+                    new ChannelWireEntry("#ch.6", 200, 5, "", 19206),
+                }),
+                // 普雷脚本未建表 -> SlotRule 为 null 时因 HasServerSlotsForGroup 为 false,按合成测试兼容进入主网格
+                new ChannelWireGroup("prey", new[]
+                {
+                    new ChannelWireEntry("综合频道201", 200, 5, "", 19301),
+                }),
+            });
+
+        static string Lookup(int kind, string key) => kind == 4 ? key switch
+        {
+            "cname_1" => "亡者峡谷",
+            "cname_6" => "交易一区",
+            "cname_7" => "交易二区",
+            "cname_9" => "交易三区",
+            "cname_11" => "格兰之森",
+            _ => null,
+        } : null;
+
+        ServerDirectory dir = ChannelDirectoryAdapter.Map(snapshot, Lookup);
+        Assert.Equal(4, dir.Servers.Count);
+
+        DirectoryServer siroco = dir.Servers[0];
+        Assert.True(siroco.IsSelectable);
+        DirectoryChannel main = Assert.Single(siroco.Channels);
+        Assert.Equal(11, main.Number);
+        Assert.Equal("格兰之森", main.Title);
+        Assert.Equal(0, main.SlotFrame);
+        Assert.Equal(new[] { 1, 6, 7 }, siroco.SpecialChannels.Select(c => c.Number).ToArray());
+        Assert.Equal(new[] { 8, 5, 5 }, siroco.SpecialChannels.Select(c => c.SlotFrame).ToArray());
+        Assert.True(siroco.SpecialChannels[0].HasRecommendedLevel);
+        Assert.False(siroco.SpecialChannels[1].HasRecommendedLevel);
+
+        DirectoryServer cain = dir.Servers[1];
+        Assert.Empty(cain.Channels);
+        Assert.Empty(cain.SpecialChannels);
+        Assert.False(cain.IsSelectable);
+
+        DirectoryServer diregie = dir.Servers[2];
+        Assert.Empty(diregie.Channels);
+        DirectoryChannel diregieSpecial = Assert.Single(diregie.SpecialChannels);
+        Assert.Equal(6, diregieSpecial.Number);
+        Assert.True(diregie.IsSelectable);
+
+        DirectoryServer prey = dir.Servers[3];
+        DirectoryChannel preyMain = Assert.Single(prey.Channels);
+        Assert.Equal(201, preyMain.Number);
+        Assert.Equal(DirectoryChannel.DefaultSlotFrame, preyMain.SlotFrame);
+        Assert.True(prey.IsSelectable);
+    }
+
+    [Theory]
+    [InlineData(2, "[none]", 4)]
+    [InlineData(3, "[granfloris]", 5)]
+    [InlineData(11, "[none]", 8)]
+    [InlineData(0, "[granfloris]", 0)]
+    [InlineData(0, "[sky_catle]", 1)]
+    [InlineData(0, "[behemoth]", 2)]
+    [InlineData(0, "[Alfhlyra]", 3)]
+    [InlineData(0, "[elven_guard]", 4)]
+    [InlineData(0, "[north_myre]", 6)]
+    [InlineData(0, "[stormpass]", 7)]
+    [InlineData(0, "[deathtower]", 8)]
+    [InlineData(0, "[ancient]", 9)]
+    [InlineData(0, "[Antwer]", 10)]
+    [InlineData(0, "[Hall]", 11)]
+    [InlineData(0, "[Fortress]", 12)]
+    [InlineData(0, "[impossible]", 13)]
+    [InlineData(0, "[seatrain]", 14)]
+    [InlineData(0, "[dragonroad]", 16)]
+    [InlineData(0, "[timedoor]", 17)]
+    [InlineData(0, "[powerstation]", 18)]
+    [InlineData(0, " [TIMEDOOR] ", 17)]
+    [InlineData(0, "[unknown_zone]", 0)]
+    [InlineData(0, "[none]", 0)]
+    public void ResolveSlotFrame_MatchesAllOriginalKindsAndAreaTags(int kind, string areaTag, int expectedFrame)
+    {
+        var rule = new ChannelServerSlotRule(3, 11, -1, string.Empty, "syn", kind, areaTag);
+        Assert.Equal(expectedFrame, ChannelDirectoryAdapter.ResolveSlotFrame(rule));
+        Assert.Equal(DirectoryChannel.DefaultSlotFrame, ChannelDirectoryAdapter.ResolveSlotFrame(null));
+    }
+
+    [Fact]
+    public void Channel_SuppressesRecommendLevel_ForTradeChannelKind3()
+    {
+        var rule = new ChannelServerSlotRule(3, 6, -1, string.Empty, "交易", 3, "[none]");
+        var entry = new ChannelEntry(
+            "siroco",
+            1,
+            "#ch.6",
+            "#ch.",
+            200,
+            0,
+            "",
+            19006,
+            new ChannelCongestionEvaluation(ChannelCongestionTier.Comfortable, false, 0, 0u),
+            ChannelEntryFlags.HasValidPort | ChannelEntryFlags.HasRecommendLevel,
+            10,
+            70,
+            6,
+            rule);
+        DirectoryChannel mapped = ChannelDirectoryAdapter.Channel(entry);
+        Assert.Equal(5, mapped.SlotFrame);
+        Assert.False(mapped.HasRecommendedLevel);
+        Assert.Equal((0, 0), (mapped.RecommendedMinLevel, mapped.RecommendedMaxLevel));
     }
 }

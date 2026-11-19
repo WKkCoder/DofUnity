@@ -41,6 +41,27 @@ namespace Dnf.Net.ChannelDirectory
             ChannelEntryFlags flags,
             int? recommendedMinLevel,
             int? recommendedMaxLevel)
+            : this(groupTag, channelNo, name, displayPrefix, maxCapacity, currentLoad, host, port,
+                congestion, flags, recommendedMinLevel, recommendedMaxLevel, 0, null)
+        {
+        }
+
+        /// <summary>构造频道条目（含线缆解析出的真实频道号与 <c>[server]</c> 槽位定义）。</summary>
+        public ChannelEntry(
+            string groupTag,
+            int channelNo,
+            string name,
+            string displayPrefix,
+            int maxCapacity,
+            int currentLoad,
+            string host,
+            int port,
+            ChannelCongestionEvaluation congestion,
+            ChannelEntryFlags flags,
+            int? recommendedMinLevel,
+            int? recommendedMaxLevel,
+            int parsedChannelNo,
+            ChannelServerSlotRule slotRule)
         {
             GroupTag = groupTag ?? string.Empty;
             ChannelNo = channelNo;
@@ -54,6 +75,8 @@ namespace Dnf.Net.ChannelDirectory
             Flags = flags;
             RecommendedMinLevel = recommendedMinLevel;
             RecommendedMaxLevel = recommendedMaxLevel;
+            ParsedChannelNo = parsedChannelNo;
+            SlotRule = slotRule;
         }
 
         /// <summary>所属频道组标签(服务器名/组标签)。</summary>
@@ -61,6 +84,12 @@ namespace Dnf.Net.ChannelDirectory
 
         /// <summary>客户端分配的 1-based 频道显示序号(<c>0x010fb021</c>)。</summary>
         public int ChannelNo { get; }
+
+        /// <summary>从线缆频道名中解析出的数字编号（如 <c>#ch.11</c> 解析为 11；不含数字时为 0）。</summary>
+        public int ParsedChannelNo { get; }
+
+        /// <summary>匹配到的 <c>channel_info.etc</c> 槽位定义；未匹配时为 null。</summary>
+        public ChannelServerSlotRule SlotRule { get; }
 
         /// <summary>线缆里的频道原始名称(去 NUL)。</summary>
         public string Name { get; }
@@ -192,9 +221,14 @@ namespace Dnf.Net.ChannelDirectory
                             flags |= ChannelEntryFlags.Full;
                         }
 
+                        int parsedNo = ChannelScriptData.SplitNameDigits(wc.Name, out string prefix);
+                        ChannelServerSlotRule slotRule = parsedNo > 0 ? effectiveScript.FindServerSlot(wg.Tag, parsedNo) : null;
+
                         int? minLv = null;
                         int? maxLv = null;
-                        if (effectiveScript.TryMatchRecommendLevel(wc.Name, out int matchedMin, out int matchedMax))
+                        if (effectiveScript.TryMatchRecommendLevel(wc.Name, out int matchedMin, out int matchedMax)
+                            || (slotRule != null && !IsNoneAreaTag(slotRule.AreaTag)
+                                && effectiveScript.TryMatchRecommendLevel(slotRule.AreaTag, out matchedMin, out matchedMax)))
                         {
                             minLv = matchedMin;
                             maxLv = matchedMax;
@@ -206,7 +240,6 @@ namespace Dnf.Net.ChannelDirectory
                             flags |= ChannelEntryFlags.HasValidPort;
                         }
 
-                        ChannelScriptData.SplitNameDigits(wc.Name, out string prefix);
                         var entry = new ChannelEntry(
                             wg.Tag,
                             nextChannelNo++,
@@ -219,7 +252,9 @@ namespace Dnf.Net.ChannelDirectory
                             eval,
                             flags,
                             minLv,
-                            maxLv);
+                            maxLv,
+                            parsedNo,
+                            slotRule);
                         entries.Add(entry);
                         flat.Add(entry);
                     }
@@ -228,6 +263,17 @@ namespace Dnf.Net.ChannelDirectory
             }
 
             return new ChannelDirectorySnapshot(scriptVersion, scriptUpToDate, effectiveScript, groups, flat);
+        }
+
+        private static bool IsNoneAreaTag(string areaTag)
+        {
+            if (string.IsNullOrWhiteSpace(areaTag))
+            {
+                return true;
+            }
+            string t = areaTag.Trim();
+            return string.Equals(t, "[none]", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(t, "none", StringComparison.OrdinalIgnoreCase);
         }
     }
 }
