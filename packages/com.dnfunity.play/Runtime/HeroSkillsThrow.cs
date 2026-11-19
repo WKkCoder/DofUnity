@@ -16,11 +16,12 @@ namespace Dnf.Play
         /// </summary>
         public IReadOnlyList<string> ThrowPoses { get; internal set; }
 
-        /// <summary>这个技能在阶段 0 里有没有霸体:[static data] 里霸体开关那一项非 0;不是投掷类技能或没有开关项为 false。</summary>
-        public bool ThrowArmor => Throw != null && Throw.ArmorStaticIndex >= 0 && Def != null && Def.GetStatic(Throw.ArmorStaticIndex, false) != 0;
+        /// <summary>这个技能在阶段 0 里有没有霸体:无条件开霸体(<see cref="ThrowRecipe.AlwaysArmorInCharge"/>)或 [static data] 里霸体开关那一项非 0;不是投掷类技能为 false。</summary>
+        public bool ThrowArmor => Throw != null && Def != null
+            && (Throw.AlwaysArmorInCharge || (Throw.ArmorStaticIndex >= 0 && Def.GetStatic(Throw.ArmorStaticIndex, false) != 0));
 
         /// <summary>
-        /// 这一次施放的阶段机(<see cref="ThrowRun"/>):两个阶段的时长取 [static data] 的两个下标,不是投掷类技能返回 null。
+        /// 这一次施放的阶段机(<see cref="ThrowRun"/>):两个阶段的时长取 [static data] 的两个下标(阶段 0 下标为负时传 0 走 70ms 兜底),不是投掷类技能返回 null。
         /// 施法速度固定取基准(本仓库没有这个属性)。
         /// </summary>
         public ThrowRun NewThrowRun()
@@ -29,7 +30,8 @@ namespace Dnf.Play
             {
                 return null;
             }
-            return new ThrowRun(Def.GetStatic(Throw.ChargeStaticIndex, false), Def.GetStatic(Throw.ShootStaticIndex, false), ThrowArmor);
+            int chargeRaw = Throw.ChargeStaticIndex >= 0 ? Def.GetStatic(Throw.ChargeStaticIndex, false) : 0;
+            return new ThrowRun(chargeRaw, Def.GetStatic(Throw.ShootStaticIndex, false), ThrowArmor);
         }
     }
 

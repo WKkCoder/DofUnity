@@ -17,12 +17,18 @@ namespace Dnf.Play
     public sealed class ThrowRecipe
     {
         public ThrowRecipe(int skillId, int chargeStaticIndex, int shootStaticIndex, int armorStaticIndex, int poseSelector, IEnumerable<SkillObjectSpec> objects)
+            : this(skillId, chargeStaticIndex, shootStaticIndex, armorStaticIndex, false, poseSelector, objects, requireChargeStaticIndex: true)
+        {
+        }
+
+        private ThrowRecipe(int skillId, int chargeStaticIndex, int shootStaticIndex, int armorStaticIndex, bool alwaysArmorInCharge, int poseSelector,
+            IEnumerable<SkillObjectSpec> objects, bool requireChargeStaticIndex)
         {
             if (skillId <= 0)
             {
                 throw new ArgumentOutOfRangeException(nameof(skillId), "技能号必须是正数");
             }
-            if (chargeStaticIndex < 0 || shootStaticIndex < 0)
+            if ((requireChargeStaticIndex && chargeStaticIndex < 0) || shootStaticIndex < 0)
             {
                 throw new ArgumentOutOfRangeException(nameof(chargeStaticIndex), "两个阶段的时长都要指定 [static data] 的下标");
             }
@@ -47,20 +53,36 @@ namespace Dnf.Play
             ChargeStaticIndex = chargeStaticIndex;
             ShootStaticIndex = shootStaticIndex;
             ArmorStaticIndex = armorStaticIndex;
+            AlwaysArmorInCharge = alwaysArmorInCharge;
             PoseSelector = poseSelector;
             Objects = list.AsReadOnly();
         }
 
+        /// <summary>
+        /// 构造"阶段 0 传 0 毫秒(走基类 0x008636b5 的 70ms 兜底)、阶段 1 取 [static data]"的 0x0d 投掷配方
+        /// (例如 0x00cc3c70 入口压入阶段 0 时长 0、阶段 1 时长取 [static data][0],0x00cdf726 无条件开阶段 0 霸体)。
+        /// </summary>
+        public static ThrowRecipe WithZeroCharge(int skillId, int shootStaticIndex, bool alwaysArmorInCharge, int poseSelector, IEnumerable<SkillObjectSpec> objects)
+        {
+            return new ThrowRecipe(skillId, -1, shootStaticIndex, -1, alwaysArmorInCharge, poseSelector, objects, requireChargeStaticIndex: false);
+        }
+
         public int SkillId { get; }
 
-        /// <summary>阶段 0 的时长(毫秒)在 [static data] 里的下标。</summary>
+        /// <summary>阶段 0 的时长(毫秒)在 [static data] 里的下标;负数表示入口固定传 0(由 <see cref="ThrowRun"/> 兜底成 70 毫秒)。</summary>
         public int ChargeStaticIndex { get; }
+
+        /// <summary>阶段 0 是否固定传 0 走基类 70 毫秒兜底(<see cref="ThrowRun.ZeroChargeFallbackMs"/>)。</summary>
+        public bool UsesZeroChargeFallback => ChargeStaticIndex < 0;
 
         /// <summary>阶段 1 的时长(毫秒)在 [static data] 里的下标。</summary>
         public int ShootStaticIndex { get; }
 
-        /// <summary>霸体开关在 [static data] 里的下标(值非 0 就在阶段 0 开霸体);负数表示这个技能没有霸体。</summary>
+        /// <summary>霸体开关在 [static data] 里的下标(值非 0 就在阶段 0 开霸体);负数表示不查开关(见 <see cref="AlwaysArmorInCharge"/>)。</summary>
         public int ArmorStaticIndex { get; }
+
+        /// <summary>是否在阶段 0 无条件开启霸体(客户端进入块直接调 setSuperArmor(1,1,-1),不查 [static data] 开关)。</summary>
+        public bool AlwaysArmorInCharge { get; }
 
         /// <summary>姿势动画的选择号 N:阶段 0 用 <see cref="ChargePoseTag"/>、阶段 1 用 <see cref="ShootPoseTag"/>。</summary>
         public int PoseSelector { get; }

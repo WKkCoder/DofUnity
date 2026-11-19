@@ -1352,10 +1352,15 @@ internal static partial class SkillCheck
             // 到点失效,魔法值与冷却在放出来时就算了。只打印汇总数,时长与数值不打印。
             int buffSkills = 0;
             int buffLevelsChecked = 0;
+            int buffExtraChecked = 0;
             int buffCycles = 0;
             int buffMotionOk = 0;
             var buffProblems = new List<string>();
-            foreach (BuffRecipe recipe in SkillRecipes.Default.AllBuffs.Concat(SkillRecipes.Default.AllClassBuffs))
+            List<BuffRecipe> job0Buffs = SkillRecipes.Default.AllBuffs
+                .Concat(SkillRecipes.Default.AllClassBuffs)
+                .Concat(SkillRecipes.Default.AllJobBuffs.Where(e => e.Job == chr.Job).Select(e => e.Recipe))
+                .ToList();
+            foreach (BuffRecipe recipe in job0Buffs)
             {
                 buffSkills++;
                 string label = "增益 #" + buffSkills;
@@ -1370,15 +1375,28 @@ internal static partial class SkillCheck
                     buffProblems.Add(label + ":指令的扳机不是增益键");
                 }
                 int needColumns = Math.Max(recipe.DurationColumn, recipe.AmountStaticIndex >= 0 ? 0 : recipe.AmountColumn) + 1;
+                int maxStatic = recipe.AmountStaticIndex;
+                foreach (BuffStatEntry extra in recipe.ExtraStats)
+                {
+                    if (extra.AmountStaticIndex >= 0)
+                    {
+                        maxStatic = Math.Max(maxStatic, extra.AmountStaticIndex);
+                    }
+                    else
+                    {
+                        needColumns = Math.Max(needColumns, extra.AmountColumn + 1);
+                    }
+                }
                 if (def.LevelInfo.Columns < needColumns || !def.LevelInfo.IsConsistent || def.LevelInfo.Levels < def.MaximumLevel)
                 {
                     buffProblems.Add(label + ":[level info] 列数或行数不够");
                 }
-                if (recipe.AmountStaticIndex >= 0 && def.StaticData.Length <= recipe.AmountStaticIndex)
+                if (maxStatic >= 0 && def.StaticData.Length <= maxStatic)
                 {
                     buffProblems.Add(label + ":[static data] 不够长");
                 }
-                for (int lv = 1; lv <= def.MaximumLevel; lv++)
+                int buffLearnable = def.GrowtypeMaxLevels.Length > 0 ? Math.Min(def.GrowtypeMaxLevels.Max(), def.MaximumLevel) : def.MaximumLevel;
+                for (int lv = 1; lv <= buffLearnable; lv++)
                 {
                     buffLevelsChecked++;
                     int duration = def.GetLevel(lv, recipe.DurationColumn, false);
@@ -1391,12 +1409,20 @@ internal static partial class SkillCheck
                     {
                         buffProblems.Add(label + " " + lv + " 级:概率超过 100%(M49,E-142)");       // 概率类增益的数换成 0 到 1 以后不会超过 1(超过了就是缩放或列号错了)
                     }
+                    foreach (BuffStatEntry extra in recipe.ExtraStats)
+                    {
+                        buffExtraChecked++;
+                        if (extra.Evaluate(def, lv) == 0.0)
+                        {
+                            buffProblems.Add(label + " " + lv + " 级:额外属性修正读出来为 0");
+                        }
+                    }
                 }
                 if (recipe.Stat == BuffStat.AutoGuardChance)
                 {
                     // 自动防御借用的防御姿态技能:得是表里的防御姿态配方、技能在目录里,而且在这个技能的前置要求里(客户端钩子里两个技能都要学过,前置要求保证学了这个就学过那个)
                     SkillDef? guardDef = catalog.Find(recipe.GuardSkillId);
-                    if (SkillRecipes.Default.FindGuard(recipe.GuardSkillId) == null || guardDef == null || !guardDef.IsActive)
+                    if (SkillRecipes.Default.FindGuard(chr.Job, recipe.GuardSkillId) == null || guardDef == null || !guardDef.IsActive)
                     {
                         buffProblems.Add(label + ":借用的防御姿态技能不在配方表或目录里");
                     }
@@ -1420,6 +1446,11 @@ internal static partial class SkillCheck
                     buffProblems.Add(label + ":没有排进槽里(没学会或没有放法)");
                     continue;
                 }
+                if (slot.BuffExtraAmounts.Count != recipe.ExtraStats.Count)
+                {
+                    buffProblems.Add(label + ":槽里的额外属性个数与配方不一致");
+                    continue;
+                }
                 if (!session.Hero.HasBuffMotion)
                 {
                     buffProblems.Add(label + ":角色脚本没有 [buff motion]");
@@ -1430,7 +1461,22 @@ internal static partial class SkillCheck
                 {
                     session.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Keys);
                 }
-                if (session.BuffCasts != 1 || session.Hero.Motion != HeroMotion.Skill || session.Buffs.Count != 0)
+                if ((session.BuffCasts != 1 || session.Hero.SkillId != def.Id) && session.Hero.Motion == HeroMotion.Skill && session.Hero.SkillId != def.Id)
+                {
+                    // 指令撞车时改用快捷栏第 1 格按键放
+                    HeroProgress? quickCaster = CasterWhoKnows(assets, level, def.Id);
+                    if (quickCaster != null && quickCaster.Skills.AssignQuick(0, def.Id))
+                    {
+                        session = NewSession(assets, opts, quickCaster);
+                        slot = session.Skills.SlotOfSkill(def.Id);
+                        mpBefore = session.Vitals?.Mp ?? 0;
+                        if (slot != null && slot.Key != SkillKeys.None)
+                        {
+                            session.Update(10, 0, 0, false, false, slot.Key);
+                        }
+                    }
+                }
+                if (slot == null || session.BuffCasts != 1 || session.Hero.Motion != HeroMotion.Skill || session.Hero.SkillId != def.Id || session.Buffs.Count != 0)
                 {
                     buffProblems.Add(label + ":按指令没有放出施法动作(或还没施完就挂上了增益)");
                     continue;
@@ -1478,8 +1524,8 @@ internal static partial class SkillCheck
             {
                 Console.WriteLine("    " + line);
             }
-            Report(buffSkills == SkillRecipes.Default.BuffCount + SkillRecipes.Default.ClassBuffCount && buffSkills > 0 && buffProblems.Count == 0 && buffCycles == buffSkills && buffMotionOk == buffSkills,
-                "增益类技能 " + buffSkills + " 个(逐级查了 " + buffLevelsChecked + " 级的持续时间与数值都为正)在真实数据里读得通;真实会话里按各自的指令各放一遍:施法动作无攻击框 "
+            Report(buffSkills == job0Buffs.Count && buffSkills > 0 && buffProblems.Count == 0 && buffCycles == buffSkills && buffMotionOk == buffSkills,
+                "增益类技能 " + buffSkills + " 个(逐级查了 " + buffLevelsChecked + " 级的持续时间与主数值都为正、额外属性 " + buffExtraChecked + " 项非零)在真实数据里读得通;真实会话里各放一遍:施法动作无攻击框 "
                 + buffMotionOk + " 个、施法结束挂上并到点失效 " + buffCycles + " 个(问题 " + buffProblems.Count + " 条)");
 
             // 9. 防御姿态类技能(M66,证据 E-164):表里的每个在真实数据里都读得通——技能在目录里、是主动技能、指令的扳机是攻击键且不止一个键、[static data] 与 [level info] 的列够用、
@@ -1607,7 +1653,10 @@ internal static partial class SkillCheck
             int throwArmored = 0;
             int throwCycles = 0;
             var throwProblems = new List<string>();
-            foreach (ThrowRecipe recipe in SkillRecipes.Default.AllThrows)
+            List<ThrowRecipe> job0Throws = SkillRecipes.Default.AllThrows
+                .Concat(SkillRecipes.Default.AllJobThrows.Where(e => e.Job == chr.Job).Select(e => e.Recipe))
+                .ToList();
+            foreach (ThrowRecipe recipe in job0Throws)
             {
                 throwSkills++;
                 string label = "投掷 #" + throwSkills;
@@ -1624,11 +1673,11 @@ internal static partial class SkillCheck
                 }
                 else
                 {
-                    if (def.GetStatic(recipe.ChargeStaticIndex, false) <= 0 || def.GetStatic(recipe.ShootStaticIndex, false) <= 0)
+                    if ((!recipe.UsesZeroChargeFallback && def.GetStatic(recipe.ChargeStaticIndex, false) <= 0) || def.GetStatic(recipe.ShootStaticIndex, false) <= 0)
                     {
                         throwProblems.Add(label + ":两个阶段的时长读出来不是正数");
                     }
-                    throwArmored += recipe.ArmorStaticIndex >= 0 && def.GetStatic(recipe.ArmorStaticIndex, false) != 0 ? 1 : 0;
+                    throwArmored += (recipe.AlwaysArmorInCharge || (recipe.ArmorStaticIndex >= 0 && def.GetStatic(recipe.ArmorStaticIndex, false) != 0)) ? 1 : 0;
                 }
                 int needColumns = recipe.Objects.Max(o => o.DamageRateColumn) + 1;
                 if (def.LevelInfo.Columns < needColumns || !def.LevelInfo.IsConsistent || def.LevelInfo.Levels < def.MaximumLevel)
@@ -1703,12 +1752,29 @@ internal static partial class SkillCheck
                 }
                 int mpBefore = session.Vitals?.Mp ?? 0;
                 double castStepMs = 0;
+                bool byQuick = false;
                 foreach (CommandStep step in CommandSteps.Of(def.Command, session.Hero.FacingLeft))
                 {
                     session.Update(step.Ms, step.DirX, step.DirY, step.Attack, step.Jump, step.Keys);
                     castStepMs = step.Ms;
                 }
-                if (session.Hero.Motion != HeroMotion.Skill || session.Hero.SkillId != def.Id || session.ThrowCasts != 1 || session.CommandCasts != 1 || !session.ThrowActive)
+                if ((session.Hero.SkillId != def.Id || session.ThrowCasts != 1) && session.Hero.Motion == HeroMotion.Skill && session.Hero.SkillId != def.Id)
+                {
+                    HeroProgress? quickThrower = CasterWhoKnows(assets, level, def.Id);
+                    if (quickThrower != null && quickThrower.Skills.AssignQuick(0, def.Id))
+                    {
+                        session = NewSession(assets, opts, quickThrower);
+                        slot = session.Skills.SlotOfSkill(def.Id);
+                        mpBefore = session.Vitals?.Mp ?? 0;
+                        if (slot != null && slot.Key != SkillKeys.None)
+                        {
+                            session.Update(10, 0, 0, false, false, slot.Key);
+                            castStepMs = 10;
+                            byQuick = true;
+                        }
+                    }
+                }
+                if (slot == null || session.Hero.Motion != HeroMotion.Skill || session.Hero.SkillId != def.Id || session.ThrowCasts != 1 || (!byQuick && session.CommandCasts != 1) || !session.ThrowActive)
                 {
                     throwProblems.Add(label + ":按指令没有放出这个技能(或阶段机没有启动)");
                     continue;
@@ -1726,7 +1792,7 @@ internal static partial class SkillCheck
                     throwProblems.Add(label + ":这一步放出的对象数不是 " + recipe.Objects.Count + "(是 " + session.HeroObjectsSpawned + ")");
                 }
                 // 阶段计时:放出那一步已经走了 castStepMs;之后每 10 毫秒一步,换阶段与结束的时刻落在 [配置值, 配置值 + 10) 毫秒里
-                int chargeMs = def.GetStatic(recipe.ChargeStaticIndex, false);
+                int chargeMs = recipe.UsesZeroChargeFallback ? ThrowRun.ZeroChargeFallbackMs : def.GetStatic(recipe.ChargeStaticIndex, false);
                 int shootMs = def.GetStatic(recipe.ShootStaticIndex, false);
                 double elapsed = castStepMs;
                 double phase1At = session.ThrowPhase == 1 ? elapsed : -1;
@@ -1760,11 +1826,14 @@ internal static partial class SkillCheck
             {
                 Console.WriteLine("    " + line);
             }
-            Report(throwSkills == SkillRecipes.Default.ThrowCount && throwSkills > 0 && throwProblems.Count == 0 && throwCycles == throwSkills,
+            Report(throwSkills == job0Throws.Count && throwSkills > 0 && throwProblems.Count == 0 && throwCycles == throwSkills,
                 "投掷类技能 " + throwSkills + " 个(逐级查了 " + throwLevelsChecked + " 级的对象百分比都为正;对象 " + throwObjectsChecked + " 个、姿势动画 " + throwPosesOk + " 个读得通;阶段 0 带霸体的 "
-                + throwArmored + " 个)在真实数据里读得通;真实会话里按各自的指令各放一遍:对象一次放齐、两个阶段的时长与 [static data] 吻合、一直在放技能、结束后回到站立的 "
+                + throwArmored + " 个)在真实数据里读得通;真实会话里各放一遍:对象一次放齐、两个阶段的时长吻合、一直在放技能、结束后回到站立的 "
                 + throwCycles + " 个(问题 " + throwProblems.Count + " 条)");
         }
+
+        // 11. 跨职业状态族配方与职业作用域隔离(阶段 2a: 0x11 增益 / 0x0d 投掷 / 0x13 防御姿态)
+        ReportCrossJobRecipes(assets, data, Report);
 
         bad += SkillCheckBodyHit.Run(assets, opts, catalog, level);
 

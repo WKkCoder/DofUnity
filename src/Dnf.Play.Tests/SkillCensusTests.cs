@@ -827,7 +827,7 @@ public sealed class SkillCensusTests
                 "职业丙  |      3 |    2 |    1 |          2 |                1 | 1/0/0/0/0/1/0                                 |              3 | 0x2a,0x32,0x35",
                 "职业丁  |      2 |    2 |    0 |          2 |                0 | 1/0/0/0/1/0/0                                 |              2 | 0x31,0x36",
                 "",
-                "全职业主动技能已有配方已能施放合计: 4 (首职业按全表, 其余职业仅计跨职业基类共享实装项)",
+                "全职业主动技能已有配方已能施放合计: 4 (按职业作用域与基类共享表统计)",
                 "",
                 "二、跨职业原生状态号直方图(按可解锁主动技能数从大到小排序)",
                 "状态号 | 涉及职业数 | 关联主动技能数 | 作用域     | 已有配方状态 | 已实现关联技能数 | 涉及职业",
@@ -989,5 +989,31 @@ public sealed class SkillCensusTests
         Assert.Equal("0x37   |          1 |              2 | 单C++类局部          | 否              |                0 | 职业12", lines[23]);
         Assert.Equal("0x00   |          1 |              1 | 基类共享(同码)         | 否              |                0 | 职业12", lines[24]);
         Assert.Equal("0x38   |          1 |              1 | 单C++类局部          | 否              |                0 | 职业12", lines[25]);
+    }
+
+    [Fact]
+    public void DescribeStateRecipeCoverageAndPeMzValidationHandleZeroAndCorruptedHeaders()
+    {
+        Assert.Equal("否", SkillCensus.DescribeStateRecipeCoverage(0, 0));
+        Assert.Equal("否", SkillCensus.DescribeStateRecipeCoverage(0, 5));
+        Assert.Equal("部分(2/5)", SkillCensus.DescribeStateRecipeCoverage(2, 5));
+        Assert.Equal("是(全覆盖)", SkillCensus.DescribeStateRecipeCoverage(5, 5));
+
+        var validPe = new SyntheticPeBuilder().Build(sectionCount: 3);
+        Assert.NotNull(SkillCensus.PeImage.TryParse(validPe));
+
+        var badM = (byte[])validPe.Clone();
+        badM[0] = (byte)'X';
+        Assert.Null(SkillCensus.PeImage.TryParse(badM));
+
+        var badZ = (byte[])validPe.Clone();
+        badZ[1] = (byte)'Y';
+        Assert.Null(SkillCensus.PeImage.TryParse(badZ));
+
+        // 阶段 2a 职业作用域接入校验: 跨职业配方与共享基类项生效,首职业局部项不泄漏给其它职业
+        Assert.True(SkillCensus.IsCastableForJob(9, 1));
+        Assert.False(SkillCensus.IsCastableForJob(2, 1));
+        Assert.True(SkillCensus.IsCastableForJob(2, SkillIds.BackStep));
+        Assert.False(SkillCensus.IsCastableForJob(-1, SkillIds.BackStep));
     }
 }

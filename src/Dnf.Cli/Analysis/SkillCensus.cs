@@ -703,7 +703,7 @@ internal static class SkillCensus
         }
 
         output.WriteLine();
-        output.WriteLine($"全职业主动技能已有配方已能施放合计: {totalImplementedByJob} (首职业按全表, 其余职业仅计跨职业基类共享实装项)");
+        output.WriteLine($"全职业主动技能已有配方已能施放合计: {totalImplementedByJob} (按职业作用域与基类共享表统计)");
         output.WriteLine();
         output.WriteLine("二、跨职业原生状态号直方图(按可解锁主动技能数从大到小排序)");
         output.WriteLine("状态号 | 涉及职业数 | 关联主动技能数 | 作用域     | 已有配方状态 | 已实现关联技能数 | 涉及职业");
@@ -729,13 +729,7 @@ internal static class SkillCensus
 
     internal static bool IsCastableForJob(int jobId, int skillId)
     {
-        if (jobId == EquipRules.SwordmanJob)
-        {
-            return HeroSkills.IsImplemented(skillId);
-        }
-        return skillId == SkillIds.BackStep
-            || skillId == SkillIds.QuickStand
-            || SkillRecipes.Default.FindBuff(skillId) != null;
+        return HeroSkills.IsImplemented(jobId, skillId);
     }
 
     internal static string DescribeStateRecipeCoverage(int implSkills, int totalSkills)

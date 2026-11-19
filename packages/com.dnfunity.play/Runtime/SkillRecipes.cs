@@ -589,7 +589,7 @@ namespace Dnf.Play
     /// 数值取 [static data] 的第 <see cref="AmountStaticIndex"/> 个数(不小于 0 时)或 [level info] 当前等级的 <see cref="AmountColumn"/> 列(否则)。
     /// 下标与列号都是客户端挂附加体的代码里写死的常量,不是数据值。耗蓝与冷却同别的技能,在放出来(进入施法状态)那一刻算(推断)。
     /// </summary>
-    public sealed class BuffRecipe
+    public sealed partial class BuffRecipe
     {
         public BuffRecipe(int skillId, BuffStat stat, int durationColumn, int amountStaticIndex, int amountColumn, double amountScale = 1.0, int guardSkillId = 0)
         {
@@ -762,7 +762,7 @@ namespace Dnf.Play
         }
 
         /// <summary>读码移植出来的配方。</summary>
-        public static SkillRecipes Default { get; } = new SkillRecipes(new[]
+        public static SkillRecipes Default { get; } = AttachCrossJobDefaults(new SkillRecipes(new[]
         {
             // 两段连击技能:起手函数 0x0049d520 → 状态 0x2a(证据 E-129)。第 0 段在动画第 2 帧放第 0 个特效,第 1 段一开始放第 1 个;
             // 第 2 段要另一个被动技能与动画变速,还没做。
@@ -1318,6 +1318,6 @@ namespace Dnf.Play
                     new SkillObjectSpec(objectId: 20120, stage: 0, frame: 0, damageRateColumn: 0, damageFixedColumn: 0, offsetY: 50),
                     new SkillObjectSpec(objectId: 20121, stage: 0, frame: 0, damageRateColumn: 2, damageFixedColumn: 2),
                 }),
-        });
+        }));
     }
 }
