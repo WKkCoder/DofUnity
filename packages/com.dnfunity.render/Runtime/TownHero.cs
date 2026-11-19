@@ -3602,7 +3602,7 @@ namespace Dnf.Render
     /// 一场城镇游戏:地图图层、NPC、主角与镜头。每帧先 <see cref="Update"/> 推进主角,再 <see cref="Build"/> 取绘制列表
     /// (地图图层与 NPC 的动画按墙钟时间 <c>timeMs</c> 播放,主角按自己的状态计时)。
     /// </summary>
-    public sealed class TownSession : IHeroSession, ITownExitSource, IMapSoundSource, ITownNpcSource
+    public sealed class TownSession : IHeroSession, ITownExitSource, IMapSoundSource, ITownNpcSource, ITownExitReset
     {
         /// <summary>纵向常数,E-024 在网关地图上拟合出的 200。</summary>
         public const int DefaultGroundY = 200;
@@ -3627,6 +3627,9 @@ namespace Dnf.Render
 
         /// <summary>主角走进、还没被流程处理的出口;没有出口表、或还没走进时为 null。</summary>
         public TownExit? PendingExit => _pending;
+
+        /// <summary>联网切区被拒或超时回退时清除已锁存的出口触发状态。</summary>
+        public void ClearPendingExit() => _pending = null;
 
         /// <summary>出口触发器;没有出口表(演示用的单张地图)时为 null。</summary>
         public TownExitTracker Exits => _exits;

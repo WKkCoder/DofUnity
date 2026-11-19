@@ -49,15 +49,27 @@ namespace Dnf.Client
     internal readonly struct OnlineSelectReport
     {
         public OnlineSelectReport(bool entered, bool mayTryAnotherSlot, string snapshotLine)
+            : this(entered, mayTryAnotherSlot, snapshotLine, null, null, null)
+        {
+        }
+
+        public OnlineSelectReport(bool entered, bool mayTryAnotherSlot, string snapshotLine,
+            SelectCharacterResult selectCharacter, TownEntrySnapshot snapshot, DungeonPermissionSnapshot dungeonPermissions)
         {
             Entered = entered;
             MayTryAnotherSlot = mayTryAnotherSlot;
             SnapshotLine = snapshotLine;
+            SelectCharacter = selectCharacter;
+            Snapshot = snapshot;
+            DungeonPermissions = dungeonPermissions;
         }
 
         public bool Entered { get; }
         public bool MayTryAnotherSlot { get; }
         public string SnapshotLine { get; }
+        public SelectCharacterResult SelectCharacter { get; }
+        public TownEntrySnapshot Snapshot { get; }
+        public DungeonPermissionSnapshot DungeonPermissions { get; }
     }
 
     /// <summary>读频道目录一步的报告(结局与快照;联网层的结果类没有公开构造函数,假会话只能造报告)。</summary>
@@ -159,7 +171,10 @@ namespace Dnf.Client
         public async Task<OnlineSelectReport> SelectAsync(int slot, CancellationToken cancellationToken)
         {
             OnlineSelectCharacterResult result = await _session.SelectCharacterAsync(slot, cancellationToken).ConfigureAwait(false);
-            return new OnlineSelectReport(result.Entered, result.MayTryAnotherSlot, result.Entered ? OnlineNetLog.Snapshot(result.Snapshot) : null);
+            return result.Entered
+                ? new OnlineSelectReport(true, result.MayTryAnotherSlot, OnlineNetLog.Snapshot(result.Snapshot),
+                    result.SelectCharacter, result.Snapshot, result.DungeonPermissions)
+                : new OnlineSelectReport(false, result.MayTryAnotherSlot, null);
         }
 
         public void Dispose()
@@ -210,6 +225,10 @@ namespace Dnf.Client
             public Action LostHandler;
 
             public volatile bool Retired;
+
+            public SelectCharacterResult SelectCharacter;
+            public TownEntrySnapshot Snapshot;
+            public DungeonPermissionSnapshot DungeonPermissions;
         }
 
         private readonly OnlineEntrySettings _template;
@@ -248,6 +267,42 @@ namespace Dnf.Client
                 lock (_lock)
                 {
                     return _slot?.Port.Real;
+                }
+            }
+        }
+
+        /// <summary>最近一次成功选角进城拿到的一系列进城回报(<c>SelectCharacterLoadInfo</c> 在内);没进城或刚换频道清空后为 null。</summary>
+        public SelectCharacterResult SelectCharacter
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _slot?.SelectCharacter;
+                }
+            }
+        }
+
+        /// <summary>最近一次成功选角进城的快照诊断信息;没进城时为 null。</summary>
+        public TownEntrySnapshot Snapshot
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _slot?.Snapshot;
+                }
+            }
+        }
+
+        /// <summary>最近一次成功选角收到的副本权限快照;没进城或未收到时为 null。</summary>
+        public DungeonPermissionSnapshot DungeonPermissions
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _slot?.DungeonPermissions;
                 }
             }
         }
@@ -316,6 +371,24 @@ namespace Dnf.Client
             return Task.Run(async () =>
             {
                 OnlineSelectReport report = await current.Port.SelectAsync(slot, cancellationToken).ConfigureAwait(false);
+                lock (_lock)
+                {
+                    if (!current.Retired && ReferenceEquals(_slot, current))
+                    {
+                        if (report.Entered)
+                        {
+                            current.SelectCharacter = report.SelectCharacter;
+                            current.Snapshot = report.Snapshot;
+                            current.DungeonPermissions = report.DungeonPermissions;
+                        }
+                        else
+                        {
+                            current.SelectCharacter = null;
+                            current.Snapshot = null;
+                            current.DungeonPermissions = null;
+                        }
+                    }
+                }
                 if (report.Entered && report.SnapshotLine != null)
                 {
                     Log(report.SnapshotLine);
@@ -338,6 +411,41 @@ namespace Dnf.Client
                 }
             }
             DisposeOffThread(old);
+        }
+
+        /// <summary>主动退出游戏时先在当前联网会话发送 <c>1/3 EXIT</c> 断线再清理句柄;不触发 <see cref="Disconnected"/>。</summary>
+        public async Task DisconnectGracefullyAsync(CancellationToken cancellationToken = default)
+        {
+            Slot old;
+            lock (_lock)
+            {
+                old = _slot;
+                _slot = null;
+                if (old != null)
+                {
+                    old.Retired = true;
+                }
+            }
+            if (old == null)
+            {
+                return;
+            }
+            old.Port.Lost -= old.LostHandler;
+            try
+            {
+                OnlineClientSession real = old.Port.Real;
+                if (real != null)
+                {
+                    await real.DisconnectAsync(cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (Exception)
+            {
+            }
+            finally
+            {
+                DisposeOffThread(old);
+            }
         }
 
         /// <summary>放弃会话并最多等一秒让后台的释放做完(宿主退出时调;之后所有网络操作都失败)。</summary>
@@ -463,6 +571,12 @@ namespace Dnf.Client
             catch (Exception e)
             {
                 return Task.FromException<OnlineConnectOutcome>(e);
+            }
+            lock (_lock)
+            {
+                slot.SelectCharacter = null;
+                slot.Snapshot = null;
+                slot.DungeonPermissions = null;
             }
             if (target.Host != null)
             {

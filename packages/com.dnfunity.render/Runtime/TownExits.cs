@@ -21,6 +21,12 @@ namespace Dnf.Render
         bool HeroFacingLeft { get; }
     }
 
+    /// <summary>联网切区被拒或超时回退时,清空城镇会话上已经锁存的出口触发标志,避免原地连环重发。</summary>
+    public interface ITownExitReset
+    {
+        void ClearPendingExit();
+    }
+
     /// <summary>
     /// 出口的触发规则(证据 E-095,推断):主角站在出口矩形里、并且正朝"外面"推方向键就走出去。
     /// "外面" = 出口矩形最靠近的那条可走区域外包矩形的边的方向(上、下、左、右):赛丽亚房间的出口在下边、艾尔文防线的四个出口各在上下左右;

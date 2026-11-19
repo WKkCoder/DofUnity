@@ -461,6 +461,9 @@ namespace Dnf.Client
                     case "-dnfserverui":
                         _serverUi = true;        // 联网外壳的选服务器、选频道用真界面(r18-serverui);没带 -dnfonline 时没有作用
                         break;
+                    case "-dnfonlineareas":
+                        if (value != null && TryParseOnlineSwitch(value, out bool areaSync)) { _onlineAreaSync = areaSync; i++; }
+                        break;
                     case "-dnfnetroot":
                         if (value != null) { _netRoot = value; i++; }
                         break;
@@ -1186,6 +1189,10 @@ namespace Dnf.Client
             }
             if (_progress == null)
             {
+                if (_onlineTown != null)
+                {
+                    return CreateOnlineHeroProgress();
+                }
                 _progress = HeroProgress.CreateForLocalHero(_assets, _heroLevel);
                 CreateAvatars();
                 RestoreSave();
@@ -1268,6 +1275,10 @@ namespace Dnf.Client
         /// </summary>
         private void OpenSave()
         {
+            if (_shell != null)
+            {
+                return;
+            }
             string path = _savePath;
             if (path == null && !Application.isBatchMode && !_heroLevelGiven)
             {
@@ -2079,7 +2090,7 @@ namespace Dnf.Client
             int order = 0;
             int cameraX = town.Camera.IntX;
             int npcPlates = NamePlates.AddNpcs(plates, ref order, _menuArt, _npcNames, scene, town.Npcs, cameraX);
-            bool heroPlate = NamePlates.AddHero(plates, ref order, _menuArt, _progress.Level, CharacterRoster.LocalName,
+            bool heroPlate = NamePlates.AddHero(plates, ref order, _menuArt, _progress.Level, _progress.HeroName,
                 (int)Math.Floor(town.Hero.X) - cameraX, (int)Math.Floor(town.Hero.Y) + town.GroundY);
             if (_platesSerial != _flow.StageSerial && (npcPlates > 0 || heroPlate))
             {
@@ -2135,6 +2146,7 @@ namespace Dnf.Client
         {
             List<SceneSprite> hud = BuildTownHud();
             List<SceneSprite> quest = BuildQuestHud();
+            List<SceneSprite> online = BuildOnlineTownOverlay();
             List<SceneSprite> menu = BuildMenuOverlay();
             if (hud == null)
             {
@@ -2143,6 +2155,17 @@ namespace Dnf.Client
             else if (quest != null)
             {
                 hud.AddRange(quest);
+            }
+            if (online != null && online.Count > 0)
+            {
+                if (hud == null)
+                {
+                    hud = online;
+                }
+                else
+                {
+                    hud.AddRange(online);
+                }
             }
             if (hud == null)
             {
@@ -2295,10 +2318,11 @@ namespace Dnf.Client
             }
             else
             {
+                RecordOnlineSafePosition();
                 int dirX = 0, dirY = 0;
                 bool attack = false, jump = false;
                 SkillKeys skills = SkillKeys.None;
-                if (_heroInput)
+                if (_heroInput && !IsOnlineAreaChangePending())
                 {
                     attack = ReadHeroInput(out dirX, out dirY, out jump, out skills);
                 }
@@ -2356,6 +2380,7 @@ namespace Dnf.Client
                 _flow.Select?.Advance(deltaMs);      // 副本选择界面自己的时钟(开场动画与横幅轮换)
                 _flow.CharacterSelect?.Advance(deltaMs);   // 选角界面自己的时钟(光束与头像的动画)
                 _flow.Splash?.Advance(deltaMs);      // 加载画面:停够时间之后流程切到目标阶段
+                PollOnlineTown();
                 _flow.Poll();
             }
             if (_flow.StageSerial != _shownSerial)
@@ -2379,7 +2404,7 @@ namespace Dnf.Client
             if (_flow.QuitRequested)
             {
                 Debug.Log("DNF_FLOW quit from system menu");
-                Quit();                              // 系统菜单里选了"退出游戏"
+                QuitOnlineAware();                   // 系统菜单里选了"退出游戏"
                 return;
             }
             _audio?.Tick(deltaMs, _flow);          // 流程自己是声音源:选角与城镇区域的音乐、结算曲子,加上当前副本会话的提示(E-097)
@@ -2537,14 +2562,17 @@ namespace Dnf.Client
             bool realSelect = world != null && world.Entries.Count > 0;
             // 城镇:默认走城镇图册(E-095:登录在网关区域、沿出口换区域、地下城入口区域的出口通世界地图、换区域与进图有加载画面);
             // -dnflegacytown 退回只有赛丽亚房间一张图、阶段瞬间切换的老行为;-dnfnosplash 去掉所有加载画面
+            TownAtlas atlas = _onlineAtlas ?? (_legacyTown ? null : TownAtlas.Open(_assets));
+            int startTown = _onlineTown != null ? _onlineTown.StartTown : 1;
             ITownWorld townWorld = _legacyTown
                 ? new LegacyTownWorld(() => DemoHero.CreateSession(_assets, DefaultMap, DemoHero.SeriaRoom))
-                : (ITownWorld)new AtlasTownWorld(_assets, TownAtlas.Open(_assets), 1, withSplashes: !_noSplash, weaponPath: () => _progress?.WeaponPath);
+                : (ITownWorld)new AtlasTownWorld(_assets, atlas, startTown, withSplashes: !_noSplash, weaponPath: () => _progress?.WeaponPath);
             bool avatarsOn = !_legacyTown && _avatars != null && _avatars.Ready;   // 老城镇只有一张图、没有装扮;装扮底座读不出来也没有
             if (avatarsOn)
             {
                 townWorld = new AvatarTownWorld(townWorld, _avatars);   // 进城、换区域、副本回城造出来的主角都按装扮栏穿(r15-avatarhost)
             }
+            townWorld = WrapOnlineTownWorld(townWorld);
             Func<string, SplashScene> dungeonSplash = _legacyTown || _noSplash ? (Func<string, SplashScene>)null : path => SplashCatalog.ForDungeon(_assets, path);
             // 选角界面(E-096):原版图包与鬼剑士头像;名册是本地存档占位(一个 1 级的默认鬼剑士)
             CharacterSelectScene characterScene = CharacterSelectScene.From(_assets);

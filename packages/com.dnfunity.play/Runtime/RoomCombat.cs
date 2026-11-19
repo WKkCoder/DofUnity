@@ -4563,6 +4563,13 @@ namespace Dnf.Play
         /// <summary>
         /// 主角头顶的名牌 "Lv.等级 名字"(M30,证据 E-122):只在有汉字字体的运行里画;主角倒下后不画。
         /// </summary>
+        /// <summary>主角头顶名牌显示的名字;为 null 或空时从 <see cref="Progress"/>.<see cref="HeroProgress.HeroName"/> 取,再没有退回 <see cref="CharacterRoster.LocalName"/>。</summary>
+        public string HeroName { get; set; }
+
+        private string EffectiveHeroName => !string.IsNullOrEmpty(HeroName)
+            ? HeroName
+            : (Progress != null && !string.IsNullOrEmpty(Progress.HeroName) ? Progress.HeroName : CharacterRoster.LocalName);
+
         private void AddHeroPlate(List<SceneSprite> into, ref int order, TownProjection projection)
         {
             if (!_art.HasFonts)
@@ -4570,7 +4577,7 @@ namespace Dnf.Play
                 return;
             }
             TownHero hero = Hero;
-            NamePlates.AddHero(into, ref order, _art, Vitals.Level, CharacterRoster.LocalName,
+            NamePlates.AddHero(into, ref order, _art, Vitals.Level, EffectiveHeroName,
                 (int)Math.Floor(hero.X) - projection.CameraX, (int)Math.Floor(hero.Y) + projection.GroundY);
         }
 
