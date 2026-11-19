@@ -1,5 +1,9 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
+using Dnf.Net.Frame;
 using Dnf.Net.Gateway;
 using Dnf.Net.Session;
 using Dnf.Net.Tests;
@@ -166,5 +170,418 @@ public sealed class OnlineShellRealSessionTests
 
         Assert.Equal(OnlineClientSessionState.Disposed, session.State);
         Assert.Null(backend.Session);
+    }
+
+    // ------------------------------------------------------------------ 真回环套接字:RealOnlineSessionPort 与外壳联合验证
+
+    private static byte[] SyntheticLoginOk(string name = "n900", int accountId = 905)
+    {
+        byte[] payload = new byte[5 + name.Length + 8 + 4 + 7];
+        payload[0] = 1;
+        BitConverter.TryWriteBytes(payload.AsSpan(1, 4), name.Length);
+        Encoding.ASCII.GetBytes(name).CopyTo(payload, 5);
+        BitConverter.TryWriteBytes(payload.AsSpan(5 + name.Length + 8, 4), accountId);
+        return payload;
+    }
+
+    private static string Md5Lower(string text)
+    {
+        return Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
+    }
+
+    private static (LoopbackServer Http, OnlineEntrySettings Settings) StartLoopbackGateway(int channelPort)
+    {
+        byte[] gwKey = GatewayTestSupport.SynthKey(77);
+        var fakeGateway = new FakeGateway(gwKey)
+        {
+            GameServerIp = IPAddress.Loopback.ToString(),
+        };
+        fakeGateway.Accounts["player_01"] = new FakeGateway.Account
+        {
+            Md5 = Md5Lower("synthetic-pw"),
+            Qq = string.Empty,
+        };
+        var http = new LoopbackServer(async (req, stream, ct) =>
+        {
+            req.Headers.TryGetValue("Content-Type", out string contentType);
+            string body = req.Body.Length == 0 ? null : Encoding.UTF8.GetString(req.Body);
+            GatewayHttpResponse r = fakeGateway.Handle(
+                req.Method,
+                "http://" + IPAddress.Loopback + req.Target,
+                contentType,
+                body);
+            string[] extra = r.RetryAfter.HasValue
+                ? new[] { "Retry-After: " + (int)Math.Ceiling(r.RetryAfter.Value.TotalSeconds) }
+                : null;
+            await LoopbackServer.WriteResponseAsync(stream, r.StatusCode, Encoding.UTF8.GetBytes(r.Text ?? string.Empty), extra, ct);
+        });
+        Assert.True(GatewayOptions.TryCreate(
+            http.BaseUrl,
+            GatewayTestSupport.HexLower(gwKey),
+            TimeSpan.FromSeconds(5),
+            out GatewayOptions options,
+            out _));
+        var settings = new OnlineEntrySettings
+        {
+            Gateway = options,
+            MouseCipher = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 },
+            DataVersion = 7,
+            ChannelPort = channelPort,
+        };
+        return (http, settings);
+    }
+
+    private sealed class LoopbackChannelServer : IDisposable
+    {
+        private readonly TcpListener _listener;
+        private readonly CancellationTokenSource _stop = new();
+        private readonly Func<int, LoopbackChannelConn, CancellationToken, Task> _handler;
+        private readonly Task _acceptLoop;
+        private readonly List<TcpClient> _clients = new();
+        private readonly object _lock = new();
+        private readonly byte[] _bootstrap;
+        private readonly byte[] _keyBlock;
+        private int _connIndex;
+
+        public LoopbackChannelServer(Func<int, LoopbackChannelConn, CancellationToken, Task> handler)
+        {
+            _handler = handler;
+            _keyBlock = GatewayTestSupport.Pattern(ChannelInfo.KeyBlockLength, 0x31, 7);
+            byte[] channelName = Encoding.UTF8.GetBytes("syn01");
+            byte[] plain = new NoticePayloadBuilder()
+                .Raw(_keyBlock)
+                .I32(channelName.Length).Raw(channelName)
+                .I32(0).I32(1)
+                .U8(0).U8(0).U8(0)
+                .I32(1000).I32(0)
+                .I32(100).I32(100)
+                .ToArray();
+            _bootstrap = DungeonEntryWire.Frame(0, 1, BootstrapTransform.Encode(plain));
+
+            _listener = new TcpListener(IPAddress.Loopback, 0);
+            _listener.Start();
+            Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
+            _acceptLoop = Task.Run(AcceptLoopAsync);
+        }
+
+        public int Port { get; }
+
+        public int AcceptedCount => Volatile.Read(ref _connIndex);
+
+        public void CloseAllClients()
+        {
+            lock (_lock)
+            {
+                foreach (TcpClient client in _clients)
+                {
+                    try { client.Dispose(); } catch { }
+                }
+                _clients.Clear();
+            }
+        }
+
+        private async Task AcceptLoopAsync()
+        {
+            while (!_stop.IsCancellationRequested)
+            {
+                TcpClient client;
+                try
+                {
+                    client = await _listener.AcceptTcpClientAsync(_stop.Token);
+                }
+                catch
+                {
+                    return;
+                }
+                lock (_lock)
+                {
+                    _clients.Add(client);
+                }
+                int idx = Interlocked.Increment(ref _connIndex) - 1;
+                var conn = new LoopbackChannelConn(client, _bootstrap, _keyBlock);
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _handler(idx, conn, _stop.Token);
+                    }
+                    catch
+                    {
+                    }
+                });
+            }
+        }
+
+        public void Dispose()
+        {
+            _stop.Cancel();
+            _listener.Stop();
+            CloseAllClients();
+            try { _acceptLoop.Wait(TimeSpan.FromSeconds(2)); } catch { }
+        }
+    }
+
+    private sealed class LoopbackChannelConn
+    {
+        private readonly TcpClient _tcp;
+        private readonly NetworkStream _stream;
+        private readonly byte[] _bootstrap;
+        private readonly SessionCipher _cipher;
+
+        public LoopbackChannelConn(TcpClient tcp, byte[] bootstrap, byte[] keyBlock)
+        {
+            _tcp = tcp;
+            _stream = tcp.GetStream();
+            _bootstrap = bootstrap;
+            _cipher = new SessionCipher(keyBlock);
+        }
+
+        public Task SendBootstrapAsync(CancellationToken ct) => WriteRawAsync(_bootstrap, ct);
+
+        public Task SendRefusalAsync(CancellationToken ct) => WriteRawAsync(DungeonEntryWire.Refusal(), ct);
+
+        public Task SendEncryptedAsync(byte cls, ushort packetId, byte[] payload, CancellationToken ct)
+        {
+            byte[] encrypted = _cipher.Encrypt(packetId, payload);
+            return WriteRawAsync(DungeonEntryWire.Frame(cls, packetId, encrypted), ct);
+        }
+
+        public async Task SendHarmlessPaddingAsync(int count, CancellationToken ct)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                await WriteRawAsync(DungeonEntryWire.Frame(0, 900, Array.Empty<byte>()), ct);
+            }
+        }
+
+        public async Task<ushort?> ReadNextCommandIdAsync(CancellationToken ct)
+        {
+            byte[] header = new byte[13];
+            if (!await ReadExactAsync(header, ct))
+            {
+                return null;
+            }
+            uint total = BitConverter.ToUInt32(header, 3);
+            if (total > 13)
+            {
+                byte[] rest = new byte[total - 13];
+                if (!await ReadExactAsync(rest, ct))
+                {
+                    return null;
+                }
+            }
+            return (ushort)(header[1] | (header[2] << 8));
+        }
+
+        public void Close()
+        {
+            try { _tcp.Dispose(); } catch { }
+        }
+
+        private async Task WriteRawAsync(byte[] bytes, CancellationToken ct)
+        {
+            await _stream.WriteAsync(bytes, 0, bytes.Length, ct);
+            await _stream.FlushAsync(ct);
+        }
+
+        private async Task<bool> ReadExactAsync(byte[] buffer, CancellationToken ct)
+        {
+            int offset = 0;
+            while (offset < buffer.Length)
+            {
+                int n = await _stream.ReadAsync(buffer, offset, buffer.Length - offset, ct);
+                if (n == 0)
+                {
+                    return false;
+                }
+                offset += n;
+            }
+            return true;
+        }
+    }
+
+    private static OnlineShellFlow StartFlowAndLogin(OnlineShellBackend backend, int channelPort)
+    {
+        var options = new OnlineShellOptions
+        {
+            Configured = true,
+            DefaultChannelPort = channelPort,
+            AutoPassPlaceholders = true,
+            TimeoutMs = 20000,
+        };
+        var flow = new OnlineShellFlow(backend, options);
+        flow.Type("player_01");
+        flow.Key(OnlineShellKey.Tab);
+        flow.Type("synthetic-pw");
+        flow.Key(OnlineShellKey.Enter);
+        return flow;
+    }
+
+    private static void PumpUntil(OnlineShellFlow flow, Func<bool> condition, int timeoutMs = 15000)
+    {
+        Stopwatch sw = Stopwatch.StartNew();
+        long now = 1000;
+        while (!condition())
+        {
+            if (sw.ElapsedMilliseconds > timeoutMs)
+            {
+                Assert.Fail("flow did not satisfy condition within " + timeoutMs + "ms (stage=" + flow.Stage + ")");
+            }
+            flow.Poll(now += 20);
+            Thread.Sleep(10);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Failed_real_channel_connect_and_peer_close_keeps_flow_on_channel_select_without_firing_disconnected(bool bootstrapRefusal)
+    {
+        using var chan = new LoopbackChannelServer(async (_, conn, ct) =>
+        {
+            if (bootstrapRefusal)
+            {
+                await conn.SendRefusalAsync(ct);
+                conn.Close();
+                return;
+            }
+            await conn.SendBootstrapAsync(ct);
+            ushort? cmd = await conn.ReadNextCommandIdAsync(ct);
+            if (cmd == 1)
+            {
+                await conn.SendEncryptedAsync(1, 1, new byte[] { 0, 0x17, 0, 0 }, ct);
+            }
+            conn.Close();
+        });
+        (LoopbackServer http, OnlineEntrySettings settings) = StartLoopbackGateway(chan.Port);
+        using LoopbackServer _http = http;
+        using var backend = new OnlineShellBackend(settings);
+        int lost = 0;
+        backend.Disconnected += () => Interlocked.Increment(ref lost);
+
+        OnlineShellFlow flow = StartFlowAndLogin(backend, chan.Port);
+        PumpUntil(flow, () => flow.Stage == OnlineShellStage.ChannelSelect && !flow.Busy && flow.Notice != null);
+
+        // 等待服务端关闭套接字的效果充分传播,确保不会误报 Disconnected 把外壳踢回 Login
+        for (int i = 0; i < 10; i++)
+        {
+            flow.Poll(5000 + i * 20);
+            await Task.Delay(15);
+        }
+
+        Assert.Equal(OnlineShellStage.ChannelSelect, flow.Stage);
+        Assert.Equal(bootstrapRefusal ? OnlineNoticeKind.Rejected : OnlineNoticeKind.GameLoginRejected, flow.Notice.Kind);
+        Assert.True(backend.HasSession);
+        Assert.Equal(0, Volatile.Read(ref lost));
+    }
+
+    [Fact]
+    public async Task CharacterListMissing_with_peer_close_resets_real_session_to_logged_in_so_retry_succeeds()
+    {
+        using var chan = new LoopbackChannelServer(async (idx, conn, ct) =>
+        {
+            await conn.SendBootstrapAsync(ct);
+            if (await conn.ReadNextCommandIdAsync(ct) != 1)
+            {
+                conn.Close();
+                return;
+            }
+            await conn.SendEncryptedAsync(1, 1, SyntheticLoginOk(), ct);
+            await conn.SendHarmlessPaddingAsync(7, ct); // 凑足 windows.Login 的 8 帧上限,立刻发 CMD 8
+
+            if (await conn.ReadNextCommandIdAsync(ct) != 8)
+            {
+                conn.Close();
+                return;
+            }
+
+            if (idx == 0)
+            {
+                // 第 0 次故意不发角色列表直接关掉连接 -> CharacterListMissing + PeerClosed
+                conn.Close();
+                return;
+            }
+
+            byte[] compressedList = UserInfoTestData.Zlib(UserInfoTestData.Packet(UserInfoTestData.Standard(0)));
+            await conn.SendEncryptedAsync(0, 2, compressedList, ct);
+            await conn.SendHarmlessPaddingAsync(11, ct); // 凑足 windows.CharacterList 的 12 帧上限
+            while (!ct.IsCancellationRequested)
+            {
+                ushort? next = await conn.ReadNextCommandIdAsync(ct);
+                if (!next.HasValue)
+                {
+                    break;
+                }
+            }
+        });
+
+        (LoopbackServer http, OnlineEntrySettings settings) = StartLoopbackGateway(chan.Port);
+        using LoopbackServer _http = http;
+        using var backend = new OnlineShellBackend(settings);
+        int lost = 0;
+        backend.Disconnected += () => Interlocked.Increment(ref lost);
+
+        OnlineShellFlow flow = StartFlowAndLogin(backend, chan.Port);
+        PumpUntil(flow, () => flow.Stage == OnlineShellStage.ChannelSelect && !flow.Busy && flow.Notice != null);
+
+        Assert.Equal(OnlineNoticeKind.CharacterListMissing, flow.Notice.Kind);
+        Assert.Equal(0, Volatile.Read(ref lost));
+        Assert.Equal(OnlineClientSessionState.LoggedIn, backend.Session.State);
+
+        // 回车直接重试 ConnectChannelAsync:不能因为底层残留在 Connected 状态而抛顺序异常
+        flow.Key(OnlineShellKey.Enter);
+        PumpUntil(flow, () => flow.Stage == OnlineShellStage.CharacterSelect);
+
+        Assert.Equal(2, chan.AcceptedCount);
+        Assert.NotNull(flow.Characters);
+        Assert.Single(flow.Characters.Entries);
+        Assert.Equal(0, Volatile.Read(ref lost));
+    }
+
+    [Fact]
+    public async Task Peer_close_after_real_channel_and_character_list_are_established_raises_disconnected_once()
+    {
+        using var chan = new LoopbackChannelServer(async (_, conn, ct) =>
+        {
+            await conn.SendBootstrapAsync(ct);
+            if (await conn.ReadNextCommandIdAsync(ct) != 1) return;
+            await conn.SendEncryptedAsync(1, 1, SyntheticLoginOk(), ct);
+            await conn.SendHarmlessPaddingAsync(7, ct);
+
+            if (await conn.ReadNextCommandIdAsync(ct) != 8) return;
+            byte[] compressedList = UserInfoTestData.Zlib(UserInfoTestData.Packet(UserInfoTestData.Standard(0)));
+            await conn.SendEncryptedAsync(0, 2, compressedList, ct);
+            await conn.SendHarmlessPaddingAsync(11, ct);
+
+            if (await conn.ReadNextCommandIdAsync(ct) != 4) return;
+            await conn.SendEncryptedAsync(0, 124, new byte[] { 0 }, ct);
+            await conn.SendHarmlessPaddingAsync(63, ct); // 凑足 windows.Slot 的 64 帧上限
+
+            while (!ct.IsCancellationRequested)
+            {
+                ushort? cmd = await conn.ReadNextCommandIdAsync(ct);
+                if (!cmd.HasValue) break;
+            }
+        });
+
+        (LoopbackServer http, OnlineEntrySettings settings) = StartLoopbackGateway(chan.Port);
+        using LoopbackServer _http = http;
+        using var backend = new OnlineShellBackend(settings);
+        int lost = 0;
+        backend.Disconnected += () => Interlocked.Increment(ref lost);
+
+        OnlineShellFlow flow = StartFlowAndLogin(backend, chan.Port);
+        PumpUntil(flow, () => flow.Stage == OnlineShellStage.CharacterSelect);
+        Assert.Equal(0, Volatile.Read(ref lost));
+
+        flow.Key(OnlineShellKey.Enter);
+        PumpUntil(flow, () => flow.Stage == OnlineShellStage.InGame, timeoutMs: 20000);
+
+        Assert.Equal(OnlineClientSessionState.CharacterSelected, backend.Session.State);
+        chan.CloseAllClients();
+
+        PumpUntil(flow, () => flow.Stage == OnlineShellStage.Login);
+        Assert.Equal(OnlineNoticeKind.Disconnected, flow.Notice.Kind);
+        Assert.Equal(1, Volatile.Read(ref lost));
     }
 }

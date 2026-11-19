@@ -170,6 +170,9 @@ namespace Dnf.Net.Session
         internal bool ValidateSlot { get; set; } = true;
         internal TimeSpan HeartbeatPoll { get; set; } = TimeSpan.FromMilliseconds(50);
         internal TimeSpan HeartbeatTimeout { get; set; } = TimeSpan.FromMinutes(11);
+        internal int SwitchLoginRetryCount { get; set; } = 6;
+        internal TimeSpan SwitchLoginRetryDelay { get; set; } = TimeSpan.FromMilliseconds(500);
+        internal TimeSpan LogoutSettleWindow { get; set; } = TimeSpan.FromSeconds(5);
     }
 
     /// <summary>一条频道连接及其归属；观察流只记录错误类别，不保留数据或异常消息。</summary>
@@ -308,6 +311,9 @@ namespace Dnf.Net.Session
         private bool _disposed;
         private bool _restoreHeartbeatOnLeave;
         private bool _detached;
+        private bool _currentLinkAuthenticated;
+        private long _lastAuthenticatedCloseTimestamp;
+        private ChannelDirectorySnapshot _lastDirectory;
 
         /// <summary>创建分阶段会话。事件与进度默认串行投递到后台线程；宿主可给 dispatcher 切回主线程。</summary>
         public OnlineClientSession(OnlineEntrySettings settings, Action<OnlineStage> onStage = null, IOnlineDispatcher dispatcher = null)
@@ -328,6 +334,7 @@ namespace Dnf.Net.Session
                 DataVersion = settings.DataVersion,
                 ChannelPort = settings.ChannelPort,
                 MaxSlots = settings.MaxSlots,
+                ServerGroup = settings.ServerGroup,
             };
             _entry = new OnlineTownEntry(_settings);
             _onStage = onStage;
@@ -339,6 +346,13 @@ namespace Dnf.Net.Session
         public OnlineClientSessionState State { get; private set; } = OnlineClientSessionState.Created;
         public OnlineHeartbeatState HeartbeatState { get; private set; } = OnlineHeartbeatState.Disabled;
         public GameClientSession GameSession => _link?.Session;
+
+        /// <summary>连接与换频道时写入 <see cref="LoginRequest.ServerGroup"/> 的服务器组编号（1..17；0 时尝试从最近目录按端口解析）。</summary>
+        public ushort ServerGroup
+        {
+            get => _settings.ServerGroup;
+            set => _settings.ServerGroup = value;
+        }
 
         /// <summary>网关登录并取游戏服地址；重复登录属于顺序错误。</summary>
         public async Task<OnlineLoginResult> LoginAsync(string account, string password, CancellationToken cancellationToken = default)
@@ -397,7 +411,7 @@ namespace Dnf.Net.Session
                     throw new InvalidOperationException("当前状态不能连接频道");
                 }
                 await CloseLinkNoGateAsync().ConfigureAwait(false);
-                return await ConnectNoGateAsync(_address, channelPort, cancellationToken).ConfigureAwait(false);
+                return await ConnectWithSettleRetryNoGateAsync(_address, channelPort, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -431,7 +445,7 @@ namespace Dnf.Net.Session
                 {
                     address = _address;
                 }
-                return await ConnectNoGateAsync(address, channelPort, cancellationToken).ConfigureAwait(false);
+                return await ConnectWithSettleRetryNoGateAsync(address, channelPort, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -492,7 +506,7 @@ namespace Dnf.Net.Session
                 }
                 await CloseLinkNoGateAsync().ConfigureAwait(false);
                 State = OnlineClientSessionState.LoggedIn;
-                return await ConnectNoGateAsync(_address, channelPort, cancellationToken).ConfigureAwait(false);
+                return await ConnectWithSettleRetryNoGateAsync(_address, channelPort, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -530,7 +544,7 @@ namespace Dnf.Net.Session
                 {
                     address = _address;
                 }
-                return await ConnectNoGateAsync(address, channelPort, cancellationToken).ConfigureAwait(false);
+                return await ConnectWithSettleRetryNoGateAsync(address, channelPort, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -541,8 +555,19 @@ namespace Dnf.Net.Session
         /// <summary>
         /// 用登录拿到的游戏服地址拉取频道目录(单次只读,不重试);不占用连频道/选角的门闩,也不改会话状态机。
         /// </summary>
-        public async Task<ChannelDirectoryLoadResult> LoadChannelDirectoryAsync(
+        public Task<ChannelDirectoryLoadResult> LoadChannelDirectoryAsync(
             int directoryPort = ChannelServiceConstants.DefaultPort,
+            CancellationToken cancellationToken = default)
+        {
+            return LoadChannelDirectoryAsync(directoryPort, null, cancellationToken);
+        }
+
+        /// <summary>
+        /// 用登录拿到的游戏服地址拉取频道目录(单次只读,不重试),并传入本地回退脚本(用于合并推荐等级等参数)。
+        /// </summary>
+        public async Task<ChannelDirectoryLoadResult> LoadChannelDirectoryAsync(
+            int directoryPort,
+            ChannelScriptData fallbackScript,
             CancellationToken cancellationToken = default)
         {
             using CancellationTokenSource operation = BeginOperation(cancellationToken);
@@ -553,12 +578,15 @@ namespace Dnf.Net.Session
                 throw new InvalidOperationException("尚未登录，不能读取频道目录");
             }
             string host = _address.ToString();
-            if (_hooks.DirectoryLoader != null)
+            ChannelDirectoryLoadResult result = _hooks.DirectoryLoader != null
+                ? await _hooks.DirectoryLoader(host, directoryPort, cancellationToken).ConfigureAwait(false)
+                : await ChannelDirectoryClient.LoadAsync(host, directoryPort, fallbackScript: fallbackScript, cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+            if (result != null && result.Succeeded && result.Snapshot != null)
             {
-                return await _hooks.DirectoryLoader(host, directoryPort, cancellationToken).ConfigureAwait(false);
+                Volatile.Write(ref _lastDirectory, result.Snapshot);
             }
-            return await ChannelDirectoryClient.LoadAsync(host, directoryPort, cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
+            return result;
         }
 
         /// <summary>关闭当前频道连接；保留网关登录结果，之后可重新 ConnectAsync。释放后调用为空操作。</summary>
@@ -655,6 +683,8 @@ namespace Dnf.Net.Session
                 if (State == OnlineClientSessionState.Disposed) return;
                 State = OnlineClientSessionState.Disposed;
                 _restoreHeartbeatOnLeave = false;
+                _currentLinkAuthenticated = false;
+                _lastAuthenticatedCloseTimestamp = 0;
                 CancellationTokenSource stop = _heartbeatStop;
                 Task heartbeat = _heartbeatTask;
                 _heartbeatStop = null;
@@ -689,6 +719,8 @@ namespace Dnf.Net.Session
                 outcome.SecondLayerMismatches, outcome.Snapshot, outcome.DungeonPermissions, outcome.SelectCharacter);
             _detached = true;
             _restoreHeartbeatOnLeave = false;
+            _currentLinkAuthenticated = false;
+            _lastAuthenticatedCloseTimestamp = 0;
             State = OnlineClientSessionState.Disposed;
             MarkDisposedAndCloseMailbox();
             _heartbeatStop?.Cancel();
@@ -702,11 +734,51 @@ namespace Dnf.Net.Session
                 _link?.Session.Events.Count ?? 0, null, null, _link?.Session.SecondLayerMismatches ?? 0, lastFailure);
         }
 
-        private async Task<OnlineConnectResult> ConnectNoGateAsync(IPAddress address, int channelPort, CancellationToken cancellationToken)
+        private async Task<OnlineConnectResult> ConnectWithSettleRetryNoGateAsync(
+            IPAddress address, int channelPort, CancellationToken cancellationToken)
+        {
+            double windowSeconds = _hooks.LogoutSettleWindow.TotalSeconds;
+            bool withinSettleWindow = _lastAuthenticatedCloseTimestamp != 0
+                && windowSeconds > 0
+                && (Stopwatch.GetTimestamp() - _lastAuthenticatedCloseTimestamp) / (double)Stopwatch.Frequency <= windowSeconds;
+            int maxRetries = withinSettleWindow && _hooks.SwitchLoginRetryCount > 0
+                ? _hooks.SwitchLoginRetryCount
+                : 0;
+
+            try
+            {
+                OnlineConnectResult result = await ConnectNoGateAsync(
+                    address, channelPort, maxRetries > 0, cancellationToken).ConfigureAwait(false);
+                for (int attempt = 0; attempt < maxRetries; attempt++)
+                {
+                    if (result.IsSuccess || result.Failure != OnlineFailure.GameLoginRejected || result.LoginFailureCode != 1)
+                    {
+                        break;
+                    }
+                    await CloseLinkNoGateAsync().ConfigureAwait(false);
+                    if (_hooks.SwitchLoginRetryDelay > TimeSpan.Zero)
+                    {
+                        await Task.Delay(_hooks.SwitchLoginRetryDelay, cancellationToken).ConfigureAwait(false);
+                    }
+                    bool suppressDisconnect = attempt + 1 < maxRetries;
+                    result = await ConnectNoGateAsync(
+                        address, channelPort, suppressDisconnect, cancellationToken).ConfigureAwait(false);
+                }
+                return result;
+            }
+            finally
+            {
+                _lastAuthenticatedCloseTimestamp = 0;
+            }
+        }
+
+        private async Task<OnlineConnectResult> ConnectNoGateAsync(
+            IPAddress address, int channelPort, bool suppressCode1Disconnect, CancellationToken cancellationToken)
         {
             _earlyFrames = new List<DecodedFrame>();
             _selectionStageReported = false;
             _restoreHeartbeatOnLeave = false;
+            _currentLinkAuthenticated = false;
             ReportStage(OnlineStage.ChannelConnect);
             OnlineChannelLink link = _hooks.ChannelFactory != null
                 ? await _hooks.ChannelFactory(address, channelPort, cancellationToken).ConfigureAwait(false)
@@ -727,14 +799,22 @@ namespace Dnf.Net.Session
             }
 
             ReportStage(OnlineStage.GameLogin);
+            ushort effectiveServerGroup = _settings.ServerGroup != 0
+                ? _settings.ServerGroup
+                : ResolveDirectoryServerGroup(address, channelPort);
             OnlineEntryResult loginFailure = await _entry.TryGameLogin(link.Session, _token, link.LocalAddress,
-                link.Connection, _hooks.Windows ?? OnlineTownWindows.Default, _earlyFrames, cancellationToken).ConfigureAwait(false);
+                link.Connection, _hooks.Windows ?? OnlineTownWindows.Default, _earlyFrames, cancellationToken,
+                effectiveServerGroup).ConfigureAwait(false);
             if (loginFailure != null)
             {
-                NotifyIfDisconnected(link);
+                if (!(suppressCode1Disconnect && loginFailure.Failure == OnlineFailure.GameLoginRejected && loginFailure.LoginFailureCode == 1))
+                {
+                    NotifyIfDisconnected(link);
+                }
                 return ConnectFailure(loginFailure);
             }
             NotifyIfDisconnected(link);
+            _currentLinkAuthenticated = true;
             State = OnlineClientSessionState.Connected;
             ParseCharacterList(out UserInfoNotice list, out OnlineCharacterListStatus listStatus);
             return new OnlineConnectResult(OnlineStage.GameLogin, OnlineFailure.None, null,
@@ -958,8 +1038,16 @@ namespace Dnf.Net.Session
         {
             _restoreHeartbeatOnLeave = false;
             await StopHeartbeatNoGateAsync().ConfigureAwait(false);
-            _link?.Dispose();
-            _link = null;
+            if (_link != null)
+            {
+                if (_currentLinkAuthenticated)
+                {
+                    _lastAuthenticatedCloseTimestamp = Stopwatch.GetTimestamp();
+                }
+                _link.Dispose();
+                _link = null;
+            }
+            _currentLinkAuthenticated = false;
             HeartbeatState = OnlineHeartbeatState.Disabled;
         }
 
@@ -993,6 +1081,42 @@ namespace Dnf.Net.Session
             {
                 throw new ObjectDisposedException(nameof(OnlineClientSession));
             }
+        }
+
+        private ushort ResolveDirectoryServerGroup(IPAddress address, int channelPort)
+        {
+            ChannelDirectorySnapshot snapshot = Volatile.Read(ref _lastDirectory);
+            if (snapshot == null || snapshot.Channels.Count == 0 || channelPort < 1 || channelPort > 65535)
+            {
+                return 0;
+            }
+            ushort fallback = 0;
+            for (int i = 0; i < snapshot.Channels.Count; i++)
+            {
+                ChannelEntry entry = snapshot.Channels[i];
+                if (entry.Port != channelPort)
+                {
+                    continue;
+                }
+                if (!ChannelScriptData.TryMapServerGroupId(entry.GroupTag, out int groupId)
+                    || groupId < 1
+                    || groupId > LoginRequest.MaxServerGroup)
+                {
+                    continue;
+                }
+                if (address != null
+                    && !string.IsNullOrWhiteSpace(entry.Host)
+                    && IPAddress.TryParse(entry.Host.Trim(), out IPAddress entryHost)
+                    && entryHost.Equals(address))
+                {
+                    return (ushort)groupId;
+                }
+                if (fallback == 0)
+                {
+                    fallback = (ushort)groupId;
+                }
+            }
+            return fallback;
         }
 
         /// <summary><paramref name="host"/> 为 null 时由调用方使用网关地址;否则必须是可解析的 IP 字面量。</summary>

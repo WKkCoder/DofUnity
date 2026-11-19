@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 构建"城镇演示"播放器:运行时读取你自备的 Script.pvf 与 ImagePacks2,实时播放网关城镇(地图图层、叠加光效、NPC)。
-# 用法: tools/unity-build-town.sh <macos|windows|android>
+# 用法: tools/unity-build-town.sh <macos|macos-dev|windows|windows-dev|android|android-dev>
 # 日志:re/unity-build-town-<平台>.log;macOS 的离屏渲染校验日志 re/unity-run-town-macos.log(都被 .gitignore 排除)
 # macOS 构建后,如果 DNF_DIR 有效(local.env 或环境变量),会带图形设备无窗口地跑几次播放器:
 #   1. 用 -dnfshot 把 t=545 毫秒的一帧渲染成 PNG,再与 CPU 合成器(dnf render-town --scene --png)逐像素比较,要求逐字节相同;
@@ -43,7 +43,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 . tools/env.sh
 
-platform="${1:?用法: $0 <macos|windows|android>}"
+platform="${1:?用法: $0 <macos|macos-dev|windows|windows-dev|android|android-dev>}"
 UNITY="${UNITY_EDITOR:-/Applications/Unity/Hub/Editor/6000.3.26f1/Unity.app/Contents/MacOS/Unity}"
 [ -x "$UNITY" ] || { echo "找不到 Unity 编辑器: $UNITY" >&2; exit 2; }
 
@@ -53,9 +53,12 @@ if [ "$platform" = "macos" ]; then
 fi
 
 case "$platform" in
-  macos)   method="DnfUnity.Editor.BuildTownDemo.BuildMacOS";   target="StandaloneOSX" ;;
-  windows) method="DnfUnity.Editor.BuildTownDemo.BuildWindows"; target="StandaloneWindows64" ;;
-  android) method="DnfUnity.Editor.BuildTownDemo.BuildAndroid"; target="Android" ;;
+  macos)       method="DnfUnity.Editor.BuildTownDemo.BuildMacOS";      target="StandaloneOSX" ;;
+  macos-dev)   method="DnfUnity.Editor.BuildTownDemo.BuildMacOSDev";   target="StandaloneOSX" ;;
+  windows)     method="DnfUnity.Editor.BuildTownDemo.BuildWindows";    target="StandaloneWindows64" ;;
+  windows-dev) method="DnfUnity.Editor.BuildTownDemo.BuildWindowsDev"; target="StandaloneWindows64" ;;
+  android)     method="DnfUnity.Editor.BuildTownDemo.BuildAndroid";    target="Android" ;;
+  android-dev) method="DnfUnity.Editor.BuildTownDemo.BuildAndroidDev"; target="Android" ;;
   *) echo "未知平台 $platform" >&2; exit 2 ;;
 esac
 
@@ -922,5 +925,23 @@ if [ "$platform" = "macos" ]; then
     fi
   else
     echo "没有设置 DNF_DIR:跳过离屏渲染校验"
+  fi
+elif [ "$platform" = "macos-dev" ]; then
+  app="$(ls -d "$PWD"/unity/DnfUnity/Builds/macos/DnfTownDemo.app/Contents/MacOS/* | head -1)"
+  echo "已构建开发版: $PWD/unity/DnfUnity/Builds/macos/DnfTownDemo.app"
+  if [ -n "${DNF_DIR:-}" ] && [ -f "$DNF_DIR/Script.pvf" ]; then
+    dev_log="$PWD/re/unity-run-town-dev-macos.log"
+    rm -f "$dev_log"
+    set +e
+    "$app" -batchmode -nographics -logFile "$dev_log" -dnfdir "$DNF_DIR" -dnfonline -dnfserverui -dnfquitafter 3
+    rc=$?
+    set -e
+    echo "开发版播放器退出码(无凭据联网外壳冒烟): $rc"
+    grep -E 'DNF_TOWN_DEMO online|DNF_ONLINE' "$dev_log" || true
+    [ "$rc" -eq 0 ] || exit "$rc"
+    grep -q -F 'DNF_TOWN_DEMO online source=None configured=False dev=True serverui=True' "$dev_log" \
+      || { echo "开发版未报 dev=True / source=None / configured=False / serverui=True:$dev_log" >&2; exit 1; }
+  else
+    echo "没有设置 DNF_DIR:跳过开发版冒烟"
   fi
 fi

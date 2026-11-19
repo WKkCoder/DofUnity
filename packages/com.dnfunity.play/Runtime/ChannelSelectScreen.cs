@@ -103,10 +103,17 @@ namespace Dnf.Play
         private const int StripFrame = 14;
 
         /// <summary>频道项的底(channelslot.img 里带骰子图标的那一张)。</summary>
-        public const int ItemFrame = 16;
+        public const int ItemFrame = DirectoryChannel.DefaultSlotFrame;
 
-        // ----- 翻页控件与提示(无基线、非对拍)
+        // ----- 底部特殊频道栏(分隔线下方 1×3 固定栏,DNF.exe 0x010f8eb2..0x010fc66b)
+        public const int SpecialColumns = 3;
+
+        public const int SpecialItemY = 422;
+
+        // ----- 翻页控件与提示(无基线、非对拍;出现底部特殊频道时下移避让中间槽位)
         public const int PagerY = 438;
+
+        public const int SpecialPagerY = 467;
 
         public const int PagerCenterX = 399;
         public const int PagerArrowWidth = PickerArt.ArrowWidth;
@@ -140,6 +147,7 @@ namespace Dnf.Play
 
         private DirectoryServer _server;
         private IReadOnlyList<DirectoryChannel> _channels = Array.Empty<DirectoryChannel>();
+        private IReadOnlyList<DirectoryChannel> _specialChannels = Array.Empty<DirectoryChannel>();
         private ChannelSelectAction _action;
         private ChannelTarget _actionTarget;
         private Target _hover;
@@ -169,8 +177,18 @@ namespace Dnf.Play
 
         public IReadOnlyList<DirectoryChannel> Channels => _channels;
 
-        /// <summary>选中的频道在服务器频道列表里的序号;没有为 -1。</summary>
+        /// <summary>分隔线下方的特殊频道列表(亡者峡谷、交易/拍卖行;界面最多显示 3 项)。</summary>
+        public IReadOnlyList<DirectoryChannel> SpecialChannels => _specialChannels;
+
+        private int VisibleSpecialCount => Math.Min(_specialChannels.Count, SpecialColumns);
+
+        private int TotalSelectableSlots => _channels.Count + VisibleSpecialCount;
+
+        /// <summary>选中的频道在统一槽位(主网格 0..N-1,底部特殊频道 N..N+2)里的序号;没有为 -1。</summary>
         public int Selected { get; private set; }
+
+        /// <summary>当前是否选中了底部特殊频道栏中的项(0..2);否则为 -1。</summary>
+        public int SelectedSpecial => Selected >= _channels.Count && Selected < TotalSelectableSlots ? Selected - _channels.Count : -1;
 
         /// <summary>现在在第几页(从 0 起)。</summary>
         public int Page { get; private set; }
@@ -185,7 +203,21 @@ namespace Dnf.Play
 
         public int PageCount => Math.Max(1, (_channels.Count + PageSize - 1) / PageSize);
 
-        public DirectoryChannel SelectedChannel => Selected >= 0 && Selected < _channels.Count ? _channels[Selected] : null;
+        public DirectoryChannel SelectedChannel => ChannelAt(Selected);
+
+        private DirectoryChannel ChannelAt(int slotIndex)
+        {
+            if (slotIndex < 0)
+            {
+                return null;
+            }
+            if (slotIndex < _channels.Count)
+            {
+                return _channels[slotIndex];
+            }
+            int specialIndex = slotIndex - _channels.Count;
+            return specialIndex < VisibleSpecialCount ? _specialChannels[specialIndex] : null;
+        }
 
         /// <summary>"游戏开始"现在能不能点:有内容、没在忙、选中了一个进得去的频道。</summary>
         public bool CanStart => Phase == PickerPhase.Ready && Busy == ChannelBusy.None && SelectedChannel != null && SelectedChannel.CanEnter;
@@ -205,17 +237,19 @@ namespace Dnf.Play
 
         /// <summary>
         /// 显示这个服务器的频道:回到第一页,先选 <paramref name="prefer"/> 指的那个频道(进得去才算),没有就选第一个进得去的;
-        /// 没有任何频道是"没有频道"状态。同时清掉忙状态与说明。
+        /// 没有任何频道(常规与特殊都空)时是"没有频道"状态。同时清掉忙状态与说明。
         /// </summary>
         public void SetServer(DirectoryServer server, ChannelTarget prefer = null)
         {
             _server = server ?? throw new ArgumentNullException(nameof(server));
             _channels = server.Channels;
+            _specialChannels = server.SpecialChannels;
             _action = ChannelSelectAction.None;
             _hint = null;
             Busy = ChannelBusy.None;
             Notice = null;
-            if (_channels.Count == 0)
+            int total = TotalSelectableSlots;
+            if (total == 0)
             {
                 Phase = PickerPhase.Empty;
                 Selected = -1;
@@ -226,9 +260,10 @@ namespace Dnf.Play
             Selected = -1;
             if (prefer != null)
             {
-                for (int i = 0; i < _channels.Count; i++)
+                for (int i = 0; i < total; i++)
                 {
-                    if (_channels[i].CanEnter && prefer.Equals(_channels[i].Target))
+                    DirectoryChannel ch = ChannelAt(i);
+                    if (ch.CanEnter && prefer.Equals(ch.Target))
                     {
                         Selected = i;
                         break;
@@ -239,7 +274,7 @@ namespace Dnf.Play
             {
                 Selected = NextEnterable(-1, 1);
             }
-            Page = Selected >= 0 ? Selected / PageSize : 0;
+            Page = Selected >= 0 && Selected < _channels.Count ? Selected / PageSize : 0;
         }
 
         /// <summary>读目录失败:面板里显示失败,原因由 <see cref="SetNotice"/> 给。清掉忙状态。</summary>
@@ -284,7 +319,7 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 方向键:按目录顺序一格一格找下一个进得去的频道(右、左各一格,下、上各一行即 <see cref="Columns"/> 格),到头不循环;
+        /// 方向键:在常规网格与底部特殊频道栏之间移动选中项(右、左按目录顺序跨两区顺延,下、上按列跨过分隔线进出底部特殊栏),到头不循环;
         /// 越过页边自动翻页。没有选中项时先选第一个进得去的。没在 Ready、或在忙时不响应。
         /// </summary>
         public void Move(int dx, int dy = 0)
@@ -298,17 +333,76 @@ namespace Dnf.Play
                 Select(NextEnterable(-1, 1));
                 return;
             }
-            int step = dx != 0 ? Math.Sign(dx) : Math.Sign(dy) * Columns;
-            if (step == 0)
+            if (dx != 0)
+            {
+                int found = NextEnterable(Selected, Math.Sign(dx));
+                if (found >= 0)
+                {
+                    Select(found);
+                }
+                return;
+            }
+            if (dy == 0)
             {
                 return;
             }
-            for (int i = Selected + step; i >= 0 && i < _channels.Count; i += step)
+            MoveVertical(Math.Sign(dy));
+        }
+
+        private void MoveVertical(int dirY)
+        {
+            if (Selected < _channels.Count)
             {
-                if (_channels[i].CanEnter)
+                for (int i = Selected + dirY * Columns; i >= 0 && i < _channels.Count; i += dirY * Columns)
                 {
-                    Select(i);
-                    return;
+                    if (ChannelAt(i).CanEnter)
+                    {
+                        Select(i);
+                        return;
+                    }
+                }
+                if (dirY > 0 && VisibleSpecialCount > 0)
+                {
+                    int col = Selected % Columns;
+                    int sameCol = _channels.Count + col;
+                    if (col < VisibleSpecialCount && ChannelAt(sameCol).CanEnter)
+                    {
+                        Select(sameCol);
+                        return;
+                    }
+                    for (int s = 0; s < VisibleSpecialCount; s++)
+                    {
+                        int idx = _channels.Count + s;
+                        if (ChannelAt(idx).CanEnter)
+                        {
+                            Select(idx);
+                            return;
+                        }
+                    }
+                }
+                return;
+            }
+
+            if (dirY < 0 && _channels.Count > 0)
+            {
+                int col = (Selected - _channels.Count) % Columns;
+                int first = Page * PageSize;
+                int lastExcl = Math.Min(_channels.Count, first + PageSize);
+                for (int i = lastExcl - 1; i >= first; i--)
+                {
+                    if (i % Columns == col && ChannelAt(i).CanEnter)
+                    {
+                        Select(i);
+                        return;
+                    }
+                }
+                for (int i = lastExcl - 1; i >= 0; i--)
+                {
+                    if (ChannelAt(i).CanEnter)
+                    {
+                        Select(i);
+                        return;
+                    }
                 }
             }
         }
@@ -475,7 +569,11 @@ namespace Dnf.Play
 
         private void ClickItem(int index)
         {
-            DirectoryChannel channel = _channels[index];
+            DirectoryChannel channel = ChannelAt(index);
+            if (channel == null)
+            {
+                return;
+            }
             if (channel.CanEnter)
             {
                 Selected = index;
@@ -502,6 +600,18 @@ namespace Dnf.Play
             return true;
         }
 
+        /// <summary>底部第 <paramref name="specialIndex"/> 个特殊频道的矩形(0..2);越界返回 false。</summary>
+        public bool TrySpecialItemRect(int specialIndex, out HitRect rect)
+        {
+            rect = new HitRect(0, 0, 0, 0);
+            if (specialIndex < 0 || specialIndex >= VisibleSpecialCount)
+            {
+                return false;
+            }
+            rect = new HitRect(ItemX + ItemPitchX * specialIndex, SpecialItemY, ItemWidth, ItemHeight);
+            return true;
+        }
+
         public static HitRect RefreshRect()
         {
             return new HitRect(RefreshX, RefreshY, RefreshWidth, RefreshHeight);
@@ -519,12 +629,24 @@ namespace Dnf.Play
 
         public static HitRect PrevPageRect()
         {
-            return new HitRect(PagerCenterX - PagerGap - PagerArrowWidth / 2, PagerY, PagerArrowWidth, PagerArrowHeight);
+            return PrevPageRect(false);
+        }
+
+        public static HitRect PrevPageRect(bool hasSpecialChannels)
+        {
+            int y = hasSpecialChannels ? SpecialPagerY : PagerY;
+            return new HitRect(PagerCenterX - PagerGap - PagerArrowWidth / 2, y, PagerArrowWidth, PagerArrowHeight);
         }
 
         public static HitRect NextPageRect()
         {
-            return new HitRect(PagerCenterX + PagerGap - PagerArrowWidth / 2, PagerY, PagerArrowWidth, PagerArrowHeight);
+            return NextPageRect(false);
+        }
+
+        public static HitRect NextPageRect(bool hasSpecialChannels)
+        {
+            int y = hasSpecialChannels ? SpecialPagerY : PagerY;
+            return new HitRect(PagerCenterX + PagerGap - PagerArrowWidth / 2, y, PagerArrowWidth, PagerArrowHeight);
         }
 
         public static HitRect RetryRect()
@@ -568,13 +690,14 @@ namespace Dnf.Play
             {
                 return Target.None;
             }
+            bool hasSpecial = VisibleSpecialCount > 0;
             if (PageCount > 1)
             {
-                if (PrevPageRect().Contains(x, y))
+                if (PrevPageRect(hasSpecial).Contains(x, y))
                 {
                     return Target.PrevPage;
                 }
-                if (NextPageRect().Contains(x, y))
+                if (NextPageRect(hasSpecial).Contains(x, y))
                 {
                     return Target.NextPage;
                 }
@@ -587,17 +710,27 @@ namespace Dnf.Play
                     return Target.Item;
                 }
             }
+            int specialCount = VisibleSpecialCount;
+            for (int s = 0; s < specialCount; s++)
+            {
+                if (TrySpecialItemRect(s, out HitRect srect) && srect.Contains(x, y))
+                {
+                    item = _channels.Count + s;
+                    return Target.Item;
+                }
+            }
             return Target.None;
         }
 
         // ------------------------------------------------------------------ 选中与翻页
 
-        /// <summary>从 <paramref name="from"/> 的下一个起、按 <paramref name="step"/>(1 或 -1)找第一个进得去的频道;没有返回 -1。</summary>
+        /// <summary>从 <paramref name="from"/> 的下一个起、按 <paramref name="step"/>(1 或 -1)在全部槽位(主网格与底部特殊栏)里找第一个进得去的频道;没有返回 -1。</summary>
         private int NextEnterable(int from, int step)
         {
-            for (int i = from + step; i >= 0 && i < _channels.Count; i += step)
+            int total = TotalSelectableSlots;
+            for (int i = from + step; i >= 0 && i < total; i += step)
             {
-                if (_channels[i].CanEnter)
+                if (ChannelAt(i).CanEnter)
                 {
                     return i;
                 }
@@ -607,12 +740,15 @@ namespace Dnf.Play
 
         private void Select(int index)
         {
-            if (index < 0)
+            if (index < 0 || index >= TotalSelectableSlots)
             {
                 return;
             }
             Selected = index;
-            Page = index / PageSize;
+            if (index < _channels.Count)
+            {
+                Page = index / PageSize;
+            }
             _hint = null;
         }
 
@@ -729,48 +865,65 @@ namespace Dnf.Play
             int first = Page * PageSize;
             for (int i = first; i < _channels.Count && i < first + PageSize; i++)
             {
-                if (!TryItemRect(i, out HitRect rect))
+                if (TryItemRect(i, out HitRect rect))
                 {
-                    continue;
+                    AddChannelCard(into, ref order, art, cjk, i, _channels[i], rect);
                 }
-                DirectoryChannel channel = _channels[i];
-                bool enterable = channel.CanEnter;
-                bool selected = i == Selected;
-                if (!art.AddFrame(into, ref order, ServerArt.ChannelSlotImage, ItemFrame, rect.X, rect.Y, "channel-item"))
+            }
+            int specialCount = VisibleSpecialCount;
+            for (int s = 0; s < specialCount; s++)
+            {
+                if (TrySpecialItemRect(s, out HitRect srect))
                 {
-                    var plate = new ShellBox(0xFF21324Eu, 0xFF121C30u, 0xFF3F68A8u, 0xFF2D4C7Eu, 1, 0, 40);
-                    OnlineShellArt.Add(into, ref order, _paint.Box(ItemWidth, ItemHeight, 3, plate), rect.X, rect.Y, "channel-item-plate");
+                    AddChannelCard(into, ref order, art, cjk, _channels.Count + s, _specialChannels[s], srect);
                 }
-                if (selected)
+            }
+        }
+
+        private void AddChannelCard(List<SceneSprite> into, ref int order, PickerArt art, bool cjk, int slotIndex, DirectoryChannel channel, HitRect rect)
+        {
+            bool enterable = channel.CanEnter;
+            bool selected = slotIndex == Selected;
+            bool drewSlot = art.AddFrame(into, ref order, ServerArt.ChannelSlotImage, channel.SlotFrame, rect.X, rect.Y, "channel-item");
+            if (!drewSlot && channel.SlotFrame != ItemFrame)
+            {
+                drewSlot = art.AddFrame(into, ref order, ServerArt.ChannelSlotImage, ItemFrame, rect.X, rect.Y, "channel-item");
+            }
+            if (!drewSlot)
+            {
+                var plate = new ShellBox(0xFF21324Eu, 0xFF121C30u, 0xFF3F68A8u, 0xFF2D4C7Eu, 1, 0, 40);
+                OnlineShellArt.Add(into, ref order, _paint.Box(ItemWidth, ItemHeight, 3, plate), rect.X, rect.Y, "channel-item-plate");
+            }
+            if (selected)
+            {
+                if (!art.AddFrame(into, ref order, ServerArt.ChannelBaseImage, SelectFrame, rect.X, rect.Y, "channel-item-select", true))
                 {
-                    if (!art.AddFrame(into, ref order, ServerArt.ChannelBaseImage, SelectFrame, rect.X, rect.Y, "channel-item-select", true))
-                    {
-                        var edge = new ShellBox(0, 0, 0xFF4DB8FFu, 0xFF4DB8FFu, 2);
-                        OnlineShellArt.Add(into, ref order, _paint.Box(ItemWidth, ItemHeight, 3, edge), rect.X, rect.Y, "channel-item-select-edge");
-                    }
+                    var edge = new ShellBox(0, 0, 0xFF4DB8FFu, 0xFF4DB8FFu, 2);
+                    OnlineShellArt.Add(into, ref order, _paint.Box(ItemWidth, ItemHeight, 3, edge), rect.X, rect.Y, "channel-item-select-edge");
                 }
-                else if (i == _hoverItem && enterable && Busy == ChannelBusy.None)
-                {
-                    art.AddFrame(into, ref order, ServerArt.ChannelBaseImage, SelectFrame, rect.X, rect.Y, "channel-item-hover", true, 110);
-                }
-                AddItemTexts(into, ref order, channel, rect, cjk);
-                if (!enterable || Busy != ChannelBusy.None)
-                {
-                    int alpha = enterable ? 0x70 : 0xA0;
-                    var shade = new ShellBox((uint)alpha << 24, (uint)alpha << 24, 0, 0, 0);
-                    OnlineShellArt.Add(into, ref order, _paint.Box(ItemWidth, ItemHeight, 2, shade), rect.X, rect.Y, enterable ? "channel-item-busy" : "channel-item-dim");
-                }
+            }
+            else if (slotIndex == _hoverItem && enterable && Busy == ChannelBusy.None)
+            {
+                art.AddFrame(into, ref order, ServerArt.ChannelBaseImage, SelectFrame, rect.X, rect.Y, "channel-item-hover", true, 110);
+            }
+            AddItemTexts(into, ref order, channel, rect, cjk);
+            if (!enterable || Busy != ChannelBusy.None)
+            {
+                int alpha = enterable ? 0x70 : 0xA0;
+                var shade = new ShellBox((uint)alpha << 24, (uint)alpha << 24, 0, 0, 0);
+                OnlineShellArt.Add(into, ref order, _paint.Box(ItemWidth, ItemHeight, 2, shade), rect.X, rect.Y, enterable ? "channel-item-busy" : "channel-item-dim");
             }
         }
 
         private void AddItemTexts(List<SceneSprite> into, ref int order, DirectoryChannel channel, HitRect rect, bool cjk)
         {
-            SpriteFrame title = _paint.Line(ServerPickerText.ChannelTitle(channel, cjk), TextPixel, PickerArt.ItemTextColor, ShellPaint.Navy, TextMaxWidth);
+            uint textColor = channel.SlotFrame == ItemFrame ? PickerArt.ItemTextColor : PickerArt.NormalItemTextColor;
+            SpriteFrame title = _paint.Line(ServerPickerText.ChannelTitle(channel, cjk), TextPixel, textColor, ShellPaint.Navy, TextMaxWidth);
             OnlineShellArt.Add(into, ref order, title, rect.X + TitleDX - 1, rect.Y + TitleDY - 2, "channel-item-title");
             string level = ServerPickerText.Level(channel);
             if (level.Length > 0)
             {
-                SpriteFrame levelLine = _paint.Line(level, TextPixel, PickerArt.ItemTextColor, ShellPaint.Navy, TextMaxWidth);
+                SpriteFrame levelLine = _paint.Line(level, TextPixel, textColor, ShellPaint.Navy, TextMaxWidth);
                 OnlineShellArt.Add(into, ref order, levelLine, rect.X + TitleDX - 1, rect.Y + LevelDY - 2, "channel-item-level");
             }
             SpriteFrame word = _paint.Line(ServerPickerText.Congestion(channel.Congestion, cjk), TextPixel,
@@ -789,13 +942,15 @@ namespace Dnf.Play
             }
             bool idle = Busy == ChannelBusy.None;
             bool canPrev = idle && Page > 0, canNext = idle && Page < PageCount - 1;
-            HitRect prev = PrevPageRect(), next = NextPageRect();
+            bool hasSpecial = VisibleSpecialCount > 0;
+            int pagerY = hasSpecial ? SpecialPagerY : PagerY;
+            HitRect prev = PrevPageRect(hasSpecial), next = NextPageRect(hasSpecial);
             OnlineShellArt.Add(into, ref order, PickerArt.Arrow(true, canPrev, _hover == Target.PrevPage), prev.X, prev.Y, "channel-page-prev");
             OnlineShellArt.Add(into, ref order, PickerArt.Arrow(false, canNext, _hover == Target.NextPage), next.X, next.Y, "channel-page-next");
             SpriteFrame label = _paint.Line(ServerPickerText.Page(Page, PageCount), 12, ShellPaint.Muted, ShellPaint.Navy);
             if (label != null)
             {
-                OnlineShellArt.Add(into, ref order, label, PagerCenterX - label.Width / 2, PagerY + (PagerArrowHeight - label.Height) / 2, "channel-page-label");
+                OnlineShellArt.Add(into, ref order, label, PagerCenterX - label.Width / 2, pagerY + (PagerArrowHeight - label.Height) / 2, "channel-page-label");
             }
         }
 

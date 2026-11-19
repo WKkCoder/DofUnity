@@ -961,4 +961,159 @@ public sealed class ChannelSelectScreenTests
         Assert.False(PickerRig.Has(sceneUnknown, "channel-illustration"));
         Assert.True(PickerRig.Has(sceneUnknown, "picker-banner-text"));
     }
+
+    // ------------------------------------------------------------------ 底部特殊频道栏与图标帧
+
+    [Fact]
+    public void Special_channels_sit_in_the_bottom_row_of_three_at_y_422_and_cap_at_three()
+    {
+        var main = new[] { Ch(11) };
+        var special = new[] { Ch(1), Ch(6), Ch(7), Ch(9) };
+        ChannelSelectScreen screen = Ready(new DirectoryServer("希洛克", main, false, special));
+
+        Assert.Equal(4, screen.SpecialChannels.Count);
+        Assert.True(screen.TrySpecialItemRect(0, out HitRect s0));
+        Assert.True(screen.TrySpecialItemRect(1, out HitRect s1));
+        Assert.True(screen.TrySpecialItemRect(2, out HitRect s2));
+        Assert.False(screen.TrySpecialItemRect(3, out _));
+        Assert.False(screen.TrySpecialItemRect(-1, out _));
+        Assert.Equal((116, 422, 186, 40), Tuple(s0));
+        Assert.Equal((306, 422, 186, 40), Tuple(s1));
+        Assert.Equal((496, 422, 186, 40), Tuple(s2));
+
+        List<SceneSprite> scene = screen.Build(0);
+        Assert.Equal(4, PickerRig.Count(scene, "channel-item-plate"));
+        Assert.True(screen.Click(116, 422));
+        Assert.Equal(1, screen.Selected);
+        Assert.Equal(0, screen.SelectedSpecial);
+        Assert.Equal(1, screen.SelectedChannel.Number);
+
+        screen.Confirm();
+        Assert.Equal(ChannelSelectAction.Start, screen.TakeAction(out ChannelTarget target));
+        Assert.Equal(PickerData.Target(1), target);
+
+        Assert.False(screen.Click(116, 462));               // 特殊栏底边之外不命中
+    }
+
+    [Fact]
+    public void Special_channels_support_arrow_navigation_hover_and_unusable_hints_without_changing_main_page()
+    {
+        var main = Enumerable.Range(11, 20).Select(n => Ch(n)).ToArray(); // 两页:第 1 页 15 项,第 2 页 5 项
+        var special = new[]
+        {
+            Ch(1),
+            Ch(6, ChannelCongestion.Full),
+            Ch(7),
+        };
+        ShellFakeSprites art = PickerSprites.Full();
+        ChannelSelectScreen screen = Ready(new DirectoryServer("希洛克", main, false, special), PickerData.Target(27), art);
+        Assert.Equal(1, screen.Page);
+        Assert.Equal(16, screen.Selected);                     // 第 2 页第 2 个(第 1 列 = col 1)
+
+        // 存在特殊频道且>1页时,翻页按钮自动下移到 SpecialPagerY = 467 避让中间特殊槽 (306, 422)
+        HitRect specialMid = new HitRect(306, 422, 186, 40);
+        Assert.True(ChannelSelectScreen.PrevPageRect(true).Y >= specialMid.Y + specialMid.Height);
+        Assert.True(ChannelSelectScreen.NextPageRect(true).Y >= specialMid.Y + specialMid.Height);
+        SceneSprite prev = PickerSprites.One(screen.Build(0), "channel-page-prev");
+        Assert.Equal(ChannelSelectScreen.SpecialPagerY, prev.ScreenY);
+
+        // 在第 2 页点击第 3 个特殊频道:页码必须保持为 1,不跳回第 0 页
+        Assert.True(screen.Click(496 + 10, 422 + 10));
+        Assert.Equal(1, screen.Page);
+        Assert.Equal(2, screen.SelectedSpecial);
+        Assert.Equal(7, screen.SelectedChannel.Number);
+
+        // 点击满载特殊频道给出满载提示并保留选中
+        Assert.True(screen.Click(306 + 10, 422 + 10));
+        Assert.Equal(PickerLabel.ChannelFull, screen.Hint);
+        Assert.Equal(7, screen.SelectedChannel.Number);
+
+        // 悬停第 1 个特殊频道点亮底部位置
+        screen.Hover(116 + 10, 422 + 10);
+        SceneSprite hover = PickerSprites.One(screen.Build(0), "channel-item-hover");
+        Assert.Equal((116, 422), (hover.ScreenX, hover.ScreenY));
+
+        // 方向键向上回到当前页(第 2 页)主网格
+        screen.Move(0, -1);
+        Assert.Equal(1, screen.Page);
+        Assert.Equal(-1, screen.SelectedSpecial);
+        Assert.InRange(screen.Selected, 15, 19);
+
+        // 点第 2 页第 1 列末行(下标 19),向下因同列特殊槽满载而落入首个可进特殊槽(下标 0),页码仍保持 1
+        Assert.True(screen.Click(306 + 10, 196 + 44 + 10));
+        Assert.Equal(19, screen.Selected);
+        screen.Move(0, 1);
+        Assert.Equal(1, screen.Page);
+        Assert.Equal(0, screen.SelectedSpecial);
+        Assert.Equal(1, screen.SelectedChannel.Number);
+    }
+
+    [Fact]
+    public void Arrow_keys_move_seamlessly_between_main_grid_and_special_bar()
+    {
+        var main = new[] { Ch(11), Ch(12), Ch(13) };
+        var special = new[] { Ch(1), Ch(6), Ch(7) };
+        ChannelSelectScreen screen = Ready(new DirectoryServer("希洛克", main, false, special));
+        Assert.Equal(0, screen.Selected);
+
+        // 主网格列 0 向下进入特殊栏列 0
+        screen.Move(0, 1);
+        Assert.Equal(0, screen.SelectedSpecial);
+        Assert.Equal(1, screen.SelectedChannel.Number);
+
+        // 特殊栏向右/向左移动,再向左回到主网格最后一项
+        screen.Move(1);
+        Assert.Equal(1, screen.SelectedSpecial);
+        screen.Move(-1);
+        screen.Move(-1);
+        Assert.Equal(-1, screen.SelectedSpecial);
+        Assert.Equal(2, screen.Selected);
+        Assert.Equal(13, screen.SelectedChannel.Number);
+
+        // 列 2 向下进入特殊栏列 2,再向上回到主网格列 2
+        screen.Move(0, 1);
+        Assert.Equal(2, screen.SelectedSpecial);
+        screen.Move(0, -1);
+        Assert.Equal(2, screen.Selected);
+    }
+
+    [Fact]
+    public void A_server_with_only_special_channels_is_ready_and_selects_the_first_enterable_special_channel()
+    {
+        var special = new[]
+        {
+            Ch(1, ChannelCongestion.Full),
+            new DirectoryChannel(6, "交易一区", ChannelCongestion.Smooth, PickerData.Target(6), slotFrame: 5),
+        };
+        ShellFakeSprites art = PickerSprites.Full();
+        art.Frames[(ServerArt.ChannelSlotImage, 5)] = PickerSprites.Block(186, 40, 0, 0);
+
+        ChannelSelectScreen screen = Ready(new DirectoryServer("希洛克", Array.Empty<DirectoryChannel>(), false, special), null, art);
+        Assert.Equal(PickerPhase.Ready, screen.Phase);
+        Assert.Equal(1, screen.Selected);
+        Assert.Equal(1, screen.SelectedSpecial);
+        Assert.Equal(6, screen.SelectedChannel.Number);
+        Assert.True(screen.CanStart);
+
+        // 测试 SlotFrame 命中已注册帧(5)及缺失帧时回落 ItemFrame(16)
+        List<SceneSprite> items = screen.Build(0).Where(s => s.AnimationPath == "channel-item").ToList();
+        Assert.Equal(2, items.Count);
+        Assert.True(PickerSprites.IsFrame(items[1], art, ServerArt.ChannelSlotImage, 5));
+
+        ChannelSelectScreen fallback = Ready(
+            new DirectoryServer("希洛克", new[] { new DirectoryChannel(11, "格兰之森", ChannelCongestion.Smooth, PickerData.Target(11), slotFrame: 0) }),
+            null,
+            art);
+        SceneSprite fbItem = PickerSprites.One(fallback.Build(0), "channel-item");
+        Assert.True(PickerSprites.IsFrame(fbItem, art, ServerArt.ChannelSlotImage, ChannelSelectScreen.ItemFrame));
+
+        // 常规区域(SlotFrame != 16)使用暖灰白字色(0xC8C3A9),骰子区域(SlotFrame == 16)使用亮绿(0x96FF1E)
+        var diceScreen = Ready(
+            new DirectoryServer("希洛克", new[] { new DirectoryChannel(11, "A", ChannelCongestion.Smooth, PickerData.Target(11), slotFrame: 16) }));
+        var normalScreen = Ready(
+            new DirectoryServer("希洛克", new[] { new DirectoryChannel(11, "A", ChannelCongestion.Smooth, PickerData.Target(11), slotFrame: 0) }));
+        SceneSprite diceTitle = PickerSprites.One(diceScreen.Build(0), "channel-item-title");
+        SceneSprite normalTitle = PickerSprites.One(normalScreen.Build(0), "channel-item-title");
+        Assert.False(diceTitle.Frame.Rgba.SequenceEqual(normalTitle.Frame.Rgba));
+    }
 }

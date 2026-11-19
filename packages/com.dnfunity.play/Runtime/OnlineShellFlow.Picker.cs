@@ -532,15 +532,24 @@ namespace Dnf.Play
             }
             foreach (DirectoryServer server in directory.Servers)
             {
-                foreach (DirectoryChannel channel in server.Channels)
+                if (ContainsTarget(server.Channels, target) || ContainsTarget(server.SpecialChannels, target))
                 {
-                    if (target.Equals(channel.Target))
-                    {
-                        return server;
-                    }
+                    return server;
                 }
             }
             return null;
+        }
+
+        private static bool ContainsTarget(System.Collections.Generic.IReadOnlyList<DirectoryChannel> channels, ChannelTarget target)
+        {
+            for (int i = 0; i < channels.Count; i++)
+            {
+                if (target.Equals(channels[i].Target))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static DirectoryServer FirstSelectable(ServerDirectory directory)

@@ -109,14 +109,20 @@ namespace Dnf.Client
         Task<OnlineDirectoryReport> LoadDirectoryAsync(CancellationToken cancellationToken);
     }
 
-    /// <summary>真会话的皮。进城之后心跳由会话自己管(默认自管心跳),这里什么都不用做。</summary>
+    /// <summary>真会话的皮。进城之后心跳由会话自己管(默认自管心跳);只在通道成功建立之后掉线才向外壳报 <see cref="Lost"/>。</summary>
     internal sealed class RealOnlineSessionPort : IOnlineSessionHostPort
     {
         private readonly OnlineClientSession _session;
+        private readonly ChannelScriptData _fallbackScript;
+        private readonly object _stateLock = new object();
+        private bool _channelEstablished;
+        private int _connectInFlight;
+        private bool _lostDuringConnect;
 
-        public RealOnlineSessionPort(OnlineEntrySettings settings)
+        public RealOnlineSessionPort(OnlineEntrySettings settings, ChannelScriptData fallbackScript = null)
         {
             _session = new OnlineClientSession(settings);
+            _fallbackScript = fallbackScript;
             _session.Disconnected += OnDisconnected;
         }
 
@@ -130,42 +136,114 @@ namespace Dnf.Client
             return new OnlineLoginReport(result.Failure, result.GatewayOutcome, result.GatewayErrorCode, result.RetryAfterSeconds);
         }
 
-        public async Task<OnlineConnectReport> ConnectAsync(int channelPort, CancellationToken cancellationToken)
+        public Task<OnlineConnectReport> ConnectAsync(int channelPort, CancellationToken cancellationToken)
         {
-            return Report(await _session.ConnectAsync(channelPort, cancellationToken).ConfigureAwait(false));
+            return RunConnectAsync(() => _session.ConnectAsync(channelPort, cancellationToken));
         }
 
-        public async Task<OnlineConnectReport> SwitchAsync(int channelPort, CancellationToken cancellationToken)
+        public Task<OnlineConnectReport> SwitchAsync(int channelPort, CancellationToken cancellationToken)
         {
-            return Report(await _session.SwitchChannelAsync(channelPort, cancellationToken).ConfigureAwait(false));
+            return RunConnectAsync(() => _session.SwitchChannelAsync(channelPort, cancellationToken));
         }
 
-        public async Task<OnlineConnectReport> ConnectAsync(string host, int channelPort, CancellationToken cancellationToken)
+        public Task<OnlineConnectReport> ConnectAsync(string host, int channelPort, CancellationToken cancellationToken)
         {
-            return Report(await _session.ConnectAsync(host, channelPort, cancellationToken).ConfigureAwait(false));
+            return RunConnectAsync(() => _session.ConnectAsync(host, channelPort, cancellationToken));
         }
 
-        public async Task<OnlineConnectReport> SwitchAsync(string host, int channelPort, CancellationToken cancellationToken)
+        public Task<OnlineConnectReport> SwitchAsync(string host, int channelPort, CancellationToken cancellationToken)
         {
-            return Report(await _session.SwitchChannelAsync(host, channelPort, cancellationToken).ConfigureAwait(false));
+            return RunConnectAsync(() => _session.SwitchChannelAsync(host, channelPort, cancellationToken));
         }
 
         public async Task<OnlineDirectoryReport> LoadDirectoryAsync(CancellationToken cancellationToken)
         {
-            ChannelDirectoryLoadResult result = await _session.LoadChannelDirectoryAsync(ChannelServiceConstants.DefaultPort, cancellationToken).ConfigureAwait(false);
+            ChannelDirectoryLoadResult result = await _session.LoadChannelDirectoryAsync(
+                ChannelServiceConstants.DefaultPort, _fallbackScript, cancellationToken).ConfigureAwait(false);
             return new OnlineDirectoryReport(result.Outcome, result.Snapshot);
         }
 
         public async Task<OnlineSelectReport> SelectAsync(int slot, CancellationToken cancellationToken)
         {
-            OnlineSelectCharacterResult result = await _session.SelectCharacterAsync(slot, cancellationToken).ConfigureAwait(false);
-            return new OnlineSelectReport(result.Entered, result.MayTryAnotherSlot, result.Entered ? OnlineNetLog.Snapshot(result.Snapshot) : null);
+            try
+            {
+                OnlineSelectCharacterResult result = await _session.SelectCharacterAsync(slot, cancellationToken).ConfigureAwait(false);
+                if (!result.Entered && !result.MayTryAnotherSlot)
+                {
+                    lock (_stateLock)
+                    {
+                        _channelEstablished = false;
+                    }
+                }
+                return new OnlineSelectReport(result.Entered, result.MayTryAnotherSlot, result.Entered ? OnlineNetLog.Snapshot(result.Snapshot) : null);
+            }
+            catch (OperationCanceledException)
+            {
+                lock (_stateLock)
+                {
+                    _channelEstablished = false;
+                }
+                throw;
+            }
         }
 
         public void Dispose()
         {
             _session.Disconnected -= OnDisconnected;
+            lock (_stateLock)
+            {
+                _channelEstablished = false;
+            }
             _session.Dispose();
+        }
+
+        private async Task<OnlineConnectReport> RunConnectAsync(Func<Task<OnlineConnectResult>> action)
+        {
+            lock (_stateLock)
+            {
+                _channelEstablished = false;
+                _connectInFlight++;
+                _lostDuringConnect = false;
+            }
+
+            bool notifyLost = false;
+            bool established = false;
+            try
+            {
+                OnlineConnectResult result = await action().ConfigureAwait(false);
+                if (result.IsSuccess)
+                {
+                    if (result.CharacterListStatus == OnlineCharacterListStatus.Received && result.CharacterList != null)
+                    {
+                        bool peerClosed = _session.GameSession != null && _session.GameSession.PeerClosed;
+                        lock (_stateLock)
+                        {
+                            notifyLost = _lostDuringConnect || peerClosed;
+                            established = !notifyLost;
+                        }
+                    }
+                    else
+                    {
+                        // 游戏登录虽通过但角色列表没到/畸形时外壳当作连接失败留在选频道页;
+                        // 这里先把底层未完成会话退回 LoggedIn,保证玩家再次回车重试时可以重新 ConnectAsync 而不抛顺序异常。
+                        await _session.DisconnectAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                }
+                return Report(result);
+            }
+            finally
+            {
+                lock (_stateLock)
+                {
+                    _connectInFlight--;
+                    _lostDuringConnect = false;
+                    _channelEstablished = established;
+                }
+                if (notifyLost)
+                {
+                    Lost?.Invoke();
+                }
+            }
         }
 
         private static OnlineConnectReport Report(OnlineConnectResult result)
@@ -175,7 +253,23 @@ namespace Dnf.Client
 
         private void OnDisconnected(OnlineDisconnectReason reason)
         {
-            Lost?.Invoke();
+            bool notify = false;
+            lock (_stateLock)
+            {
+                if (_connectInFlight > 0)
+                {
+                    _lostDuringConnect = true;
+                }
+                else if (_channelEstablished)
+                {
+                    _channelEstablished = false;
+                    notify = true;
+                }
+            }
+            if (notify)
+            {
+                Lost?.Invoke();
+            }
         }
     }
 
@@ -213,6 +307,7 @@ namespace Dnf.Client
         }
 
         private readonly OnlineEntrySettings _template;
+        private readonly ChannelDirectoryCatalog _directoryCatalog;
         private readonly Func<OnlineEntrySettings, IOnlineSessionPort> _portFactory;
         private readonly Func<GatewayOptions, IGatewayTransport> _transportFactory;
         private readonly Action<string> _log;
@@ -223,15 +318,18 @@ namespace Dnf.Client
 
         /// <param name="template">网关、鼠标口令密文、数据版本等(账号与口令留空:登录时由界面输入);为 null 时所有网络操作都失败(外壳在没有连接配置时本来就不会调用)。</param>
         /// <param name="log">日志去处(只写进城快照一行);可为 null。</param>
-        public OnlineShellBackend(OnlineEntrySettings template, Action<string> log = null)
-            : this(template, log, settings => new RealOnlineSessionPort(settings), CreateHttpTransport)
+        /// <param name="directoryCatalog">从本地游戏数据预读的频道目录规则与文本查询;可为 null。</param>
+        public OnlineShellBackend(OnlineEntrySettings template, Action<string> log = null, ChannelDirectoryCatalog directoryCatalog = null)
+            : this(template, log, settings => new RealOnlineSessionPort(settings, directoryCatalog?.FallbackScript), CreateHttpTransport, directoryCatalog)
         {
         }
 
         internal OnlineShellBackend(OnlineEntrySettings template, Action<string> log,
-            Func<OnlineEntrySettings, IOnlineSessionPort> portFactory, Func<GatewayOptions, IGatewayTransport> transportFactory)
+            Func<OnlineEntrySettings, IOnlineSessionPort> portFactory, Func<GatewayOptions, IGatewayTransport> transportFactory,
+            ChannelDirectoryCatalog directoryCatalog = null)
         {
             _template = template;
+            _directoryCatalog = directoryCatalog;
             _log = log;
             _portFactory = portFactory ?? throw new ArgumentNullException(nameof(portFactory));
             _transportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
@@ -398,6 +496,7 @@ namespace Dnf.Client
                 DataVersion = _template.DataVersion,
                 ChannelPort = _template.ChannelPort,
                 MaxSlots = _template.MaxSlots,
+                ServerGroup = _template.ServerGroup,
             };
         }
 
@@ -473,6 +572,10 @@ namespace Dnf.Client
                 }
                 return Task.Run(async () =>
                 {
+                    if (slot.Port.Real != null)
+                    {
+                        slot.Port.Real.ServerGroup = target.ServerGroup;
+                    }
                     OnlineConnectReport report = switching
                         ? await hostPort.SwitchAsync(target.Host, target.Port, cancellationToken).ConfigureAwait(false)
                         : await hostPort.ConnectAsync(target.Host, target.Port, cancellationToken).ConfigureAwait(false);
@@ -481,6 +584,10 @@ namespace Dnf.Client
             }
             return Task.Run(async () =>
             {
+                if (slot.Port.Real != null)
+                {
+                    slot.Port.Real.ServerGroup = target.ServerGroup;
+                }
                 OnlineConnectReport report = switching
                     ? await slot.Port.SwitchAsync(target.Port, cancellationToken).ConfigureAwait(false)
                     : await slot.Port.ConnectAsync(target.Port, cancellationToken).ConfigureAwait(false);
@@ -510,7 +617,7 @@ namespace Dnf.Client
             return Task.Run(async () =>
             {
                 OnlineDirectoryReport report = await hostPort.LoadDirectoryAsync(cancellationToken).ConfigureAwait(false);
-                return ChannelDirectoryAdapter.Result(report.Outcome, report.Snapshot);
+                return ChannelDirectoryAdapter.Result(report.Outcome, report.Snapshot, _directoryCatalog?.ResolveString);
             }, cancellationToken);
         }
 

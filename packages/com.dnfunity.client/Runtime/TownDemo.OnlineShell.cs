@@ -81,8 +81,11 @@ namespace Dnf.Client
                 string remembered = PlayerPrefs.HasKey(OnlineUserPrefsKey) ? PlayerPrefs.GetString(OnlineUserPrefsKey) : null;
                 OnlineShellSetup setup = OnlineShellSetupLoader.Load(dev, _netRoot, _netPort, Application.persistentDataPath, _onlineUser, remembered);
                 CharacterSelectScene shellArt = CharacterSelectScene.ForOnline(_assets);
-                _shell = OnlineShellHost.Create(setup, shellArt, line => Debug.Log(line), _serverUi, _serverUi ? ServerPickerScene.From(shellArt, _assets.LoadAni) : null,
-                    OnlineCharacterSelectSetup.Create(_assets, _fonts != null));
+                _shell = OnlineShellHost.Create(setup, shellArt, line => Debug.Log(line), _serverUi,
+                    _serverUi ? ServerPickerScene.From(shellArt, _assets.LoadAni) : null,
+                    OnlineCharacterSelectSetup.Create(_assets, _fonts != null),
+                    _serverUi ? ChannelDirectoryCatalog.Create(_assets, _fonts != null) : null,
+                    _fonts);
                 _shellDir = dir;
                 _shell.TakeViewChange();         // 第一个视图就是下面造的这一个
                 _view = new TownView(_assets, _shell.Flow.Scene, StageBackground);

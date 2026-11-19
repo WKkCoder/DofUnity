@@ -55,14 +55,14 @@ public sealed partial class ChannelDirectoryTests
         ms.Write(buf);
     }
 
-    private static void WriteFixedAscii(MemoryStream ms, string text, int fixedLen)
+    private static void WriteFixedText(MemoryStream ms, string text, int fixedLen, Encoding encoding)
     {
         byte[] buf = new byte[fixedLen];
         if (!string.IsNullOrEmpty(text))
         {
-            byte[] ascii = Encoding.ASCII.GetBytes(text);
-            int copy = Math.Min(ascii.Length, fixedLen);
-            Buffer.BlockCopy(ascii, 0, buf, 0, copy);
+            byte[] encoded = (encoding ?? Encoding.ASCII).GetBytes(text);
+            int copy = Math.Min(encoded.Length, fixedLen);
+            Buffer.BlockCopy(encoded, 0, buf, 0, copy);
         }
         ms.Write(buf, 0, buf.Length);
     }
@@ -70,20 +70,21 @@ public sealed partial class ChannelDirectoryTests
     private static byte[] BuildBinaryChannelList(
         IReadOnlyList<(string GroupTag, (string Name, int MaxCap, int Load, string Host, int Port)[] Channels)> groups,
         int extraTrailingBytes = 0,
-        byte trailingFill = 0)
+        byte trailingFill = 0,
+        Encoding encoding = null)
     {
         using var ms = new MemoryStream();
         WriteInt32Le(ms, groups.Count);
         foreach (var (tag, channels) in groups)
         {
-            WriteFixedAscii(ms, tag, 20);
+            WriteFixedText(ms, tag, 20, encoding);
             WriteInt32Le(ms, channels.Length);
             foreach (var ch in channels)
             {
-                WriteFixedAscii(ms, ch.Name, 20);
+                WriteFixedText(ms, ch.Name, 20, encoding);
                 WriteInt32Le(ms, ch.MaxCap);
                 WriteInt32Le(ms, ch.Load);
-                WriteFixedAscii(ms, ch.Host, 16);
+                WriteFixedText(ms, ch.Host, 16, encoding);
                 WriteInt32Le(ms, ch.Port);
             }
         }
@@ -638,6 +639,249 @@ public sealed partial class ChannelDirectoryTests
             await srv.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(ChannelDirectoryLoadOutcome.VersionRejected, res.Outcome);
         }
+    }
+
+    [Fact]
+    public void BinaryParser_DecodesUtf8ChineseGroupTagsAndChannelNames()
+    {
+        byte[] payload = BuildBinaryChannelList(new[]
+        {
+            ("测试大区", new[]
+            {
+                ("测试频道11", 200, 12, "192.0.2.15", 19011),
+            }),
+        }, encoding: Encoding.UTF8);
+
+        ChannelInfoParseStatus status = ChannelInfoBinaryParser.TryParse(payload, allowAesZeroPadding: false, out List<ChannelWireGroup> groups);
+
+        Assert.Equal(ChannelInfoParseStatus.Ok, status);
+        ChannelWireGroup group = Assert.Single(groups);
+        Assert.Equal("测试大区", group.Tag);
+        Assert.DoesNotContain('?', group.Tag);
+        ChannelWireEntry entry = Assert.Single(group.Channels);
+        Assert.Equal("测试频道11", entry.Name);
+        Assert.DoesNotContain('?', entry.Name);
+        Assert.Equal("192.0.2.15", entry.Host);
+        Assert.Equal(19011, entry.Port);
+    }
+
+    [Fact]
+    public void ChannelScriptParser_ParsesServerBlocksBackticksGroupIdsAndMergeFallback()
+    {
+        const string serverScript =
+            "[dungeon]\n" +
+            "[server] 3\n" +
+            "  11 <4::cname_syn_11> 0 `[zone_alpha]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "  52 <4::cname_syn_52> 13 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "[/server]\n" +
+            "[server] 8  21 `测试直写名` 1 `[zone_beta]` 0 0 0 0 0 0 `` `` `` 0 0  [/server]\n";
+
+        ChannelScriptData primary = ChannelScriptParser.Parse(serverScript);
+
+        Assert.False(primary.HasExplicitFullThreshold);
+        Assert.Empty(primary.RecommendLevels);
+        Assert.Equal(3, primary.ServerSlots.Count);
+
+        // 14 canonical server group IDs (English + Simplified/Traditional Chinese aliases)
+        (string Tag, int ExpectedId)[] cases =
+        {
+            ("cain", 1), ("卡恩", 1),
+            ("diregie", 2), ("狄瑞吉", 2),
+            ("siroco", 3), ("希洛克", 3),
+            ("prey", 4), ("pray", 4), ("普雷", 4),
+            ("casillas", 5), ("cassillas", 5), ("卡西利亚斯", 5), ("卡西利亞斯", 5),
+            ("hilder", 6), ("赫尔德", 6), ("赫爾德", 6),
+            ("ruke", 7), ("luke", 7), ("卢克", 7),
+            ("seria", 8), ("cerria", 8), ("赛丽亚", 8), ("賽麗亞", 8),
+            ("anton", 9), ("安徒恩", 9),
+            ("roxy", 10), ("lukse", 10), ("卢克西", 10),
+            ("bakal", 11), ("巴卡尔", 11),
+            ("ozma", 12), ("奥兹玛", 12),
+            ("khazan", 13), ("kazan", 13), ("卡赞", 13),
+            ("starter_server", 14), ("start", 14), ("新手", 14),
+        };
+        foreach ((string tag, int expectedId) in cases)
+        {
+            Assert.True(ChannelScriptData.TryMapServerGroupId(tag, out int actualId), tag);
+            Assert.Equal(expectedId, actualId);
+        }
+        Assert.False(ChannelScriptData.TryMapServerGroupId(null, out _));
+        Assert.False(ChannelScriptData.TryMapServerGroupId("unknown_group_999", out _));
+
+        ChannelServerSlotRule siroco11 = primary.FindServerSlot("siroco", 11);
+        Assert.NotNull(siroco11);
+        Assert.Equal(3, siroco11.ServerGroupId);
+        Assert.Equal(11, siroco11.ChannelNo);
+        Assert.Equal(4, siroco11.TitleStringKind);
+        Assert.Equal("cname_syn_11", siroco11.TitleStringKey);
+        Assert.Equal("[zone_alpha]", siroco11.AreaTag);
+
+        ChannelServerSlotRule siroco11Zh = primary.FindServerSlot("希洛克", 11);
+        Assert.Same(siroco11, siroco11Zh);
+
+        ChannelServerSlotRule seria21 = primary.FindServerSlot("赛丽亚", 21);
+        Assert.NotNull(seria21);
+        Assert.Equal(8, seria21.ServerGroupId);
+        Assert.Equal(-1, seria21.TitleStringKind);
+        Assert.Equal("测试直写名", seria21.LiteralTitle);
+        Assert.Equal("[zone_beta]", seria21.AreaTag);
+
+        ChannelScriptData fallback = ChannelScriptParser.Parse("[channel rate full] 88.5\n[channel] `[zone_alpha]` 41 85\n");
+        ChannelScriptData merged = primary.MergeFallback(fallback);
+        Assert.Equal(serverScript, merged.RawText);
+        Assert.True(merged.HasExplicitFullThreshold);
+        Assert.Equal(88.5f, merged.FullThresholdPercent);
+        Assert.Single(merged.RecommendLevels);
+        Assert.Equal(3, merged.ServerSlots.Count);
+    }
+
+    [Fact]
+    public void SnapshotBuild_PopulatesParsedChannelNoSlotRuleAndAreaRecommendLevel()
+    {
+        ChannelScriptData script = ChannelScriptParser.Parse(
+            "[server] 3\n" +
+            "  11 <4::cname_syn_11> 0 `[zone_alpha]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "  52 <4::cname_syn_52> 13 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "[/server]\n" +
+            "[channel] `[zone_alpha]` 41 85\n");
+
+        ChannelDirectorySnapshot snapshot = ChannelDirectorySnapshot.Build(
+            "v900",
+            false,
+            script,
+            new[]
+            {
+                WireGroup("siroco", ("#ch.11", 200, 10, "192.0.2.10", 19011), ("#ch.52", 200, 5, "192.0.2.10", 19052)),
+            });
+
+        Assert.Equal(2, snapshot.Channels.Count);
+        ChannelEntry ch11 = snapshot.Channels[0];
+        Assert.Equal(1, ch11.ChannelNo);
+        Assert.Equal(11, ch11.ParsedChannelNo);
+        Assert.Equal("#ch.", ch11.DisplayPrefix);
+        Assert.NotNull(ch11.SlotRule);
+        Assert.Equal("cname_syn_11", ch11.SlotRule.TitleStringKey);
+        Assert.True(ch11.Flags.HasFlag(ChannelEntryFlags.HasRecommendLevel));
+        Assert.Equal(41, ch11.RecommendedMinLevel);
+        Assert.Equal(85, ch11.RecommendedMaxLevel);
+
+        ChannelEntry ch52 = snapshot.Channels[1];
+        Assert.Equal(2, ch52.ChannelNo);
+        Assert.Equal(52, ch52.ParsedChannelNo);
+        Assert.Equal("#ch.", ch52.DisplayPrefix);
+        Assert.NotNull(ch52.SlotRule);
+        Assert.Equal("[none]", ch52.SlotRule.AreaTag);
+        Assert.False(ch52.Flags.HasFlag(ChannelEntryFlags.HasRecommendLevel));
+        Assert.Null(ch52.RecommendedMinLevel);
+        Assert.Null(ch52.RecommendedMaxLevel);
+    }
+
+    [Fact]
+    public async Task Client_OutdatedServerBlockScript_MergesFallbackRecommendLevelsAndFullRate()
+    {
+        const string serverOnlyScript =
+            "[server] 3\n" +
+            "  11 <4::cname_syn_11> 0 `[zone_alpha]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "[/server]\n";
+        ChannelScriptData fallback = ChannelScriptParser.Parse(
+            "[channel rate full] 88.0\n" +
+            "[channel] `[zone_alpha]` 41 85\n");
+
+        (ChannelDirectoryLoadResult res, byte[] cmds) = await RunScenarioAsync(async srv =>
+        {
+            await srv.NegotiateSessionKeyAsync();
+            await srv.ReadVersionRequestAsync();
+            byte[] ver = new byte[20];
+            Encoding.ASCII.GetBytes("v910").CopyTo(ver, 4);
+            await srv.SendEncryptedAsync(0x06, ver, 32);
+            await srv.ReadRequestAsync(0x09);
+            await srv.SendCompressedEncryptedAsync(0x09, Encoding.UTF8.GetBytes(serverOnlyScript));
+            await srv.ReadRequestAsync(0x01);
+            byte[] list = BuildBinaryChannelList(new[]
+            {
+                ("siroco", new[] { ("#ch.11", 200, 10, "192.0.2.10", 19011) }),
+            });
+            await srv.SendCompressedEncryptedAsync(0x03, list);
+        }, fallbackScript: fallback);
+
+        Assert.True(res.Succeeded, res.ErrorDetail);
+        Assert.Equal(new byte[] { 0x0b, 0x05, 0x09, 0x01 }, cmds);
+        Assert.Equal(88.0f, res.Snapshot.ScriptData.FullThresholdPercent);
+        ChannelEntry ch = Assert.Single(res.Snapshot.Channels);
+        Assert.Equal(11, ch.ParsedChannelNo);
+        Assert.NotNull(ch.SlotRule);
+        Assert.Equal("cname_syn_11", ch.SlotRule.TitleStringKey);
+        Assert.Equal(41, ch.RecommendedMinLevel);
+        Assert.Equal(85, ch.RecommendedMaxLevel);
+    }
+
+    [Theory]
+    [InlineData(0, false, ChannelSelectPlacement.MainGrid)]
+    [InlineData(11, false, ChannelSelectPlacement.SpecialTower)]
+    [InlineData(3, false, ChannelSelectPlacement.SpecialTrade)]
+    [InlineData(4, true, ChannelSelectPlacement.PvpArena)]
+    [InlineData(5, true, ChannelSelectPlacement.PvpArena)]
+    [InlineData(6, true, ChannelSelectPlacement.PvpArena)]
+    [InlineData(7, true, ChannelSelectPlacement.PvpArena)]
+    [InlineData(8, true, ChannelSelectPlacement.PvpArena)]
+    [InlineData(9, true, ChannelSelectPlacement.PvpArena)]
+    [InlineData(10, true, ChannelSelectPlacement.PvpArena)]
+    [InlineData(13, true, ChannelSelectPlacement.PvpArena)]
+    [InlineData(14, true, ChannelSelectPlacement.PvpArena)]
+    [InlineData(15, true, ChannelSelectPlacement.PvpArena)]
+    [InlineData(16, true, ChannelSelectPlacement.PvpArena)]
+    [InlineData(1, false, ChannelSelectPlacement.Hidden)]
+    [InlineData(2, false, ChannelSelectPlacement.Hidden)]
+    [InlineData(12, false, ChannelSelectPlacement.Hidden)]
+    [InlineData(17, false, ChannelSelectPlacement.Hidden)]
+    [InlineData(18, false, ChannelSelectPlacement.Hidden)]
+    [InlineData(-1, false, ChannelSelectPlacement.Hidden)]
+    public void ChannelServerSlotRule_ClassifyChannelKind_MatchesClientBucketTable(
+        int channelKind,
+        bool expectedPvp,
+        ChannelSelectPlacement expectedPlacement)
+    {
+        Assert.Equal(expectedPvp, ChannelServerSlotRule.IsPvpChannelKind(channelKind));
+        Assert.Equal(expectedPlacement, ChannelServerSlotRule.ClassifyChannelKind(channelKind));
+        var rule = new ChannelServerSlotRule(3, 11, -1, string.Empty, "syn", channelKind, "[none]");
+        Assert.Equal(expectedPlacement, rule.SelectPlacement);
+    }
+
+    [Fact]
+    public void ChannelScriptData_HasServerSlotsForGroup_And_SnapshotPreservesPvpMaxLoad()
+    {
+        const string scriptText =
+            "[server] 3\n" +
+            "  11 <4::cname_syn_11> 0 `[zone_alpha]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "  52 <4::cname_syn_52> 13 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "  53 <4::cname_syn_53> 8 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n" +
+            "[/server]\n";
+        ChannelScriptData script = ChannelScriptParser.Parse(scriptText);
+
+        Assert.True(script.HasServerSlotsForGroup("siroco"));
+        Assert.True(script.HasServerSlotsForGroup("希洛克服务器"));
+        Assert.False(script.HasServerSlotsForGroup("cain"));
+        Assert.False(script.HasServerSlotsForGroup("unknown_custom_group"));
+        Assert.False(ChannelScriptData.Default.HasServerSlotsForGroup("siroco"));
+
+        ChannelDirectorySnapshot snapshot = ChannelDirectorySnapshot.Build(
+            "v920",
+            false,
+            script,
+            new[]
+            {
+                WireGroup("siroco",
+                    ("#ch.11", 200, 12, "192.0.2.10", 19011),
+                    ("#ch.52", 200, 180, "192.0.2.10", 19052),
+                    ("#ch.53", 200, 90, "192.0.2.10", 19053)),
+            });
+
+        ChannelGroup siroco = Assert.Single(snapshot.Groups);
+        Assert.Equal(3, siroco.Channels.Count);
+        Assert.Equal(180, siroco.MaxCurrentLoad);
+        Assert.Equal(ChannelSelectPlacement.MainGrid, siroco.Channels[0].SlotRule.SelectPlacement);
+        Assert.Equal(ChannelSelectPlacement.PvpArena, siroco.Channels[1].SlotRule.SelectPlacement);
+        Assert.Equal(ChannelSelectPlacement.PvpArena, siroco.Channels[2].SlotRule.SelectPlacement);
     }
 
     private static async Task SendRawAsync(Stream stream, byte cmd, byte[] body)

@@ -22,6 +22,7 @@ public class LoginRequestTests
             LoginMode = 1,
             MouseCipher = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 },
             DataVersion = 12345,
+            ClientParam = 0x11223344u,
             ServerGroup = 3,
             LocalAddress = 0x0100007Fu,
         };
@@ -53,6 +54,8 @@ public class LoginRequestTests
         Assert.Equal(request.MouseCipher, mouse);
         Assert.True(reader.TryGetInt(out int version));
         Assert.Equal(12345, version);
+        Assert.True(reader.TryGetInt(out int clientParam));
+        Assert.Equal(0x11223344, clientParam);
         Assert.True(reader.TryGetShort(out short group));
         Assert.Equal(3, group);
         Assert.True(reader.TryGetInt(out int local));
