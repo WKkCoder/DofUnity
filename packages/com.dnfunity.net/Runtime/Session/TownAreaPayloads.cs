@@ -7,13 +7,18 @@ namespace Dnf.Net.Session
     /// <summary>
     /// 城镇换区命令（类 1、包号 <see cref="SetUserAreaPacketId"/>，<c>SET_USER_AREA</c>）及其配对服务端回复与区通知的载荷构造/解析器。
     /// <para>
-    /// 闭环必需性：进城后若需切换到副本门口区（服务端 <c>DisPatcher_StartGame</c> 检查 <c>*(area + 0x68) == 5 || 6</c>）或其它城镇区域，
-    /// 必须发送 <c>1/38</c>；不发则始终停留在初始区域，无法进入副本门口区开局，也不会触发目标区的 <c>0/23</c> 与 <c>0/24</c> 下发。
+    /// 闭环必需性：进城后若需切换到其它城镇区域（含地下城入口区），必须发送 <c>1/38</c>；
+    /// 不发则始终停留在初始区域，也不会触发目标区的 <c>0/23</c> 与 <c>0/24</c> 下发。
+    /// </para>
+    /// <para>
+    /// 开始游戏命令（类 1、包号 15）本身不按区属性拒绝。区对象上的属性值（偏移 0x68）：4 是地下城入口，5 与 6 是对战安全区；
+    /// 属性值只影响 <c>DisPatcher_StartGame::excludeAddHackCount</c>（0x081ca2a8）：等级不低于 2、区属性不是 4、
+    /// 且用户的移动空间值不为 1 时，服务端只给反作弊分析器加一次计数，命令照常处理（证据 E-433，更正 E-420 里"5 或 6 才放行开始游戏"的说法）。
     /// </para>
     /// <para>
     /// 服务端依据：<c>DisPatcher_SetArea::read</c>（0x081c91e6）、<c>check_error</c>（0x081c93e8）、<c>process</c>（0x081c951c）、
     /// <c>send</c>（0x081c9656）、<c>GameWorld::move_area</c>（0x086c5a84）、<c>Area::insert_user</c>（0x086c25a6）与
-    /// <c>Area::send_area_users</c>（0x086c2780）；客户端发送点位于 0x0103cd8d、0x01112b81、0x01116aa8。
+    /// <c>Area::send_area_users</c>（0x086c22f2）；客户端发送点位于 0x0103cd8d、0x01112b81、0x01116aa8。
     /// </para>
     /// </summary>
     public static class TownAreaPayloads
@@ -153,7 +158,7 @@ namespace Dnf.Net.Session
         /// <summary>
         /// 解析 <c>0/24 AREA_USERS</c> 通知载荷（小端）。
         /// <para>
-        /// 读序（<c>Area::send_area_users</c> 0x086c2780）：<c>u8 village, u8 area, u16 count, count × { u16 uniqueId, u16 x, u16 y, u8 direction, u8 visible }</c>。
+        /// 读序（<c>Area::send_area_users</c> 0x086c22f2）：<c>u8 village, u8 area, u16 count, count × { u16 uniqueId, u16 x, u16 y, u8 direction, u8 visible }</c>。
         /// </para>
         /// </summary>
         /// <param name="payload">通知明文载荷；允许为 null。</param>
