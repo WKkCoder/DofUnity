@@ -553,6 +553,7 @@ namespace Dnf.Play
                     Z = 0;
                     _vz = 0;
                     _falling = false;
+                    _runner?.OnMoveCollision(2);
                 }
             }
         }

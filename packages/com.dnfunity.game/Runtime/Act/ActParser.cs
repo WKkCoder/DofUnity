@@ -117,6 +117,7 @@ namespace Dnf.Game.Act
                     if (closes.TryGetValue(i, out int openLine) && nodeAt.TryGetValue(openLine, out ActNode block))
                     {
                         block.Closer = tag;
+                        block.CloserValues = lines[i].Values ?? Array.Empty<ScriptValue>();
                         int idx = open.LastIndexOf(block);
                         if (idx >= 0)
                         {

@@ -117,6 +117,7 @@ namespace Dnf.Play
             actor.SuperArmorOnAttack = def.SuperArmorOnAttack;              // [superarmor on attack]:出招期间带档位 1 的霸体(E-143)
             actor.FacesTarget = def.ChangeDirectionByTarget;                // [change direction by target]:出生时"朝向跟着目标走"的开关,没写是开(E-169)
             actor.AttackFacing = def.AttackFacing;                          // [is direction to move]:出招里逐帧面朝目标(E-169)
+            actor.InitActGrabbable(def.Tags.IntOr("[is grabable]", 1) != 0); // .mob [is grabable]:缺省 1(0x012a5310)
             actor.SetStrikes(attackStrikes);
             actor.SetAttackKinds(AttackKindRecord.Parse(def.Tags), unchecked((uint)seed * 2654435761u + (uint)actor.Index * 40503u + 12345u));
             // 默认 AI 的走位:游荡、发现主角、按节拍朝主角走(证据 E-114);没有 [melee combat]/[range combat]/[stay] 类别的怪物仍走占位

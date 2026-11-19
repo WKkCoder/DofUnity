@@ -606,6 +606,7 @@ namespace Dnf.Play
             if (_script != null)
             {
                 _script.LiveTrigger = _actEnabled != null ? (Func<int, int, bool?>)ActTriggerState : null;
+                _script.DamageCheckState = CheckDamageThreshold;
             }
         }
 
@@ -1464,6 +1465,7 @@ namespace Dnf.Play
             _lastWalk = walk;
             AdvanceStatAppendages(deltaMs);        // 属性改变附加物的时限按墙钟走(M63,E-161)
             AdvanceCamouflage(deltaMs);            // 伪装的时限同样按墙钟走(推断)
+            AdvanceChangeTeamWallClock(deltaMs);   // 换队附加物随属性附加物墙钟同步倒数
             if (_lifeLeftMs > 0 && IsAlive)
             {
                 // 召唤物的存活时间按墙钟走(命中停顿里不冻结,推断);到点按脚本杀死处理(E-134)
@@ -1492,6 +1494,7 @@ namespace Dnf.Play
             }
             _phaseMs += deltaMs;
             _aiClockMs += deltaMs;
+            AdvanceRestState(deltaMs);
             _script?.Advance(deltaMs);
             if (Hp <= 0)
             {
@@ -2143,13 +2146,37 @@ namespace Dnf.Play
         {
             bool ignoreBlocker = Blocker != null && Blocker.BlockedBy(X, Y) != null;
             bool ignoreWalk = (_script != null || _brain != null) && walk != null && !walk.IsUnrestricted && !walk.Contains(X, Y);
-            if (stepX != 0 && CanStandAt(X + stepX, Y, walk, ignoreBlocker, ignoreWalk))
+            bool hitX = false;
+            bool hitY = false;
+            if (stepX != 0)
             {
-                X += stepX;
+                if (CanStandAt(X + stepX, Y, walk, ignoreBlocker, ignoreWalk))
+                {
+                    X += stepX;
+                }
+                else
+                {
+                    hitX = true;
+                }
             }
-            if (stepY != 0 && CanStandAt(X, Y + stepY, walk, ignoreBlocker, ignoreWalk))
+            if (stepY != 0)
             {
-                Y += stepY;
+                if (CanStandAt(X, Y + stepY, walk, ignoreBlocker, ignoreWalk))
+                {
+                    Y += stepY;
+                }
+                else
+                {
+                    hitY = true;
+                }
+            }
+            if (hitX)
+            {
+                NotifyActMoveCollision(0);
+            }
+            if (hitY)
+            {
+                NotifyActMoveCollision(1);
             }
         }
 
@@ -2298,7 +2325,7 @@ namespace Dnf.Play
         public bool ApplyHit(int damage, bool knockDown, double pushPixels, bool pushToLeft, HitStunInput stun, KnockdownInput down, bool noReaction = false,
             int elementMask = 0)
         {
-            if (!IsAlive || Phase == MonsterPhase.Gone)
+            if (!IsAlive || Phase == MonsterPhase.Gone || _actUnbeatable)
             {
                 return false;
             }
@@ -2309,7 +2336,9 @@ namespace Dnf.Play
             }
             FamilyOnDamage(elementMask);                       // 当前动作(非出招族)与过程动作也收到(E-146)
             _brain?.NotifyDamaged();                           // 挨了打:马上找目标、不等发现迟滞(E-114)
+            int prevHp = Hp;
             Hp = Math.Max(0, Hp - Math.Max(0, damage));
+            AccumulateDamageCheck(prevHp - Hp);
             int oldPushDir = _pushDir;
             double oldPushTotal = _pushTotal, oldPushDone = _pushDone, oldPushMs = _pushMs;
             _pushDir = pushToLeft ? -1 : 1;
@@ -2404,7 +2433,7 @@ namespace Dnf.Play
         public List<Aabb> DamageBoxes()
         {
             var result = new List<Aabb>();
-            if (!IsAlive || Phase == MonsterPhase.Gone || Phase == MonsterPhase.Dying || _damageBoxOff)
+            if (!IsAlive || Phase == MonsterPhase.Gone || Phase == MonsterPhase.Dying || _damageBoxOff || _actUnbeatable)
             {
                 return result;
             }
@@ -2437,7 +2466,7 @@ namespace Dnf.Play
         {
             get
             {
-                if (!IsAlive || Phase == MonsterPhase.Gone || Phase == MonsterPhase.Dying || _damageBoxOff)
+                if (!IsAlive || Phase == MonsterPhase.Gone || Phase == MonsterPhase.Dying || _damageBoxOff || _actUnbeatable)
                 {
                     return false;
                 }

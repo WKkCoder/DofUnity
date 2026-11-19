@@ -296,8 +296,19 @@ namespace Dnf.Play
                     Z = 0;
                     _actVz = 0;
                     _actFalling = false;
+                    NotifyActMoveCollision(2);
                 }
             }
+        }
+
+        private void FamilyOnMoveCollision(int axis)
+        {
+            if (_fam == null)
+            {
+                return;
+            }
+            _famActive?.Runner?.OnMoveCollision(axis);
+            Host(MonsterActFamily.Proc)?.Runner?.OnMoveCollision(axis);
         }
 
         /// <summary>挨了打:唤醒当前动作与过程动作里带 [ON DAMAGE] 的触发器(出招的运行器由调用方处理;客户端分发给这两个对象,E-146)。</summary>

@@ -33,6 +33,9 @@ namespace Dnf.Game.Act
         /// <summary>配对闭合标签的原文(块才有;笔误闭合如 [/TIRGGER] 配对时这里是文件里的实际写法)。</summary>
         public string Closer { get; internal set; }
 
+        /// <summary>配对闭合标签同行跟在后面的值(如 [/RANDOM SELECT] 500 里的延迟值)。</summary>
+        public ScriptValue[] CloserValues { get; internal set; } = Array.Empty<ScriptValue>();
+
         public ActNode Parent { get; internal set; }
 
         public IReadOnlyList<ActNode> Children => _children ?? NoChildren;
