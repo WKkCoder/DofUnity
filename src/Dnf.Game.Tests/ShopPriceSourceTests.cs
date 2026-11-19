@@ -283,4 +283,129 @@ public class ShopPriceSourceTests
         Assert.Equal(ShopResult.Ok, ShopRules.CheckBuy(shop, matOnlyEquip, 1, 0, new Inventory(8)));
         Assert.Equal(ShopResult.Ok, ShopRules.CheckBuy(shop, freeNoMat, 1, 0, bagFiveMats));
     }
+
+    // ------------------------------------------------------------------ 补测:一次买多件时所需材料要乘件数(变异 H25)
+
+    /// <summary>
+    /// 可叠加(非装备)的兑换物品:<c>[price]</c> 为 0、每件需要 2 个材料。一次买 n 件要 2 × n 个材料,
+    /// 背包里的材料少于 2 × n 个就必须是 <see cref="ShopResult.NotEnoughMaterial"/>,恰好够或更多才通过。
+    /// 现有用例只买 1 件或只买装备(装备恒按 1 件算),"所需材料没乘件数"原先测不出来。
+    /// </summary>
+    [Theory]
+    [InlineData(5, 3, ShopResult.NotEnoughMaterial)]   // 3 件要 2 × 3 = 6 个,只有 5 个
+    [InlineData(6, 3, ShopResult.Ok)]                  // 3 件要 6 个,恰好 6 个
+    [InlineData(5, 2, ShopResult.Ok)]                  // 2 件要 2 × 2 = 4 个,5 个有余
+    [InlineData(3, 2, ShopResult.NotEnoughMaterial)]   // 2 件要 4 个,只有 3 个
+    [InlineData(1, 1, ShopResult.NotEnoughMaterial)]   // 1 件要 2 个,只有 1 个
+    [InlineData(2, 1, ShopResult.Ok)]                  // 1 件要 2 个,恰好 2 个
+    [InlineData(0, 3, ShopResult.NotEnoughMaterial)]   // 空背包:3 件要 6 个,有 0 个
+    public void StackableExchangeNeedsMaterialsTimesCount(int owned, int count, ShopResult expected)
+    {
+        ItemInfo mat = MakeStack(970);
+        ItemInfo swap = MakeStack(971, price: 0, matId: 970, matCount: 2);
+        ItemShopDef shop = MakeShop(971);
+
+        Assert.Equal(expected, ShopRules.CheckBuyWithMaterials(shop, swap, count, 0, MakeBagWith(mat, owned)));
+    }
+
+    /// <summary>金币加材料复合标价的可叠加物品:买 3 件时金币和材料都乘件数;钱的检查先于材料,材料差一个就不通过。</summary>
+    [Fact]
+    public void StackableGoldAndMaterialExchangeScalesMaterialsAndChecksGoldFirst()
+    {
+        ItemInfo mat = MakeStack(972);
+        ItemInfo swap = MakeStack(973, price: 7, matId: 972, matCount: 2);
+        ItemShopDef shop = MakeShop(973);
+
+        // 买 3 件:金币 7 × 3 = 21,材料 2 × 3 = 6
+        Assert.Equal(ShopResult.NotEnoughMaterial, ShopRules.CheckBuyWithMaterials(shop, swap, 3, 21, MakeBagWith(mat, 5)));
+        Assert.Equal(ShopResult.Ok, ShopRules.CheckBuyWithMaterials(shop, swap, 3, 21, MakeBagWith(mat, 6)));
+        Assert.Equal(ShopResult.NotEnoughGold, ShopRules.CheckBuyWithMaterials(shop, swap, 3, 20, MakeBagWith(mat, 6)));
+        Assert.Equal(ShopResult.NotEnoughGold, ShopRules.CheckBuyWithMaterials(shop, swap, 3, 20, MakeBagWith(mat, 5)));
+    }
+
+    /// <summary>
+    /// 对照:同样 <c>[price]</c> 为 0、每件 2 个材料,但这件是装备——一次恒按 1 件算,
+    /// 请求"买 3 件"也只要 2 个材料(不是 2 × 3 = 6 个)。
+    /// </summary>
+    [Fact]
+    public void EquipmentExchangeCountsAsOnePieceSoItNeedsOnlyOneRoundOfMaterials()
+    {
+        ItemInfo mat = MakeStack(974);
+        ItemInfo swapEquip = MakeEquip(975, EquipmentParts.Coat, price: 0, matId: 974, matCount: 2);
+        ItemShopDef shop = MakeShop(975);
+
+        // 请求 3 件,装备按 1 件算:需要 2 个
+        Assert.Equal(ShopResult.Ok, ShopRules.CheckBuyWithMaterials(shop, swapEquip, 3, 0, MakeBagWith(mat, 2)));
+        Assert.Equal(ShopResult.Ok, ShopRules.CheckBuyWithMaterials(shop, swapEquip, 3, 0, MakeBagWith(mat, 5)));
+        Assert.Equal(ShopResult.NotEnoughMaterial, ShopRules.CheckBuyWithMaterials(shop, swapEquip, 3, 0, MakeBagWith(mat, 1)));
+        Assert.Equal(ShopResult.NotEnoughMaterial, ShopRules.CheckBuyWithMaterials(shop, swapEquip, 3, 0, MakeBagWith(mat, 0)));
+        // 请求 1 件与请求 3 件的结果一致
+        Assert.Equal(ShopResult.Ok, ShopRules.CheckBuyWithMaterials(shop, swapEquip, 1, 0, MakeBagWith(mat, 2)));
+    }
+
+    /// <summary>买入材料总数:可叠加 = 单件数量 × 件数,装备恒一件(同一组 <c>[need material]</c> 数值)。</summary>
+    [Fact]
+    public void BuyMaterialCountMultipliesStackableByCountAndKeepsEquipmentAtOnePiece()
+    {
+        ItemInfo stack = MakeStack(976, price: 0, matId: 974, matCount: 2);
+        ItemInfo equip = MakeEquip(977, price: 0, matId: 974, matCount: 2);
+
+        Assert.Equal(6L, ItemPricing.BuyMaterialCount(stack, 3));   // 2 × 3
+        Assert.Equal(2L, ItemPricing.BuyMaterialCount(equip, 3));   // 装备恒一件:2
+        Assert.Equal(2L, ItemPricing.BuyMaterialCount(stack, 1));   // 2 × 1
+        Assert.Equal(2L, ItemPricing.BuyMaterialCount(equip, 1));
+    }
+
+    // ------------------------------------------------------------------ 补测:材料号/数量无效时买入不要求材料(变异 H14)
+
+    /// <summary>
+    /// <see cref="ItemInfo.HasNeedMaterial"/> = 材料号 &gt;= 0 且数量 &gt; 0;不满足时买入材料总数必须是 0,与另一个字段写了什么无关
+    /// (现有 <c>noMat</c> 夹具数量也是 0,守卫去掉后乘出来还是 0,测不出来)。0 是合法材料号,只有 -1 才是"没设"。
+    /// 列:材料号、单件数量、件数、可叠加的期望、装备的期望(装备恒一件)。
+    /// </summary>
+    [Theory]
+    [InlineData(-1, 3, 2, 0L, 0L)]    // 材料号没设(默认 -1)而数量写了 3:没有材料要求,不是 3 × 2 = 6(装备也不是 3)
+    [InlineData(-1, 3, 1, 0L, 0L)]    // 买 1 件也一样,不是 3
+    [InlineData(-2, 3, 2, 0L, 0L)]    // 其它负材料号同样无效
+    [InlineData(0, 3, 2, 6L, 3L)]     // 0 是合法材料号:可叠加 3 × 2 = 6,装备恒一件 = 3
+    [InlineData(5, 0, 2, 0L, 0L)]     // 数量为 0:没有材料要求
+    [InlineData(5, -4, 2, 0L, 0L)]    // 数量为负:没有材料要求,不是 -4 × 2 = -8(装备也不是 -4)
+    [InlineData(5, 3, 2, 6L, 3L)]     // 对照:材料号与数量都有效,可叠加 3 × 2 = 6,装备 3
+    public void BuyMaterialCountIsZeroWithoutValidNeedMaterial(int matId, int matCount, int count, long expectedStack, long expectedEquip)
+    {
+        ItemInfo stack = MakeStack(978, price: 0, matId: matId, matCount: matCount);
+        ItemInfo equip = MakeEquip(979, price: 0, matId: matId, matCount: matCount);
+
+        Assert.Equal(expectedStack, ItemPricing.BuyMaterialCount(stack, count));
+        Assert.Equal(expectedEquip, ItemPricing.BuyMaterialCount(equip, count));
+    }
+
+    /// <summary>材料号没设(-1)而数量写了 3:买入不要求材料,空背包与 null 背包都不报 NotEnoughMaterial。</summary>
+    [Fact]
+    public void CheckBuyWithMaterialsDoesNotRequireMaterialsWhenMaterialIdIsUnset()
+    {
+        ItemInfo stack = MakeStack(980, price: 0, matId: -1, matCount: 3);
+        ItemInfo equip = MakeEquip(981, EquipmentParts.Coat, price: 0, matId: -1, matCount: 3);
+        ItemShopDef shop = MakeShop(980, 981);
+
+        Assert.Equal(ShopResult.Ok, ShopRules.CheckBuyWithMaterials(shop, stack, 2, 0, new Inventory(8)));
+        Assert.Equal(ShopResult.Ok, ShopRules.CheckBuyWithMaterials(shop, stack, 2, 0, null));
+        Assert.Equal(ShopResult.Ok, ShopRules.CheckBuyWithMaterials(shop, equip, 1, 0, new Inventory(8)));
+        Assert.Equal(ShopResult.Ok, ShopRules.CheckBuyWithMaterials(shop, equip, 1, 0, null));
+        // 只有数量没有材料号不算材料:仍是"零价无材料",关掉开关时被拦下
+        Assert.Equal(ShopResult.NotBuyable, ShopRules.CheckBuyWithMaterials(shop, stack, 2, 0, new Inventory(8), allowFreeWithoutMaterial: false));
+    }
+
+    /// <summary>材料号 0 是合法材料:每件 3 个材料 0,买 2 件要 3 × 2 = 6 个,不足就报 NotEnoughMaterial。</summary>
+    [Fact]
+    public void MaterialIdZeroIsAValidMaterialForCheckBuyWithMaterials()
+    {
+        ItemInfo mat = MakeStack(0);
+        ItemInfo swap = MakeStack(982, price: 0, matId: 0, matCount: 3);
+        ItemShopDef shop = MakeShop(982);
+
+        Assert.Equal(ShopResult.NotEnoughMaterial, ShopRules.CheckBuyWithMaterials(shop, swap, 2, 0, new Inventory(8)));
+        Assert.Equal(ShopResult.NotEnoughMaterial, ShopRules.CheckBuyWithMaterials(shop, swap, 2, 0, MakeBagWith(mat, 5)));
+        Assert.Equal(ShopResult.Ok, ShopRules.CheckBuyWithMaterials(shop, swap, 2, 0, MakeBagWith(mat, 6)));
+    }
 }
