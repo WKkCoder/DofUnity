@@ -1537,6 +1537,7 @@ namespace Dnf.Client
 
         private void DisposeView()
         {
+            DisposeOnlineDungeon();    // 先收尾正在跑的联网副本异步任务与订阅
             DisposeOnlineShell();      // -dnfonline 的外壳与它拥有的联网会话(没带时什么也不做)
             if (_audio != null)
             {
@@ -1580,6 +1581,10 @@ namespace Dnf.Client
             if (!PumpOnlineShell())    // -dnfonline:外壳的输入、阶段机与换画面(没带时什么也不做、返回 true);出错或退出了返回 false
             {
                 return;
+            }
+            if (_onlineDungeon != null && (_onlineTown == null || _flow == null))
+            {
+                DisposeOnlineDungeon();
             }
             PumpTouch();
             PumpMenu();
@@ -2147,6 +2152,7 @@ namespace Dnf.Client
             List<SceneSprite> hud = BuildTownHud();
             List<SceneSprite> quest = BuildQuestHud();
             List<SceneSprite> online = BuildOnlineTownOverlay();
+            List<SceneSprite> onlineDungeon = BuildOnlineDungeonOverlay();
             List<SceneSprite> menu = BuildMenuOverlay();
             if (hud == null)
             {
@@ -2165,6 +2171,17 @@ namespace Dnf.Client
                 else
                 {
                     hud.AddRange(online);
+                }
+            }
+            if (onlineDungeon != null && onlineDungeon.Count > 0)
+            {
+                if (hud == null)
+                {
+                    hud = onlineDungeon;
+                }
+                else
+                {
+                    hud.AddRange(onlineDungeon);
                 }
             }
             if (hud == null)
@@ -2381,6 +2398,7 @@ namespace Dnf.Client
                 _flow.CharacterSelect?.Advance(deltaMs);   // 选角界面自己的时钟(光束与头像的动画)
                 _flow.Splash?.Advance(deltaMs);      // 加载画面:停够时间之后流程切到目标阶段
                 PollOnlineTown();
+                PollOnlineDungeon();
                 _flow.Poll();
             }
             if (_flow.StageSerial != _shownSerial)
@@ -2404,6 +2422,7 @@ namespace Dnf.Client
             if (_flow.QuitRequested)
             {
                 Debug.Log("DNF_FLOW quit from system menu");
+                PrepareOnlineDungeonForQuit();
                 QuitOnlineAware();                   // 系统菜单里选了"退出游戏"
                 return;
             }
@@ -2552,6 +2571,7 @@ namespace Dnf.Client
         /// <summary>流程模式的初始化:造 <see cref="GameFlow"/>(城镇、副本两种会话的工厂接上这个演示的数据与参数)并进入起始阶段;带自动机参数时再造流程自动机。</summary>
         private void StartFlow()
         {
+            DisposeOnlineDungeon();
             OpenSave();
             // 城镇里就要按存档里穿的武器造主角,装扮会话也要在进城之前包进城镇世界,所以进度(与装扮会话)在流程之前就造好;
             // 没有存档时这里造出来的与之后第一次造出来的是同一个(HeroProgressForRun 只造一次),只是早了一点
@@ -2585,6 +2605,7 @@ namespace Dnf.Client
                 () => new CharacterSelectScreen(CharacterRoster.Local(_progress != null ? _progress.Level : _savedLevel), characterScene),
                 (path, run, difficulty) => TakeNetRun() ?? CreateDungeon(path, _seed + run, difficulty));
             _flow.DifficultyLimit = DifficultyGate.For(() => _progress, _assets);   // 选择界面左右键能选到哪一档:按主角的通关记录(M33,E-125)
+            AttachOnlineDungeonFlow(world?.Def?.Path ?? (string.Equals(_worldMapPath, "none", StringComparison.OrdinalIgnoreCase) ? null : _worldMapPath), atlas, townWorld);
             _flow.Bag.UseAssets(_assets);            // 背包里穿武器前先问"画面上穿得出来吗"(HeroLook.CanShow)
             if (avatarsOn)
             {

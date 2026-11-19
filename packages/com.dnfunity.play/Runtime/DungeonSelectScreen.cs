@@ -85,6 +85,35 @@ namespace Dnf.Play
         private int _difficulty;
         private double _ageMs;
 
+        /// <summary>联网选图时的条目可进入状态查询;为 null 表示单机模式(全部可进入)。</summary>
+        public Func<DungeonEntry, DungeonEntryStatus> EntryStatus { get; set; }
+
+        /// <summary>有字体时的副本显示名解析(读自数据文字表);为 null 时用默认展示。</summary>
+        public Func<DungeonEntry, string> EntryDisplayName { get; set; }
+
+        /// <summary>当前地图地区名(有字体时用于替换系统字标题)。</summary>
+        public string RegionDisplayName { get; set; }
+
+        /// <summary>顶部非阻塞状态/错误提示条。</summary>
+        public DungeonSelectNotice Notice { get; set; }
+
+        /// <summary>忙等状态(正在请求进入联网副本时为 true,屏蔽切换与重复确认)。</summary>
+        public bool Busy { get; set; }
+
+        /// <summary>本界面使用的字体集(测试用);null 时回退到 <see cref="OverlayArt.SharedFonts"/>。</summary>
+        public IGlyphFonts Fonts
+        {
+            get => _art.Fonts;
+            set => _art.Fonts = value;
+        }
+
+        public DungeonEntryStatus StatusOf(DungeonEntry entry)
+        {
+            return entry != null && EntryStatus != null ? EntryStatus(entry) : DungeonEntryStatus.Allowed;
+        }
+
+        public bool IsSelectedDisabled => StatusOf(Selected).Disabled;
+
         public IReadOnlyList<DungeonEntry> Entries => _entries;
 
         /// <summary>选中的副本在 <see cref="Entries"/> 里的序号;没有副本时是 -1。</summary>
@@ -192,47 +221,65 @@ namespace Dnf.Play
         /// <summary>选中项上移(<paramref name="delta"/> 为负)或下移(为正);夹在列表范围里,不循环。已经有结果之后不再响应。</summary>
         public void Move(int delta)
         {
-            if (Outcome != SelectOutcome.None || _entries.Count == 0)
+            if (Busy || Outcome != SelectOutcome.None || _entries.Count == 0)
             {
                 return;
             }
+            int previous = Index;
             int position = Array.IndexOf(_navigation, Index);
             position = Math.Max(0, Math.Min(position + delta, _navigation.Length - 1));
             Index = _navigation[position];
             ClampDifficulty();
+            if (Index != previous)
+            {
+                Notice = null;
+            }
         }
 
         /// <summary>难度调高(<paramref name="delta"/> 为正)或调低(为负);夹在 0 到 <see cref="MaxDifficulty"/>,不循环。已经有结果之后不再响应。</summary>
         public void MoveDifficulty(int delta)
         {
-            if (Outcome != SelectOutcome.None || _entries.Count == 0)
+            if (Busy || Outcome != SelectOutcome.None || _entries.Count == 0)
             {
                 return;
             }
             _difficulty = Math.Max(0, Math.Min(_difficulty + delta, MaxDifficulty));
         }
 
+        /// <summary>联网动态更新(0,5)副本许可表后,按最新上限重新夹紧当前难度。</summary>
+        public void RefreshDifficulty()
+        {
+            ClampDifficulty();
+        }
+
         private void ClampDifficulty()
         {
-            _difficulty = Math.Min(_difficulty, MaxDifficulty);
+            _difficulty = Math.Max(0, Math.Min(_difficulty, MaxDifficulty));
         }
 
-        /// <summary>进入选中的副本;没有副本、或已经有结果时不响应。</summary>
+        /// <summary>进入选中的副本;没有副本、被禁止进入、或已经有结果时不响应。</summary>
         public void Confirm()
         {
-            if (Outcome == SelectOutcome.None && Selected != null)
+            if (Busy || Outcome != SelectOutcome.None || Selected == null)
             {
-                Outcome = SelectOutcome.Enter;
+                return;
             }
+            if (StatusOf(Selected).Disabled)
+            {
+                Notice = null;
+                return;
+            }
+            Outcome = SelectOutcome.Enter;
         }
 
-        /// <summary>返回城镇;已经有结果时不响应。</summary>
+        /// <summary>返回城镇;忙等或已经有结果时不响应。</summary>
         public void Back()
         {
-            if (Outcome == SelectOutcome.None)
+            if (Busy || Outcome != SelectOutcome.None)
             {
-                Outcome = SelectOutcome.Back;
+                return;
             }
+            Outcome = SelectOutcome.Back;
         }
 
         /// <summary>
@@ -241,7 +288,7 @@ namespace Dnf.Play
         /// </summary>
         public bool Click(int x, int y)
         {
-            if (_world == null || Outcome != SelectOutcome.None)
+            if (Busy || _world == null || Outcome != SelectOutcome.None)
             {
                 return false;
             }
@@ -268,6 +315,7 @@ namespace Dnf.Play
             {
                 Index = hit;
                 ClampDifficulty();
+                Notice = null;
             }
             return true;
         }
@@ -279,8 +327,15 @@ namespace Dnf.Play
             if (_worldArt != null)
             {
                 _worldArt.Build(sprites, ref order, _art, _world, _entries, Index, AgeMs, _difficulty);
+                if (_art.HasFonts || EntryStatus != null || (Notice != null && Notice.Kind != DungeonSelectNoticeKind.None))
+                {
+                    DungeonSelectOverlay.EnhanceWorldMap(
+                        sprites, ref order, _art, _entries, Index, AgeMs, timeMs,
+                        EntryStatus, EntryDisplayName, RegionDisplayName, Notice);
+                }
                 return sprites;
             }
+            bool onlineOrFonts = _art.HasFonts || EntryStatus != null || (Notice != null && Notice.Kind != DungeonSelectNoticeKind.None);
             sprites.Add(OverlayArt.Place(_art.Solid(ScreenWidth, ScreenHeight, BackgroundColor), 0, 0, order++, "select-backdrop"));
             SpriteFrame title = _art.Text("SELECT DUNGEON", 3, OverlayArt.Yellow);
             sprites.Add(OverlayArt.Place(title, 40, 30, order++, "select-title"));
@@ -290,17 +345,40 @@ namespace Dnf.Play
                 SpriteFrame level = _art.Text("DIFFICULTY " + DifficultyNames.Of(_difficulty), 2, OverlayArt.Orange);
                 sprites.Add(OverlayArt.Place(level, 40, 70, order++, "select-difficulty"));
             }
+            ShellPaint paint = onlineOrFonts ? new ShellPaint(_art) : null;
             const int rowTop = 110;
             const int rowStep = 40;
             for (int i = 0; i < _entries.Count; i++)
             {
                 int y = rowTop + rowStep * i;
                 bool selected = i == Index;
+                DungeonEntry entry = _entries[i];
+                DungeonEntryStatus status = onlineOrFonts ? StatusOf(entry) : DungeonEntryStatus.Allowed;
                 if (selected)
                 {
-                    sprites.Add(OverlayArt.Place(_art.Solid(400, rowStep - 6, SelectionColor), 36, y - 6, order++, "select-highlight"));
+                    uint bg = status.Disabled ? 0x2E2E34u : SelectionColor;
+                    sprites.Add(OverlayArt.Place(_art.Solid(400, rowStep - 6, bg), 36, y - 6, order++, "select-highlight"));
                 }
-                SpriteFrame name = _art.Text(_entries[i].Name, 3, selected ? OverlayArt.Yellow : OverlayArt.White);
+                uint color = status.Disabled ? 0x7A7E86u : (selected ? OverlayArt.Yellow : OverlayArt.White);
+                SpriteFrame name;
+                if (onlineOrFonts && _art.HasFonts && EntryDisplayName != null)
+                {
+                    string display = EntryDisplayName(entry);
+                    if (string.IsNullOrEmpty(display))
+                    {
+                        display = entry.Name;
+                    }
+                    if (status.Disabled)
+                    {
+                        display += " (不可进入)";
+                    }
+                    name = paint.Data(display, 22, color, OverlayArt.Black, 380);
+                }
+                else
+                {
+                    string label = status.Disabled ? entry.Name + " (DISABLED)" : entry.Name;
+                    name = _art.Text(label, 3, color);
+                }
                 if (name != null)
                 {
                     sprites.Add(OverlayArt.Place(name, 48, y, order++, "select-name"));
@@ -313,6 +391,10 @@ namespace Dnf.Play
 
             SpriteFrame hint = _art.Text("UP DOWN SELECT   LEFT RIGHT LEVEL   ENTER GO   ESC TOWN", 2, HintColor);
             sprites.Add(OverlayArt.Place(hint, 40, ScreenHeight - 40, order++, "select-hint"));
+            if (onlineOrFonts)
+            {
+                DungeonSelectOverlay.AddNoticeBar(sprites, ref order, paint, Notice, StatusOf(Selected), timeMs, "select-online-notice");
+            }
             return sprites;
         }
     }
