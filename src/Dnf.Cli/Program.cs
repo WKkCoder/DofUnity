@@ -331,6 +331,11 @@ namespace Dnf.Cli
         public int ScanMinPercent { get; set; } = 30;
         public int ScanTop { get; set; } = 8;
         public string? Pred { get; set; }
+
+        // particle-shot(.ptl 确定性离线仿真与连拍图)
+        public string? PtlPath { get; set; }
+        public int Frames { get; set; } = 12;
+        public int StepMs { get; set; } = 50;
     }
 
     internal static class CommandLine
@@ -404,6 +409,8 @@ namespace Dnf.Cli
             "      从怪物出发看 .act 触发器的运行期覆盖度(证据 E-130):怪物出招的 .act 里有多少带触发器、触发器多少是运行器认得的,这些招式能放出的被动对象(含对象再放对象)与它们自己的 .act,以及被动对象全表的总体情况;只输出个数与标签名。\n" +
             "  dnf ptl-census [--json <文件>]\n" +
             "      全库普查 .ptl 标签与块结构、各脚本对 .ptl 的引用以及 .act [PARTICLE] 的三整数参数分布(严格脱敏,只输出计数、标签名、关键字与分桶)。\n" +
+            "  dnf particle-shot --ptl <路径> [--frames N --step-ms M --out 目录]\n" +
+            "      用 ParticleEffectDef 与 ParticleSimulation 对指定 .ptl 跑确定性多帧仿真并输出网格连拍 PNG。\n" +
             "  dnf ai-check [--dump <文件>] [--json <文件>]\n" +
             "      用 Dnf.Game 的 .ai 解析器读全库 .ai(证据 E-052):能否读完、错误、剩余标记、关键字与运算符直方图,以及 [void] 函数真假两路的返回形状(用来判断真假方向);名表运行时从数据包的 AICharacter/OperatingValue.lst 读。\n" +
             "  dnf ai-eval [--json <文件>]\n" +
@@ -915,6 +922,19 @@ namespace Dnf.Cli
                     case "--pred":
                         opts.Pred = NextValue(args, ref i);
                         break;
+                    case "--ptl":
+                        opts.PtlPath = NextValue(args, ref i);
+                        break;
+                    case "--frames":
+                        opts.Frames = int.TryParse(NextValue(args, ref i), out int ptFrames) && ptFrames >= 1 && ptFrames <= 256
+                            ? ptFrames
+                            : throw new UserError("--frames 需要 1 到 256 的整数");
+                        break;
+                    case "--step-ms":
+                        opts.StepMs = int.TryParse(NextValue(args, ref i), out int ptStepMs) && ptStepMs >= 0 && ptStepMs <= 10000
+                            ? ptStepMs
+                            : throw new UserError("--step-ms 需要 0 到 10000 的整数毫秒");
+                        break;
                     default:
                         if (args[i].StartsWith("--", StringComparison.Ordinal))
                         {
@@ -983,6 +1003,8 @@ namespace Dnf.Cli
                     return ActRunCheck.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "ptl-census":
                     return PtlCensus.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "particle-shot":
+                    return ParticleShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "ai-eval":
                     return AiEval.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "mob-check":
