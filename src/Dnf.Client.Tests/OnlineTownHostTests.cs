@@ -14,14 +14,14 @@ namespace Dnf.Client.Tests;
 /// 客户端在线城镇宿主编排端到端测试:
 /// 涵盖 <c>SelectCharacterLoadInfo</c>(Village/UniqueId) 与 <c>TownEntrySnapshot</c> 消费、多城镇起点与回退、
 /// <c>1/38</c> 切区(<c>0/23</c>+<c>0/24</c> 与 Gate 仅 <c>0/24</c>)、<c>0x44</c>/超时回退、
-/// 踢下线(<c>0/199</c>)与断线回登录、普通/真界面(-dnfserverui)回选角重连、退出游戏发断线、事件成对退订与日志脱敏。
+/// 踢下线(<c>0/199</c>)与断线回登录、普通/真界面(-dnfserverui)回选角重连、退出游戏(关闭到频道的连接,不发 <c>1/3</c>,真服怎么看待这种收尾未验证)、事件成对退订与日志脱敏。
 /// 全部运行在内存假网关与假传输上,不连任何真实服务器。
 /// </summary>
 public sealed class OnlineTownHostTests
 {
     private const double FrameMs = 1000.0 / 60.0;
 
-    private sealed class RecordingTransport : ITownCommandTransport
+    internal sealed class RecordingTransport : ITownCommandTransport
     {
         public event Action<TownInboundEvent> InboundReceived;
         public event Action Disconnected;
@@ -65,7 +65,7 @@ public sealed class OnlineTownHostTests
         public void Dispose() => Disposed = true;
     }
 
-    private sealed class FakeTownSession : IHeroSession, ITownExitSource, ITownExitReset
+    internal sealed class FakeTownSession : IHeroSession, ITownExitSource, ITownExitReset
     {
         private readonly TownExitTracker _tracker;
         private readonly IReadOnlyList<WorldRect> _walk;
@@ -130,7 +130,7 @@ public sealed class OnlineTownHostTests
         public List<SceneSprite> Build(long timeMs) => new();
     }
 
-    private sealed class SyntheticWorld : ITownWorld
+    internal sealed class SyntheticWorld : ITownWorld
     {
         private readonly TownAtlas _atlas;
 
@@ -232,7 +232,7 @@ public sealed class OnlineTownHostTests
         public void Dispose() => Host.Dispose();
     }
 
-    private static UserInfoNotice CustomRoster()
+    internal static UserInfoNotice CustomRoster()
     {
         UserInfoTestData.EntrySpec first = UserInfoTestData.Standard(0, equipCount: 0);
         first.Uid = 9101;
@@ -252,7 +252,7 @@ public sealed class OnlineTownHostTests
         return notice;
     }
 
-    private static SelectCharacterResult SelectPayload(ushort uniqueId, byte village)
+    internal static SelectCharacterResult SelectPayload(ushort uniqueId, byte village)
     {
         var b = new NoticePayloadBuilder()
             .U8(1)             // flag = success
@@ -293,7 +293,7 @@ public sealed class OnlineTownHostTests
         return new ScriptLine(tag, list);
     }
 
-    private static TownAtlas BuildAtlas()
+    internal static TownAtlas BuildAtlas()
     {
         var scripts = new Dictionary<string, ScriptLine[]>
         {
@@ -534,7 +534,7 @@ public sealed class OnlineTownHostTests
     }
 
     [Fact]
-    public async Task Quit_game_gracefully_unsubscribes_and_disposes_backend_session()
+    public async Task Quit_game_unsubscribes_closes_the_channel_connection_and_disposes_backend_session()
     {
         using var rig = new HostTownRig(onPort: port =>
         {

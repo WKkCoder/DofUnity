@@ -171,6 +171,12 @@ namespace Dnf.Client
         public async Task<OnlineSelectReport> SelectAsync(int slot, CancellationToken cancellationToken)
         {
             OnlineSelectCharacterResult result = await _session.SelectCharacterAsync(slot, cancellationToken).ConfigureAwait(false);
+            return ToReport(result);
+        }
+
+        /// <summary>选角结果到后端报告的映射(internal 只为让测试不连网络就能逐项检查:成功带快照日志与三份载荷,失败只带"能否换槽再试")。</summary>
+        internal static OnlineSelectReport ToReport(OnlineSelectCharacterResult result)
+        {
             return result.Entered
                 ? new OnlineSelectReport(true, result.MayTryAnotherSlot, OnlineNetLog.Snapshot(result.Snapshot),
                     result.SelectCharacter, result.Snapshot, result.DungeonPermissions)
@@ -239,6 +245,12 @@ namespace Dnf.Client
         private readonly List<Task> _disposals = new List<Task>();
         private Slot _slot;
         private bool _disposed;
+
+        /// <summary>
+        /// 测试接缝(internal):优雅断线时关闭真会话到频道连接的那一步,默认就是 <see cref="OnlineClientSession.DisconnectAsync"/>。
+        /// 真会话在没有连着频道时关闭它看不出任何差别,测试里换成记录用的假实现,才能数出它被调了几次、带着什么取消令牌。
+        /// </summary>
+        internal Func<OnlineClientSession, CancellationToken, Task> SessionDisconnect = (session, token) => session.DisconnectAsync(token);
 
         /// <param name="template">网关、鼠标口令密文、数据版本等(账号与口令留空:登录时由界面输入);为 null 时所有网络操作都失败(外壳在没有连接配置时本来就不会调用)。</param>
         /// <param name="log">日志去处(只写进城快照一行);可为 null。</param>
@@ -413,7 +425,11 @@ namespace Dnf.Client
             DisposeOffThread(old);
         }
 
-        /// <summary>主动退出游戏时先在当前联网会话发送 <c>1/3 EXIT</c> 断线再清理句柄;不触发 <see cref="Disconnected"/>。</summary>
+        /// <summary>
+        /// 主动退出游戏时先关闭当前联网会话到频道服务器的连接(<see cref="OnlineClientSession.DisconnectAsync"/>:只关这条 TCP,网关登录保留),再清理句柄;不触发 <see cref="Disconnected"/>。
+        /// 注意:这里<b>不发 <c>1/3</c></b>(联网层也没有 <c>1/3</c> 的构造器),真服会不会把这样的收尾当异常掉线,没有验证过。
+        /// 关闭过程里的任何异常都吞掉,不外抛;没有会话时是空操作。
+        /// </summary>
         public async Task DisconnectGracefullyAsync(CancellationToken cancellationToken = default)
         {
             Slot old;
@@ -436,7 +452,7 @@ namespace Dnf.Client
                 OnlineClientSession real = old.Port.Real;
                 if (real != null)
                 {
-                    await real.DisconnectAsync(cancellationToken).ConfigureAwait(false);
+                    await SessionDisconnect(real, cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (Exception)
