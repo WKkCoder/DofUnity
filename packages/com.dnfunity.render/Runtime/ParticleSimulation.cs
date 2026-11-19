@@ -389,9 +389,20 @@ namespace Dnf.Render
 
         public bool IsEmissionFinished => _finished;
 
+        public bool IsFinished => _finished && _particles.Count == 0;
+
         public int LiveCount => _particles.Count;
 
         public int ElapsedMs => _elapsedMs;
+
+        /// <summary>
+        /// 立即停止后续发射，仅继续推进已经存活的粒子直至全部死亡。
+        /// 对应客户端 .act [PARTICLE] 执行器（0x010c6138）单次 Emit 后立即析构发射器的语义。
+        /// </summary>
+        public void StopEmission()
+        {
+            _finished = true;
+        }
 
         /// <summary>推进 <paramref name="deltaMs"/> 毫秒并返回本步所有存活粒子精灵。</summary>
         public IReadOnlyList<ParticleSprite> Step(int deltaMs, ParticleSimVec3 emitterPos, bool facingLeft)
@@ -1356,7 +1367,7 @@ namespace Dnf.Render
             }
         }
 
-        private static SpriteFrame TransformSprite(
+        internal static SpriteFrame TransformSprite(
             SpriteFrame src,
             bool mirrored,
             float scaleX,

@@ -2194,6 +2194,7 @@ namespace Dnf.Play
                 b.Object.Advance(heroDelta);             // 物件的受击动画与命中停顿一起冻结(受击方与攻击方定住同样久,E-077)
             }
             UpdateDrops(deltaMs, hero);
+            UpdateActParticles(deltaMs);
             _targetMs += deltaMs;
             _hudClockMs += deltaMs;
             _monsterHp?.Update(_hudClockMs);
@@ -4376,6 +4377,7 @@ namespace Dnf.Play
                     extra.Add(s);
                 }
             }
+            AddActParticleSprites(extra, projection);
             foreach (MonsterProjectile p in _projectiles)
             {
                 SceneSprite s = p.Sprite(_assets, projection);

@@ -1925,6 +1925,9 @@ namespace Dnf.Game.Act
                     case ActBehaviorKind.AbsCasting:
                         ExecuteSymbolBehavior(b, targets);
                         break;
+                    case ActBehaviorKind.Particle:
+                        ExecuteParticleBehavior(b);
+                        break;
                     default:
                         _host.NoteUnsupportedBehavior(b.Tag);     // 没做的行为按空操作处理(ActBehaviorGroup.UnsupportedTags 供审计;实际打到几次由场景统计,E-147)
                         break;

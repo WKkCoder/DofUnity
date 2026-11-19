@@ -714,6 +714,11 @@ namespace Dnf.Game.Act
 
         /// <summary>[ABS CASTING] a b:拥有者头上的绝对读条条(行为码 0x7f,块 0x010bd541),只管表现。</summary>
         AbsCasting,
+
+        // ---- r19-particle
+
+        /// <summary>[PARTICLE] "路径" [dx dy dz]:在拥有者位置加固定(不镜像)偏移处触发一次粒子发射(行为码 0xaa,加载 0x013419f8、执行 0x010c5f91)。</summary>
+        Particle,
     }
 
     /// <summary>
