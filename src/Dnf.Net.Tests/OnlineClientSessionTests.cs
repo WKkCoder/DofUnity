@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using Dnf.Net.ChannelDirectory;
 using Dnf.Net.Frame;
 using Dnf.Net.Session;
 
@@ -1593,5 +1594,161 @@ public sealed class OnlineClientSessionTests
         Assert.Equal(1, rig.Channels[0].Connection.DisposeCount);
         Assert.DoesNotContain(rig.Channels[0].Pipe.ClientFrames, f => f.Id == 4);   // 选角命令没有写出去
         Assert.Single(rig.Channels);                                                // 也没有换连接再试
+    }
+
+    // ---- 跨频道换线等待异步登出落定的重试窗口 ----
+
+    [Fact]
+    public async Task SwitchChannelAsync_retries_transient_code_1_after_authenticated_link_without_spurious_disconnect()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Hooks.SwitchLoginRetryCount = 4;
+        rig.Hooks.SwitchLoginRetryDelay = TimeSpan.FromMilliseconds(5);
+        rig.Hooks.LogoutSettleWindow = TimeSpan.FromSeconds(5);
+        rig.ScriptFactory = ch =>
+        {
+            if (ch == 1 || ch == 2)
+            {
+                return frame =>
+                {
+                    if (frame.Class == PacketClass.Cmd && frame.Id == 1)
+                    {
+                        DungeonEntryPipe pipe = rig.Channels[ch].Pipe;
+                        pipe.Push(DungeonEntryWire.Reply(1, new byte[] { 0, 1, 0, 0 }));
+                        pipe.CloseServer();
+                    }
+                    return Array.Empty<byte[]>();
+                };
+            }
+            return Script();
+        };
+
+        (OnlineClientSession client, _) = await rig.Selected();
+        int disconnected = 0;
+        client.Disconnected += _ => Interlocked.Increment(ref disconnected);
+
+        OnlineConnectResult switched = await Bounded(client.SwitchChannelAsync(9020));
+
+        Assert.True(switched.IsSuccess, switched.Failure.ToString());
+        Assert.True(switched.CharacterListReceived);
+        Assert.Equal(OnlineClientSessionState.Connected, client.State);
+        Assert.Equal(4, rig.Channels.Count);
+        Assert.Equal(0, Volatile.Read(ref disconnected));
+    }
+
+    [Fact]
+    public async Task ConnectAsync_right_after_DisconnectAsync_from_authenticated_link_retries_transient_code_1()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Hooks.SwitchLoginRetryCount = 3;
+        rig.Hooks.SwitchLoginRetryDelay = TimeSpan.FromMilliseconds(5);
+        rig.Hooks.LogoutSettleWindow = TimeSpan.FromSeconds(5);
+        rig.ScriptFactory = ch => ch == 1
+            ? Script(login: HostTestKit.Frames(DungeonEntryWire.Reply(1, new byte[] { 0, 1, 0, 0 })))
+            : Script();
+
+        (OnlineClientSession client, _) = await rig.Connected();
+        int disconnected = 0;
+        client.Disconnected += _ => Interlocked.Increment(ref disconnected);
+        await Bounded(client.DisconnectAsync());
+
+        OnlineConnectResult reconnected = await Bounded(client.ConnectAsync(9020));
+
+        Assert.True(reconnected.IsSuccess, reconnected.Failure.ToString());
+        Assert.True(reconnected.CharacterListReceived);
+        Assert.Equal(3, rig.Channels.Count);
+        Assert.Equal(0, Volatile.Read(ref disconnected));
+    }
+
+    [Fact]
+    public async Task Transient_code_1_retry_does_not_apply_to_fresh_login_or_non_1_failure_codes()
+    {
+        // 1) 刚登录完首次 ConnectAsync 遇 code=1 不应重试
+        var freshRig = new OnlineFlowRig();
+        freshRig.Hooks.SwitchLoginRetryCount = 4;
+        freshRig.Hooks.SwitchLoginRetryDelay = TimeSpan.FromMilliseconds(5);
+        freshRig.ScriptFactory = _ => Script(login: HostTestKit.Frames(DungeonEntryWire.Reply(1, new byte[] { 0, 1, 0, 0 })));
+        OnlineClientSession freshClient = await freshRig.LoggedIn();
+        OnlineConnectResult freshFail = await Bounded(freshClient.ConnectAsync(9010));
+        Assert.False(freshFail.IsSuccess);
+        Assert.Equal(OnlineFailure.GameLoginRejected, freshFail.Failure);
+        Assert.Equal((byte)1, freshFail.LoginFailureCode);
+        Assert.Single(freshRig.Channels);
+
+        // 2) SwitchChannelAsync 遇非 1 错误码 (0x17) 不应重试
+        var switchRig = new OnlineFlowRig();
+        switchRig.Hooks.SwitchLoginRetryCount = 4;
+        switchRig.Hooks.SwitchLoginRetryDelay = TimeSpan.FromMilliseconds(5);
+        switchRig.Hooks.LogoutSettleWindow = TimeSpan.FromSeconds(5);
+        switchRig.ScriptFactory = ch => ch == 0
+            ? Script()
+            : Script(login: HostTestKit.Frames(DungeonEntryWire.Reply(1, new byte[] { 0, 0x17, 0, 0 })));
+        (OnlineClientSession switchClient, _) = await switchRig.Selected();
+        OnlineConnectResult verFail = await Bounded(switchClient.SwitchChannelAsync(9020));
+        Assert.False(verFail.IsSuccess);
+        Assert.Equal(OnlineFailure.GameLoginRejected, verFail.Failure);
+        Assert.Equal((byte)0x17, verFail.LoginFailureCode);
+        Assert.Equal(2, switchRig.Channels.Count);
+    }
+
+    [Fact]
+    public async Task SwitchChannelAsync_settle_retry_honors_cancellation_token()
+    {
+        var rig = new OnlineFlowRig();
+        rig.Hooks.SwitchLoginRetryCount = 4;
+        rig.Hooks.SwitchLoginRetryDelay = TimeSpan.FromSeconds(5);
+        rig.Hooks.LogoutSettleWindow = TimeSpan.FromSeconds(5);
+        rig.ScriptFactory = ch => ch == 0
+            ? Script()
+            : Script(login: HostTestKit.Frames(DungeonEntryWire.Reply(1, new byte[] { 0, 1, 0, 0 })));
+
+        (OnlineClientSession client, _) = await rig.Selected();
+        using var stop = new CancellationTokenSource(40);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Bounded(client.SwitchChannelAsync(9020, stop.Token)));
+        Assert.Equal(OnlineClientSessionState.LoggedIn, client.State);
+    }
+
+    [Fact]
+    public async Task Connect_writes_ServerGroup_from_explicit_property_or_directory_snapshot()
+    {
+        static ushort ReadServerGroup(DungeonEntryClientFrame frame)
+        {
+            int offset = 4; // PatchTime
+            offset += 4 + (int)BitConverter.ToUInt32(frame.Plain, offset); // Token
+            offset += 4 + (int)BitConverter.ToUInt32(frame.Plain, offset); // UserName
+            offset += 4 + (int)BitConverter.ToUInt32(frame.Plain, offset); // PasswordBlock
+            offset += 1 + 4 + 8 + 4 + 4; // LoginMode + MouseCipher(4+8) + DataVersion + ClientParam
+            return BitConverter.ToUInt16(frame.Plain, offset);
+        }
+
+        // 1) 未显式指定时从 LoadChannelDirectoryAsync 快照按端口解析 (siroco -> 3)
+        var dirRig = new OnlineFlowRig();
+        ChannelDirectorySnapshot snap = ChannelDirectorySnapshot.Build(
+            "0",
+            true,
+            null,
+            new[]
+            {
+                new ChannelWireGroup("siroco", new[]
+                {
+                    new ChannelWireEntry("#ch.52", 200, 10, string.Empty, 30052),
+                }),
+            });
+        dirRig.Hooks.DirectoryLoader = (_, _, _) =>
+            Task.FromResult(ChannelDirectoryLoadResult.Success(snap, 0, true));
+
+        OnlineClientSession dirClient = await dirRig.LoggedIn();
+        Assert.True((await Bounded(dirClient.LoadChannelDirectoryAsync())).Succeeded);
+        Assert.Equal(0, dirClient.ServerGroup);
+        Assert.True((await Bounded(dirClient.ConnectAsync(30052))).IsSuccess);
+        Assert.Equal((ushort)3, ReadServerGroup(dirRig.Channels[0].Pipe.ClientFrames.Single(f => f.Id == 1)));
+
+        // 2) 显式指定 client.ServerGroup = 3 优先于目录与默认值
+        var explicitRig = new OnlineFlowRig();
+        OnlineClientSession explicitClient = await explicitRig.LoggedIn();
+        explicitClient.ServerGroup = 3;
+        Assert.True((await Bounded(explicitClient.ConnectAsync(9010))).IsSuccess);
+        Assert.Equal((ushort)3, ReadServerGroup(explicitRig.Channels[0].Pipe.ClientFrames.Single(f => f.Id == 1)));
     }
 }

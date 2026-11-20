@@ -97,6 +97,9 @@ namespace Dnf.Net.Session
 
         /// <summary>逐槽选角最多试多少个槽(从 0 起)。</summary>
         public int MaxSlots { get; set; } = 6;
+
+        /// <summary>登录包(CMD 1/1)里的服务器组编号(1..17; 0 表示未指定,由普通频道按自身配置决定)。</summary>
+        public ushort ServerGroup { get; set; }
     }
 
     /// <summary>联网进城的结局。成功时 <see cref="Session"/> 与连接归调用方,记得释放本结果对象。</summary>
@@ -339,7 +342,8 @@ namespace Dnf.Net.Session
         /// (调用方进城后交给 <see cref="TownEntryParser"/>;登录失败时结果对象不带快照,追加的内容不会被用到)。
         /// </summary>
         internal async Task<OnlineEntryResult> TryGameLogin(GameClientSession session, string token, uint localAddress,
-            IDisposable connection, OnlineTownWindows windows, List<DecodedFrame> earlyFrames, CancellationToken cancellationToken)
+            IDisposable connection, OnlineTownWindows windows, List<DecodedFrame> earlyFrames, CancellationToken cancellationToken,
+            ushort? serverGroupOverride = null)
         {
             byte[] mouseCipher = _settings.MouseCipher != null && _settings.MouseCipher.Length == LoginRequest.MouseCipherBytes
                 ? _settings.MouseCipher
@@ -353,7 +357,7 @@ namespace Dnf.Net.Session
                 LoginMode = 0,
                 MouseCipher = mouseCipher,
                 DataVersion = _settings.DataVersion,
-                ServerGroup = 0,
+                ServerGroup = serverGroupOverride ?? _settings.ServerGroup,
                 LocalAddress = localAddress,
             };
             if (request.Validate() != LoginRequestProblem.None)
