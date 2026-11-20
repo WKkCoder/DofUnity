@@ -273,6 +273,9 @@ namespace Dnf.Game.Act
         OnAttackSuccess,
         OnDamage,
 
+        /// <summary>[ON MOVE COLLISION]:移动碰壁或落地唤醒的事件触发器(条件码 0x11,事件派发 0x010a5ec0)。</summary>
+        OnMoveCollision,
+
         /// <summary>别的事件类([ON CREATE OBJECT] 等):这一类事件的运行器没有接,触发器在其余运行器里直接跳过(与客户端一致)。</summary>
         OnOtherEvent,
         ZPos,
@@ -428,6 +431,15 @@ namespace Dnf.Game.Act
         /// stuck 标志是 .atk 里 [stuck] 概率的命中掷骰结果(E-057),由宿主随事件给出,没给按否。
         /// </summary>
         CheckStuck,
+
+        /// <summary>[AXIS INDEX] k:[ON MOVE COLLISION] 的轴过滤(条件码 0x3c,0x010a60df):0=X,1=Y,2=Z,互斥重写三轴许可。</summary>
+        AxisIndex,
+
+        /// <summary>[CHECK GHOST]:场上存在鬼魂(Ghost 被动子类)对象时整体为真(条件码 0x23,0x010d4dea)。</summary>
+        CheckGhost,
+
+        /// <summary>[CHARGED TIME] op ms:对工作集里可蓄力怪物子类(0x019dd838)按蓄力毫秒数过滤(条件码 0x6,0x010d3cf0)。</summary>
+        ChargedTime,
     }
 
     /// <summary>
@@ -445,7 +457,7 @@ namespace Dnf.Game.Act
     }
 
     /// <summary>触发器里的一条记录(条件、事件或 [DO BEHAVIOR])。字段按种类取用。</summary>
-    public sealed class ActRecord
+    public sealed partial class ActRecord
     {
         public ActRecordKind Kind { get; internal set; }
 
@@ -714,6 +726,32 @@ namespace Dnf.Game.Act
 
         /// <summary>[ABS CASTING] a b:拥有者头上的绝对读条条(行为码 0x7f,块 0x010bd541),只管表现。</summary>
         AbsCasting,
+
+        // ---- 怪物未决簇 1:逻辑状态写入与触发器补全
+
+        /// <summary>[SET VISIBLITY] v:对工作集里活着的碰撞对象写可见性字节(v 非 0 为 1,0 为 0;行为码 0xe0,0x010bf653)。</summary>
+        SetVisibility,
+
+        /// <summary>[SET GRABABLE] v:对怪物拥有者写可抓取状态(v == 1 为真;行为码 0xbd,0x010c88a7)。</summary>
+        SetGrabable,
+
+        /// <summary>[SET DAMAGE CHECK] on durationMs:开关怪物拥有者的累计受击窗口(on == 1 开,否则关;行为码 0xbe,0x010c6cf6)。</summary>
+        SetDamageCheck,
+
+        /// <summary>[SET UNBEATABLE] [ON] durMs / [OFF]:开关主动对象无敌(含时限;行为码 0x112,0x010d047d)。</summary>
+        SetUnbeatable,
+
+        /// <summary>[SET PASSTYPE] keyword:设置活着被动对象的穿透类型([pass only character] 映射为 7;行为码 0xc7,0x010cb686)。</summary>
+        SetPassType,
+
+        /// <summary>[SET WIDTH] w0 w1:设置活着碰撞对象的宽高字段(行为码 0xc6,0x010cb53e)。</summary>
+        SetWidth,
+
+        /// <summary>[CHANGE TEAM] teamId durationMs hpPct:挂上换队附加物(含 HpMax 百分比加成与定时恢复;行为码 0x94,0x010c231e)。</summary>
+        ChangeTeam,
+
+        /// <summary>[DEFAULT TEAM]:卸下换队附加物恢复原队(行为码 0x95,0x010c25b1)。</summary>
+        DefaultTeam,
     }
 
     /// <summary>

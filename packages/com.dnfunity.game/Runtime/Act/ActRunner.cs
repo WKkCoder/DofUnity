@@ -544,7 +544,11 @@ namespace Dnf.Game.Act
 
         private static bool IsEvent(ActRecordKind kind)
         {
-            return kind == ActRecordKind.OnSetAction || kind == ActRecordKind.OnAttackSuccess || kind == ActRecordKind.OnDamage || kind == ActRecordKind.OnOtherEvent;
+            return kind == ActRecordKind.OnSetAction
+                || kind == ActRecordKind.OnAttackSuccess
+                || kind == ActRecordKind.OnDamage
+                || kind == ActRecordKind.OnMoveCollision
+                || kind == ActRecordKind.OnOtherEvent;
         }
 
         /// <summary>一份触发器开关数组,每个触发器取脚本里 [ENABLE] 写的初值(没写算开);交给 <see cref="ActRunner(ActProgram, IActEntity, IActHost, bool[])"/> 当持久开关。</summary>
@@ -732,7 +736,7 @@ namespace Dnf.Game.Act
             }
         }
 
-        private void Evaluate(int index, int frame, ActRecordKind evt)
+        private void Evaluate(int index, int frame, ActRecordKind evt, int moveAxis = -1)
         {
             if (_inert[index] || !_enabled[index])
             {
@@ -750,6 +754,10 @@ namespace Dnf.Game.Act
             _set.Clear();
             _set.Add(_owner);
             bool allowEmpty = false;
+            bool allowMoveX = true;
+            bool allowMoveY = true;
+            bool allowMoveZ = false;
+            bool seenMoveCollision = false;
             IReadOnlyList<ActRecord> records = t.Records;
             for (int r = 0; r < records.Count; r++)
             {
@@ -806,7 +814,14 @@ namespace Dnf.Game.Act
                     case ActRecordKind.IsDamageBoxEnable:
                     case ActRecordKind.CheckSymbol:
                     case ActRecordKind.Area:
+                    case ActRecordKind.ChargedTime:
                         FilterSet(rec);
+                        break;
+                    case ActRecordKind.CheckGhost:
+                        if (!CheckGhostPasses())
+                        {
+                            return;
+                        }
                         break;
                     case ActRecordKind.IsInArea:
                         if (!ApplyIsInArea(rec))
@@ -912,8 +927,37 @@ namespace Dnf.Game.Act
                             return;
                         }
                         break;
+                    case ActRecordKind.OnMoveCollision:
+                        if (rec.Kind != evt)
+                        {
+                            return;
+                        }
+                        seenMoveCollision = true;
+                        break;
+                    case ActRecordKind.AxisIndex:
+                        ApplyAxisIndex(rec.Number, ref allowMoveX, ref allowMoveY, ref allowMoveZ);
+                        break;
                     case ActRecordKind.DoBehavior:
                     case ActRecordKind.DirectDoBehavior:
+                        if (evt == ActRecordKind.OnMoveCollision)
+                        {
+                            if (rec.Kind == ActRecordKind.DirectDoBehavior)
+                            {
+                                if (!seenMoveCollision)
+                                {
+                                    continue;
+                                }
+                            }
+                            else
+                            {
+                                if (!IsMoveAxisAllowed(moveAxis, allowMoveX, allowMoveY, allowMoveZ, seenMoveCollision))
+                                {
+                                    seenMoveCollision = false;
+                                    continue;
+                                }
+                                seenMoveCollision = true;
+                            }
+                        }
                         if (t.Limit > 0 && _fired[index] >= t.Limit)
                         {
                             return;
@@ -928,6 +972,15 @@ namespace Dnf.Game.Act
                         }
                         break;
                     case ActRecordKind.DelayDoBehavior:
+                        if (evt == ActRecordKind.OnMoveCollision)
+                        {
+                            if (!IsMoveAxisAllowed(moveAxis, allowMoveX, allowMoveY, allowMoveZ, seenMoveCollision))
+                            {
+                                seenMoveCollision = false;
+                                continue;
+                            }
+                            seenMoveCollision = true;
+                        }
                         if (t.Limit > 0 && _fired[index] >= t.Limit)
                         {
                             return;
@@ -1083,6 +1136,8 @@ namespace Dnf.Game.Act
                     return KeepSymbol(rec, e);
                 case ActRecordKind.Area:
                     return KeepArea(rec, e);
+                case ActRecordKind.ChargedTime:
+                    return KeepChargedTime(rec, e);
                 default:
                     return true;
             }
@@ -1470,12 +1525,13 @@ namespace Dnf.Game.Act
             }
             _fired[index]++;
             int group = rec.Behavior.Eval(_rand);
-            if (group >= 0 && rec.Number >= 0)
+            int delay = rec.DelayMs != null ? rec.DelayMs.Eval(_rand) : rec.Number;
+            if (group >= 0 && delay >= 0)
             {
                 // 行为组号或延迟是负数就不排队(客户端 0x010adaed 起的两个符号判断),次数照加
                 _delayed.Add(new Delayed
                 {
-                    DueMs = _host.NowMs + rec.Number,
+                    DueMs = _host.NowMs + delay,
                     Group = group,
                     Targets = new List<IActEntity>(_targets),
                 });
@@ -1924,6 +1980,16 @@ namespace Dnf.Game.Act
                     case ActBehaviorKind.SetPartySymbol:
                     case ActBehaviorKind.AbsCasting:
                         ExecuteSymbolBehavior(b, targets);
+                        break;
+                    case ActBehaviorKind.SetVisibility:
+                    case ActBehaviorKind.SetGrabable:
+                    case ActBehaviorKind.SetDamageCheck:
+                    case ActBehaviorKind.SetUnbeatable:
+                    case ActBehaviorKind.SetPassType:
+                    case ActBehaviorKind.SetWidth:
+                    case ActBehaviorKind.ChangeTeam:
+                    case ActBehaviorKind.DefaultTeam:
+                        ExecuteCluster1Behavior(b, targets);
                         break;
                     default:
                         _host.NoteUnsupportedBehavior(b.Tag);     // 没做的行为按空操作处理(ActBehaviorGroup.UnsupportedTags 供审计;实际打到几次由场景统计,E-147)

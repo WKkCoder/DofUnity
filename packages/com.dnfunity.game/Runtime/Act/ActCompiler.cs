@@ -61,6 +61,13 @@ namespace Dnf.Game.Act
                 {
                     Add(n.Children, into);
                     into.Add(new ActToken(ActTokenKind.Close, n.Tag, default));
+                    if (n.CloserValues != null)
+                    {
+                        foreach (ScriptValue cv in n.CloserValues)
+                        {
+                            into.Add(new ActToken(ActTokenKind.Value, null, cv));
+                        }
+                    }
                 }
             }
         }
@@ -569,12 +576,23 @@ namespace Dnf.Game.Act
                         records.Add(new ActRecord { Kind = ActRecordKind.CheckStuck, Tag = tag, Number = stuckArgs.Length > 0 ? stuckArgs[0] : -1 });
                         break;
                     }
+                    case "[ON MOVE COLLISION]":
+                        records.Add(new ActRecord { Kind = ActRecordKind.OnMoveCollision, Tag = tag });
+                        break;
+                    case "[AXIS INDEX]":
+                        records.Add(ParseAxisIndex(cur, tag, unsupported));
+                        break;
+                    case "[CHECK GHOST]":
+                        records.Add(new ActRecord { Kind = ActRecordKind.CheckGhost, Tag = tag });
+                        break;
+                    case "[CHARGED TIME]":
+                        records.Add(ParseChargedTime(cur, tag, unsupported));
+                        break;
                     case "[ON CREATE OBJECT]":
                     case "[ON DESTROY OBJECT]":
                     case "[ON DESTROY ME]":
                     case "[ON END ACTION]":
                     case "[ON SHAKE INPUT]":
-                    case "[ON MOVE COLLISION]":
                     case "[ON CHANGE LIFE]":
                     case "[ON END BEHAVIOR]":
                         records.Add(new ActRecord { Kind = ActRecordKind.OnOtherEvent, Tag = tag });
@@ -995,7 +1013,7 @@ namespace Dnf.Game.Act
             return rec;
         }
 
-        /// <summary>[DELAY DO BEHAVIOR] 选择器 行为组号 延迟毫秒(E-132;全库 267 处,第二个数是 100 到几千的延迟)。</summary>
+        /// <summary>[DELAY DO BEHAVIOR] 选择器 行为组号 延迟毫秒(客户端 0x013491f0 两处都调 valueOf 0x01330240)。</summary>
         private static ActRecord ParseDelayDo(ActCursor cur, string tag, List<string> unsupported)
         {
             ActRecord rec = ParseDo(cur, tag, unsupported);
@@ -1003,14 +1021,16 @@ namespace Dnf.Game.Act
             {
                 return rec;
             }
-            if (!cur.TryInt(out int delay))
+            ActValue delay = cur.Value();
+            if (delay == null)
             {
                 AddUnsupportedTag(unsupported, tag + " (no delay)");
                 cur.SkipToHead(IsTriggerHead);
                 return new ActRecord { Kind = ActRecordKind.Unsupported, Tag = tag };
             }
             rec.Kind = ActRecordKind.DelayDoBehavior;
-            rec.Number = delay;
+            rec.DelayMs = delay;
+            rec.Number = delay.IsConstant ? delay.First : 0;
             return rec;
         }
 
@@ -1173,6 +1193,15 @@ namespace Dnf.Game.Act
                 case "[SET PARTY SYMBOL]":
                 case "[ABS CASTING]":
                     return ParseSymbolBehavior(cur, tag);      // M107:ActCompiler.Symbols.cs
+                case "[SET VISIBLITY]":
+                case "[SET GRABABLE]":
+                case "[SET DAMAGE CHECK]":
+                case "[SET UNBEATABLE]":
+                case "[SET PASSTYPE]":
+                case "[SET WIDTH]":
+                case "[CHANGE TEAM]":
+                case "[DEFAULT TEAM]":
+                    return ParseCluster1Behavior(cur, tag);
                 case "[CASTING]":
                 {
                     // [CASTING] 毫秒 行为组号:两个值表达式(全库 372 处写的都是字面整数;客户端执行块 0x010bd088,E-168);读不全就当没做

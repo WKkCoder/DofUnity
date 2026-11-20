@@ -122,6 +122,9 @@ namespace Dnf.Play
         /// <summary>第 i 招有没有动画可播;没设置时全都有。没有动画的招一律当"出不了"。</summary>
         public Func<int, bool> AttackExists { get; set; }
 
+        /// <summary>供宿主(怪物)接上实时累计受击窗口检查(.ai 的 <c>damage check()</c>)。</summary>
+        public Func<int, bool> DamageCheckState { get; set; }
+
         /// <summary>第 a 个招式的第 t 个触发器现在是不是开着(.act 的 [ENABLE]);没设置时全是关的。</summary>
         public Func<int, int, bool> TriggerEnabled { get; set; }
 
@@ -334,7 +337,7 @@ namespace Dnf.Play
 
             public bool IsFreeState() => _view.Free;
 
-            public bool DamageCheck(int mode) => false;
+            public bool DamageCheck(int mode) => _owner.DamageCheckState != null && _owner.DamageCheckState(mode);
 
             public int CountInArea(float xMin, float xMax, float yMin, float yMax, int teamMode, int typeFilter, int idFilter)
             {

@@ -240,7 +240,11 @@ internal static partial class ActRunCheck
                 bool isEvent = false;
                 foreach (ActRecord r in t.Records)
                 {
-                    if (r.Kind == ActRecordKind.OnSetAction || r.Kind == ActRecordKind.OnAttackSuccess || r.Kind == ActRecordKind.OnDamage || r.Kind == ActRecordKind.OnOtherEvent)
+                    if (r.Kind == ActRecordKind.OnSetAction
+                        || r.Kind == ActRecordKind.OnAttackSuccess
+                        || r.Kind == ActRecordKind.OnDamage
+                        || r.Kind == ActRecordKind.OnMoveCollision
+                        || r.Kind == ActRecordKind.OnOtherEvent)
                     {
                         isEvent = true;
                     }
@@ -2704,6 +2708,8 @@ internal static partial class ActRunCheck
         messageSelectors.Print();
         LoopTally loops = RunLoopCensus(assets, data, library);
         loops.Print();
+        LiveCluster1Tally liveCluster1 = RunLiveCluster1(assets, data, library);
+        liveCluster1.Print();
         int templates = 0;
         foreach (int id in reached)
         {
@@ -2772,6 +2778,9 @@ internal static partial class ActRunCheck
         int motionAll = motionOk + monsterTally.TargetMotionBroken.Values.Sum();
         Report(motionAll > 0 && motionOk * 100 >= motionAll * 95,
             "怪物出招里朝目标的移动与转向(E-169)读通的不低于 95%(" + motionOk + "/" + motionAll + ")");
+        Report(liveCluster1.Attacks > 0 && liveCluster1.Failed == 0 && liveCluster1.NotEntered == 0 && liveCluster1.StateChanged > 0,
+            "未决簇 1 招式实跑:带簇 1 标签或触发器的招每一招都切得进去、各跑最多 30 秒不抛异常、观测到状态写入(" + liveCluster1.Attacks
+            + " 招,没切进去 " + liveCluster1.NotEntered + " 招,抛异常 " + liveCluster1.Failed + " 招,状态变更 " + liveCluster1.StateChanged + " 招)");
 
         if (opts.JsonFile != null)
         {
@@ -2797,6 +2806,7 @@ internal static partial class ActRunCheck
                 liveMessages = liveMessages.ToJson(),
                 messageSelectors = messageSelectors.ToJson(),
                 loopCensus = loops.ToJson(),
+                liveCluster1 = liveCluster1.ToJson(),
             };
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(opts.JsonFile))!);
             File.WriteAllText(opts.JsonFile, JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));
