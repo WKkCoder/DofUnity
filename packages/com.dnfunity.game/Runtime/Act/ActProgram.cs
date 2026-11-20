@@ -752,6 +752,11 @@ namespace Dnf.Game.Act
 
         /// <summary>[DEFAULT TEAM]:卸下换队附加物恢复原队(行为码 0x95,0x010c25b1)。</summary>
         DefaultTeam,
+
+        // ---- r19-particle
+
+        /// <summary>[PARTICLE] "路径" [dx dy dz]:在拥有者位置加固定(不镜像)偏移处触发一次粒子发射(行为码 0xaa,加载 0x013419f8、执行 0x010c5f91)。</summary>
+        Particle,
     }
 
     /// <summary>

@@ -1202,6 +1202,8 @@ namespace Dnf.Game.Act
                 case "[CHANGE TEAM]":
                 case "[DEFAULT TEAM]":
                     return ParseCluster1Behavior(cur, tag);
+                case "[PARTICLE]":
+                    return ParseParticleBehavior(cur, tag);    // r19-particle:ActCompiler.Particle.cs
                 case "[CASTING]":
                 {
                     // [CASTING] 毫秒 行为组号:两个值表达式(全库 372 处写的都是字面整数;客户端执行块 0x010bd088,E-168);读不全就当没做
