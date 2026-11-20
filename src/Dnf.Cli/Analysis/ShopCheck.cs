@@ -368,8 +368,8 @@ internal static class ShopCheck
     }
 
     /// <summary>
-    /// 把刚买的 <paramref name="count"/> 件 <paramref name="item"/> 卖回去,核对结果:商店收的(<see cref="ShopRules.IsSellable"/>)要成交、
-    /// 钱涨的正好是 <see cref="ItemPricing.SellPrice"/>、背包里这件清零;商店不收的要拒收、钱与背包都不动。账对返回 true。
+    /// 打印商品的零价统计:金价为 0 的占比(带 [need material] 与无材料的划分)、[value] 为 0 的占比、按物品类型与按商店的零价占比;
+    /// 只输出个数与百分比。
     /// </summary>
     private static void PrintZeroPriceStats(List<ItemShopDef> defs, ItemCatalog items, List<ItemInfo> goods)
     {
@@ -443,6 +443,10 @@ internal static class ShopCheck
         return count + "/" + total + " (" + pct.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "%)";
     }
 
+    /// <summary>
+    /// 把刚买的 <paramref name="count"/> 件 <paramref name="item"/> 卖回去,核对结果:商店收的(<see cref="ShopRules.IsSellable"/>)要成交、
+    /// 钱涨的正好是 <see cref="ItemPricing.SellPrice"/>、背包里这件清零;商店不收的要拒收、钱与背包都不动。账对返回 true。
+    /// </summary>
     private static bool SellBack(HeroProgress progress, ItemInfo item, int count, ItemPriceRates rates, ref int sells, ref int refused)
     {
         InventoryTab tab = Inventory.TabOf(item);
