@@ -313,4 +313,106 @@ public class OnlineDungeonScreenGapR7Tests
         Assert.Equal((expectedX + 44, textY, expectedTextWidth, expectedTextHeight), Box(sprites[3]));
         Assert.Equal(new[] { 0, 1, 2, 3 }, sprites.Select(s => s.SortKey));
     }
+
+    // ------------------------------------------------------------------ 卡片名替换的前提与跳过路径
+
+    [Fact]
+    public void CardNameSpritesAreLeftAloneWithoutADisplayNameFunctionOrWithoutEntries()
+    {
+        // 保护:替换卡片名要"有显示名函数 且 有条目列表"才做:缺任何一个时 map-card-name 精灵原样不动、不抛异常;
+        // 没有显示名函数时不能去调它(有条目也不换),没有条目列表时不能拿 null 去找卡片(有函数也一次都不调)。
+        // 落点 (103,91) 在 0 号选中大卡 (97,63,168,73) 里:条目与函数都齐全时它会被换成字体字(见别的用例)。
+        DungeonEntry[] entries = TwoCards();
+        SceneSprite hit = Stub("map-card-name", 103, 91, 3, 82);
+
+        var noFunction = new List<SceneSprite> { hit };
+        Enhance(noFunction, new ProbeFonts(), entries, 0, null, null);
+        Assert.Same(hit, Assert.Single(noFunction));
+
+        int asked = 0;
+        var noEntries = new List<SceneSprite> { hit };
+        Enhance(noEntries, new ProbeFonts(), null, 0, _ =>
+        {
+            asked++;
+            return "XY";
+        }, null);
+        Assert.Same(hit, Assert.Single(noEntries));
+        Assert.Equal(0, asked);
+
+        // 对照:条目与函数都齐全 → 同一个精灵被换成 14 号字(帧 8×16,x = 97+6 = 103,y = 63 + (73-16)/2 = 91)
+        var both = new List<SceneSprite> { hit };
+        Enhance(both, new ProbeFonts(), entries, 0, _ => "XY", null);
+        Assert.Equal((103, 91, 8, 16), Box(Assert.Single(both)));
+    }
+
+    [Fact]
+    public void ACardNameIsKeptWhenItsDisplayNameIsEmptyAndEntriesWithoutACardAreSkippedWhileSearching()
+    {
+        // 保护:显示名函数对某张卡答 null 或空串时,这张卡的名字精灵原样保留(不被换成空);
+        // 找卡片时没有卡片图的条目(占位列表里的普通条目)直接跳过,选中项本身没有卡片时也不抛异常、照样能找到别的卡。
+        // 条目:0 号卡 (160,160)、1 号普通条目(没有卡片)、2 号卡 (420,220):
+        //   0 号 → 大卡 (97,63,168,73)、小卡 (124,83,118,52);2 号 → 小卡 (384,143,118,52)。
+        // 名字精灵 a 落在 (130,90):选中 0 号时在 0 号大卡里;选中 1 号(没有卡片)时在 0 号小卡里;
+        // 名字精灵 b 落在 (390,162):在 2 号小卡里(找它要先扫过没有卡片的 1 号)。
+        DungeonEntry middle = PlainEntry("MID");
+        DungeonEntry[] entries =
+        {
+            FallbackCardEntry("lorien", 9101, 160, 160),
+            middle,
+            FallbackCardEntry("vilmark", 9102, 420, 220),
+        };
+
+        // 名字都有:选中 0 号 → a 是 14 号 (帧 8×16):x = 97+6 = 103,y = 63 + (73-16)/2 = 91;b 是 12 号 (帧 8×14):x = 384+6 = 390,y = 143 + (52-14)/2 = 162
+        //          选中 1 号(没有卡片)→ a 是 0 号小卡里的 12 号字:x = 124+6 = 130,y = 83 + (52-14)/2 = 102;b 同上
+        foreach (var c in new[] { (Selected: 0, AX: 103, AY: 91, AH: 16), (Selected: 1, AX: 130, AY: 102, AH: 14) })
+        {
+            SceneSprite a = Stub("map-card-name", 130, 90, 1, 90);
+            SceneSprite b = Stub("map-card-name", 390, 162, 2, 91);
+            var sprites = new List<SceneSprite> { a, b };
+            Enhance(sprites, new ProbeFonts(), entries, c.Selected, e => e.Card == null ? "UNUSED" : "XY", null);
+            Assert.Equal((c.AX, c.AY, 8, c.AH), Box(sprites[0]));
+            Assert.Equal((390, 162, 8, 14), Box(sprites[1]));
+        }
+
+        // 0 号的名字答 null、2 号答空串:两个精灵都原样保留(不去向字体要字)
+        var fonts = new ProbeFonts();
+        SceneSprite keepA = Stub("map-card-name", 130, 90, 1, 92);
+        SceneSprite keepB = Stub("map-card-name", 390, 162, 2, 93);
+        var kept = new List<SceneSprite> { keepA, keepB };
+        Enhance(kept, fonts, entries, 0, e => e.Card == null ? "UNUSED" : (e.Card.DungeonId == 9101 ? null : string.Empty), null);
+        Assert.Same(keepA, kept[0]);
+        Assert.Same(keepB, kept[1]);
+        Assert.Empty(fonts.Requested);
+    }
+
+    // ------------------------------------------------------------------ 副本选择界面的提示条:同样的宽度规则与上限
+
+    [Theory]
+    [InlineData(1, 125, 560, 120, 505, 16)]  // 测宽 3+500 = 503 ≤ 504 放得下 → 帧 505×16 → 56+505 = 561 被上限夹到 560
+    [InlineData(2, 124, 560, 120, 504, 16)]  // 测宽 502 → 帧 504×16 → 56+504 = 560 刚好等于上限
+    [InlineData(3, 123, 559, 120, 503, 16)]  // 测宽 501 → 帧 503×16 → 条宽 559,x = (800-559)/2 = 120
+    [InlineData(3, 124, 559, 120, 503, 12)]  // 测宽 505 > 504 → 缩到 10 号仍超 → 截断到 <= 500:"AAA"+122 个全角字 497 + "…" 4 = 501 → 帧 503×12 → 条宽 559
+    [InlineData(0, 200, 560, 120, 506, 12)]  // 测宽 800 → 缩到 10 号 → 截断:125 个全角字 500 + "…" 4 = 504 → 帧 506×12 → 56+506 = 562 夹到 560
+    public void TheSelectScreenNoticeBarFollowsTheSameWidthRuleAndCapAtFiveHundredSixty(
+        int narrow, int wide, int expectedBarWidth, int expectedX, int expectedTextWidth, int expectedTextHeight)
+    {
+        // 保护:选择界面顶部提示条(世界地图叠层与占位列表共用的那一段)的宽度规则与进出副本的提示条一致:条宽 = 文字帧宽 + 56,上限 560,
+        // 文字限宽 504;位置 y = 48,色条 (x+1,49) 4×30,图标 (x+16,54) 20×20,文字 (x+44, 48+(32-文字高)/2);标签前缀 select-online-notice。
+        var fonts = new ProbeFonts();
+        var sprites = new List<SceneSprite>();
+        int order = 0;
+        string text = Narrow(narrow) + Wide(wide);
+        DungeonSelectOverlay.AddNoticeBar(
+            sprites, ref order, new ShellPaint(new OverlayArt { Fonts = fonts }), new DungeonSelectNotice(DungeonSelectNoticeKind.Info, text), DungeonEntryStatus.Allowed, 0);
+
+        Assert.Equal(4, order);
+        Assert.Equal(
+            new[] { "select-online-notice-bar", "select-online-notice-accent", "select-online-notice-icon", "select-online-notice" },
+            Tags(sprites));
+        int textY = 48 + (32 - expectedTextHeight) / 2;
+        Assert.Equal((expectedX, 48, expectedBarWidth, 32), Box(sprites[0]));
+        Assert.Equal((expectedX + 1, 49, 4, 30), Box(sprites[1]));
+        Assert.Equal((expectedX + 16, 54, 20, 20), Box(sprites[2]));
+        Assert.Equal((expectedX + 44, textY, expectedTextWidth, expectedTextHeight), Box(sprites[3]));
+    }
 }
