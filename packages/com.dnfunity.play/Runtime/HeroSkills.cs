@@ -105,6 +105,27 @@ namespace Dnf.Play
             }
         }
 
+        /// <summary>
+        /// 多属性 0x11 增益附加体除主属性之外的其余属性修正(<see cref="BuffRecipe.ExtraStats"/> 按当前等级折算成 (属性枚举号, 数值));
+        /// 不是增益类技能、读不到定义或没有额外属性时为空表。
+        /// </summary>
+        public IReadOnlyList<KeyValuePair<int, double>> BuffExtraAmounts
+        {
+            get
+            {
+                if (Buff == null || Def == null || Buff.ExtraStats.Count == 0)
+                {
+                    return Array.Empty<KeyValuePair<int, double>>();
+                }
+                var list = new List<KeyValuePair<int, double>>(Buff.ExtraStats.Count);
+                foreach (BuffStatEntry entry in Buff.ExtraStats)
+                {
+                    list.Add(new KeyValuePair<int, double>(entry.StatType, entry.Evaluate(Def, Level)));
+                }
+                return list;
+            }
+        }
+
         /// <summary>防御姿态类技能的放法(E-164);不是防御姿态类技能为 null。这类技能没有配方(没有多段动作与攻击信息),身体不打人。</summary>
         public GuardRecipe Guard { get; internal set; }
 
@@ -349,13 +370,22 @@ namespace Dnf.Play
         /// </summary>
         public IReadOnlyList<HeroSkillSlot> CommandSlots => _commandSlots;
 
+        /// <summary>这份技能表所属的职业编号(默认 0 即首职业;非首职业屏蔽首职业专属手写技与首职业局部配方碰撞)。</summary>
+        public int Job { get; }
+
         public HeroSkills(IEnumerable<HeroSkillSlot> slots)
-            : this(slots, null)
+            : this(slots, null, EquipRules.SwordmanJob)
         {
         }
 
         public HeroSkills(IEnumerable<HeroSkillSlot> slots, IEnumerable<HeroSkillSlot> commandSlots)
+            : this(slots, commandSlots, EquipRules.SwordmanJob)
         {
+        }
+
+        public HeroSkills(IEnumerable<HeroSkillSlot> slots, IEnumerable<HeroSkillSlot> commandSlots, int job)
+        {
+            Job = job;
             _slots = new List<HeroSkillSlot>(slots ?? throw new ArgumentNullException(nameof(slots)));
             _commandSlots = new List<HeroSkillSlot>();
             if (commandSlots != null)
@@ -370,17 +400,39 @@ namespace Dnf.Play
             }
         }
 
-        /// <summary>这个技能编号有没有实现放法(三个手写的、倒地起身,加上默认配方表里的配方技能、增益类技能、防御姿态类技能与投掷类技能)。</summary>
+        /// <summary>首职业(0)下这个技能编号有没有实现放法(兼容旧一参签名,等价于 <see cref="IsImplemented(int, int)"/> 传首职业)。</summary>
         public static bool IsImplemented(int skillId)
         {
-            return skillId == SkillIds.HardAttack || skillId == SkillIds.UpperSlash || skillId == SkillIds.BackStep || skillId == SkillIds.QuickStand
-                || SkillRecipes.Default.Find(skillId) != null || SkillRecipes.Default.FindBuff(skillId) != null || SkillRecipes.Default.FindGuard(skillId) != null
-                || SkillRecipes.Default.FindClassBuff(skillId) != null || SkillRecipes.Default.FindThrow(skillId) != null;
+            return IsImplemented(EquipRules.SwordmanJob, skillId);
         }
 
-        private static bool IsImplemented(HeroSkillSlot slot)
+        /// <summary>
+        /// 指定职业 <paramref name="job"/> 下技能编号 <paramref name="skillId"/> 有没有实现放法:
+        /// 基类共享项(后跳、倒地起身与基类通用 0x11 增益)对全部非负职业生效;首职业手写项与局部表仅对首职业生效;其余按 (job, skillId) 作用域查表。
+        /// </summary>
+        public static bool IsImplemented(int job, int skillId)
         {
-            return slot.Recipe != null || slot.Buff != null || slot.Guard != null || slot.Throw != null || IsImplemented(slot.SkillId);
+            if (job < 0 || skillId <= 0)
+            {
+                return false;
+            }
+            if (skillId == SkillIds.BackStep || skillId == SkillIds.QuickStand)
+            {
+                return true;
+            }
+            if (job == EquipRules.SwordmanJob && (skillId == SkillIds.HardAttack || skillId == SkillIds.UpperSlash))
+            {
+                return true;
+            }
+            return SkillRecipes.Default.Find(job, skillId) != null
+                || SkillRecipes.Default.FindBuff(job, skillId) != null
+                || SkillRecipes.Default.FindGuard(job, skillId) != null
+                || SkillRecipes.Default.FindThrow(job, skillId) != null;
+        }
+
+        private static bool IsImplemented(int job, HeroSkillSlot slot)
+        {
+            return slot.Recipe != null || slot.Buff != null || slot.Guard != null || slot.Throw != null || IsImplemented(job, slot.SkillId);
         }
 
         /// <summary>
@@ -396,7 +448,7 @@ namespace Dnf.Play
             var slots = new List<HeroSkillSlot>();
             if (data == null || chr == null)
             {
-                return new HeroSkills(slots);
+                return new HeroSkills(slots, null, job);
             }
             int[] initial = chr.Tags.Ints("[skill]");
             for (int i = 0; i + 1 < initial.Length && slots.Count < 3; i += 2)
@@ -406,10 +458,11 @@ namespace Dnf.Play
                 {
                     continue;
                 }
-                slots.Add(MakeSlot(data, chr, (SkillKeys)(1 << slots.Count), def, initial[i + 1], skillLevelOf: _ => initial[i + 1],
+                int initialLevel = initial[i + 1];
+                slots.Add(MakeSlot(data, chr, job, (SkillKeys)(1 << slots.Count), def, initialLevel, skillLevelOf: _ => initialLevel,
                     resolveSkill: id => data.GetSkill(job, id)));
             }
-            return new HeroSkills(slots);
+            return new HeroSkills(slots, null, job);
         }
 
         /// <summary>
@@ -421,7 +474,7 @@ namespace Dnf.Play
             var slots = new List<HeroSkillSlot>();
             if (data == null || chr == null || book == null)
             {
-                return new HeroSkills(slots);
+                return new HeroSkills(slots, null, job);
             }
             recipes = recipes ?? SkillRecipes.Default;
             IReadOnlyList<SkillPassivePowerRate.Link> registeredLinks = Dnf.Game.SkillPassivePowerRegistry.CollectForBook(data, job, book);
@@ -438,7 +491,7 @@ namespace Dnf.Play
                 {
                     continue;
                 }
-                slots.Add(MakeSlot(data, chr, (SkillKeys)(1 << position), def, book.LevelOf(skillId), recipes, effects, book.LevelOf,
+                slots.Add(MakeSlot(data, chr, job, (SkillKeys)(1 << position), def, book.LevelOf(skillId), recipes, effects, book.LevelOf,
                     id => book.Catalog.Find(id) ?? data.GetSkill(job, id), registeredLinks));
             }
             // 学会了、有出招指令、没放进快捷栏的主动技能:只靠指令放(E-140)。没有放法的技能不进来(按指令也放不出东西)
@@ -454,24 +507,25 @@ namespace Dnf.Play
                 {
                     continue;
                 }
-                HeroSkillSlot slot = MakeSlot(data, chr, SkillKeys.None, def, learned.Value, recipes, effects, book.LevelOf,
+                HeroSkillSlot slot = MakeSlot(data, chr, job, SkillKeys.None, def, learned.Value, recipes, effects, book.LevelOf,
                     id => book.Catalog.Find(id) ?? data.GetSkill(job, id), registeredLinks);
-                if (IsImplemented(slot))
+                if (IsImplemented(job, slot))
                 {
                     commandSlots.Add(slot);
                 }
             }
-            return new HeroSkills(slots, commandSlots) { SkillLevelOf = book.LevelOf };
+            return new HeroSkills(slots, commandSlots, job) { SkillLevelOf = book.LevelOf };
         }
 
-        private static HeroSkillSlot MakeSlot(GameData data, CharacterDef chr, SkillKeys key, SkillDef def, int level, SkillRecipes recipes = null,
+        private static HeroSkillSlot MakeSlot(GameData data, CharacterDef chr, int job, SkillKeys key, SkillDef def, int level, SkillRecipes recipes = null,
             SkillEffectTable effects = null, Func<int, int> skillLevelOf = null, Func<int, SkillDef> resolveSkill = null,
             IReadOnlyList<SkillPassivePowerRate.Link> registeredLinks = null)
         {
             var slot = new HeroSkillSlot(key, def.Id, level, def);
-            SkillRecipe recipe = (recipes ?? SkillRecipes.Default).Find(def.Id)?.ExpandFor(def);        // 逐击连段类按这个技能的击数展开(状态 0x27)
-            slot.Buff = (recipes ?? SkillRecipes.Default).FindBuff(def.Id) ?? (recipes ?? SkillRecipes.Default).FindClassBuff(def.Id);   // 增益类技能(E-141):没有配方,放法只有一个施法动作与一个附加体
-            slot.Guard = (recipes ?? SkillRecipes.Default).FindGuard(def.Id);      // 防御姿态类技能(E-164):没有配方,放法只有一个姿势动作,按住攻击键维持
+            SkillRecipes table = recipes ?? SkillRecipes.Default;
+            SkillRecipe recipe = table.Find(job, def.Id)?.ExpandFor(def);        // 逐击连段类按这个技能的击数展开(状态 0x27)
+            slot.Buff = table.FindBuff(job, def.Id);                             // 增益类技能(E-141/阶段 2a):含基类通用与本职业专属 0x11 增益
+            slot.Guard = table.FindGuard(job, def.Id);                           // 防御姿态类技能(E-164/阶段 2a):按职业作用域隔离
             if (recipe != null)
             {
                 // 配方技能:逐段取攻击信息(角色 [etc attack info] 的下标)与伤害数(.skl [level info] 当前等级的两列),特效取技能预载表的下标(证据 E-129)
@@ -554,13 +608,13 @@ namespace Dnf.Play
                 slot.StageEffects = paths;
                 return slot;
             }
-            ThrowRecipe throwRecipe = (recipes ?? SkillRecipes.Default).FindThrow(def.Id);      // 投掷类技能(状态 0x0d 一族):对象的攻击信息与伤害数、两段姿势动画
+            ThrowRecipe throwRecipe = table.FindThrow(job, def.Id);      // 投掷类技能(状态 0x0d 一族):对象的攻击信息与伤害数、两段姿势动画
             if (throwRecipe != null)
             {
                 BuildThrowSlot(slot, data, chr, def, throwRecipe, skillLevelOf, resolveSkill, registeredLinks);
                 return slot;
             }
-            if (def.Id == SkillIds.HardAttack)
+            if (job == EquipRules.SwordmanJob && def.Id == SkillIds.HardAttack)
             {
                 // 鬼斩有自己的攻击信息(角色 [etc attack info] 里的 hardattack.atk,按名字找)与伤害数(.skl [level info] 当前等级的第 0、1 列)
                 int atk = chr.EtcAttackInfoIndexOf(HardAttackInfoFile);
@@ -733,9 +787,9 @@ namespace Dnf.Play
             return key == CommandKey.Skill || key == CommandKey.Buff;
         }
 
-        private static bool IsCommandCastable(HeroSkillSlot s)
+        private bool IsCommandCastable(HeroSkillSlot s)
         {
-            return s.SkillId != SkillIds.QuickStand && IsImplemented(s) && CommandCasts(s.Def?.Command);
+            return s.SkillId != SkillIds.QuickStand && IsImplemented(Job, s) && CommandCasts(s.Def?.Command);
         }
 
         /// <summary>
@@ -823,7 +877,7 @@ namespace Dnf.Play
             {
                 return SkillCastResult.NotBound;
             }
-            if (!IsImplemented(slot))
+            if (!IsImplemented(Job, slot))
             {
                 return SkillCastResult.NotImplemented;
             }
@@ -836,27 +890,28 @@ namespace Dnf.Play
                 return SkillCastResult.NoMp;
             }
             bool began;
-            switch (slot.SkillId)
+            if (slot.SkillId == SkillIds.BackStep)
             {
-                case SkillIds.HardAttack:
-                    // 鬼斩:原地播 [etc motion] 里的 hardattack.ani(客户端的状态 20),不滑行(基线里主角整段位置不变,冲出去的样子画在帧图自带的偏移里)
-                    int etc = hero.EtcMotionIndexOf(HardAttackMotionFile);
-                    began = etc >= 0 && hero.BeginSkillMotion(slot.SkillId, etc, 0.0, 0.0);
-                    break;
-                case SkillIds.UpperSlash:
-                    began = hero.BeginSkillStrike(slot.SkillId, UpperSlashStage);
-                    break;
-                case SkillIds.BackStep:
-                    began = hero.BeginBackStep(slot.SkillId, slot.Def == null ? 0 : slot.Def.GetStatic(0, false));
-                    break;
-                default:
-                    began = slot.Recipe != null
-                        ? (slot.Recipe.Dive != null ? BeginDive(slot, hero)
-                            : (slot.Recipe.JumpAttack != null ? BeginJumpAttack(slot, hero) : BeginStage(slot, 0, hero, heldX, heldY, false, MultiHitWindows(slot))))
-                        : slot.Throw != null ? BeginThrow(slot, hero)      // 投掷类:原地摆阶段 0 的姿势,对象与霸体由房间会话放(状态 0x0d 一族)
-                        : slot.Guard != null ? hero.BeginGuard(slot.SkillId, slot.Guard.MotionIndex, slot.GuardMinHoldMs)   // 防御姿态类:原地摆姿势、动画定在第 0 帧,按住攻击键维持(M66,E-164)
-                        : slot.Buff != null && hero.BeginBuffMotion(slot.SkillId);   // 增益类:原地播 [buff motion],施法正常结束时才挂增益(E-141,由房间会话挂)
-                    break;
+                began = hero.BeginBackStep(slot.SkillId, slot.Def == null ? 0 : slot.Def.GetStatic(0, false));
+            }
+            else if (Job == EquipRules.SwordmanJob && slot.SkillId == SkillIds.HardAttack)
+            {
+                // 鬼斩:原地播 [etc motion] 里的 hardattack.ani(客户端的状态 20),不滑行(基线里主角整段位置不变,冲出去的样子画在帧图自带的偏移里)
+                int etc = hero.EtcMotionIndexOf(HardAttackMotionFile);
+                began = etc >= 0 && hero.BeginSkillMotion(slot.SkillId, etc, 0.0, 0.0);
+            }
+            else if (Job == EquipRules.SwordmanJob && slot.SkillId == SkillIds.UpperSlash)
+            {
+                began = hero.BeginSkillStrike(slot.SkillId, UpperSlashStage);
+            }
+            else
+            {
+                began = slot.Recipe != null
+                    ? (slot.Recipe.Dive != null ? BeginDive(slot, hero)
+                        : (slot.Recipe.JumpAttack != null ? BeginJumpAttack(slot, hero) : BeginStage(slot, 0, hero, heldX, heldY, false, MultiHitWindows(slot))))
+                    : slot.Throw != null ? BeginThrow(slot, hero)      // 投掷类:原地摆阶段 0 的姿势,对象与霸体由房间会话放(状态 0x0d 一族)
+                    : slot.Guard != null ? hero.BeginGuard(slot.SkillId, slot.Guard.MotionIndex, slot.GuardMinHoldMs)   // 防御姿态类:原地摆姿势、动画定在第 0 帧,按住攻击键维持(M66,E-164)
+                    : slot.Buff != null && hero.BeginBuffMotion(slot.SkillId);   // 增益类:原地播 [buff motion],施法正常结束时才挂增益(E-141,由房间会话挂)
             }
             if (!began)
             {
