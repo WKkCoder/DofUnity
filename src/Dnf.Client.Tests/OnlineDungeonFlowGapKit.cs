@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Dnf.Data;
 using Dnf.Net.Frame;
 using Dnf.Net.Session;
 using Dnf.Net.Tests;
@@ -411,6 +412,78 @@ internal static class OnlineDungeonFlowGapKit
             "map/test/normal.map",
             Array.Empty<WorldRect>(),
             Array.Empty<TownExit>());
+    }
+
+    /// <summary>进副本两步命令的标准回包:"开始游戏"回 27,"选副本"回 28+29;别的命令返回 null(交给调用方接着判断)。</summary>
+    public static CombatKit.ServerFrame[] EntryReply(PacketClass cls, int packetId, int dungeonId = DungeonAId, int monsters = 2)
+    {
+        if (cls != PacketClass.Cmd)
+        {
+            return null;
+        }
+        if (packetId == OnlineDungeonEntry.StartGamePacketId)
+        {
+            return LoadingFrames();
+        }
+        if (packetId == OnlineDungeonEntry.SelectDungeonPacketId)
+        {
+            return InfoAndMapFrames(dungeonId, monsters);
+        }
+        return null;
+    }
+
+    private static ScriptLine ScriptLineOf(string tag, params object[] values)
+    {
+        var list = new ScriptValue[values.Length];
+        for (int i = 0; i < values.Length; i++)
+        {
+            list[i] = values[i] is int iv ? new ScriptValue(ScriptValueKind.Int, iv, null) : new ScriptValue(ScriptValueKind.String, 0, (string)values[i]);
+        }
+        return new ScriptLine(tag, list);
+    }
+
+    /// <summary>只有一座城镇、几块普通区域的合成图册(都没有出口与可走区域):够 <c>TryMapToServerArea</c> 判"这个区域登记过"。</summary>
+    public static TownAtlas AtlasWith(int town, params int[] areaIds)
+    {
+        string twn = "town/k" + town + ".twn";
+        var paths = new Dictionary<int, string> { [town] = twn };
+        var scripts = new Dictionary<string, ScriptLine[]>();
+        var twnLines = new List<ScriptLine>();
+        foreach (int areaId in areaIds)
+        {
+            twnLines.Add(ScriptLineOf("[area]", areaId, "K" + town + "/A" + areaId + ".map", "[normal]"));
+            scripts["map/k" + town + "/a" + areaId + ".map"] = Array.Empty<ScriptLine>();
+        }
+        scripts[twn] = twnLines.ToArray();
+        return new TownAtlas(paths, p => scripts.TryGetValue(p, out ScriptLine[] doc) ? doc : null, _ => false);
+    }
+
+    /// <summary>
+    /// 把场景台摆成"能进一间真房间的副本":入口两步命令按标准回包,放弃回城(1/45)交给 <paramref name="onGiveUp"/>(null 就当没收到),
+    /// 其余命令交给战斗假服务端(<paramref name="monsters"/> 只怪);建房工厂造一间单房间(合成房间夹具,怪数同)。
+    /// </summary>
+    public static void ServeRoomDungeon(Rig rig, int monsters = 2, Func<byte[], IEnumerable<CombatKit.ServerFrame>> onGiveUp = null)
+    {
+        var combatServer = new FakeCombatServer(CombatKit.Sequential(monsters));
+        rig.Port.SetResponder((cls, id, payload) =>
+        {
+            CombatKit.ServerFrame[] entry = EntryReply(cls, id, DungeonAId, monsters);
+            if (entry != null)
+            {
+                return entry;
+            }
+            if (cls == PacketClass.Cmd && id == SessionLifecyclePayloads.GiveUpGamePacketId)
+            {
+                return onGiveUp != null ? onGiveUp(payload) : Array.Empty<CombatKit.ServerFrame>();
+            }
+            return combatServer.Handle(cls, id, payload);
+        });
+        rig.RoomBuilder = ctx =>
+        {
+            var room = new OnlineDungeonRoom(ctx.CombatRunner);
+            HostedRoomRun run = room.CreateRun(plan => rig.Fixture.Create(Templates(monsters), plan, Array.Empty<GateSide>()));
+            return OnlineDungeonRoomBuildResult.Success(room, run);
+        };
     }
 
     // ------------------------------------------------------------------------------------------------
