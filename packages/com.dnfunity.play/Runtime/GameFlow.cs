@@ -190,6 +190,18 @@ namespace Dnf.Play
         /// </summary>
         public Func<DungeonEntry, int> DifficultyLimit { get; set; }
 
+        /// <summary>联网选图挂钩:打开或重开选择屏后由宿主挂载条目状态、文字与提示条。</summary>
+        public Action<DungeonSelectScreen> ConfigureSelect { get; set; }
+
+        /// <summary>联网进副本接管回调(r18-dungeonflow):非 null 时选择屏确认与再次挑战走联网握手与房间装配。</summary>
+        public Action<DungeonEntry, int> OnlineStartDungeon { get; set; }
+
+        /// <summary>联网放弃回城接管回调(r18-dungeonflow):非 null 时副本内菜单选"放弃回城"先发 1/45 等 0/23+0/24 再回城。</summary>
+        public Action OnlineGiveUpDungeon { get; set; }
+
+        /// <summary>联网通关结算菜单接管标记(<c>r18-settleui</c> 用):为 true 时暂缓自动退出副本阶段,等外部选定后再切阶段。</summary>
+        public bool OnlineHoldDungeonExit { get; set; }
+
         /// <summary>
         /// 进副本的门槛(r15-growth):宿主接到主角的疲劳上(<see cref="FatigueGate.For"/>);不设就不拦。副本选择界面确认进入与结算菜单选"再次挑战"时各问一次(参数是副本路径),
         /// 结论不是 <see cref="EntryVerdict.Allowed"/> 就不开局:选择界面的确认退回选择界面(重新打开,停在原来选的副本与难度上),再次挑战改去副本选择界面
@@ -676,7 +688,140 @@ namespace Dnf.Play
                     }
                 }
             }
-            Switch(GameStage.DungeonSelect, reason, null, new DungeonSelectScreen(_entries, index, _world, DifficultyLimit, Difficulty));
+            Switch(GameStage.DungeonSelect, reason, null, CreateSelect(index, Difficulty));
+        }
+
+        private DungeonSelectScreen CreateSelect(int index, int difficulty)
+        {
+            var screen = new DungeonSelectScreen(_entries, index, _world, DifficultyLimit, difficulty);
+            ConfigureSelect?.Invoke(screen);
+            return screen;
+        }
+
+        private DungeonEntry FindEntryByPath(string dungeonPath)
+        {
+            if (string.IsNullOrEmpty(dungeonPath))
+            {
+                return null;
+            }
+            for (int i = 0; i < _entries.Count; i++)
+            {
+                if (string.Equals(_entries[i].Path, dungeonPath, StringComparison.Ordinal))
+                {
+                    return _entries[i];
+                }
+            }
+            return null;
+        }
+
+        /// <summary>联网请求进副本时的加载状态切换:有过渡图先切到加载画面(等联网就绪后再进副本),否则保持在当前画面标忙。</summary>
+        public void BeginOnlineDungeonLoading(DungeonEntry entry, int difficulty, string reason = "online enter")
+        {
+            if (entry == null)
+            {
+                throw new ArgumentNullException(nameof(entry));
+            }
+            if (string.IsNullOrEmpty(entry.Path))
+            {
+                throw new ArgumentException("需要副本路径", nameof(entry));
+            }
+            DungeonPath = entry.Path;
+            Difficulty = Math.Max(0, Math.Min(difficulty, DungeonSession.DifficultyCount - 1));
+            OnlineHoldDungeonExit = false;
+
+            SplashScene splash = _dungeonSplash?.Invoke(entry.Path);
+            if (splash != null)
+            {
+                _afterSplash = null;
+                Switch(GameStage.Loading, reason, null, null, new SplashScreen(splash));
+            }
+            else if (Stage == GameStage.DungeonSelect && Select != null)
+            {
+                Select.Busy = true;
+                Select.Notice = new DungeonSelectNotice(DungeonSelectNoticeKind.Entering);
+            }
+        }
+
+        /// <summary>联网进副本握手与建房完成:计入开局次数并切进 <see cref="GameStage.Dungeon"/>。</summary>
+        public void CompleteOnlineDungeonStart(string dungeonPath, int difficulty, IRunSession run, string reason = "online enter")
+        {
+            if (string.IsNullOrEmpty(dungeonPath))
+            {
+                throw new ArgumentException("需要副本路径", nameof(dungeonPath));
+            }
+            if (run == null)
+            {
+                throw new ArgumentNullException(nameof(run));
+            }
+            DungeonPath = dungeonPath;
+            Difficulty = Math.Max(0, Math.Min(difficulty, DungeonSession.DifficultyCount - 1));
+            Runs++;
+            _afterSplash = null;
+            OnlineHoldDungeonExit = false;
+            Switch(GameStage.Dungeon, reason, run, null);
+        }
+
+        /// <summary>联网进副本或建房失败:退出加载画面,重新打开副本选择界面停在原条目与难度上并展示提示。</summary>
+        public void FailOnlineDungeonStart(DungeonEntry entry, int difficulty, DungeonSelectNotice notice, string reason = "online enter failed")
+        {
+            _afterSplash = null;
+            OnlineHoldDungeonExit = false;
+            ReopenSelect(entry, difficulty, reason);
+            if (Select != null)
+            {
+                Select.Busy = false;
+                Select.Notice = notice;
+            }
+        }
+
+        /// <summary>联网放弃回城握手完成后记一次放弃并按城镇世界返城。</summary>
+        public void CompleteOnlineGiveUp(string reason = "online giveup")
+        {
+            _afterSplash = null;
+            OnlineHoldDungeonExit = false;
+            GiveUps++;
+            EnterTown(reason);
+        }
+
+        /// <summary>联网副本中途中止/断线/超时收尾后记一次失败并返城。</summary>
+        public void CompleteOnlineDungeonAbort(string reason = "online abort")
+        {
+            _afterSplash = null;
+            OnlineHoldDungeonExit = false;
+            Failures++;
+            EnterTown(reason);
+        }
+
+        /// <summary>由联网结算UI(<c>r18-settleui</c>)结束停留并按玩家选择切换阶段。</summary>
+        public void CompleteOnlineSettlement(SettlementChoice choice, string reason = "online settlement")
+        {
+            OnlineHoldDungeonExit = false;
+            switch (choice)
+            {
+                case SettlementChoice.Retry:
+                    Settlements++;
+                    if (!Admit(DungeonPath))
+                    {
+                        EnterSelect("choice " + choice + " blocked " + LastBlock);
+                        return;
+                    }
+                    if (OnlineStartDungeon != null)
+                    {
+                        DungeonEntry entry = FindEntryByPath(DungeonPath) ?? new DungeonEntry(DungeonPath, null);
+                        OnlineStartDungeon(entry, Difficulty);
+                        return;
+                    }
+                    StartDungeon(DungeonPath, reason, Difficulty);
+                    return;
+                case SettlementChoice.SelectDungeon:
+                    Settlements++;
+                    EnterSelect(reason);
+                    return;
+                case SettlementChoice.ReturnToTown:
+                    Settlements++;
+                    EnterTown(reason);
+                    return;
+            }
         }
 
         /// <summary>
@@ -756,6 +901,11 @@ namespace Dnf.Play
             switch (action)
             {
                 case SystemMenuAction.ReturnToTown when Stage == GameStage.Dungeon:
+                    if (OnlineGiveUpDungeon != null)
+                    {
+                        OnlineGiveUpDungeon();
+                        return true;
+                    }
                     GiveUps++;
                     EnterTown("menu return");
                     return true;
@@ -817,12 +967,17 @@ namespace Dnf.Play
         private bool PollDungeon()
         {
             IRunSession run = Run;
-            if (run == null)
+            if (run == null || OnlineHoldDungeonExit)
             {
                 return false;
             }
             if (run.Failed)
             {
+                if (OnlineStartDungeon != null)
+                {
+                    // 联网副本失败或中止必须先等控制器完成 LeaveExclusiveReceiveAsync，再由 CompleteOnlineDungeonAbort 记 Failures 并回城
+                    return false;
+                }
                 // 失败:服务端失败计时到点让所有人出副本回城(party_dungeon_fail,E-115);没有结算,不算结算选择
                 Failures++;
                 EnterTown("dungeon fail");
@@ -836,6 +991,12 @@ namespace Dnf.Play
                     if (!Admit(DungeonPath))
                     {
                         EnterSelect("choice " + choice + " blocked " + LastBlock);   // 挡下:结算的选定撤不回,改去选择界面(那里确认时还会再问一次)
+                        return true;
+                    }
+                    if (OnlineStartDungeon != null)
+                    {
+                        DungeonEntry retryEntry = FindEntryByPath(DungeonPath) ?? new DungeonEntry(DungeonPath, null);
+                        OnlineStartDungeon(retryEntry, Difficulty);
                         return true;
                     }
                     StartDungeon(DungeonPath, "choice " + choice, Difficulty);
@@ -870,15 +1031,18 @@ namespace Dnf.Play
         private void ReopenSelect(DungeonEntry entry, int difficulty, string reason)
         {
             int index = 0;
-            for (int i = 0; i < _entries.Count; i++)
+            if (entry != null)
             {
-                if (ReferenceEquals(_entries[i], entry))
+                for (int i = 0; i < _entries.Count; i++)
                 {
-                    index = i;
-                    break;
+                    if (ReferenceEquals(_entries[i], entry) || string.Equals(_entries[i].Path, entry.Path, StringComparison.Ordinal))
+                    {
+                        index = i;
+                        break;
+                    }
                 }
             }
-            Switch(GameStage.DungeonSelect, reason, null, new DungeonSelectScreen(_entries, index, _world, DifficultyLimit, difficulty));
+            Switch(GameStage.DungeonSelect, reason, null, CreateSelect(index, difficulty));
         }
 
         private bool PollSelect()
@@ -891,6 +1055,11 @@ namespace Dnf.Play
                     if (!Admit(entry.Path))
                     {
                         ReopenSelect(entry, difficulty, "select " + entry.Name + " blocked " + LastBlock);   // 挡下:选择界面重新打开,停在原来选的副本与难度上
+                        return true;
+                    }
+                    if (OnlineStartDungeon != null)
+                    {
+                        OnlineStartDungeon(entry, difficulty);
                         return true;
                     }
                     StartDungeon(entry.Path, "select " + entry.Name, difficulty);

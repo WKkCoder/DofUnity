@@ -223,6 +223,12 @@ namespace Dnf.Client
         public HostedMazeStatus Alignment { get; private set; } = HostedMazeStatus.NoMaze;
 
         /// <summary>
+        /// 可选的通关结束闸门(r18-dungeonflow):为非 null 时只有在 <see cref="Settled"/> 基础上同时返回 true 才放行回城/结算,
+        /// 让宿主在切回城镇之前先完成 <c>LeaveExclusiveReceiveAsync</c> 交接并触发结算 UI。
+        /// </summary>
+        public Func<bool> CanFinish { get; set; }
+
+        /// <summary>
         /// 造联网房间这一局:按对应表的怪数出一份出生点计划交给 <paramref name="createRoom"/>,拿回房间之后核对本地怪与表的对应,
         /// 再包成 <see cref="HostedRoomRun"/>(击杀接联网跑器的 <c>PostKill</c>,回城看状态机是否走到结算完成)。
         /// 不能走通的情形(没有状态机、没有怪、没造出房间、一只对得上的都没有)返回 null、在 <see cref="Status"/> 里写明原因,宿主据此退回城镇;房间工厂自己抛的异常原样传出。
@@ -440,11 +446,14 @@ namespace Dnf.Client
             return maze.TryNeighbor(x, y, side, out int nx, out int ny) && maze.IsBossCell(nx, ny) ? GateKind.Boss : GateKind.Normal;
         }
 
-        /// <summary>联网战斗已走到终局(两个结算通知收齐)并且跑器已结束:这一局完了,可以回城。</summary>
+        /// <summary>联网战斗已走到终局(两个结算通知收齐)、跑器已结束、且宿主已允许收尾(如已离开独占收包):这一局完了,可以回城或交接结算。</summary>
         private bool Settled()
         {
             OnlineDungeonCombat machine = _runner.Machine;
-            return _runner.Ended && machine != null && machine.Phase == OnlineCombatPhase.Settled;
+            return _runner.Ended
+                && machine != null
+                && machine.Phase == OnlineCombatPhase.Settled
+                && (CanFinish == null || CanFinish());
         }
 
         /// <summary>核对房间里的出生点怪与对应表:每个本地编号至多一只本地怪;缺的记进 <see cref="Missing"/>,多的与重复的算 <see cref="Extra"/>。</summary>
@@ -657,6 +666,10 @@ namespace Dnf.Client
             {
                 return;
             }
+            if (machine.IsGivingUp || machine.ReturnedToTown)
+            {
+                return;                     // 正在主动放弃回城或已收到 0/23+0/24:不误判为断线/超时中止,由流程控制器收尾
+            }
             if (_runner.Ended)
             {
                 if (machine.Phase != OnlineCombatPhase.Settled)
@@ -775,6 +788,11 @@ namespace Dnf.Client
         {
             HostedRoomRun run = _run;
             if (run == null || run.Aborted || _runner.Ended || !_step.IsStep || side != _step.Side)
+            {
+                return false;
+            }
+            OnlineDungeonCombat machine = _runner.Machine;
+            if (machine != null && (machine.IsGivingUp || machine.ReturnedToTown))
             {
                 return false;
             }
