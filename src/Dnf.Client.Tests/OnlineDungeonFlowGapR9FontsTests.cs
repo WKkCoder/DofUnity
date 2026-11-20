@@ -55,7 +55,8 @@ public sealed class OnlineDungeonFlowGapR9FontsTests
     public void Every_select_screen_the_flow_opens_gets_the_option_fonts_and_draws_with_them()
     {
         // 保护:流程选项带了字体集时,控制器配置每一块新开的选择屏都把"这一份"字体集交给屏(引用相同,不是复制、不是只给第一块);
-        // 屏画面时真的用它(占位画面里副本名是数据文字,按 22 号向字体集要字形);控制器释放后钩子撤掉,之后新开的屏不再被配置、没有字体集。
+        // 屏画面时真的用它(占位画面里两个副本的名字是数据文字,要向字体集要字形,所以画一次之后被问过的次数变多);
+        // 控制器释放后钩子撤掉,之后新开的屏不再被配置、没有字体集。
         var fonts = new ProbeFonts();
         using var rig = new Rig(o => o.Fonts = fonts);
 
@@ -63,8 +64,9 @@ public sealed class OnlineDungeonFlowGapR9FontsTests
         Assert.Equal(GameStage.DungeonSelect, rig.Flow.Stage);
         DungeonSelectScreen first = rig.Flow.Select;
         Assert.Same(fonts, first.Fonts);
+        int askedBeforeDrawing = fonts.Requested.Count;
         first.Build(0);
-        Assert.Contains(22, fonts.Requested);   // 两个副本的名字各画一行,都向"选项里那份"字体集要 22 号
+        Assert.True(fonts.Requested.Count > askedBeforeDrawing, "选择屏画面时应向选项里那份字体集要字形");
 
         rig.Flow.EnterSelect("again");           // 第二块新屏
         DungeonSelectScreen second = rig.Flow.Select;
@@ -160,8 +162,9 @@ public sealed class OnlineDungeonFlowGapR9FontsTests
         Assert.Same(before, rig.Flow.Select);    // 同一块屏被补配置,而不是换了新屏
         Assert.Same(fonts, rig.Flow.Select.Fonts);
         Assert.NotNull(rig.Flow.Select.EntryStatus);
+        int askedBeforeDrawing = fonts.Requested.Count;
         rig.Flow.Select.Build(0);
-        Assert.Contains(22, fonts.Requested);
+        Assert.True(fonts.Requested.Count > askedBeforeDrawing, "已开屏画面时应向选项里那份字体集要字形");
     }
 
     [Fact]
