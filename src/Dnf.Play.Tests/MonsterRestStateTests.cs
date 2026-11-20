@@ -367,6 +367,77 @@ public sealed class MonsterRestStateTests
         Assert.Equal(int.MaxValue, m2.DamageCheckAccumulated);
     }
 
+    /// <summary>
+    /// 窗口已开、累计已非 0 时再次执行 [SET DAMAGE CHECK] 开启:累计必须清零、时长换成新值、计时器重新起算。
+    /// 其余用例只在首次开启(累计本来就是 0)时检查,钉不住开启分支里这条"清累计"。
+    /// </summary>
+    [Fact]
+    public void DamageCheckReopeningWindowWithNonZeroAccumulationClearsAccumulationAndRestartsTimer()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = MakeMonster(assets, hp: 5000);
+        var walk = new RectUnionArea(new List<WorldRect>());
+        var host = new MiniHost();
+
+        ActProgram open1000 = Compile(
+            L("[TRIGGER]"), L("[FRAME]", 0, 0), L("[DO BEHAVIOR]"), L("[ME]", 0), L("[/TRIGGER]"),
+            L("[BEHAVIOR]"), L("[SET DAMAGE CHECK]", 1, 1000), L("[/BEHAVIOR]"));
+        ActProgram open600 = Compile(
+            L("[TRIGGER]"), L("[FRAME]", 0, 0), L("[DO BEHAVIOR]"), L("[ME]", 0), L("[/TRIGGER]"),
+            L("[BEHAVIOR]"), L("[SET DAMAGE CHECK]", 1, 600), L("[/BEHAVIOR]"));
+
+        // 第一次开启 1000ms 窗口,窗口里走 800ms 后实际掉血 N=70(累计 70,低于下面用的阈值 110)
+        new ActRunner(open1000, m.ActSelf, host).Update(0, 0.016f);
+        Assert.True(m.DamageCheckActive);
+        Assert.Equal(1000, m.DamageCheckDurationMs);
+        m.Update(800, 100, 100, false, walk);
+        Assert.False(m.ApplyHit(70, false, 0, false));
+        Assert.Equal(4930, m.Hp);                                // 5000 - 70
+        Assert.Equal(70, m.DamageCheckAccumulated);
+
+        // 窗口未关、累计非 0 时再次开启(换成 600ms):累计回到 0、时长是新值、仍为开启
+        new ActRunner(open600, m.ActSelf, host).Update(0, 0.016f);
+        Assert.True(m.DamageCheckActive);
+        Assert.Equal(600, m.DamageCheckDurationMs);
+        Assert.Equal(0, m.DamageCheckAccumulated);
+
+        // 随后再受 M=40:累计是 40 而不是 70 + 40 = 110
+        // (计时器也从再次开启那刻重新起算:此刻只过了 500ms < 600,仍在窗口内;若沿用旧计时则已是 800 + 500 = 1300 >= 600 而不累计)
+        m.Update(500, 100, 100, false, walk);
+        Assert.False(m.ApplyHit(40, false, 0, false));
+        Assert.Equal(4890, m.Hp);                                // 4930 - 40
+        Assert.Equal(40, m.DamageCheckAccumulated);
+
+        // 再走 100ms 恰到 600ms 边界(>= durMs)不再累计:累计仍为 40(窗口时长确实是新的 600,不是旧的 1000)
+        m.Update(100, 100, 100, false, walk);
+        Assert.False(m.ApplyHit(10, false, 0, false));
+        Assert.Equal(4880, m.Hp);                                // 4890 - 10,血照扣,只是不累计
+        Assert.Equal(40, m.DamageCheckAccumulated);
+
+        // 阈值 110(= N + M)不够 -> false 且不清累计;阈值 40(= M)恰好够 -> true 并清零
+        Assert.False(m.CheckDamageThreshold(110));
+        Assert.Equal(40, m.DamageCheckAccumulated);
+        Assert.True(m.CheckDamageThreshold(40));
+        Assert.Equal(0, m.DamageCheckAccumulated);
+
+        // 同一时长再次开启也一样清零:累计 25 -> 以同样的 600ms 再开 -> 回到 0;再受 15 -> 15(不是 25 + 15 = 40)
+        Assert.False(m.ApplyHit(25, false, 0, false));
+        Assert.Equal(4855, m.Hp);                                // 4880 - 25
+        Assert.Equal(25, m.DamageCheckAccumulated);
+        new ActRunner(open600, m.ActSelf, host).Update(0, 0.016f);
+        Assert.True(m.DamageCheckActive);
+        Assert.Equal(600, m.DamageCheckDurationMs);
+        Assert.Equal(0, m.DamageCheckAccumulated);
+        Assert.False(m.ApplyHit(15, false, 0, false));
+        Assert.Equal(4840, m.Hp);                                // 4855 - 15
+        Assert.Equal(15, m.DamageCheckAccumulated);
+        Assert.False(m.CheckDamageThreshold(40));
+        Assert.Equal(15, m.DamageCheckAccumulated);
+        Assert.True(m.CheckDamageThreshold(15));
+        Assert.Equal(0, m.DamageCheckAccumulated);
+    }
+
     // ------------------------------------------------------------------ [SET UNBEATABLE]
 
     [Fact]
@@ -450,6 +521,60 @@ public sealed class MonsterRestStateTests
         Assert.Equal(MonsterPhase.Hurt, mDownDead.Phase);
         Assert.False(mDownDead.HasDamageBox);
         Assert.Empty(mDownDead.DamageBoxes());
+    }
+
+    /// <summary>
+    /// 无敌的到期时刻 = 开启那一刻的逻辑时钟 + 时长(相对),不是时长本身(绝对)。
+    /// 上面那条用例都在逻辑时钟为 0 时开启,相对与绝对恰好相同;这里先让逻辑时钟走一段再开启。
+    /// </summary>
+    [Fact]
+    public void SetUnbeatableExpiryIsRelativeToLogicalClockAtActivationNotAbsoluteDuration()
+    {
+        using var fx = new AvatarFixture();
+        using DnfAssets assets = DnfAssets.Open(fx.Root);
+        MonsterActor m = MakeMonster(assets, hp: 1000);
+        var walk = new RectUnionArea(new List<WorldRect>());
+        var host = new MiniHost();
+
+        // 先让逻辑时钟走到 500ms(此刻没有无敌)
+        m.Update(500, 100, 100, false, walk);
+        Assert.False(m.IsActUnbeatable);
+        Assert.True(m.HasDamageBox);
+
+        // 在时钟 500ms 处开启 300ms 无敌:到期时刻 = 500 + 300 = 800(绝对写法会得到 300,早于当前时钟)
+        ActProgram on300 = Compile(
+            L("[TRIGGER]"), L("[FRAME]", 0, 0), L("[DO BEHAVIOR]"), L("[ME]", 0), L("[/TRIGGER]"),
+            L("[BEHAVIOR]"), L("[SET UNBEATABLE]"), L("[ON]", 300), L("[/BEHAVIOR]"));
+        new ActRunner(on300, m.ActSelf, host).Update(0, 0.016f);
+
+        // 开启后立刻(未走时间)就已无敌:挡受击与受击框
+        Assert.True(m.IsActUnbeatable);
+        Assert.False(m.HasDamageBox);
+        Assert.Empty(m.DamageBoxes());
+        Assert.False(m.ApplyHit(250, false, 0, false));
+        Assert.Equal(1000, m.Hp);
+
+        // 走 100ms(时钟 600 < 800):仍无敌(绝对写法下到期时刻 300 < 600,这一步就会被清掉)
+        m.Update(100, 100, 100, false, walk);
+        Assert.True(m.IsActUnbeatable);
+        Assert.False(m.HasDamageBox);
+        Assert.False(m.ApplyHit(250, false, 0, false));
+        Assert.Equal(1000, m.Hp);
+
+        // 再走 200ms(时钟 800 == 到期时刻 800):恰好到期点仍无敌(严格晚于才失效)
+        m.Update(200, 100, 100, false, walk);
+        Assert.True(m.IsActUnbeatable);
+        Assert.False(m.HasDamageBox);
+        Assert.False(m.ApplyHit(250, false, 0, false));
+        Assert.Equal(1000, m.Hp);
+
+        // 再走 1ms(时钟 801 > 800):严格晚于到期时刻,无敌失效,受击框恢复,受击生效
+        m.Update(1, 100, 100, false, walk);
+        Assert.False(m.IsActUnbeatable);
+        Assert.True(m.HasDamageBox);
+        Assert.NotEmpty(m.DamageBoxes());
+        Assert.False(m.ApplyHit(250, false, 0, false));
+        Assert.Equal(750, m.Hp);                                 // 1000 - 250
     }
 
     // ------------------------------------------------------------------ [SET WIDTH] & [SET PASSTYPE]
