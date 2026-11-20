@@ -270,7 +270,7 @@ namespace Dnf.Client
             return TryApplyNotificationPayload(table, frame.Payload, out parsed);
         }
 
-        /// <summary>直接尝试把一条 (0,5) 通知明文载荷解包并合入许可表(成功返回 true;坏包仅计坏帧数、保留原表不变)。</summary>
+        /// <summary>直接尝试把一条 (0,5) 通知明文载荷解包并合入许可表。好包与坏包都返回 true(表示这条载荷已被处理),是否解包成功看 <paramref name="parsed"/>:好包合入许可表、<paramref name="parsed"/> 为 true;坏包仅计坏帧数、保留原表不变、<paramref name="parsed"/> 为 false。</summary>
         public static bool TryApplyNotificationPayload(OnlineDungeonPermissionTable table, byte[] payload, out bool parsed)
         {
             if (table == null)
