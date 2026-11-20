@@ -1095,4 +1095,123 @@ public sealed class CrossJobSkillTests
             Assert.True(HeroSkills.IsImplemented(e.Job, e.Recipe.SkillId));
         }
     }
+
+    // ------------------------------------------------------------------ 6. 非首职业不继承首职业手写配方(变异测试补缺口 H44)
+
+    /// <summary>
+    /// 只有职业 0 与职业 1 的合成脚本库:两个职业的技能表里都登记了 <paramref name="collidingId"/> 与 <see cref="SkillIds.HardAttack"/>,
+    /// 都指向同一份带出招指令的主动技能脚本——也就是"编号相撞、但不是同一个职业的技能"。
+    /// </summary>
+    private static GameData BuildCollidingJobsData(int collidingId)
+    {
+        var fx = new Fixture();
+        fx.List("skill/skilllist.lst", (0, "job0.lst"), (1, "job1.lst"));
+        fx.List("skill/job0.lst", (collidingId, "test/c.skl"), (SkillIds.HardAttack, "test/c.skl"));
+        fx.List("skill/job1.lst", (collidingId, "test/c.skl"), (SkillIds.HardAttack, "test/c.skl"));
+        fx.Tokens("skill/test/c.skl", w => w
+            .Tag("[type]").Str("[active]")
+            .Tag("[command]").Str("SKILL")
+            .Tag("[maximum level]").Int(10)
+            .Tag("[static data]").Ints(100, 200, 300, 400)
+            .Tag("[level info]").Ints(6, 10, 20, 30, 40, 50, 60));
+        return new GameData(fx.Build());
+    }
+
+    /// <summary>只带一条 [skill](编号与等级成对给出)的最小合成角色脚本。</summary>
+    private static CharacterDef ChrWithInitialSkills(int job, params int[] idLevelPairs)
+    {
+        return new CharacterDef(job, "character/test/mini.chr", new[]
+        {
+            new ScriptLine("[skill]", idLevelPairs.Select(v => new ScriptValue(ScriptValueKind.Int, v, null)).ToArray()),
+        });
+    }
+
+    [Fact]
+    public void NonZeroJobSlotsDoNotInheritSwordmanHandcraftedRecipeOnCollidingSkillId()
+    {
+        // 取首职业默认多段配方表里确有的编号(运行时从表里取,不抄数值):它们都落在首职业局部编号区间 1..168 里,
+        // 非首职业的技能哪怕编号相撞,也不能继承这份配方(MakeSlot 里必须按职业作用域查表)。
+        // 注意:HardAttack(5) 与 UpperSlash(46) 是手写的 Cast 分支,并不在多段配方表里(Default.Find(5) == null),
+        // 单拿它们断言"首职业 Recipe 非空"的对照不成立,丢了职业作用域也查不出来;所以撞号检验必须用表里真有的编号,
+        // HardAttack 另外用 Strike/特效这条手写路径做"首职业手写技不外泄给非首职业"的对照。
+        int collidingId = SkillRecipes.Default.All.First().SkillId;
+        Assert.NotNull(SkillRecipes.Default.Find(collidingId));
+        Assert.Null(SkillRecipes.Default.Find(SkillIds.HardAttack));
+        Assert.Null(SkillRecipes.Default.Find(SkillIds.UpperSlash));
+        Assert.NotEqual(SkillIds.HardAttack, collidingId);
+
+        GameData data = BuildCollidingJobsData(collidingId);
+
+        // 1) 三参 Create(data, chr, job):初始技能表 [skill] 先撞号配方技(等级 3)再手写技 HardAttack(等级 2),各占一个快捷槽(A、S)
+        HeroSkills job0 = HeroSkills.Create(data, ChrWithInitialSkills(0, collidingId, 3, SkillIds.HardAttack, 2), job: 0);
+        HeroSkills job1 = HeroSkills.Create(data, ChrWithInitialSkills(1, collidingId, 3, SkillIds.HardAttack, 2), job: 1);
+        Assert.Equal((0, 1), (job0.Job, job1.Job));
+        Assert.Equal((2, 2), (job0.Slots.Count, job1.Slots.Count));
+
+        // 首职业对照:撞号技拿到首职业的多段配方(带被动威力委托),HardAttack 走手写命中与 2 个斩击光影特效而不是配方
+        HeroSkillSlot recipe0 = job0.SlotOf(SkillKeys.A);
+        Assert.Equal(collidingId, recipe0.SkillId);
+        Assert.NotNull(recipe0.Recipe);
+        Assert.Equal(collidingId, recipe0.Recipe.SkillId);
+        Assert.NotNull(recipe0.PassiveSkillLevelOf);
+        HeroSkillSlot hard0 = job0.SlotOf(SkillKeys.S);
+        Assert.Equal(SkillIds.HardAttack, hard0.SkillId);
+        Assert.Null(hard0.Recipe);
+        Assert.True(hard0.Strike.HasValue);
+        Assert.Equal(2, hard0.EffectPaths.Count);
+
+        // 非首职业:槽照常排出来(目录里有、带出招指令),但撞号技绝不继承首职业配方,HardAttack 也没有手写命中与特效
+        HeroSkillSlot recipe1 = job1.SlotOf(SkillKeys.A);
+        Assert.Equal(collidingId, recipe1.SkillId);
+        Assert.Equal(3, recipe1.Level);
+        Assert.Null(recipe1.Recipe);
+        Assert.Null(recipe1.PassiveSkillLevelOf);
+        Assert.Null(recipe1.Buff);
+        Assert.Null(recipe1.Guard);
+        Assert.Null(recipe1.Throw);
+        HeroSkillSlot hard1 = job1.SlotOf(SkillKeys.S);
+        Assert.Equal(SkillIds.HardAttack, hard1.SkillId);
+        Assert.Null(hard1.Recipe);
+        Assert.False(hard1.Strike.HasValue);
+        Assert.Empty(hard1.EffectPaths);
+
+        // 没有放法:Cast 在"没实现"这一关就返回(检查顺序在碰主角之前,所以不用造主角)
+        Assert.Equal(SkillCastResult.NotImplemented, job1.Cast(recipe1, hero: null));
+        Assert.Equal(SkillCastResult.NotImplemented, job1.Cast(hard1, hero: null));
+
+        // IsImplemented 的职业作用域:首职业认撞号配方与手写技,非首职业哪个都不认
+        Assert.True(HeroSkills.IsImplemented(0, collidingId));
+        Assert.True(HeroSkills.IsImplemented(0, SkillIds.HardAttack));
+        Assert.False(HeroSkills.IsImplemented(1, collidingId));
+        Assert.False(HeroSkills.IsImplemented(1, SkillIds.HardAttack));
+
+        // 2) 技能簿路径(带 SkillBook 的 Create 重载,配方表缺省取 Default):快捷槽与"只靠指令放"的槽两条出口同样不给非首职业配方。
+        //    目录用带真实括号指令 (SKILL) 的合成技能(只靠指令放的槽要求出招指令非空;Fixture 的标记流写不出括号词)
+        SkillBook BookFor(int job, bool quickSlotted)
+        {
+            SkillDef cmdDef = SyntheticSkillDef(collidingId, new[] { 100 }, null, new[] { new[] { 200, 40 } }, null, "(SKILL)");
+            var book = new SkillBook(new SkillCatalog(job, new[] { cmdDef }));
+            book.Restore(
+                new[] { new KeyValuePair<int, int>(collidingId, 3) },
+                quickSlotted ? new[] { new KeyValuePair<int, int>(0, collidingId) } : Array.Empty<KeyValuePair<int, int>>(),
+                0, 0);
+            return book;
+        }
+
+        HeroSkills quick0 = HeroSkills.Create(data, ChrWithInitialSkills(0), 0, BookFor(0, quickSlotted: true));
+        HeroSkills quick1 = HeroSkills.Create(data, ChrWithInitialSkills(1), 1, BookFor(1, quickSlotted: true));
+        Assert.NotNull(Assert.Single(quick0.Slots).Recipe);
+        HeroSkillSlot bookQuick1 = Assert.Single(quick1.Slots);
+        Assert.Equal(collidingId, bookQuick1.SkillId);
+        Assert.Null(bookQuick1.Recipe);
+
+        // 只靠指令放:没有放法的技能不进指令槽。首职业的撞号配方技进,非首职业的不进(也就找不到槽)
+        HeroSkills command0 = HeroSkills.Create(data, ChrWithInitialSkills(0), 0, BookFor(0, quickSlotted: false));
+        HeroSkills command1 = HeroSkills.Create(data, ChrWithInitialSkills(1), 1, BookFor(1, quickSlotted: false));
+        HeroSkillSlot commandSlot0 = Assert.Single(command0.CommandSlots);
+        Assert.Equal(collidingId, commandSlot0.SkillId);
+        Assert.NotNull(commandSlot0.Recipe);
+        Assert.Empty(command1.CommandSlots);
+        Assert.Null(command1.SlotOfSkill(collidingId));
+    }
 }
