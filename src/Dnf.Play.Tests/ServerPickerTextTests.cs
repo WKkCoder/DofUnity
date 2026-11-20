@@ -64,18 +64,19 @@ public sealed class ServerPickerTextTests
     [Fact]
     public void A_channel_title_is_ch_plus_the_number_plus_the_name_and_drops_chinese_without_fonts()
     {
-        Assert.Equal("ch11测试", ServerPickerText.ChannelTitle(Channel(11), true));
+        Assert.Equal("ch11.测试", ServerPickerText.ChannelTitle(Channel(11), true));
         Assert.Equal("ch11", ServerPickerText.ChannelTitle(Channel(11), false));
-        Assert.Equal("ch3测试a", ServerPickerText.ChannelTitle(Channel(3, "测试a"), true));
-        Assert.Equal("ch3a", ServerPickerText.ChannelTitle(Channel(3, "测试a"), false));
-        Assert.Equal("ch7", ServerPickerText.ChannelTitle(Channel(7, null), true));
-        Assert.Equal("ch0", ServerPickerText.ChannelTitle(Channel(0, ""), true));
+        Assert.Equal("ch03.测试a", ServerPickerText.ChannelTitle(Channel(3, "测试a"), true));
+        Assert.Equal("ch03.a", ServerPickerText.ChannelTitle(Channel(3, "测试a"), false));
+        Assert.Equal("ch07", ServerPickerText.ChannelTitle(Channel(7, null), true));
+        Assert.Equal("ch00", ServerPickerText.ChannelTitle(Channel(0, ""), true));
     }
 
     [Fact]
     public void The_level_line_exists_only_with_a_valid_recommended_range()
     {
         Assert.Equal("(Lv.41~55)", ServerPickerText.Level(Channel(1, "x", 41, 55)));
+        Assert.Equal("(Lv.01~20)", ServerPickerText.Level(Channel(1, "x", 1, 20)));
         Assert.Equal("(Lv.30~30)", ServerPickerText.Level(Channel(1, "x", 30, 30)));
         Assert.Equal(string.Empty, ServerPickerText.Level(Channel(1)));
         Assert.Equal(string.Empty, ServerPickerText.Level(Channel(1, "x", 41, 0)));

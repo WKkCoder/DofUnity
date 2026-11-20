@@ -24,14 +24,18 @@ namespace Dnf.Play
     /// </summary>
     public sealed class DirectoryChannel
     {
+        /// <summary>无专属区域/类型映射时的默认槽位图标帧号（骰子图标）。</summary>
+        public const int DefaultSlotFrame = 16;
+
         /// <param name="number">显示序号(界面上 "ch" 后面的数字);不能是负数。</param>
         /// <param name="title">去掉数字的频道名(可能是中文;没有字体时界面只画序号);可为 null。</param>
         /// <param name="congestion">拥挤档位。</param>
         /// <param name="target">要连的地址;没有可用端口时为 null。</param>
         /// <param name="recommendedMinLevel">推荐最低等级;没有推荐等级时 0。</param>
         /// <param name="recommendedMaxLevel">推荐最高等级;没有推荐等级时 0。</param>
+        /// <param name="slotFrame"><c>channelslot.img</c> 的图标帧号;默认 <see cref="DefaultSlotFrame"/>。</param>
         public DirectoryChannel(int number, string title, ChannelCongestion congestion, ChannelTarget target,
-            int recommendedMinLevel = 0, int recommendedMaxLevel = 0)
+            int recommendedMinLevel = 0, int recommendedMaxLevel = 0, int slotFrame = DefaultSlotFrame)
         {
             if (number < 0)
             {
@@ -43,6 +47,7 @@ namespace Dnf.Play
             Target = target;
             RecommendedMinLevel = recommendedMinLevel;
             RecommendedMaxLevel = recommendedMaxLevel;
+            SlotFrame = slotFrame;
         }
 
         public int Number { get; }
@@ -57,6 +62,8 @@ namespace Dnf.Play
 
         public int RecommendedMaxLevel { get; }
 
+        public int SlotFrame { get; }
+
         /// <summary>有推荐等级(两头都为正且最高不低于最低);没有时界面不画第二行。</summary>
         public bool HasRecommendedLevel => RecommendedMinLevel > 0 && RecommendedMaxLevel >= RecommendedMinLevel;
 
@@ -70,38 +77,42 @@ namespace Dnf.Play
     public sealed class DirectoryServer
     {
         /// <param name="name">服务器名(目录里的组标签)。</param>
-        /// <param name="channels">这个服务器的频道,按目录给的顺序;可为 null(当作没有)。</param>
+        /// <param name="channels">这个服务器的常规频道(3×5 翻页主网格),按目录给的顺序;可为 null(当作没有)。</param>
         /// <param name="hasEventMark">要不要在入口上挂活动角标(原版的来源没有读到,默认不挂,见 NOTES)。</param>
-        public DirectoryServer(string name, IReadOnlyList<DirectoryChannel> channels, bool hasEventMark = false)
+        /// <param name="specialChannels">分隔线下方的特殊频道(最多 3 项:亡者峡谷、交易/拍卖行);可为 null(当作没有)。</param>
+        public DirectoryServer(string name, IReadOnlyList<DirectoryChannel> channels, bool hasEventMark = false,
+            IReadOnlyList<DirectoryChannel> specialChannels = null)
         {
             Name = name ?? string.Empty;
             Channels = channels ?? Array.Empty<DirectoryChannel>();
             HasEventMark = hasEventMark;
+            SpecialChannels = specialChannels ?? Array.Empty<DirectoryChannel>();
         }
 
         public string Name { get; }
 
         public IReadOnlyList<DirectoryChannel> Channels { get; }
 
+        public IReadOnlyList<DirectoryChannel> SpecialChannels { get; }
+
         public bool HasEventMark { get; }
 
-        /// <summary>能选:至少有一个频道(频道全满的服务器也能选,进去看到的是一排"满载")。</summary>
-        public bool IsSelectable => Channels.Count > 0;
+        /// <summary>能选:主网格或特殊频道栏至少有一个频道(频道全满的服务器也能选,进去看到的是一排"满载")。</summary>
+        public bool IsSelectable => Channels.Count > 0 || SpecialChannels.Count > 0;
 
         /// <summary>有没有进得去的频道。</summary>
-        public bool HasEnterableChannel
+        public bool HasEnterableChannel => AnyEnterable(Channels) || AnyEnterable(SpecialChannels);
+
+        private static bool AnyEnterable(IReadOnlyList<DirectoryChannel> channels)
         {
-            get
+            for (int i = 0; i < channels.Count; i++)
             {
-                for (int i = 0; i < Channels.Count; i++)
+                if (channels[i].CanEnter)
                 {
-                    if (Channels[i].CanEnter)
-                    {
-                        return true;
-                    }
+                    return true;
                 }
-                return false;
             }
+            return false;
         }
     }
 

@@ -81,6 +81,10 @@ namespace Dnf.Play
         public const uint SubtitleColor = 0xFFFFFFu;
 
         public const uint ItemTextColor = 0x96FF1Eu;
+
+        /// <summary>常规区域/特殊栏槽位字色（原版 <c>0x010f83c3</c> 暖灰白；仅骰子区域用 <see cref="ItemTextColor"/> 亮绿）。</summary>
+        public const uint NormalItemTextColor = 0xC8C3A9u;
+
         public const uint ButtonTextColor = CharacterSelectArt.ButtonTextColor;
         public const uint FallbackBackdrop = CharacterSelectArt.FallbackBackdrop;
 

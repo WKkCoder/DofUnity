@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace Dnf.Play
@@ -98,7 +99,7 @@ namespace Dnf.Play
         }
 
         /// <summary>
-        /// 频道项第一行:"ch" + 序号 + 去掉数字的频道名(基线上是 "ch11…")。没有字体集时只能画点阵字库认得的字符,中文名换成只写序号。
+        /// 频道项第一行:"ch%02d.%s"(原版 <c>0x010f46d0</c>,如 "ch11.格兰之森"、"ch01.亡者峡谷")。没有字体集时只留 ASCII 部分;无名字时不留悬空句点。
         /// </summary>
         public static string ChannelTitle(DirectoryChannel channel, bool cjk)
         {
@@ -107,15 +108,20 @@ namespace Dnf.Play
             {
                 title = AsciiOnly(title);
             }
-            return "ch" + channel.Number + title;
+            string num = channel.Number.ToString("D2", CultureInfo.InvariantCulture);
+            return title.Length > 0 ? "ch" + num + "." + title : "ch" + num;
         }
 
-        /// <summary>频道项第二行:推荐等级 "(Lv.41~55)";没有推荐等级返回空串。</summary>
+        /// <summary>频道项第二行:推荐等级 "(Lv.%02d~%02d)"(原版 <c>0x010f699a</c>);没有推荐等级返回空串。</summary>
         public static string Level(DirectoryChannel channel)
         {
-            return channel.HasRecommendedLevel
-                ? "(Lv." + channel.RecommendedMinLevel + "~" + channel.RecommendedMaxLevel + ")"
-                : string.Empty;
+            if (!channel.HasRecommendedLevel)
+            {
+                return string.Empty;
+            }
+            string min = channel.RecommendedMinLevel.ToString("D2", CultureInfo.InvariantCulture);
+            string max = channel.RecommendedMaxLevel.ToString("D2", CultureInfo.InvariantCulture);
+            return "(Lv." + min + "~" + max + ")";
         }
 
         /// <summary>页码 "第几页/共几页"。</summary>

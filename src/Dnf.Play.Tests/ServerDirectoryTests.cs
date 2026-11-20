@@ -45,7 +45,9 @@ public sealed class ServerDirectoryTests
         Assert.Equal(ChannelCongestion.Good, channel.Congestion);
         Assert.Same(target, channel.Target);
         Assert.Equal((10, 20), (channel.RecommendedMinLevel, channel.RecommendedMaxLevel));
+        Assert.Equal(DirectoryChannel.DefaultSlotFrame, channel.SlotFrame);
         Assert.Equal(0, new DirectoryChannel(0, "x", ChannelCongestion.Good, null).Number);
+        Assert.Equal(5, new DirectoryChannel(6, "x", ChannelCongestion.Smooth, null, slotFrame: 5).SlotFrame);
     }
 
     [Fact]
@@ -73,6 +75,15 @@ public sealed class ServerDirectoryTests
         Assert.False(empty.IsSelectable);
         Assert.False(empty.HasEnterableChannel);
         Assert.Empty(empty.Channels);
+        Assert.Empty(empty.SpecialChannels);
+
+        var onlySpecial = new DirectoryServer("a", null, false, new[] { Channel(ChannelCongestion.Smooth) });
+        Assert.True(onlySpecial.IsSelectable);
+        Assert.True(onlySpecial.HasEnterableChannel);
+
+        var fullSpecial = new DirectoryServer("a", null, false, new[] { Channel(ChannelCongestion.Full) });
+        Assert.True(fullSpecial.IsSelectable);
+        Assert.False(fullSpecial.HasEnterableChannel);
     }
 
     [Fact]

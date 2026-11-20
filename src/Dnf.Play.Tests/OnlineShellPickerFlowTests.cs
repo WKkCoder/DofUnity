@@ -1093,4 +1093,34 @@ public sealed class OnlineShellPickerFlowTests
         rig.Key(OnlineShellKey.Enter);
         Assert.NotEmpty(rig.Flow.Scene.Build(0));            // 选频道
     }
+
+    [Fact]
+    public void Returning_from_a_special_channel_locates_the_server_and_preselects_that_special_channel()
+    {
+        var server1 = new DirectoryServer("希洛克", new[] { PickerData.Channel(11) });
+        var server2 = new DirectoryServer(
+            "卡恩",
+            new[] { PickerData.Channel(21) },
+            false,
+            new[] { new DirectoryChannel(1, "亡者峡谷", ChannelCongestion.Smooth, PickerData.Target(1), 20, 70, slotFrame: 8) });
+        var rig = new PickerRig(PickerData.Directory(server1, server2), o => o.DefaultChannelPort = PickerData.PortOf(1));
+        rig.Directory.OnLoad = ct => Task.FromResult(ServerDirectoryResult.Fail(OnlineNoticeKind.NetworkError));
+        rig.Backend.OnConnect = (t, ct) => Task.FromResult(OnlineConnectOutcome.Ok(ShellTestData.Roster(2)));
+
+        // 直连默认特殊频道(亡者峡谷 ch1)进选角,切回选频道后重读目录
+        rig.ReachServerSelect();
+        rig.Key(OnlineShellKey.Space);
+        Assert.Equal(OnlineShellStage.CharacterSelect, rig.Flow.Stage);
+        rig.Key(OnlineShellKey.Escape);
+        Assert.Equal(OnlineShellStage.ChannelSelect, rig.Flow.Stage);
+
+        rig.Directory.OnLoad = ct => Task.FromResult(ServerDirectoryResult.Ok(PickerData.Directory(server1, server2)));
+        rig.Key(OnlineShellKey.Enter);
+
+        Assert.Equal(PickerPhase.Ready, rig.Channel.Phase);
+        Assert.Equal("卡恩", rig.Flow.PickedServer.Name);
+        Assert.Equal(0, rig.Channel.SelectedSpecial);
+        Assert.Equal(1, rig.Channel.SelectedChannel.Number);
+        Assert.Equal(PickerData.Target(1), rig.Channel.SelectedChannel.Target);
+    }
 }
