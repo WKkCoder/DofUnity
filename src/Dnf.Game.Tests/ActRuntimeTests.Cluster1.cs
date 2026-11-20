@@ -464,6 +464,175 @@ public sealed partial class ActRuntimeTests
         Assert.Equal(new[] { "destroy" }, abortOwner.Log);
     }
 
+    /// <summary>
+    /// 行为执行后拥有者的 MotionVersion 变了(切动作/改帧)就会把中止位置真(同一次入口里后面的触发器不再求值),中止位一直留到下一次入口才复位。
+    /// 上一条用例每次都新建 runner,而且测试实体的 [DESTROY] 只置死亡、不改 MotionVersion,并没有真的置中止位;
+    /// 这里在同一个 runner 上、中止位确实为真的状态下再调 <see cref="ActRunner.OnMoveCollision"/>:入口必须先复位,触发器照常求值。
+    /// 测试实体里 [SET FRAME] 取正数会让 MotionVersion 加一,所以用它置中止位。
+    /// </summary>
+    [Fact]
+    public void OnMoveCollisionEntryClearsTheAbortFlagLeftSetByAnEarlierEntryOnTheSameRunner()
+    {
+        // 1. 同一个 runner 连续两次碰壁:第 1 次触发器 0 改帧置中止位,同次入口里排在后面的触发器 1 没轮到求值;
+        //    第 2 次入口时中止位仍为真,必须先复位 -> 触发器 0 已满 [LIMIT] 1 跳过,触发器 1 照常求值并触发。
+        ActProgram twoHits = P(Cat(
+            Trigger(L("[LIMIT]", 1), L("[ON MOVE COLLISION]"), L("[DO BEHAVIOR]"), L("[ME]", 0)),
+            Trigger(L("[ON MOVE COLLISION]"), L("[DO BEHAVIOR]"), L("[ME]", 1)),
+            Behavior(L("[SET FRAME]", 3)),
+            Behavior(Speed(960))));
+        Assert.True(twoHits.Triggers[0].Supported);
+        Assert.True(twoHits.Triggers[1].Supported);
+
+        var owner = new Entity();
+        var runner = new ActRunner(twoHits, owner, new Host());
+        runner.OnMoveCollision(0);
+        Assert.Equal(new[] { "frame:3" }, owner.Log);          // 改帧置了中止位:触发器 1 在这次入口里没有求值
+        Assert.Equal(1, runner.FiredCount(0));
+        Assert.Equal(0, runner.FiredCount(1));
+        runner.OnMoveCollision(0);                             // 同一个 runner 的第 2 次入口(此刻中止位还是真)
+        Assert.Equal(new[] { "frame:3", "speed:960,-,-" }, owner.Log);
+        Assert.Equal(1, runner.FiredCount(0));                 // 触发器 0:[LIMIT] 1 已满,不再触发
+        Assert.Equal(1, runner.FiredCount(1));                 // 触发器 1:这次入口里照常触发
+
+        // 1b. 不设 [LIMIT]:同一个触发器改帧后(没有单次位)第 2 次碰壁照样再触发一次,总共两次 "frame:3"。
+        ActProgram sameTrigger = P(Cat(
+            Trigger(L("[ON MOVE COLLISION]"), L("[DO BEHAVIOR]"), L("[ME]", 0)),
+            Behavior(L("[SET FRAME]", 3))));
+        var ownerSame = new Entity();
+        var runnerSame = new ActRunner(sameTrigger, ownerSame, new Host());
+        runnerSame.OnMoveCollision(0);
+        runnerSame.OnMoveCollision(0);
+        Assert.Equal(new[] { "frame:3", "frame:3" }, ownerSame.Log);
+        Assert.Equal(2, runnerSame.FiredCount(0));
+
+        // 2. 逐帧 Update 里的触发器改帧置了中止位,Update 返回后中止位还留着;紧接着同一个 runner 收到碰壁(Y 轴默认允许)必须照常求值。
+        ActProgram afterUpdate = P(Cat(
+            Trigger(L("[FRAME]", 0, 0), L("[DO BEHAVIOR]"), L("[ME]", 0)),
+            Trigger(L("[ON MOVE COLLISION]"), L("[DO BEHAVIOR]"), L("[ME]", 1)),
+            Behavior(L("[SET FRAME]", 3)),
+            Behavior(Speed(961))));
+        var ownerUpdate = new Entity();
+        var runnerUpdate = new ActRunner(afterUpdate, ownerUpdate, new Host());
+        runnerUpdate.Update(0, 0.016f);
+        Assert.Equal(new[] { "frame:3" }, ownerUpdate.Log);
+        runnerUpdate.OnMoveCollision(1);
+        Assert.Equal(new[] { "frame:3", "speed:961,-,-" }, ownerUpdate.Log);
+
+        // 3. [ON DAMAGE] 唤醒里改帧置了中止位:之后同一个 runner 先撞 X 墙(触发器只许 Y 轴,不触发,但入口已复位中止位),
+        //    再撞 Y 墙 -> 触发。入口若不复位,两次碰壁都不会求值。
+        ActProgram afterDamage = P(Cat(
+            Trigger(L("[ON DAMAGE]"), L("[DO BEHAVIOR]"), L("[ME]", 0)),
+            Trigger(L("[ON MOVE COLLISION]"), L("[AXIS INDEX]", 1), L("[DO BEHAVIOR]"), L("[ME]", 1)),
+            Behavior(L("[SET FRAME]", 3)),
+            Behavior(Speed(962))));
+        var ownerDamage = new Entity();
+        var runnerDamage = new ActRunner(afterDamage, ownerDamage, new Host());
+        runnerDamage.OnDamage(new Entity { Kind = ActEntityKind.Character });
+        Assert.Equal(new[] { "frame:3" }, ownerDamage.Log);
+        runnerDamage.OnMoveCollision(0);
+        Assert.Equal(new[] { "frame:3" }, ownerDamage.Log);
+        runnerDamage.OnMoveCollision(1);
+        Assert.Equal(new[] { "frame:3", "speed:962,-,-" }, ownerDamage.Log);
+    }
+
+    /// <summary>
+    /// 触发器的事件取第一条事件记录。第一条是别的事件、后面才有 [ON MOVE COLLISION] 时,那个事件到来求值会走到
+    /// [ON MOVE COLLISION] 记录,事件种类对不上当前事件必须直接放弃(触发器不触发,也不能把"见过碰壁"置真去放行后面的 [DO BEHAVIOR])。
+    /// </summary>
+    [Theory]
+    [InlineData("[ON DAMAGE]", 0)]
+    [InlineData("[ON ATTACKSUCCESS]", 1)]
+    [InlineData("[ON SET ACTION]", 2)]
+    public void OnMoveCollisionRecordBehindAnotherEventRecordDoesNotFireTheTriggerWhenThatFirstEventArrives(string firstEvent, int which)
+    {
+        void Raise(ActRunner r)
+        {
+            switch (which)
+            {
+                case 0:
+                    r.OnDamage(new Entity { Kind = ActEntityKind.Character });
+                    break;
+                case 1:
+                    r.OnAttackSuccess(new Entity { Kind = ActEntityKind.Character });
+                    break;
+                default:
+                    r.OnSetAction();
+                    break;
+            }
+        }
+
+        // 触发器 0:<第一条事件> + [ON MOVE COLLISION] + [DO BEHAVIOR] 0;触发器 1(对照):只有 <第一条事件> + 同样形状的 [DO BEHAVIOR] 1。
+        ActProgram prog = P(Cat(
+            Trigger(L(firstEvent), L("[ON MOVE COLLISION]"), L("[DO BEHAVIOR]"), L("[ME]", 0)),
+            Trigger(L(firstEvent), L("[DO BEHAVIOR]"), L("[ME]", 1)),
+            Behavior(Speed(970)),
+            Behavior(Speed(971))));
+        Assert.True(prog.Triggers[0].Supported);
+        Assert.True(prog.Triggers[1].Supported);
+
+        var owner = new Entity();
+        var runner = new ActRunner(prog, owner, new Host());
+        Raise(runner);
+        // 事件确实送达(对照触发器 1 触发),触发器 0 因 [ON MOVE COLLISION] 记录的事件对不上而不触发(没有 "speed:970")
+        Assert.Equal(new[] { "speed:971,-,-" }, owner.Log);
+        Assert.Equal(0, runner.FiredCount(0));
+        Assert.Equal(1, runner.FiredCount(1));
+
+        // 碰壁入口只唤醒第一条事件就是 [ON MOVE COLLISION] 的触发器:这两个触发器的第一条事件不是碰壁,谁都不触发
+        runner.OnMoveCollision(0);
+        runner.OnMoveCollision(1);
+        Assert.Equal(new[] { "speed:971,-,-" }, owner.Log);
+        Assert.Equal(0, runner.FiredCount(0));
+        Assert.Equal(1, runner.FiredCount(1));
+    }
+
+    /// <summary>对称情形:[ON MOVE COLLISION] 在前、别的事件记录在后,碰壁到来走到后一条事件记录时事件对不上,同样不触发。</summary>
+    [Theory]
+    [InlineData("[ON DAMAGE]", 0)]
+    [InlineData("[ON ATTACKSUCCESS]", 1)]
+    [InlineData("[ON SET ACTION]", 2)]
+    public void AnotherEventRecordBehindOnMoveCollisionRecordDoesNotFireTheTriggerWhenCollisionArrives(string secondEvent, int which)
+    {
+        void Raise(ActRunner r)
+        {
+            switch (which)
+            {
+                case 0:
+                    r.OnDamage(new Entity { Kind = ActEntityKind.Character });
+                    break;
+                case 1:
+                    r.OnAttackSuccess(new Entity { Kind = ActEntityKind.Character });
+                    break;
+                default:
+                    r.OnSetAction();
+                    break;
+            }
+        }
+
+        // 触发器 0:[ON MOVE COLLISION] + <第二条事件> + [DO BEHAVIOR] 0;触发器 1(对照):只有 [ON MOVE COLLISION] + 同样形状的 [DO BEHAVIOR] 1。
+        ActProgram prog = P(Cat(
+            Trigger(L("[ON MOVE COLLISION]"), L(secondEvent), L("[DO BEHAVIOR]"), L("[ME]", 0)),
+            Trigger(L("[ON MOVE COLLISION]"), L("[DO BEHAVIOR]"), L("[ME]", 1)),
+            Behavior(Speed(972)),
+            Behavior(Speed(973))));
+        Assert.True(prog.Triggers[0].Supported);
+        Assert.True(prog.Triggers[1].Supported);
+
+        var owner = new Entity();
+        var runner = new ActRunner(prog, owner, new Host());
+        runner.OnMoveCollision(0);
+        // 碰壁确实送达(对照触发器 1 触发),触发器 0 在第二条事件记录处放弃(没有 "speed:972")
+        Assert.Equal(new[] { "speed:973,-,-" }, owner.Log);
+        Assert.Equal(0, runner.FiredCount(0));
+        Assert.Equal(1, runner.FiredCount(1));
+
+        // 另一个事件到来:两个触发器的第一条事件都是碰壁,不被它唤醒
+        Raise(runner);
+        Assert.Equal(new[] { "speed:973,-,-" }, owner.Log);
+        Assert.Equal(0, runner.FiredCount(0));
+        Assert.Equal(1, runner.FiredCount(1));
+    }
+
     // ------------------------------------------------------------------ [CHECK GHOST]
 
     [Fact]
