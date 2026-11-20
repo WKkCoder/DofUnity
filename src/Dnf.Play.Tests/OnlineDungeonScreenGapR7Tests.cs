@@ -7,7 +7,7 @@ namespace Dnf.Play.Tests;
 /// r18-dungeonflow 测试补强(区域 C,第七轮):<see cref="DungeonSelectOverlay.EnhanceWorldMap"/> 与 <see cref="OnlineDungeonOverlay.Build"/> 里
 /// "边界值与守卫"一类的小处。这两个入口是公开的、接受任意精灵列表,所以这里直接造精灵列表、给带字体的素材,把边界卡在两侧:
 /// 按标签找精灵时下标 0 也算找到、文字行最大宽度的"刚好放得下/刚好放不下"、区域名与队伍图标重叠时的左移位置、
-/// 条目为空或选中越界时的守卫、找不到卡片时的返回路径、提示条宽度的上限。
+/// 条目为空或选中越界时的守卫、找不到卡片时的返回路径、提示条宽度的上限、灰显遮罩插入后层序的整体重排。
 /// 复用 <see cref="OnlineDungeonScreenGapKit"/>(internal,同一个测试程序集):行号编码色块与随字号变化的探针字体 <see cref="ProbeFonts"/>;
 /// 不改全进程共用字体集(素材用实例自己的 <see cref="OverlayArt.Fonts"/>)。
 /// ProbeFonts 的排版规则(手算用):窄字前进 3、全角字前进 4、省略号(U+2026)按全角前进 4;帧宽 = 各字前进之和 + 2(描边两边各 1)、帧高 = 字号 + 2;
@@ -29,6 +29,11 @@ public class OnlineDungeonScreenGapR7Tests
     {
         return OverlayArt.Place(Coded(6, 4, colorTag), x, y, sortKey, tag, tint);
     }
+
+    /// <summary>世界地图上换成字体字的文字帧里,不透明色(从小到大)只有两种:黑描边 0x000000 与白字 0xF4F4F4。</summary>
+    private static readonly uint[] WhiteTextBlackEdge = { 0x000000u, 0xF4F4F4u };
+
+    private static uint[] SortedColors(SpriteFrame frame) => OpaqueColors(frame).OrderBy(c => c).ToArray();
 
     /// <summary>
     /// 带字体调用世界地图增强入口,只让"文字系统替换"这一段起作用:不挂可进入状态、不挂提示(所以不会画遮罩与提示条),卡片图已淡入完(2000 毫秒)。
@@ -69,7 +74,7 @@ public class OnlineDungeonScreenGapR7Tests
     {
         // 保护:按标签 map-region-name 找精灵,下标 0 也算找到(不能要求它排在别的精灵后面):带字体又给了区域显示名时,
         // 下标 0 的占位精灵被换成字体字(14 号、白字),层序、标签、不透明度继承原来的,别的精灵一个不动;
-        // 没给显示名(null、空串)或列表里没有这个标签时一个都不换,也不去向字体要字。
+        // 没给显示名(null、空串)或列表里没有这个标签时一个都不换,也不去向字体要字。替换出来的字帧只有白字 0xF4F4F4 与黑描边 0x000000 两种不透明色。
         // "AB":3+3 = 6 → 帧宽 8、帧高 14+2 = 16;右端 797 → x = 797-8 = 789(不小于 762,不挪到队伍图标左边),y = 482。
         var fonts = new ProbeFonts();
         SceneSprite region = Stub("map-region-name", 5, 6, 3, 40, tint: 200);
@@ -81,7 +86,7 @@ public class OnlineDungeonScreenGapR7Tests
         Assert.NotSame(region, sprites[0]);
         Assert.Equal((789, 482, 8, 16), Box(sprites[0]));
         Assert.Equal(("map-region-name", 3, 200), (sprites[0].AnimationPath, sprites[0].SortKey, sprites[0].TintAlpha));
-        Assert.Contains(0xF4F4F4u, OpaqueColors(sprites[0].Frame));
+        Assert.Equal(WhiteTextBlackEdge, SortedColors(sprites[0].Frame));
         Assert.Same(other, sprites[1]);
         Assert.Equal(new[] { 14 }, fonts.Requested.ToArray());
 
@@ -147,7 +152,8 @@ public class OnlineDungeonScreenGapR7Tests
     public void TheLevelTextSpriteIsFoundByTagEvenInTheFirstSlotAndShowsTheSelectedCardsLevel()
     {
         // 保护:按标签 map-level 找精灵,下标 0 也算找到:带字体、选中项有卡片时,下标 0 的占位精灵被换成选中卡的等级字(12 号、白字),
-        // 位置、层序、标签、不透明度继承原来的;选中项不同文字就不同(靠位数区分:等级 4 → "Lv. 004~005",等级 1000 → "Lv. 1000~1001")。
+        // 位置、层序、标签、不透明度继承原来的;字帧只有白字 0xF4F4F4 与黑描边 0x000000 两种不透明色;
+        // 选中项不同文字就不同(靠位数区分:等级 4 → "Lv. 004~005",等级 1000 → "Lv. 1000~1001")。
         // "Lv. 004~005":11 个字符,空格前进 2、其余 10 个前进 3 → 32 → 帧宽 34、帧高 12+2 = 14;
         // "Lv. 1000~1001":13 个字符,12*3+2 = 38 → 帧宽 40、帧高 14。
         DungeonEntry[] entries = TwoCards();
@@ -162,7 +168,7 @@ public class OnlineDungeonScreenGapR7Tests
             Assert.Equal(2, sprites.Count);
             Assert.Equal((103, 89, expectedWidth, 14), Box(sprites[0]));
             Assert.Equal(("map-level", 5, 180), (sprites[0].AnimationPath, sprites[0].SortKey, sprites[0].TintAlpha));
-            Assert.Contains(0xF4F4F4u, OpaqueColors(sprites[0].Frame));
+            Assert.Equal(WhiteTextBlackEdge, SortedColors(sprites[0].Frame));
             Assert.Same(other, sprites[1]);
             Assert.Equal(new[] { 12 }, fonts.Requested.ToArray());
         }
@@ -209,6 +215,7 @@ public class OnlineDungeonScreenGapR7Tests
         //   刚好放得下的名字原样排出(选中卡 14 号、小卡 12 号,不缩不截),多 1 像素就一号一号缩小(最多缩 4 号)并从后面截断补省略号;
         //   限宽若被改小一像素,刚好放得下的名字就会被缩小截断;改大一像素,多 1 像素的名字就会原样排出。
         // 名字落位:x = 卡左 + 6;y = 卡顶 + (卡高 - 帧高)/2(整数除)。名字精灵的落点分别放在 0 号大卡 (97,63,168,73) 与 1 号小卡 (384,143,118,52) 里(选中 0 号)。
+        // 名字帧只有白字 0xF4F4F4 与黑描边 0x000000 两种不透明色。
         // 名字 = 若干全角字后面跟若干窄字(截断从后面去字,所以先去掉的是窄字)。
         //
         // 情形一(刚好放得下):
@@ -233,8 +240,8 @@ public class OnlineDungeonScreenGapR7Tests
         Assert.Equal((390, oneY, oneWidth, oneHeight), Box(sprites[1]));
         Assert.Equal(("map-card-name", 11, 220), (sprites[0].AnimationPath, sprites[0].SortKey, sprites[0].TintAlpha));
         Assert.Equal(("map-card-name", 12, 100), (sprites[1].AnimationPath, sprites[1].SortKey, sprites[1].TintAlpha));
-        Assert.Contains(0xF4F4F4u, OpaqueColors(sprites[0].Frame));
-        Assert.Contains(0xF4F4F4u, OpaqueColors(sprites[1].Frame));
+        Assert.Equal(WhiteTextBlackEdge, SortedColors(sprites[0].Frame));
+        Assert.Equal(WhiteTextBlackEdge, SortedColors(sprites[1].Frame));
         Assert.Equal(expectedSizes, string.Join(",", fonts.Requested));
     }
 
@@ -414,5 +421,48 @@ public class OnlineDungeonScreenGapR7Tests
         Assert.Equal((expectedX + 1, 49, 4, 30), Box(sprites[1]));
         Assert.Equal((expectedX + 16, 54, 20, 20), Box(sprites[2]));
         Assert.Equal((expectedX + 44, textY, expectedTextWidth, expectedTextHeight), Box(sprites[3]));
+    }
+
+    // ------------------------------------------------------------------ 插入灰显遮罩之后的层序重排
+
+    private static DungeonEntryStatus Rejected(byte code) => new DungeonEntryStatus(DungeonEntryBlockKind.ServerRejected, code);
+
+    private static (int X, int Y, int Slot, int Npc, string Tag, int AniFrame, bool Mirrored, SpriteBlend Blend, int Tint, int Rank) Fields(SceneSprite s)
+        => (s.ScreenX, s.ScreenY, s.SortKey, s.NpcId, s.AnimationPath, s.AniFrame, s.Mirrored, s.Blend, s.TintAlpha, s.LayerRank);
+
+    [Fact]
+    public void InsertingDisabledCardOverlaysRenumbersTheLayerSlotsOfEverySpriteIncludingTheFirstOneAndKeepsTheirOtherFields()
+    {
+        // 保护:灰显遮罩与角标插进精灵列表之后,所有精灵(包括排在最前面的第 0 个)的层序都按下标重排成 0、1、2……,
+        // 不是只重排插入点之后的;原来的层序即使乱着(这里 7、8、9,都不等于新下标)也一样重排,函数返回时的序号 = 精灵总数;
+        // 重排只改层序:原有精灵的像素块、位置、NPC 号、动画帧、翻转、混合方式、不透明度、层级大类、标签都原样带过去(下面给的都是互不相同的非默认值)。
+        // 0 号卡(标记 (160,160),被禁)的遮罩与角标各一个,插在 map-edges 之前(下标 1);选中 1 号(可进入),所以没有提示条:
+        //   插入前 [map-first, map-edges, map-last] → 插入后 [map-first, 遮罩, 角标, map-edges, map-last] → 层序 0..4;
+        //   map-first 在 0 号位、map-edges 挪到 3 号位、map-last 挪到 4 号位。
+        DungeonEntry[] entries = { CardEntry("a", 9101, 160, 160), CardEntry("b", 9102, 420, 220, slot: 1) };
+        SpriteFrame frameFirst = Coded(5, 5, 2);
+        SpriteFrame frameEdges = Coded(5, 5, 3);
+        SpriteFrame frameLast = Coded(5, 5, 4);
+        var sprites = new List<SceneSprite>
+        {
+            new SceneSprite(frameFirst, 11, 12, 7, 13, "map-first", 14, true, SpriteBlend.Additive, 150, 2),
+            new SceneSprite(frameEdges, 21, 22, 8, 23, "map-edges", 24, false, SpriteBlend.Additive, 160, 3),
+            new SceneSprite(frameLast, 31, 32, 9, 33, "map-last", 34, true, SpriteBlend.Normal, 170, 5),
+        };
+        int order = 40;
+        DungeonSelectOverlay.EnhanceWorldMap(
+            sprites, ref order, new OverlayArt { Fonts = new ProbeFonts() }, entries, 1, 2000, 0,
+            e => e.Card.DungeonId == 9101 ? Rejected(3) : DungeonEntryStatus.Allowed, null, null, null);
+
+        Assert.Equal(new[] { "map-first", "map-card-disabled", "map-card-disabled-tag", "map-edges", "map-last" }, Tags(sprites));
+        Assert.Equal(new[] { 0, 1, 2, 3, 4 }, sprites.Select(s => s.SortKey));
+        Assert.Equal(5, order);
+
+        Assert.Same(frameFirst, sprites[0].Frame);
+        Assert.Equal((11, 12, 0, 13, "map-first", 14, true, SpriteBlend.Additive, 150, 2), Fields(sprites[0]));
+        Assert.Same(frameEdges, sprites[3].Frame);
+        Assert.Equal((21, 22, 3, 23, "map-edges", 24, false, SpriteBlend.Additive, 160, 3), Fields(sprites[3]));
+        Assert.Same(frameLast, sprites[4].Frame);
+        Assert.Equal((31, 32, 4, 33, "map-last", 34, true, SpriteBlend.Normal, 170, 5), Fields(sprites[4]));
     }
 }
