@@ -68,11 +68,19 @@ public class ShopTests
     [Fact]
     public void ItemScriptDefaultsForShopFieldsAreZeroAndFalse()
     {
+        // 原版客户端与服务端在省略 [value] 时都会以 [price] 兜底;两者都未写时价格字段才为 0
         ItemInfo item = ParseItem(new TokenStreamBuilder().Tag("[price]").Int(5).Tag("[attach type]").Str("[trade]"));
-        Assert.Equal(0, item.Value);
+        Assert.Equal(5, item.Value);
         Assert.Equal(0, item.FinishPointPrice);
         Assert.False(item.KiriProtectable);
         Assert.False(item.IsTradeDelete);
+        Assert.Equal(-1, item.NeedMaterialId);
+        Assert.Equal(0, item.NeedMaterialCount);
+        Assert.False(item.HasNeedMaterial);
+
+        ItemInfo free = ParseItem(new TokenStreamBuilder().Tag("[attach type]").Str("[trade]"));
+        Assert.Equal(0, free.Price);
+        Assert.Equal(0, free.Value);
     }
 
     [Fact]

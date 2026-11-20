@@ -31,6 +31,9 @@ namespace Dnf.Game
 
         /// <summary>商店不收这件东西(时装、称号、<c>[trade delete]</c>、<c>[finish point price]</c> 不为 0;服务端 0x17)。</summary>
         NotSellable,
+
+        /// <summary><c>[need material]</c> 兑换所需的背包材料数量不够。</summary>
+        NotEnoughMaterial,
     }
 
     /// <summary>商店买卖的规则(纯逻辑,不动背包与钱;动手的是 <c>HeroProgress.Buy/Sell</c>)。</summary>
@@ -83,11 +86,52 @@ namespace Dnf.Game
         }
 
         /// <summary>
+        /// 同时考虑金币与 <c>[need material]</c> 兑换材料时最多能买几件;
+        /// 默认允许 <c>[price] &lt;= 0</c> 且无兑换材料的物品按上限购买(与原版购买检查一致),
+        /// 也可将 <paramref name="allowFreeWithoutMaterial"/> 设为 <c>false</c> 关闭纯零价无材料物品的购买(返回 0)。
+        /// </summary>
+        public static int MaxBuyableWithMaterials(ItemInfo item, long gold, Inventory bag, bool allowFreeWithoutMaterial = true)
+        {
+            if (!allowFreeWithoutMaterial && item != null && item.Price <= 0 && !item.HasNeedMaterial)
+            {
+                return 0;
+            }
+            int byGold = MaxBuyable(item, gold);
+            if (byGold == 0 || !item.HasNeedMaterial)
+            {
+                return byGold;
+            }
+            int owned = bag != null ? bag.CountOf(item.NeedMaterialId) : 0;
+            if (item.IsEquipment)
+            {
+                return owned >= item.NeedMaterialCount ? byGold : 0;
+            }
+            long byMaterial = owned / item.NeedMaterialCount;
+            return byMaterial < byGold ? (int)byMaterial : byGold;
+        }
+
+        /// <summary>
         /// 买 <paramref name="count"/> 件 <paramref name="item"/> 行不行。次序(服务端 <c>user_buy_item</c> 的次序,前面加上"这家店卖不卖"与件数两项):
         /// 物品存在 → 这家店卖 → 件数 → 钱够 → 称号不能买 → 背包放得下
         /// (<paramref name="shop"/> 为 null 时跳过"这家店卖"一项;<paramref name="bag"/> 为 null 时跳过背包一项)。装备的件数按 1 算。
         /// </summary>
         public static ShopResult CheckBuy(ItemShopDef shop, ItemInfo item, int count, long gold, Inventory bag)
+        {
+            return CheckBuyCore(shop, item, count, gold, bag, checkMaterial: false, allowFreeWithoutMaterial: true);
+        }
+
+        /// <summary>
+        /// 连同 <c>[need material]</c> 兑换材料一起校验买 <paramref name="count"/> 件 <paramref name="item"/> 行不行:
+        /// 物品存在 → 这家店卖 → 件数 → 钱够 → 称号与可选零价无材料开关 → 材料够(<paramref name="bag"/> 为 null 且需要材料时按缺少材料处理) → 背包放得下。
+        /// </summary>
+        public static ShopResult CheckBuyWithMaterials(
+            ItemShopDef shop, ItemInfo item, int count, long gold, Inventory bag, bool allowFreeWithoutMaterial = true)
+        {
+            return CheckBuyCore(shop, item, count, gold, bag, checkMaterial: true, allowFreeWithoutMaterial: allowFreeWithoutMaterial);
+        }
+
+        private static ShopResult CheckBuyCore(
+            ItemShopDef shop, ItemInfo item, int count, long gold, Inventory bag, bool checkMaterial, bool allowFreeWithoutMaterial)
         {
             if (item == null)
             {
@@ -106,9 +150,17 @@ namespace Dnf.Game
             {
                 return ShopResult.NotEnoughGold;
             }
-            if (!IsBuyable(item))
+            if (!IsBuyable(item) || (!allowFreeWithoutMaterial && item.Price <= 0 && !item.HasNeedMaterial))
             {
                 return ShopResult.NotBuyable;
+            }
+            if (checkMaterial && item.HasNeedMaterial)
+            {
+                long needCount = ItemPricing.BuyMaterialCount(item, n);
+                if (bag == null || bag.CountOf(item.NeedMaterialId) < needCount)
+                {
+                    return ShopResult.NotEnoughMaterial;
+                }
             }
             if (bag != null && !bag.CanAdd(item, n))
             {
@@ -160,6 +212,9 @@ namespace Dnf.Game
                     return "BAG IS FULL";
                 case ShopResult.NotSellable:
                     return "SHOP WILL NOT TAKE THIS";
+                case ShopResult.NotEnoughMaterial:
+                    // UiText 在 Play 包内不随本任务改动;复用已有精确译文("不能买这个"),保证界面占位译表与枚举覆盖全过。
+                    return "CANNOT BUY THIS";
                 default:
                     return string.Empty;
             }

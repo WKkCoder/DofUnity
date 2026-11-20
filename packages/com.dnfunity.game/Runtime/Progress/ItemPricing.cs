@@ -5,6 +5,22 @@ using Dnf.Data;
 // 收购价的调用方 Store::GetSellItemPrice 0x08618ea0 与 0x08619008)。
 namespace Dnf.Game
 {
+    /// <summary>商店买入标价的构成分类(基于原版购买检查实际读取的本地静态价格与兑换材料字段)。</summary>
+    public enum ShopPriceKind
+    {
+        /// <summary><c>[price]</c> 与 <c>[need material]</c> 均未标出正数花费(免费、其它币种或外部规则)。</summary>
+        FreeOrUnknown = 0,
+
+        /// <summary>只标出了金币单价(<c>[price] &gt; 0</c>,无 <c>[need material]</c>)。</summary>
+        Gold = 1,
+
+        /// <summary>零金币纯材料兑换(<c>[price] &lt;= 0</c> 且带有效 <c>[need material]</c>)。</summary>
+        Material = 2,
+
+        /// <summary>金币加材料复合标价(<c>[price] &gt; 0</c> 且带有效 <c>[need material]</c>)。</summary>
+        GoldAndMaterial = 3,
+    }
+
     /// <summary>
     /// 价格倍率表(<c>equipment/pricetable.tbl</c> 里 <c>[percent]</c> 后面的三个整数,单位千分之一)。服务端把它读进数组 <c>itemPriceRates_</c>;
     /// 商店收购只用到下标 0 与 2(<see cref="ItemInfo.KiriProtectable"/> 的物品用下标 2,其余用下标 0),下标 1 没有被收购用到,原样留着。
@@ -119,7 +135,42 @@ namespace Dnf.Game
             {
                 return 0;
             }
-            return item.IsEquipment ? item.Price : (long)item.Price * count;
+            return BuyCostForCount(item, item.Price, count);
+        }
+
+        /// <summary>买入材料总数:单件所需材料乘件数(装备恒为一件);物品为空、无材料要求或件数不大于 0 返回 0。</summary>
+        public static long BuyMaterialCount(ItemInfo item, int count)
+        {
+            if (item == null || count <= 0 || !item.HasNeedMaterial)
+            {
+                return 0;
+            }
+            return BuyCostForCount(item, item.NeedMaterialCount, count);
+        }
+
+        /// <summary>按 <c>[price]</c> 与 <c>[need material]</c> 划分物品的商店买入标价构成。</summary>
+        public static ShopPriceKind ClassifyBuyPrice(ItemInfo item)
+        {
+            if (item == null)
+            {
+                return ShopPriceKind.FreeOrUnknown;
+            }
+            bool hasGold = item.Price > 0;
+            bool hasMaterial = item.HasNeedMaterial;
+            if (hasGold && hasMaterial)
+            {
+                return ShopPriceKind.GoldAndMaterial;
+            }
+            if (hasGold)
+            {
+                return ShopPriceKind.Gold;
+            }
+            return hasMaterial ? ShopPriceKind.Material : ShopPriceKind.FreeOrUnknown;
+        }
+
+        private static long BuyCostForCount(ItemInfo item, int unitCost, int count)
+        {
+            return item.IsEquipment ? unitCost : (long)unitCost * count;
         }
     }
 }

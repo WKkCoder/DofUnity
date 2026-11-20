@@ -99,7 +99,9 @@ internal static class ShopCheck
         int free = goods.Count(i => i.Price == 0);
         int noSale = goods.Count(i => !ShopRules.IsSellable(i));
         Console.WriteLine("  商品构成:装备 " + equip + "、可叠加 " + stack + "、其它 " + (goods.Count - equip - stack) + ";称号 " + title + ";价格为 0 的 " + free + ";商店不收的 " + noSale);
+        PrintZeroPriceStats(defs, items, goods);
         Report(goods.All(i => i.Price >= 0 && i.Value >= 0), "价格与价值都不是负数");
+        Report(goods.Where(i => i.HasNeedMaterial).All(i => items.Get(i.NeedMaterialId) != null && i.NeedMaterialCount > 0), "标了 [need material] 的商品都能找到兑换材料且数量大于 0");
 
         // 3. 价格倍率表
         ItemPriceRates? read = ItemPriceRates.Read(data);
@@ -369,6 +371,78 @@ internal static class ShopCheck
     /// 把刚买的 <paramref name="count"/> 件 <paramref name="item"/> 卖回去,核对结果:商店收的(<see cref="ShopRules.IsSellable"/>)要成交、
     /// 钱涨的正好是 <see cref="ItemPricing.SellPrice"/>、背包里这件清零;商店不收的要拒收、钱与背包都不动。账对返回 true。
     /// </summary>
+    private static void PrintZeroPriceStats(List<ItemShopDef> defs, ItemCatalog items, List<ItemInfo> goods)
+    {
+        if (goods.Count == 0)
+        {
+            return;
+        }
+        int total = goods.Count;
+        int zeroPrice = goods.Count(i => i.Price == 0);
+        int zeroPriceWithMat = goods.Count(i => i.Price == 0 && i.HasNeedMaterial);
+        int zeroPriceNoMat = goods.Count(i => i.Price == 0 && !i.HasNeedMaterial);
+        int zeroValue = goods.Count(i => i.Value == 0);
+        int zeroBoth = goods.Count(i => i.Price == 0 && i.Value == 0);
+
+        int equipAll = goods.Count(i => i.IsEquipment);
+        int equipZero = goods.Count(i => i.IsEquipment && i.Price == 0);
+        int wasteAll = goods.Count(i => !i.IsEquipment && i.StackableType == 0);
+        int wasteZero = goods.Count(i => !i.IsEquipment && i.StackableType == 0 && i.Price == 0);
+        int matAll = goods.Count(i => !i.IsEquipment && i.StackableType == 1);
+        int matZero = goods.Count(i => !i.IsEquipment && i.StackableType == 1 && i.Price == 0);
+        int otherAll = total - equipAll - wasteAll - matAll;
+        int otherZero = zeroPrice - equipZero - wasteZero - matZero;
+
+        int stockedShops = 0;
+        int majorityZeroShops = 0;
+        foreach (ItemShopDef def in defs)
+        {
+            int shopReadable = 0;
+            int shopZero = 0;
+            foreach (ItemShopTab tab in def.Tabs)
+            {
+                foreach (int code in tab.Cells)
+                {
+                    ItemInfo? item = code >= 0 ? items.Get(code) : null;
+                    if (item == null)
+                    {
+                        continue;
+                    }
+                    shopReadable++;
+                    if (item.Price == 0)
+                    {
+                        shopZero++;
+                    }
+                }
+            }
+            if (shopReadable == 0)
+            {
+                continue;
+            }
+            stockedShops++;
+            if (shopZero * 2 > shopReadable)
+            {
+                majorityZeroShops++;
+            }
+        }
+
+        Console.WriteLine("  零价统计(去重 " + total + " 种可读商品):[price]==0 占 " + FormatCountPct(zeroPrice, total)
+            + "(带 [need material] " + FormatCountPct(zeroPriceWithMat, total) + ",无材料 " + FormatCountPct(zeroPriceNoMat, total) + ")"
+            + ";[value]==0 占 " + FormatCountPct(zeroValue, total)
+            + ";两者均为 0 占 " + FormatCountPct(zeroBoth, total));
+        Console.WriteLine("  按类型 [price]==0 占比:装备 " + FormatCountPct(equipZero, equipAll)
+            + ",消耗品 " + FormatCountPct(wasteZero, wasteAll)
+            + ",材料 " + FormatCountPct(matZero, matAll)
+            + ",其它 " + FormatCountPct(otherZero, otherAll)
+            + ";零价过半的店 " + FormatCountPct(majorityZeroShops, stockedShops));
+    }
+
+    private static string FormatCountPct(int count, int total)
+    {
+        double pct = total == 0 ? 0.0 : 100.0 * count / total;
+        return count + "/" + total + " (" + pct.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "%)";
+    }
+
     private static bool SellBack(HeroProgress progress, ItemInfo item, int count, ItemPriceRates rates, ref int sells, ref int refused)
     {
         InventoryTab tab = Inventory.TabOf(item);
