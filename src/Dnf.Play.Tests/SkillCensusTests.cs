@@ -1209,18 +1209,19 @@ public sealed class SkillCensusTests
     [Fact]
     public void Analyze_PerStatePointersWrittenByC7WithEachModRmForm_AreAllRecognised()
     {
-        // 类 4:过程入口 .text 偏移 0x70000、进入入口 0x70200。三个"逐状态函数"各自前面是 CC 填充,放在进入入口前 0x600/0x500/0x400 处,
-        // 每个函数里是一个按键助手起手点(技能号 941/942/943 → 状态 0x31/0x33/0x34)。
+        // 类 4:过程入口 .text 偏移 0x70000、进入入口 0x70200。四个"逐状态函数"各自前面是 CC 填充,放在进入入口前 0x600/0x500/0x400/0x300 处,
+        // 每个函数里是一个按键助手起手点(技能号 941/942/943/944 → 状态 0x31/0x33/0x34/0x35)。
+        // 逐状态函数是否按"逐状态指针"登记,取决于它自己的入口有没有被指针扫描认出来(每个函数各自独立判定,不会被相邻函数带上)。
         // 类 4 的初始化代码(0x70060 起)里先有一个大偏移 dword 0x70A8(触发"逐状态指针数组"扫描),
-        // 再用三种 C7(mov dword ptr [..], imm32)写法各写一个指向这些函数入口的代码指针。
+        // 再用四种 C7 写法(三种 mov dword ptr [..], imm32 + 一种 mov r32, imm32)各写一个指向这些函数入口的代码指针。
         // 每条 C7 前面一个字节都不是 ModRM 的合理值:读前一字节会判到别的分支,立即数位置就错了。
         (SyntheticPeBuilder pe, uint[] vtables, uint keyHelperVa) = BuildClassSkeleton();
         const int cls = 4;
         int procOff = ClassProcOff(cls); // 0x70000
-        int[] fnOffs = { procOff - 0x600, procOff - 0x500, procOff - 0x400 };
-        int[] skills = { 941, 942, 943 };
-        int[] states = { 0x31, 0x33, 0x34 };
-        for (int i = 0; i < 3; i++)
+        int[] fnOffs = { procOff - 0x600, procOff - 0x500, procOff - 0x400, procOff - 0x300 };
+        int[] skills = { 941, 942, 943, 944 };
+        int[] states = { 0x31, 0x33, 0x34, 0x35 };
+        for (int i = 0; i < fnOffs.Length; i++)
         {
             int state = states[i];
             int skill = skills[i];
@@ -1252,12 +1253,18 @@ public sealed class SkillCensusTests
         p += 4;
         BitConverter.GetBytes(pe.TextVa(fnOffs[2])).CopyTo(pe.Text, p);
         p += 4;
+
+        // 写法四(mod=11,"其余"分支):mov ecx, fn3  =>  C7 C1 imm32;立即数在 +2;前一字节故意是 0x90(读成 mod=10 → 立即数在 +6)
+        pe.Text[p++] = 0x90;
+        pe.Text[p++] = 0xC7; pe.Text[p++] = 0xC1;
+        BitConverter.GetBytes(pe.TextVa(fnOffs[3])).CopyTo(pe.Text, p);
+        p += 4;
         pe.EmitRet(p);
 
         SkillCensus.NativeAnalysis analysis = AnalyzeSkeleton(pe);
 
-        // 三个函数入口的指针都被认出来 → 函数里的起手点按"逐状态指针"登记(PerStatePointer),而不是普通的按键助手点(KeyHub)
-        for (int i = 0; i < 3; i++)
+        // 四个函数入口的指针都被认出来 → 函数里的起手点按"逐状态指针"登记(PerStatePointer),而不是普通的按键助手点(KeyHub)
+        for (int i = 0; i < fnOffs.Length; i++)
         {
             Assert.Equal(new[] { new SkillCensus.EntryPoint(states[i], SkillCensus.EntryKind.PerStatePointer) },
                 EntriesOf(analysis, vtables[cls], skills[i]));
