@@ -6,7 +6,8 @@ namespace Dnf.Play.Tests;
 /// <summary>
 /// r18-dungeonflow 测试补强(区域 C,第五轮):<see cref="DungeonSelectScreen"/> 里第一轮没有钉住的两处——
 /// 鼠标点击换选中项时过期提示被清掉(<see cref="DungeonSelectScreen.Click"/> 的换选分支),
-/// 以及选择行名字刚好 380 宽时既不缩字号也不截断(字体字限宽的边界)。
+/// 以及选择行名字刚好 380 宽时既不缩字号也不截断(字体字限宽的边界);
+/// 另外钉住世界地图增强入口在缺精灵列表或缺素材时的空操作(额外探索时发现没人钉)。
 /// 复用 <see cref="OnlineDungeonScreenGapKit"/>(internal,同一个测试程序集):合成世界地图、行号编码色块、随字号变化的探针字体 ProbeFonts。
 /// 期望值都是手算的字面量,注释写推导;不改全进程共用字体集。
 /// </summary>
@@ -162,5 +163,30 @@ public class OnlineDungeonScreenGapR5Tests
         Assert.Equal((48, 150, 381, 20), Box(movedNames[1]));
         Assert.Equal((48, 190, 381, 24), Box(movedNames[2]));
         Assert.Equal((36, 144, 400, 34), Box(Assert.Single(Tagged(moved, "select-highlight"))));
+    }
+
+    // ------------------------------------------------------------------ 世界地图增强入口:缺精灵列表或缺素材
+
+    [Fact]
+    public void EnhancingTheWorldMapWithoutASpriteListOrWithoutArtDoesNothingAndKeepsTheGivenOrder()
+    {
+        // 保护:世界地图增强入口缺少精灵列表,或者缺少素材时,直接空操作:不抛异常、不改调用方传入的序号、不动已有精灵;
+        // 两个条件"任缺一个"都要空操作(只缺其中一个也不能继续往下画)。最后用两者齐全的对照说明同样的其它参数在齐全时是会画东西的。
+        DungeonEntry[] entries = { A, B };
+        var notice = new DungeonSelectNotice(DungeonSelectNoticeKind.Info, "NOTICE");
+        Func<DungeonEntry, DungeonEntryStatus> rejected = _ => Rejected(4);
+
+        int order = 77;
+        DungeonSelectOverlay.EnhanceWorldMap(null, ref order, new OverlayArt(), entries, 0, 2000, 0, rejected, null, null, notice);
+        Assert.Equal(77, order);                                                    // 没有精灵列表:序号原样
+
+        var sprites = new List<SceneSprite> { OverlayArt.Place(Coded(10, 10, 1), 0, 0, 0, "base") };
+        DungeonSelectOverlay.EnhanceWorldMap(sprites, ref order, null, entries, 0, 2000, 0, rejected, null, null, notice);
+        Assert.Equal(77, order);                                                    // 没有素材:序号原样
+        Assert.Equal(new[] { "base" }, Tags(sprites));                              // 精灵列表一个都没多
+
+        DungeonSelectOverlay.EnhanceWorldMap(sprites, ref order, new OverlayArt(), entries, 0, 2000, 0, rejected, null, null, notice);
+        Assert.True(sprites.Count > 1);                                             // 对照:两者齐全才会画
+        Assert.Single(Tagged(sprites, "select-online-notice-icon"));                // 提示条的图标
     }
 }
