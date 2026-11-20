@@ -317,7 +317,10 @@ internal static class OnlineDungeonFlowGapR4Kit
         public Rig4(
             Action<OnlineDungeonFlowOptions> configure = null,
             Func<string, SplashScene> dungeonSplash = null,
-            OnlineClientSession rawSession = null)
+            OnlineClientSession rawSession = null,
+            Func<CharacterSelectScreen> characterSelect = null,
+            Action<GameFlow> beforeController = null,
+            Func<OnlineDungeonPermissionTable, OnlineDungeonSelectPolicy> makePolicy = null)
         {
             Table = new OnlineDungeonPermissionTable();
             Table.LoadInitial(new[]
@@ -333,8 +336,10 @@ internal static class OnlineDungeonFlowGapR4Kit
             };
 
             World = new TestTownWorld(new TownPlace(1, 0), new TownPlace(ReturnTownId, ReturnAreaId));
-            Flow = new GameFlow(World, (path, _) => throw new InvalidOperationException("offline factory should not run"), Entries, null, dungeonSplash);
-            Policy = OnlineDungeonSelectPolicy.Create(Table, hasLocalData: _ => true, hasUltimate: _ => true);
+            Flow = new GameFlow(World, (path, _) => throw new InvalidOperationException("offline factory should not run"), Entries, null, dungeonSplash, characterSelect);
+            Policy = makePolicy != null
+                ? makePolicy(Table)
+                : OnlineDungeonSelectPolicy.Create(Table, hasLocalData: _ => true, hasUltimate: _ => true);
             Port.RawSession = rawSession;
 
             Options = new OnlineDungeonFlowOptions
@@ -347,6 +352,7 @@ internal static class OnlineDungeonFlowGapR4Kit
                 OnDisconnected = () => Interlocked.Increment(ref Disconnects),
             };
             configure?.Invoke(Options);
+            beforeController?.Invoke(Flow);
 
             Ctrl = new OnlineDungeonFlowController(Port, Flow, Policy, ctx =>
             {
