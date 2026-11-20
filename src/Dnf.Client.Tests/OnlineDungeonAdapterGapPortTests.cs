@@ -39,11 +39,17 @@ public sealed class OnlineDungeonAdapterGapPortTests
         field.SetValue(session, link);
     }
 
+    /// <summary>
+    /// 收包窗口取得很宽(30 秒只是上界,从不真的等):内存流的读立即完成,收包循环一读到结果就退出,
+    /// 所以不依赖墙钟;窗口太窄时机器卡一下就会在读之前到点退出,让下面两个造形偶发失败。
+    /// </summary>
+    private static readonly TimeSpan Window = TimeSpan.FromSeconds(30);
+
     /// <summary>读空的内存流:第一次读到 0 字节,游戏会话记下"对端已关闭"。</summary>
     private static async Task<GameClientSession> ClosedGameAsync()
     {
         var game = new GameClientSession(new MemoryStream());
-        await game.ReceiveAsync(TimeSpan.FromMilliseconds(50));
+        await game.ReceiveAsync(Window);
         Assert.True(game.PeerClosed);
         Assert.Equal(FrameError.None, game.LastFrameError);
         return game;
@@ -53,7 +59,7 @@ public sealed class OnlineDungeonAdapterGapPortTests
     private static async Task<GameClientSession> FaultedGameAsync()
     {
         var game = new GameClientSession(new MemoryStream(new byte[15]));
-        await game.ReceiveAsync(TimeSpan.FromMilliseconds(50));
+        await game.ReceiveAsync(Window);
         Assert.False(game.PeerClosed);
         Assert.Equal(FrameError.LengthBelowMinimum, game.LastFrameError);
         return game;
