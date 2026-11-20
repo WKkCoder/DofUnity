@@ -145,13 +145,13 @@ namespace Dnf.Client
         /// <paramref name="characterSelect"/> 非 null 时选角界面用服务器给的真名册(<see cref="OnlineShellOptions.CharacterSelect"/>),为 null 是外壳原来的占位名册。
         /// </summary>
         public static OnlineShellHost Create(OnlineShellSetup setup, CharacterSelectScene art, Action<string> log, bool serverUi = false, ServerPickerScene picker = null,
-            OnlineCharacterSelectOptions characterSelect = null)
+            OnlineCharacterSelectOptions characterSelect = null, ChannelDirectoryCatalog directoryCatalog = null, IGlyphFonts fonts = null)
         {
             if (setup == null)
             {
                 throw new ArgumentNullException(nameof(setup));
             }
-            return new OnlineShellHost(setup, new OnlineShellBackend(setup.CreateSettings(), log), art, log, null, serverUi, picker, characterSelect);
+            return new OnlineShellHost(setup, new OnlineShellBackend(setup.CreateSettings(), log, directoryCatalog), art, log, fonts, serverUi, picker, characterSelect);
         }
 
         internal OnlineShellHost(OnlineShellSetup setup, OnlineShellBackend backend, CharacterSelectScene art, Action<string> log, IGlyphFonts fonts,
