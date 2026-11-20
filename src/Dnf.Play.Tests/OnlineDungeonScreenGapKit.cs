@@ -5,7 +5,7 @@ namespace Dnf.Play.Tests;
 /// <summary>
 /// 区域 C 界面测试共用夹具(从 OnlineDungeonSelectTests 里的合成世界地图与"行号编码"色块复制而来,既有测试文件原样不动;
 /// 只给 OnlineDungeonScreenGap* 系列测试用)。另带一套"随字号变化的合成字体"(<see cref="ProbeFonts"/>),
-/// 让精灵的高度能读出请求的字号、宽度能读出文字内容,从而把字号常量的变异也量得出来。
+/// 让精灵的高度能读出请求的字号、宽度能读出文字内容,这样字号与限宽这类常量一旦被改动,帧的尺寸就会跟着变,测试量得出来。
 /// </summary>
 internal static class OnlineDungeonScreenGapKit
 {
