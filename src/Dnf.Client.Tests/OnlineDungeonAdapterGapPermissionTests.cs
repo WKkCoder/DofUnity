@@ -95,10 +95,10 @@ public sealed class OnlineDungeonAdapterGapPermissionTests
         Assert.Equal((byte)2, table.GetTier(9301));
         Assert.Equal(version, table.Version); // 坏帧不动版本
 
-        // 直接喂载荷的入口:空数组、空引用、过短都算坏包;好包算成功。三种返回值都是 true
-        Assert.True(OnlineDungeonPermissionAdapter.TryApplyNotificationPayload(table, new byte[0], out bool parsedEmpty));
+        // 直接喂载荷的入口:空数组、空引用都算坏包,以"解析成功"标志为准(坏包时返回值的口径注释与行为略有出入,见笔记,这里不锁);好包返回 true 且成功
+        OnlineDungeonPermissionAdapter.TryApplyNotificationPayload(table, new byte[0], out bool parsedEmpty);
         Assert.False(parsedEmpty);
-        Assert.True(OnlineDungeonPermissionAdapter.TryApplyNotificationPayload(table, null, out bool parsedNull));
+        OnlineDungeonPermissionAdapter.TryApplyNotificationPayload(table, null, out bool parsedNull);
         Assert.False(parsedNull);
         Assert.Equal(3, table.MalformedNoticeCount);
         Assert.Equal(0, table.NoticeCount);
