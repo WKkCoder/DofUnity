@@ -122,6 +122,42 @@ public sealed class SkillCensusTests
             return off + 1;
         }
 
+        public int EmitMovEdxSetStateSlot(int off)
+        {
+            // mov edx, [eax + 0x30c] => 8B 90 0C 03 00 00(与 EmitSetState 的前半段同形,但后面不一定有 push)
+            Text[off] = 0x8B;
+            Text[off + 1] = 0x90;
+            BitConverter.GetBytes(0x30Cu).CopyTo(Text, off + 2);
+            return off + 6;
+        }
+
+        public int EmitCallEdx(int off)
+        {
+            // call edx => FF D2
+            Text[off] = 0xFF;
+            Text[off + 1] = 0xD2;
+            return off + 2;
+        }
+
+        public int EmitAddRegImm8(int off, byte modrm, sbyte imm)
+        {
+            // add r32, imm8 => 83 /0 ib(modrm 的 mod=3、reg=0、rm=目标寄存器:esp=C4、eax=C0)
+            Text[off] = 0x83;
+            Text[off + 1] = modrm;
+            Text[off + 2] = unchecked((byte)imm);
+            return off + 3;
+        }
+
+        public int EmitStackConst(int off, sbyte disp, int value)
+        {
+            // mov dword ptr [ebp + disp8], imm32 => C7 45 dd imm32
+            Text[off] = 0xC7;
+            Text[off + 1] = 0x45;
+            Text[off + 2] = unchecked((byte)disp);
+            BitConverter.GetBytes(value).CopyTo(Text, off + 3);
+            return off + 7;
+        }
+
         public byte[] Build(int sectionCount = 4)
         {
             const int peOff = 0x80;
@@ -1015,5 +1051,306 @@ public sealed class SkillCensusTests
         Assert.False(SkillCensus.IsCastableForJob(2, 1));
         Assert.True(SkillCensus.IsCastableForJob(2, SkillIds.BackStep));
         Assert.False(SkillCensus.IsCastableForJob(-1, SkillIds.BackStep));
+    }
+
+    // ------------------------------------------------------------------ 变异测试补缺口(r19 修补一)
+    // 下面 7 组用例补的是集成者变异测试里"现有测试全绿也杀不死"的缺口:普通节访问器的节数边界、
+    // 逐状态指针写入的 C7 三种 ModRM 写法、无置状态调用时的 -1 哨兵、技能号 1 的下界、add esp 清栈的判断。
+    // 全部用合成映像与合成编号,期望值手算,不依赖墙钟与执行顺序。
+
+    /// <summary>骨架里第 <paramref name="cls"/> 个类的过程入口在 .text 里的偏移(类与类相隔 0x18000,进入入口在其后 0x200)。</summary>
+    private static int ClassProcOff(int cls) => 0x10000 + cls * 0x18000;
+
+    /// <summary>
+    /// 最小的"能被 <see cref="SkillCensus.Analyze"/> 识别"的合成映像骨架:11 张 Character 虚表(.rdata 里相隔 0x500,
+    /// 共享 +0x918 按键读取槽与 +0x30c 切状态槽,+0x1f0/+0x29c 各不相同)、100 处 `mov edx,[eax+0x918]; call keyHelper`
+    /// (凑够按键助手的发现门限)、其余 .text 全是 0xCC。只放骨架,不放任何技能起手点。
+    /// </summary>
+    private static (SyntheticPeBuilder Pe, uint[] Vtables, uint KeyHelperVa) BuildClassSkeleton()
+    {
+        var pe = new SyntheticPeBuilder();
+        uint keyGetterVa = pe.TextVa(0x100);
+        pe.EmitRet(0x100);
+        uint setStateVa = pe.TextVa(0x120);
+        pe.EmitRet(0x120);
+        uint keyHelperVa = pe.TextVa(0x140);
+        pe.EmitRet(0x140);
+
+        var vtables = new uint[11];
+        for (int i = 0; i < 11; i++)
+        {
+            int vtOff = i * 0x500;
+            int procOff = ClassProcOff(i);
+            vtables[i] = pe.RdataVa(vtOff);
+            pe.EmitRet(procOff);
+            pe.EmitRet(procOff + 0x200);
+            pe.WriteU32(pe.Rdata, vtOff + 0x1F0, pe.TextVa(procOff));
+            pe.WriteU32(pe.Rdata, vtOff + 0x29C, pe.TextVa(procOff + 0x200));
+            pe.WriteU32(pe.Rdata, vtOff + 0x30C, setStateVa);
+            pe.WriteU32(pe.Rdata, vtOff + 0x918, keyGetterVa);
+        }
+
+        for (int k = 0; k < 100; k++)
+        {
+            int o = 0x120000 + k * 36;
+            pe.Text[o] = 0x8B;
+            pe.Text[o + 1] = 0x90;
+            BitConverter.GetBytes(0x918u).CopyTo(pe.Text, o + 2);
+            pe.EmitCallRel32(o + 6, keyHelperVa);
+        }
+        return (pe, vtables, keyHelperVa);
+    }
+
+    /// <summary>
+    /// 一个按键助手起手调用点:`prefix; call keyHelper; cmp eax,-1; je skip; body; skip: ret`
+    /// (与 BuildSyntheticWorld 里的 EmitKeyHubSite 同形,但前导与 `je` 之后的内容由调用方决定)。返回 ret 之后的偏移。
+    /// </summary>
+    private static int EmitHubSite(SyntheticPeBuilder pe, uint keyHelperVa, int off, Func<int, int> prefix, Func<int, int> body)
+    {
+        int q = prefix(off);
+        q = pe.EmitCallRel32(q, keyHelperVa);
+        pe.Text[q++] = 0x83; pe.Text[q++] = 0xF8; pe.Text[q++] = 0xFF; // cmp eax, -1
+        int je = q;
+        q += 2;
+        q = body(q);
+        pe.EmitJeRel8(je, q);
+        return pe.EmitRet(q);
+    }
+
+    /// <summary>对合成映像直接跑原生分析(空脚本库、只传 1 个职业:跳过与本组用例无关的工厂职业继承推断)。</summary>
+    private static SkillCensus.NativeAnalysis AnalyzeSkeleton(SyntheticPeBuilder pe)
+    {
+        (byte[] emptyPvf, _) = TestData.BuildPvf(Array.Empty<TestData.PvfFileSpec>(), validChecksums: true);
+        using var pvf = new PvfArchive(new MemoryStream(emptyPvf));
+        SkillCensus.PeImage image = SkillCensus.PeImage.TryParse(pe.Build(sectionCount: 3));
+        Assert.NotNull(image);
+        return SkillCensus.Analyze(pvf, image, new[] { 0 });
+    }
+
+    private static List<SkillCensus.EntryPoint> EntriesOf(SkillCensus.NativeAnalysis analysis, uint vtable, int skillId)
+    {
+        Assert.True(analysis.ClassEntries.TryGetValue(vtable, out Dictionary<int, List<SkillCensus.EntryPoint>> bySkill), "该类没有登记任何起手点");
+        Assert.True(bySkill.TryGetValue(skillId, out List<SkillCensus.EntryPoint> entries), "该类没有登记这个技能号");
+        return entries;
+    }
+
+    /// <summary>在类 1 的过程区放一个以 `push skillId` 起头的起手点,<paramref name="body"/> 决定 `je` 之后的内容,返回该技能号登记的入口点。</summary>
+    private static List<SkillCensus.EntryPoint> EntriesOfSingleSite(int skillId, Func<SyntheticPeBuilder, int, int> body)
+    {
+        (SyntheticPeBuilder pe, uint[] vtables, uint keyHelperVa) = BuildClassSkeleton();
+        EmitHubSite(pe, keyHelperVa, ClassProcOff(1) + 0x60, q => pe.EmitPushImm(q, skillId), q => body(pe, q));
+        return EntriesOf(AnalyzeSkeleton(pe), vtables[1], skillId);
+    }
+
+    [Fact]
+    public void PeImage_ZeroAndSingleOrdinarySection_OnlyTextWindowIsExposedAndRdataAccessorsStayZero()
+    {
+        // 手算(合成映像):ImageBase=0x00400000;.text:RVA 0x1000、原始大小 0x140000、原始偏移=节头区对齐后的 0x200。
+        // 节表起于 0x80+24+0xE0=0x178,0/1 个节时 0x178+40n ≤ 0x200,节头区按 0x200 对齐后恰为 0x200。
+        var sb = new SyntheticPeBuilder();
+
+        // 0 个节:TryParse 给出空节表映像,所有节访问器与按 VA 的判定都是 0 / false,且不抛异常
+        SkillCensus.PeImage none = SkillCensus.PeImage.TryParse(sb.Build(sectionCount: 0));
+        Assert.NotNull(none);
+        Assert.Equal((0u, 0u, 0u, 0), (none.TextStartVa, none.TextEndVa, none.TextRawOffset, none.TextRawSize));
+        Assert.Equal((0u, 0u, 0u, 0), (none.RdataStartVa, none.RdataEndVa, none.RdataRawOffset, none.RdataRawSize));
+        Assert.False(none.IsTextVa(sb.TextVa(0)));
+        Assert.False(none.IsRdataVa(sb.RdataVa(0)));
+        Assert.False(none.IsStaticDataVa(sb.RdataVa(0)));
+        Assert.False(none.TryVaToOff(sb.TextVa(0), out _));
+
+        // 只有 1 个普通节(.text):TextStartVa = ImageBase + TextRva = 0x00401000;
+        // TextEndVa = 0x00401000 + 0x140000 = 0x00541000;原始偏移 0x200;原始大小 0x140000。
+        SkillCensus.PeImage one = SkillCensus.PeImage.TryParse(sb.Build(sectionCount: 1));
+        Assert.NotNull(one);
+        Assert.Equal(0x00401000u, SyntheticPeBuilder.ImageBase + SyntheticPeBuilder.TextRva);
+        Assert.Equal(0x00401000u, one.TextStartVa);
+        Assert.Equal(0x00541000u, one.TextEndVa);
+        Assert.Equal(0x200u, one.TextRawOffset);
+        Assert.Equal(0x140000, one.TextRawSize);
+
+        // 没有第二节:.rdata 的四个访问器全为 0(尤其 RdataRawOffset 不能越界取 [1] 抛异常)
+        Assert.Equal(0u, one.RdataStartVa);
+        Assert.Equal(0u, one.RdataEndVa);
+        Assert.Equal(0u, one.RdataRawOffset);
+        Assert.Equal(0, one.RdataRawSize);
+
+        // 依赖这些访问器的按 VA 判定也跟着自洽:.text 边界内外、.rdata/.data 一律不认、.text 内偏移 = 0x200 + 0x10
+        Assert.False(one.IsTextVa(0x00401000u - 1));
+        Assert.True(one.IsTextVa(0x00401000u));
+        Assert.True(one.IsTextVa(0x00541000u - 1));
+        Assert.False(one.IsTextVa(0x00541000u));
+        Assert.False(one.IsRdataVa(sb.RdataVa(0)));
+        Assert.False(one.IsStaticDataVa(sb.RdataVa(0)));
+        Assert.False(one.TryVaToOff(sb.RdataVa(0), out _));
+        Assert.True(one.TryVaToOff(0x00401010u, out int textOff));
+        Assert.Equal(0x210, textOff);
+    }
+
+    [Fact]
+    public void PeImage_TwoThreeAndFourSections_ExposeHandComputedTextAndRdataWindows()
+    {
+        // 手算:节表起于 0x80+24+0xE0=0x178,每节 40 字节,节头区按 0x200 对齐后才是 .text 的原始偏移:
+        //   2 节 0x178+80=0x1C8 → 0x200;3 节 0x178+120=0x1F0 → 0x200;4 节 0x178+160=0x218 → 0x400。
+        // .text 原始大小 0x140000,所以 .rdata 原始偏移 = .text 原始偏移 + 0x140000(0x140200 / 0x140200 / 0x140400)。
+        // .text:RVA 0x1000 → VA 0x00401000..0x00541000;.rdata:RVA 0x200000、大小 0x8000 → VA 0x00600000..0x00608000。
+        // 第 3 节(.data)与第 4 节(.prot)不进这两组访问器。
+        var sb = new SyntheticPeBuilder();
+        foreach ((int sections, uint textRaw, uint rdataRaw) in new[] { (2, 0x200u, 0x140200u), (3, 0x200u, 0x140200u), (4, 0x400u, 0x140400u) })
+        {
+            SkillCensus.PeImage pe = SkillCensus.PeImage.TryParse(sb.Build(sectionCount: sections));
+            Assert.NotNull(pe);
+            Assert.Equal((0x00401000u, 0x00541000u, textRaw, 0x140000), (pe.TextStartVa, pe.TextEndVa, pe.TextRawOffset, pe.TextRawSize));
+            Assert.Equal((0x00600000u, 0x00608000u, rdataRaw, 0x8000), (pe.RdataStartVa, pe.RdataEndVa, pe.RdataRawOffset, pe.RdataRawSize));
+            Assert.Equal(0x00600000u, SyntheticPeBuilder.ImageBase + SyntheticPeBuilder.RdataRva);
+        }
+    }
+
+    [Fact]
+    public void Analyze_PerStatePointersWrittenByC7WithEachModRmForm_AreAllRecognised()
+    {
+        // 类 4:过程入口 .text 偏移 0x70000、进入入口 0x70200。三个"逐状态函数"各自前面是 CC 填充,放在进入入口前 0x600/0x500/0x400 处,
+        // 每个函数里是一个按键助手起手点(技能号 941/942/943 → 状态 0x31/0x33/0x34)。
+        // 类 4 的初始化代码(0x70060 起)里先有一个大偏移 dword 0x70A8(触发"逐状态指针数组"扫描),
+        // 再用三种 C7(mov dword ptr [..], imm32)写法各写一个指向这些函数入口的代码指针。
+        // 每条 C7 前面一个字节都不是 ModRM 的合理值:读前一字节会判到别的分支,立即数位置就错了。
+        (SyntheticPeBuilder pe, uint[] vtables, uint keyHelperVa) = BuildClassSkeleton();
+        const int cls = 4;
+        int procOff = ClassProcOff(cls); // 0x70000
+        int[] fnOffs = { procOff - 0x600, procOff - 0x500, procOff - 0x400 };
+        int[] skills = { 941, 942, 943 };
+        int[] states = { 0x31, 0x33, 0x34 };
+        for (int i = 0; i < 3; i++)
+        {
+            int state = states[i];
+            int skill = skills[i];
+            EmitHubSite(pe, keyHelperVa, fnOffs[i], q => pe.EmitPushImm(q, skill), q => pe.EmitSetState(q, state));
+        }
+
+        int p = procOff + 0x60;
+        BitConverter.GetBytes(0x70A8u).CopyTo(pe.Text, p);
+        p += 4;
+
+        // 写法一(mod=01):mov dword ptr [eax+0x10], fn0  =>  C7 40 10 imm32;立即数在 +3;前一字节故意是 0x90(读成 mod=10 → 立即数在 +6)
+        pe.Text[p++] = 0x90;
+        pe.Text[p++] = 0xC7; pe.Text[p++] = 0x40; pe.Text[p++] = 0x10;
+        BitConverter.GetBytes(pe.TextVa(fnOffs[0])).CopyTo(pe.Text, p);
+        p += 4;
+
+        // 写法二(mod=10):mov dword ptr [eax+0x70a8], fn1  =>  C7 80 A8 70 00 00 imm32;立即数在 +6;前一字节故意是 0xCC(读成默认 → 立即数在 +2)
+        pe.Text[p++] = 0xCC;
+        pe.Text[p++] = 0xC7; pe.Text[p++] = 0x80;
+        BitConverter.GetBytes(0x70A8u).CopyTo(pe.Text, p);
+        p += 4;
+        BitConverter.GetBytes(pe.TextVa(fnOffs[1])).CopyTo(pe.Text, p);
+        p += 4;
+
+        // 写法三(mod=00、rm=5):mov dword ptr [abs32], fn2  =>  C7 05 abs32 imm32;立即数在 +6;前一字节故意是 0xCC
+        pe.Text[p++] = 0xCC;
+        pe.Text[p++] = 0xC7; pe.Text[p++] = 0x05;
+        BitConverter.GetBytes(pe.DataVa(0x100)).CopyTo(pe.Text, p);
+        p += 4;
+        BitConverter.GetBytes(pe.TextVa(fnOffs[2])).CopyTo(pe.Text, p);
+        p += 4;
+        pe.EmitRet(p);
+
+        SkillCensus.NativeAnalysis analysis = AnalyzeSkeleton(pe);
+
+        // 三个函数入口的指针都被认出来 → 函数里的起手点按"逐状态指针"登记(PerStatePointer),而不是普通的按键助手点(KeyHub)
+        for (int i = 0; i < 3; i++)
+        {
+            Assert.Equal(new[] { new SkillCensus.EntryPoint(states[i], SkillCensus.EntryKind.PerStatePointer) },
+                EntriesOf(analysis, vtables[cls], skills[i]));
+        }
+    }
+
+    [Fact]
+    public void Analyze_CallSiteWithoutAnySetStateCall_RecordsPureCallSentinelMinusOne()
+    {
+        // 起手点里没有 `mov edx,[eax+0x30c]`:只有一个无关的 `push 5; call edx`(没读 +0x30c 槽,不算置状态)。
+        // 没找到任何状态时按"纯调用/切换"登记哨兵状态 -1;不是别的数。
+        List<SkillCensus.EntryPoint> entries = EntriesOfSingleSite(961, (pe, q) =>
+        {
+            q = pe.EmitPushImm(q, 5);
+            return pe.EmitCallEdx(q);
+        });
+
+        Assert.Equal(new[] { new SkillCensus.EntryPoint(-1, SkillCensus.EntryKind.KeyHub) }, entries);
+        Assert.DoesNotContain(entries, e => e.StateId == -2);
+        Assert.DoesNotContain(entries, e => e.StateId == 5);
+    }
+
+    [Fact]
+    public void Analyze_StackConstantRunIds_KeepOneAndNineNineNineAndDropZeroAndOneThousand()
+    {
+        // 栈常量数组分支的"首项不校验范围":数组的第一项可以是 0 或 1000(非法),其后各项必须在 1..999 才继续。
+        // 类 1 的起手点:[ebp-0x20]=0、[ebp-0x1c]=1、[ebp-0x18]=999 → 技能号序列 [0, 1, 999] → 0 被丢弃,1 与 999 保留(1 是合法下界)。
+        // 类 2 的起手点:[ebp-0x20]=1000、[ebp-0x1c]=2、[ebp-0x18]=3 → 序列 [1000, 2, 3] → 1000 被丢弃,2 与 3 保留(证明这个点确实被处理过)。
+        // 前导最后是 push eax(寄存器不是已知常量),所以技能号来源只能是栈常量数组。
+        (SyntheticPeBuilder pe, uint[] vtables, uint keyHelperVa) = BuildClassSkeleton();
+        EmitHubSite(pe, keyHelperVa, ClassProcOff(1) + 0x60, q =>
+        {
+            q = pe.EmitStackConst(q, -0x20, 0);
+            q = pe.EmitStackConst(q, -0x1C, 1);
+            q = pe.EmitStackConst(q, -0x18, 999);
+            pe.Text[q++] = 0x50; // push eax
+            return q;
+        }, q => pe.EmitSetState(q, 0x2A));
+        EmitHubSite(pe, keyHelperVa, ClassProcOff(2) + 0x60, q =>
+        {
+            q = pe.EmitStackConst(q, -0x20, 1000);
+            q = pe.EmitStackConst(q, -0x1C, 2);
+            q = pe.EmitStackConst(q, -0x18, 3);
+            pe.Text[q++] = 0x50; // push eax
+            return q;
+        }, q => pe.EmitSetState(q, 0x2A));
+
+        SkillCensus.NativeAnalysis analysis = AnalyzeSkeleton(pe);
+
+        // 全部类里登记过的技能号恰好是 {1, 2, 3, 999}:0 与 1000 一个都不在
+        int[] allIds = analysis.ClassEntries.Values.SelectMany(m => m.Keys).OrderBy(k => k).ToArray();
+        Assert.Equal(new[] { 1, 2, 3, 999 }, allIds);
+
+        var loopTable = new[] { new SkillCensus.EntryPoint(0x2A, SkillCensus.EntryKind.LoopTable) };
+        Assert.Equal(loopTable, EntriesOf(analysis, vtables[1], 1));
+        Assert.Equal(loopTable, EntriesOf(analysis, vtables[1], 999));
+        Assert.Equal(loopTable, EntriesOf(analysis, vtables[2], 2));
+        Assert.Equal(loopTable, EntriesOf(analysis, vtables[2], 3));
+        Assert.DoesNotContain(0, analysis.ClassEntries[vtables[1]].Keys);
+        Assert.DoesNotContain(1000, analysis.ClassEntries[vtables[2]].Keys);
+    }
+
+    [Fact]
+    public void Analyze_AddEspBeforeSetStateCall_ClearsPushedArgumentsSoNoStateIsRecorded()
+    {
+        // `push 7; add esp,4; mov edx,[eax+0x30c]; call edx`:置状态调用前没有新的 push,栈已被 `add esp,4`(83 C4 04:mod=3、rm=4)清掉,
+        // 7 不再是置状态的参数 → 不记 7,整个起手点落到"没找到状态"的 -1 哨兵。
+        List<SkillCensus.EntryPoint> entries = EntriesOfSingleSite(971, (pe, q) =>
+        {
+            q = pe.EmitPushImm(q, 7);
+            q = pe.EmitAddRegImm8(q, 0xC4, 4);
+            q = pe.EmitMovEdxSetStateSlot(q);
+            return pe.EmitCallEdx(q);
+        });
+
+        Assert.Equal(new[] { new SkillCensus.EntryPoint(-1, SkillCensus.EntryKind.KeyHub) }, entries);
+        Assert.DoesNotContain(entries, e => e.StateId == 7);
+    }
+
+    [Fact]
+    public void Analyze_AddToOtherRegisterBeforeSetStateCall_KeepsStackTopAsStateArgument()
+    {
+        // `push 9; add eax,4; mov edx,[eax+0x30c]; call edx`:`add` 的目标是 eax(83 C0 04:mod=3、rm=0)而不是 esp,不清栈,
+        // 栈顶的 9 仍是置状态参数 → 必须记成状态 9(不是 -1)。
+        List<SkillCensus.EntryPoint> entries = EntriesOfSingleSite(972, (pe, q) =>
+        {
+            q = pe.EmitPushImm(q, 9);
+            q = pe.EmitAddRegImm8(q, 0xC0, 4);
+            q = pe.EmitMovEdxSetStateSlot(q);
+            return pe.EmitCallEdx(q);
+        });
+
+        Assert.Equal(new[] { new SkillCensus.EntryPoint(9, SkillCensus.EntryKind.KeyHub) }, entries);
+        Assert.DoesNotContain(entries, e => e.StateId == -1);
     }
 }
