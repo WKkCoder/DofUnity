@@ -249,6 +249,21 @@ internal static class OnlineDungeonFlowGapKit
         public bool PeerClosed { get; private set; }
         public FrameError LastFrameError => _frameError;
 
+        /// <summary>
+        /// 收帧闸门:非 null 时,每次 <see cref="ReceiveAsync"/> 先在这里停住(<b>故意不看取消令牌</b>),直到测试放行。
+        /// 用来把"战斗任务还没收场"这一状态钉死,不靠线程调度的快慢——取消令牌被取消时,等待信号量的收帧会就地(同一线程)完成,
+        /// 战斗任务也就跟着同步收场,测试看不到"停战中"这个阶段;停在闸门上就不会。
+        /// </summary>
+        public TaskCompletionSource<bool> ReceiveGate { get; set; }
+
+        private readonly TaskCompletionSource<bool> _gateEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>等收帧第一次停在 <see cref="ReceiveGate"/> 上(确认战斗循环已经停在闸门上);超时返回 false。</summary>
+        public bool WaitForReceiveGate(int timeoutMs)
+        {
+            return _gateEntered.Task.Wait(timeoutMs);
+        }
+
         public void Enqueue(CombatKit.ServerFrame frame)
         {
             _inbound.Enqueue(frame.Decoded());
@@ -290,6 +305,12 @@ internal static class OnlineDungeonFlowGapKit
         public async Task<List<DecodedFrame>> ReceiveAsync(TimeSpan timeout, int maxFrames = 16, CancellationToken cancellationToken = default)
         {
             var list = new List<DecodedFrame>();
+            TaskCompletionSource<bool> gate = ReceiveGate;
+            if (gate != null)
+            {
+                _gateEntered.TrySetResult(true);
+                await gate.Task.ConfigureAwait(false);
+            }
             if (!_inbound.TryDequeue(out DecodedFrame first))
             {
                 if (PeerClosed || _frameError != FrameError.None)
@@ -623,6 +644,29 @@ internal static class OnlineDungeonFlowGapKit
                 Thread.Sleep(2);
             }
             Assert.True(condition(), "Timed out waiting for online dungeon flow state; stage=" + Flow.Stage + " phase=" + Ctrl.Phase);
+        }
+
+        /// <summary>
+        /// 同 <see cref="PumpUntil"/>,但只轮询控制器(不推进房间与流程):想让"战斗任务先收场"这个顺序确定、
+        /// 不被房间每步的检查抢先判成网络中止时用。逻辑时钟照样每圈前进 20ms。
+        /// </summary>
+        public void PumpControllerUntil(Func<bool> condition, int maxIterations = 4000)
+        {
+            for (int i = 0; i < maxIterations; i++)
+            {
+                if (condition())
+                {
+                    return;
+                }
+                NowMs += 20;
+                Ctrl.Poll(NowMs);
+                if (condition())
+                {
+                    return;
+                }
+                Thread.Sleep(2);
+            }
+            Assert.True(condition(), "Timed out waiting for online dungeon controller state; stage=" + Flow.Stage + " phase=" + Ctrl.Phase);
         }
 
         /// <summary>等到控制器回到 Idle(各退出分支的收尾都走完)。</summary>
