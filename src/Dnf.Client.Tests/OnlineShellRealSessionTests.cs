@@ -18,6 +18,9 @@ namespace Dnf.Client.Tests;
 /// </summary>
 public sealed class OnlineShellRealSessionTests
 {
+    /// <summary>等真会话释放完的轮询上限(毫秒),只给"后端 Dispose() 之后断言已释放"的两条用例用:比本文件别处的 5000 宽,因为失败的根因就是线程池被并行测试占满、释放晚做完;通过时轮询立刻返回,不增加耗时。</summary>
+    private const int ReleaseWaitMs = 15000;
+
     private static OnlineEntrySettings Template(int gatewayPort)
     {
         Assert.True(GatewayOptions.TryCreate(
@@ -156,11 +159,14 @@ public sealed class OnlineShellRealSessionTests
         Assert.True(SpinWait.SpinUntil(() => first.State == OnlineClientSessionState.Disposed, 5000));
         Assert.NotEqual(OnlineClientSessionState.Disposed, second.State);
         backend.Dispose();
-        Assert.Equal(OnlineClientSessionState.Disposed, second.State);
+        // 后端 Dispose() 只最多等约一秒、线程池被占满时会先超时返回,所以"second 已释放"要有界轮询、不能立刻断言(理由与合同见下面 Disposing_the_backend_releases_the_real_session 上的注释)
+        Assert.True(SpinWait.SpinUntil(() => second.State == OnlineClientSessionState.Disposed, ReleaseWaitMs));
     }
 
+    // 后端 Dispose() 只最多等约一秒就返回(宿主退出时不能被卡住的释放拖死),线程池被占满时真会话可能还没释放完,所以"已释放"用有界轮询、不在 Dispose() 之后立刻断言;
+    // "等释放做完"与"最多等约一秒"两条合同由 OnlineShellBackendTests 里的 Dispose_waits_for_the_release_to_finish 与 Dispose_gives_up_waiting_after_about_a_second_if_the_release_hangs 用假端口钉住。
     [Fact]
-    public async Task Disposing_the_backend_releases_the_real_session_before_returning()
+    public async Task Disposing_the_backend_releases_the_real_session()
     {
         var backend = new OnlineShellBackend(Template(ClosedPort()));
         await GatewayTestSupport.Bounded(backend.LoginAsync("player_01", "synthetic-pw", default));
@@ -168,8 +174,9 @@ public sealed class OnlineShellRealSessionTests
 
         backend.Dispose();
 
-        Assert.Equal(OnlineClientSessionState.Disposed, session.State);
+        // 摘掉会话是同步的,立刻断言;真会话的释放在后台线程上做,只轮询到条件成立
         Assert.Null(backend.Session);
+        Assert.True(SpinWait.SpinUntil(() => session.State == OnlineClientSessionState.Disposed, ReleaseWaitMs));
     }
 
     // ------------------------------------------------------------------ 真回环套接字:RealOnlineSessionPort 与外壳联合验证
