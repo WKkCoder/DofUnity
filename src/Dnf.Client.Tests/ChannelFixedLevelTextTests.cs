@@ -374,6 +374,150 @@ public sealed class ChannelFixedLevelTextTests
         Assert.Empty(resolver.Calls);
     }
 
+    // ------------------------------------------------------------------ 没有槽位规则的条目(解析器非 null)
+    // 真实场景:用户的游戏目录里有 DNF.exe、但没有频道槽位脚本(或线上目录里这个组没有槽位表)时,Create(assets, true) 照样接上解析器,
+    // 而映射走"没有槽位规则"的老路:条目的 SlotRule 为 null。这时没有规则可看,固定文字一律不取,也不能因为没有规则而抛异常。
+
+    /// <summary>没有槽位规则(<c>SlotRule</c> 为 null)的频道条目;推荐等级只看条目自己的字段。</summary>
+    private static ChannelEntry EntryWithoutRule(int? min = 41, int? max = 55, bool levelFlag = true, int number = 11)
+    {
+        ChannelEntryFlags flags = ChannelEntryFlags.HasValidPort;
+        if (levelFlag)
+        {
+            flags |= ChannelEntryFlags.HasRecommendLevel;
+        }
+        var evaluation = new ChannelCongestionEvaluation(ChannelCongestionTier.Comfortable, false, 0, 0u);
+        return new ChannelEntry("siroco", number, "#ch." + number, "#ch.", 200, 10, string.Empty, 31000 + number, evaluation, flags, min, max, number, null);
+    }
+
+    [Theory]
+    [InlineData(true, 41, 55, "(Lv.41~55)")]
+    [InlineData(true, 1, 20, "(Lv.01~20)")]
+    [InlineData(true, 0, 0, "")]                       // 0~0 取到了值:区间照取,只是 HasRecommendedLevel 为假、不画
+    [InlineData(false, null, null, "")]
+    [InlineData(false, 41, 55, "")]                    // 值在、标志不在:不算推荐等级
+    public void A_channel_entry_without_a_slot_rule_gets_no_fixed_text_keeps_its_own_level_and_never_asks_the_resolver(bool levelFlag, int? min, int? max, string expectedLine)
+    {
+        var resolver = new Resolver();
+        ChannelEntry entry = EntryWithoutRule(min, max, levelFlag);
+        Assert.Null(entry.SlotRule);                                       // 夹具自检:确实没有槽位规则
+
+        DirectoryChannel mapped = ChannelDirectoryAdapter.Channel(entry, null, resolver.Lookup);   // 不抛异常
+
+        Assert.Null(mapped.FixedLevelText);
+        Assert.Empty(resolver.Calls);                                      // 解析器一次都没被调用
+        if (levelFlag)
+        {
+            Assert.Equal((min.Value, max.Value), (mapped.RecommendedMinLevel, mapped.RecommendedMaxLevel));   // 推荐等级按条目自己的字段取
+        }
+        else
+        {
+            Assert.Equal((0, 0), (mapped.RecommendedMinLevel, mapped.RecommendedMaxLevel));
+        }
+        Assert.Equal(DirectoryChannel.DefaultSlotFrame, mapped.SlotFrame);
+        Assert.Equal(11, mapped.Number);
+        Assert.Equal(expectedLine, ServerPickerText.Level(mapped));
+        AssertSameChannel(ChannelDirectoryAdapter.Channel(entry), mapped);   // 与不带解析器时一模一样
+    }
+
+    /// <summary>
+    /// 频道组 siroco 里没有槽位规则的快照:脚本里只有推荐等级规则 <c>[granfloris]</c> 1~20;
+    /// <paramref name="slotTableOfAnotherGroup"/> 为真时脚本里另有一张别的组(组 1)的槽位表,但组 siroco(组 3)没有——"线上目录里这个组没有槽位表"。
+    /// 频道 2、5 的名字不命中任何推荐等级规则;频道 7 的名字去掉数字后是 <c>[granfloris]</c>,命中规则、带推荐等级 1~20,但仍然没有槽位规则。
+    /// </summary>
+    private static ChannelDirectorySnapshot SnapshotWithoutSlotRules(bool slotTableOfAnotherGroup)
+    {
+        string scriptText =
+            "[channel] `[granfloris]` 1 20\n" +
+            (slotTableOfAnotherGroup ? "[server] 1\n  1 <4::cname_1> 0 `[none]` 0 0 0 0 0 0 `` `` `` 0 0\n[/server]\n" : string.Empty);
+        ChannelScriptData script = ChannelScriptParser.Parse(scriptText);
+        return ChannelDirectorySnapshot.Build(
+            "v1",
+            false,
+            script,
+            new[]
+            {
+                new ChannelWireGroup("siroco", new[]
+                {
+                    new ChannelWireEntry("#ch.2", 200, 10, "", 19002),
+                    new ChannelWireEntry("[granfloris]7", 200, 10, "", 19007),
+                    new ChannelWireEntry("#ch.5", 200, 10, "", 19005),
+                }),
+            });
+    }
+
+    private static void AssertRulelessDirectoryHasNoFixedText(ServerDirectory directory)
+    {
+        DirectoryServer siroco = Assert.Single(directory.Servers);
+        Assert.Equal(new[] { 2, 7, 5 }, siroco.Channels.Select(c => c.Number).ToArray());     // 每个频道照常进主网格,按目录给的顺序
+        Assert.Empty(siroco.SpecialChannels);
+        Assert.All(siroco.Channels, c => Assert.Null(c.FixedLevelText));
+        Assert.All(siroco.Channels, c => Assert.NotNull(c.Target));
+        Assert.All(siroco.Channels, c => Assert.Equal(DirectoryChannel.DefaultSlotFrame, c.SlotFrame));
+        // 推荐等级照条目自己的字段:只有频道 7(名字命中规则)有
+        Assert.Equal(new[] { false, true, false }, siroco.Channels.Select(c => c.HasRecommendedLevel).ToArray());
+        Assert.Equal((1, 20), (siroco.Channels[1].RecommendedMinLevel, siroco.Channels[1].RecommendedMaxLevel));
+        Assert.Equal("(Lv.01~20)", ServerPickerText.Level(siroco.Channels[1]));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Map_with_a_resolver_puts_every_ruleless_channel_on_the_main_grid_without_fixed_text(bool slotTableOfAnotherGroup)
+    {
+        var resolver = new Resolver();
+        ChannelDirectorySnapshot snapshot = SnapshotWithoutSlotRules(slotTableOfAnotherGroup);
+        Assert.All(snapshot.Channels, c => Assert.Null(c.SlotRule));          // 夹具自检:三个条目都没有槽位规则
+        Assert.Equal(3, snapshot.Channels.Count);
+        Assert.Equal(slotTableOfAnotherGroup, snapshot.ScriptData.ServerSlots.Count > 0);
+        Assert.False(snapshot.ScriptData.HasServerSlotsForGroup("siroco"));   // 组里没有槽位表
+
+        ServerDirectory directory = ChannelDirectoryAdapter.Map(snapshot, null, resolver.Lookup);
+
+        AssertRulelessDirectoryHasNoFixedText(directory);
+        Assert.Empty(resolver.Calls);                                          // 解析器一次都没被调用
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Result_with_both_resolvers_maps_a_ruleless_directory_and_asks_neither(bool slotTableOfAnotherGroup)
+    {
+        // 整链:读目录成功 → Result → Map → Channel,带上字符串解析器与固定文字解析器;没有槽位规则时两个都不该被问到。
+        var resolver = new Resolver();
+        var stringCalls = new List<(int Kind, string Key)>();
+        Func<int, string, string> resolveString = (kind, key) =>
+        {
+            stringCalls.Add((kind, key));
+            return "SYNTH-TITLE";
+        };
+
+        ServerDirectoryResult result = ChannelDirectoryAdapter.Result(ChannelDirectoryLoadOutcome.Ok, SnapshotWithoutSlotRules(slotTableOfAnotherGroup), resolveString, resolver.Lookup);
+
+        Assert.True(result.Success);
+        AssertRulelessDirectoryHasNoFixedText(result.Directory);
+        Assert.Empty(resolver.Calls);
+        Assert.Empty(stringCalls);                                             // 标题也只能走老路(没有规则就没有文字列引用)
+    }
+
+    [Fact]
+    public void An_executable_without_a_slot_script_still_wires_the_resolver_and_the_ruleless_directory_maps_without_fixed_text()
+    {
+        // 真实场景整条链:游戏目录里有 DNF.exe(表里有固定文字)、Script.pvf 里没有频道槽位与推荐等级脚本 → Create(assets, true) 接上了解析器、
+        // 脚本里没有槽位表 → 频道没有槽位规则 → 照老路映射,表里的固定文字一个频道也不画。
+        using var game = new MiniGameDirectory();
+        game.Write("DNF.exe", MiniGameDirectory.Executable(Table));
+        using DnfAssets assets = DnfAssets.Open(game.Root);
+
+        ChannelDirectoryCatalog catalog = ChannelDirectoryCatalog.Create(assets, true);
+
+        Assert.NotNull(catalog.ResolveClientText);                             // 接上了(固定文字表读得到)
+        Assert.Equal("SYNTH-NOTE", catalog.ResolveClientText(FixedId));
+        Assert.Empty(catalog.FallbackScript.ServerSlots);                      // 没有槽位表
+        ServerDirectory directory = ChannelDirectoryAdapter.Map(SnapshotWithoutSlotRules(false), catalog.ResolveString, catalog.ResolveClientText);
+        AssertRulelessDirectoryHasNoFixedText(directory);
+    }
+
     // ------------------------------------------------------------------ ChannelDirectoryCatalog
 
     private static string Table => "1>SYNTH-ONE\r\n" + FixedId + ">SYNTH-NOTE\r\n";

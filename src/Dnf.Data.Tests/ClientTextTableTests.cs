@@ -148,6 +148,52 @@ public class ClientTextTableTests
     }
 
     [Fact]
+    public void TextThatStartsWithLineBreaksKeepsEveryEntryAfterThem()
+    {
+        // 换行出现在下标 0:"下一行起点"是 1(紧跟在换行之后),不是文本末尾;算错的话后面所有条目都会被丢掉。
+        ClientTextTable one = ClientTextTable.Parse("\n1>a\n2>b\n");
+        Assert.Equal(2, one.Count);
+        Assert.Equal("a", Get(one, 1));
+        Assert.Equal("b", Get(one, 2));
+
+        // 两个前导换行(下标 0 与下标 1 都是换行),后面没有换行结尾:一项。
+        ClientTextTable two = ClientTextTable.Parse("\n\n1>a");
+        Assert.Equal(1, two.Count);
+        Assert.Equal("a", Get(two, 1));
+
+        // 整段只有一个换行:没有条目(也不能死循环、不能抛异常)。
+        Assert.Equal(0, ClientTextTable.Parse("\n").Count);
+
+        // 同类写法:前导换行后面还有空行与 CRLF,条目照常全部读到。
+        ClientTextTable mixed = ClientTextTable.Parse("\n\n\n3>c\n\n4>d\r\n\n5>e");
+        Assert.Equal(3, mixed.Count);
+        Assert.Equal("c", Get(mixed, 3));
+        Assert.Equal("d", Get(mixed, 4));
+        Assert.Equal("e", Get(mixed, 5));
+    }
+
+    [Theory]
+    [InlineData("1>a\n/", 1)]
+    [InlineData("1>a\n//", 1)]
+    [InlineData("1>a\n/x", 1)]
+    [InlineData("/", 0)]
+    [InlineData("//", 0)]
+    [InlineData("/x", 0)]
+    public void ShortLinesStartingWithASlashAtTheVeryEndDoNotThrow(string text, int expectedCount)
+    {
+        // 最后一行没有换行结尾、又很短(1 到 2 个字符)且以 / 开头:判断"是不是 // 注释"时不能读到文本之外去。
+        ClientTextTable table = null;
+        Exception thrown = Record.Exception(() => table = ClientTextTable.Parse(text));
+        Assert.Null(thrown);
+        Assert.NotNull(table);
+        Assert.Equal(expectedCount, table.Count);
+        if (expectedCount == 1)
+        {
+            Assert.Equal("a", Get(table, 1));
+        }
+    }
+
+    [Fact]
     public void EmptyAndNullInput()
     {
         Assert.Equal(0, ClientTextTable.Parse(string.Empty).Count);

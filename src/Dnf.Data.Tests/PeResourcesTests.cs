@@ -283,6 +283,52 @@ public class PeResourcesTests
         AssertFalse(ninetySeven.Bytes, "FILE", 157);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnImageWithASingleSectionHoldingBothTheDirectoryAndTheDataIsRead(bool pe32Plus)
+    {
+        // 映像只有一个节(资源目录与资源数据都在这一个节里):节数的下限是 1,不是 2。
+        SyntheticPe.Spec spec = SyntheticPe.Standard(pe32Plus);
+        spec.SingleSection = true;
+        SyntheticPe.Image image = SyntheticPe.Build(spec);
+
+        // 夹具自检:头里写的节数确实是 1;数据确实在这个节里,而且 RVA 与文件偏移不同(仍要靠节表换算)。
+        int sectionCount = image.Bytes[image["coff"] + 2] | (image.Bytes[image["coff"] + 3] << 8);
+        Assert.Equal(1, sectionCount);
+        Assert.False(image.Marks.ContainsKey("section:1"));
+        Assert.True(image["data:FILE/157/0"] > image["rsrc"]);
+        Assert.NotEqual((uint)image["data:FILE/157/0"], image.ReadU32(image["data-entry:FILE/157/0"]));
+
+        Assert.Equal(Ascii("FILE/157/first"), Read(image.Bytes, "FILE", 157));
+        Assert.Equal(Ascii("FILE/41/a"), Read(image.Bytes, "FILE", 41));
+        Assert.Equal(Ascii("FILE/43/a"), Read(image.Bytes, "FILE", 43));
+        AssertFalse(image.Bytes, "FILE", 158);
+        AssertFalse(image.Bytes, "FIL E", 157);
+    }
+
+    [Fact]
+    public void SingleSectionImageTruncatedAnywhereReturnsFalseWithoutThrowing()
+    {
+        // 单节映像同样:截到目标数据最后一个字节之前的任何长度都读不到、不抛异常,从这一长度起(含)读得到。
+        SyntheticPe.Spec spec = SyntheticPe.Standard();
+        spec.SingleSection = true;
+        SyntheticPe.Image image = SyntheticPe.Build(spec);
+        int end = image.DataEnd("FILE", 157, 0);
+        Assert.True(end <= image.Bytes.Length);
+        for (int length = 0; length < end; length++)
+        {
+            using var stream = new MemoryStream(image.Bytes, 0, length);
+            Assert.False(PeResources.TryReadNamedResource(stream, "FILE", 157, out byte[] data), $"截到 {length} 字节不应读到");
+            Assert.Null(data);
+        }
+        using (var exact = new MemoryStream(image.Bytes, 0, end))
+        {
+            Assert.True(PeResources.TryReadNamedResource(exact, "FILE", 157, out byte[] data));
+            Assert.Equal(Ascii("FILE/157/first"), data);
+        }
+    }
+
     [Fact]
     public void NotPeFilesReturnFalse()
     {
@@ -407,6 +453,34 @@ public class PeResourcesTests
     }
 
     [Fact]
+    public void TypeEntryWhoseTargetHasNoHighBitReturnsFalseEvenWhenItPointsAtTheRealTypeDirectory()
+    {
+        // 类型项 FILE 的目标换成类型目录 type-dir:FILE 的相对偏移,但不带高位:偏移上确实是下一层目录(原来的目标就是它,只少了"是子目录"的高位),
+        // 按规格这是数据项的写法,结构不对,必须 false。没有"目标必须有高位"这道检查的实现会照着偏移当目录往下走,一路读到数据、返回 true。
+        // (上面那条只把目标指到数据项的位置:按目录去读时条目数恰好是 0,去掉检查结果也一样是 false,抓不到。)
+        SyntheticPe.Image image = SyntheticPe.Build(SyntheticPe.Standard());
+        int target = image["type-entry:FILE"] + 4;
+        Assert.Equal(HighBit | image.Relative("type-dir:FILE"), image.ReadU32(target));   // 夹具自检:原来带高位、指向的就是这个目录
+        Assert.Equal(Ascii("FILE/157/first"), Read(image.Bytes, "FILE", 157));             // 对照:带高位时读得到
+
+        image.PatchU32(target, image.Relative("type-dir:FILE"));
+        AssertFalse(image.Bytes, "FILE", 157);
+    }
+
+    [Fact]
+    public void ItemEntryWhoseTargetHasNoHighBitReturnsFalseEvenWhenItPointsAtTheRealLanguageDirectory()
+    {
+        // 编号项 FILE/157 的目标换成语言目录 item-dir:FILE/157 的相对偏移,但不带高位:同上,偏移上确实是下一层目录,没有高位就必须 false。
+        SyntheticPe.Image image = SyntheticPe.Build(SyntheticPe.Standard());
+        int target = image["item-entry:FILE/157"] + 4;
+        Assert.Equal(HighBit | image.Relative("item-dir:FILE/157"), image.ReadU32(target));
+        Assert.Equal(Ascii("FILE/157/first"), Read(image.Bytes, "FILE", 157));
+
+        image.PatchU32(target, image.Relative("item-dir:FILE/157"));
+        AssertFalse(image.Bytes, "FILE", 157);
+    }
+
+    [Fact]
     public void EmptyLanguageDirectoryReturnsFalse()
     {
         SyntheticPe.Image image = SyntheticPe.Build(SyntheticPe.Standard());
@@ -498,6 +572,86 @@ public class PeResourcesTests
             Assert.False(PeResources.TryReadNamedResource(stream, "FILE", 157, out byte[] data));
             Assert.Null(data);
         }
+    }
+
+    // ------------------------------------------------------------------ 上限常量:取值与字面数字的边界(不引用常量,常量自己被改了这里才抓得到)
+
+    [Fact]
+    public void LimitConstantsHaveTheDocumentedValues()
+    {
+        Assert.Equal(64 * 1024 * 1024, PeResources.MaxResourceBytes);
+        Assert.Equal(67108864, PeResources.MaxResourceBytes);
+        Assert.Equal(4096, PeResources.MaxDirectoryEntries);
+        Assert.Equal(96, PeResources.MaxSections);
+    }
+
+    [Fact]
+    public void ResourceOfExactly64MiBIsReadAndOneMoreByteIsNotByLiteralNumbers()
+    {
+        // 与 ResourceOfExactlyTheMaximumSizeIsReadAndOneMoreByteIsNot 同一做法,但边界写成字面数字:67108864 = 64 * 1024 * 1024 读得到,67108865 读不到。
+        // 节的原始大小与虚拟长流都留出 64 字节余量:多 1 字节时拦住它的只能是大小上限本身,不是节或流的边界。
+        SyntheticPe.Image image = SyntheticPe.Build(SyntheticPe.Standard(separate: true));
+        int dataFile = image["data:FILE/157/0"];
+        int offsetInSection = dataFile - image["data-section"];
+        image.PatchU32(image["section:2"] + 16, (uint)(offsetInSection + 67108864 + 64));
+        long streamLength = dataFile + 67108864L + 64;
+
+        image.PatchU32(image["data-entry:FILE/157/0"] + 4, 67108864u);
+        using (var stream = new ZeroPaddedStream(image.Bytes, streamLength))
+        {
+            Assert.True(PeResources.TryReadNamedResource(stream, "FILE", 157, out byte[] data));
+            Assert.Equal(67108864, data.Length);
+            Assert.Equal(Ascii("FILE/157/first"), data.AsSpan(0, "FILE/157/first".Length).ToArray());
+        }
+
+        image.PatchU32(image["data-entry:FILE/157/0"] + 4, 67108865u);
+        using (var stream = new ZeroPaddedStream(image.Bytes, streamLength))
+        {
+            Assert.False(PeResources.TryReadNamedResource(stream, "FILE", 157, out byte[] data));
+            Assert.Null(data);
+        }
+    }
+
+    [Fact]
+    public void DirectoryWithExactly4096EntriesIsReadAndOneMoreIsNotByLiteralNumbers()
+    {
+        // 根目录里 FILE + 4095 个数字类型 = 4096 条:读得到;再多一个(4097 条):读不到。
+        SyntheticPe.ResType[] Types(int numbered)
+        {
+            var list = new List<SyntheticPe.ResType>
+            {
+                SyntheticPe.ResType.Named("FILE", new SyntheticPe.Item(157, new SyntheticPe.Leaf(0, Ascii("literal-limit")))),
+            };
+            for (int i = 0; i < numbered; i++)
+            {
+                list.Add(SyntheticPe.ResType.Numbered(1000 + i));
+            }
+            return list.ToArray();
+        }
+
+        SyntheticPe.Image atLimit = SyntheticPe.Build(new SyntheticPe.Spec { Types = Types(4095) });
+        Assert.Equal(4096, atLimit.Bytes[atLimit["root"] + 12] + (atLimit.Bytes[atLimit["root"] + 13] << 8)
+            + atLimit.Bytes[atLimit["root"] + 14] + (atLimit.Bytes[atLimit["root"] + 15] << 8));   // 夹具自检:根目录声明的条目数是 4096
+        Assert.Equal(Ascii("literal-limit"), Read(atLimit.Bytes, "FILE", 157));
+
+        SyntheticPe.Image overLimit = SyntheticPe.Build(new SyntheticPe.Spec { Types = Types(4096) });
+        AssertFalse(overLimit.Bytes, "FILE", 157);
+    }
+
+    [Fact]
+    public void ExactlyNinetySixSectionsAreReadAndNinetySevenAreNotByLiteralNumbers()
+    {
+        // 2 个有内容的节 + 94 个空节 = 96 个:读得到;+ 95 个空节 = 97 个:读不到。
+        SyntheticPe.Spec spec = SyntheticPe.Standard();
+        spec.ExtraSections = 94;
+        SyntheticPe.Image ninetySix = SyntheticPe.Build(spec);
+        Assert.Equal(96, ninetySix.Bytes[ninetySix["coff"] + 2] | (ninetySix.Bytes[ninetySix["coff"] + 3] << 8));   // 夹具自检:头里写的节数是 96
+        Assert.Equal(Ascii("FILE/157/first"), Read(ninetySix.Bytes, "FILE", 157));
+
+        spec.ExtraSections = 95;
+        SyntheticPe.Image ninetySeven = SyntheticPe.Build(spec);
+        Assert.Equal(97, ninetySeven.Bytes[ninetySeven["coff"] + 2] | (ninetySeven.Bytes[ninetySeven["coff"] + 3] << 8));
+        AssertFalse(ninetySeven.Bytes, "FILE", 157);
     }
 
     // ------------------------------------------------------------------ 数据的 RVA

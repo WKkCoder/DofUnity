@@ -4,7 +4,7 @@ namespace Dnf.Data.Tests;
 
 /// <summary>
 /// 合成 PE 映像构造器(只给测试用,不入产品):按规格造出最小的 PE32 / PE32+ 映像——DOS 头(e_lfanew)、PE 签名、COFF 头、
-/// 带数据目录的可选头、节表(至少两个节:.text 与 .rsrc,可选第三个放资源数据的节与若干空节)、
+/// 带数据目录的可选头、节表(默认至少两个节:.text 与 .rsrc,可选第三个放资源数据的节与若干空节;<see cref="Spec.SingleSection"/> 时只有一个 .rsrc 节)、
 /// 资源节里的三层资源目录(类型:命名或数字;编号;语言;叶子数据项)。所有字节都是合成的,不含任何原版内容。
 /// 构造结果带一张"标记表"(文件偏移),测试可以据此原地改字节(成环、过深、条目数夸张……)。
 /// </summary>
@@ -75,6 +75,12 @@ internal static class SyntheticPe
 
         /// <summary>.text 节的原始数据大小(填充字节;测试"不整文件读进内存"时放很大)。</summary>
         public int TextBytes = 0x200;
+
+        /// <summary>
+        /// 映像只有一个节(.rsrc):资源目录与资源数据都在这一个节里,没有 .text。节数写 1,<see cref="TextBytes"/> 被忽略;
+        /// 不能与 <see cref="DataInSeparateSection"/>、<see cref="ExtraSections"/> 同用(那两个都意味着不止一个节,同用会抛 <see cref="ArgumentException"/>)。
+        /// </summary>
+        public bool SingleSection = false;
     }
 
     internal sealed class Image
@@ -125,10 +131,14 @@ internal static class SyntheticPe
     /// </summary>
     public static Image Build(Spec spec)
     {
+        if (spec.SingleSection && (spec.DataInSeparateSection || spec.ExtraSections != 0))
+        {
+            throw new ArgumentException("SingleSection 只有一个节,不能与 DataInSeparateSection、ExtraSections 同用。", nameof(spec));
+        }
         ResType[] types = spec.Types.Where(t => t.Name != null).Concat(spec.Types.Where(t => t.Name == null)).ToArray();
         int directoryStart = spec.Pe32Plus ? 112 : 96;
         int optionalSize = directoryStart + 8 * spec.DirectoryCount;
-        int sectionCount = 2 + (spec.DataInSeparateSection ? 1 : 0) + spec.ExtraSections;
+        int sectionCount = spec.SingleSection ? 1 : 2 + (spec.DataInSeparateSection ? 1 : 0) + spec.ExtraSections;
         int headersEnd = PeOffset + 24 + optionalSize + sectionCount * 40;
         int textRaw = AlignUp(headersEnd, 0x200);
 
@@ -182,8 +192,8 @@ internal static class SyntheticPe
 
         // ---- 节布局:虚拟地址与文件偏移故意不同(RVA ≠ 文件偏移),数据节的 RVA 与资源节也不同
         int textVa = 0x1000;
-        int rsrcVa = AlignUp(textVa + spec.TextBytes, 0x1000) + 0x1000;
-        int rsrcRaw = textRaw + spec.TextBytes;
+        int rsrcVa = spec.SingleSection ? 0x3000 : AlignUp(textVa + spec.TextBytes, 0x1000) + 0x1000;
+        int rsrcRaw = spec.SingleSection ? textRaw : textRaw + spec.TextBytes;
         int dataVa = AlignUp(rsrcVa + rsrcLength, 0x1000) + 0x2000;
         int dataRaw = rsrcRaw + rsrcLength;
         int fileLength = spec.DataInSeparateSection ? dataRaw + dataTotal : rsrcRaw + rsrcLength;
@@ -248,13 +258,23 @@ internal static class SyntheticPe
             U32(at + 36, 0x40000040u);
         }
 
-        Section(0, ".text", spec.TextBytes, textVa, spec.TextBytes, textRaw);
-        for (int i = 0; i < spec.TextBytes && textRaw + i < bytes.Length; i++)
+        int next;
+        if (spec.SingleSection)
         {
-            bytes[textRaw + i] = 0xCC;
+            // 只有一个节:.rsrc 排在节表第 0 项,原始数据紧跟在头之后;资源目录与数据都在里面(RVA 仍与文件偏移不同)。
+            Section(0, ".rsrc", rsrcLength, rsrcVa, rsrcLength, rsrcRaw);
+            next = 1;
         }
-        Section(1, ".rsrc", rsrcLength, rsrcVa, rsrcLength, rsrcRaw);
-        int next = 2;
+        else
+        {
+            Section(0, ".text", spec.TextBytes, textVa, spec.TextBytes, textRaw);
+            for (int i = 0; i < spec.TextBytes && textRaw + i < bytes.Length; i++)
+            {
+                bytes[textRaw + i] = 0xCC;
+            }
+            Section(1, ".rsrc", rsrcLength, rsrcVa, rsrcLength, rsrcRaw);
+            next = 2;
+        }
         if (spec.DataInSeparateSection)
         {
             Section(next++, ".rdat", dataTotal, dataVa, dataTotal, dataRaw);

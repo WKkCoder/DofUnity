@@ -141,6 +141,31 @@ public sealed class ServerPickerTextTests
         Assert.Equal("SYNTH-NOTE", WithFixedText("SYNTH-NOTE").FixedLevelText);
     }
 
+    [Theory]
+    [InlineData("  ")]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    [InlineData(" \r\n ")]
+    [InlineData("\u3000")]
+    public void A_whitespace_only_fixed_text_is_kept_verbatim_because_only_null_and_empty_mean_none(string whitespace)
+    {
+        // 契约(DirectoryChannel 的文档注释):只有 null 与空串算"没有";只含空白的文字原样保留——把全空白当作没有是适配层的事,构造函数与画字都不动它。
+        DirectoryChannel channel = new DirectoryChannel(7, "测试", ChannelCongestion.Smooth, new ChannelTarget(30007), 41, 55, DirectoryChannel.DefaultSlotFrame, fixedLevelText: whitespace);
+        Assert.NotNull(channel.FixedLevelText);
+        Assert.Equal(whitespace, channel.FixedLevelText);
+        Assert.Equal(whitespace, ServerPickerText.Level(channel));          // cjk 缺省为真:原样画它,不退回 "(Lv.41~55)"
+        Assert.Equal(whitespace, ServerPickerText.Level(channel, true));
+    }
+
+    [Fact]
+    public void Two_spaces_as_the_fixed_text_are_kept_as_two_spaces()
+    {
+        // 具名参数的写法(与适配层以外的调用方一致):"  " 进去、"  " 出来。
+        var channel = new DirectoryChannel(7, "测试", ChannelCongestion.Smooth, new ChannelTarget(30007), fixedLevelText: "  ");
+        Assert.Equal("  ", channel.FixedLevelText);
+        Assert.Equal("  ", ServerPickerText.Level(channel));
+    }
+
     [Fact]
     public void Page_text_is_current_over_total_counting_from_one()
     {

@@ -114,6 +114,29 @@ public class EmbeddedTextContainerTests
         Assert.Equal("\uFFFDA", Decode(Hex("53 43 30 31  03 00 00 00  F8 14 58")));
     }
 
+    [Theory]
+    [InlineData("53 43 30 31  02 00 00 00  F8 14", "EF BB")]   // P = 2:明文 EF BB:EF^17 = F8,BB^AF = 14。
+    [InlineData("53 43 30 31  01 00 00 00  F8", "EF")]          // P = 1:明文 EF:EF^17 = F8。
+    public void PlainTextThatIsOnlyAPrefixOfTheByteOrderMarkIsNotTakenForOneAndDoesNotThrow(string containerHex, string plainHex)
+    {
+        // 明文只有 BOM 的前一两个字节(P = 2 或 1):还没有第三个字节可看,不能越界去读它;也不是 BOM,不能被去掉——坏字节照常换成替换字符。
+        // 不断言替换字符的个数(不同运行时对残缺序列合成几个 U+FFFD 可以不同),只断言:成功、不抛异常、不为空、里面有 U+FFFD。
+        // (容器是手算的十六进制:Encode 只收字符串,而这两个明文不是合法的 UTF-8,经字符串中转会变成别的字节。)
+        byte[] container = Hex(containerHex);
+        Assert.True(EmbeddedTextContainer.TryDecodeBytes(container, out byte[] plain));
+        Assert.Equal(Hex(plainHex), plain);                                   // 字节层面原样
+
+        bool ok = false;
+        string text = null;
+        Exception thrown = Record.Exception(() => ok = EmbeddedTextContainer.TryDecode(container, out text));
+        Assert.Null(thrown);
+        Assert.True(ok);
+        Assert.NotNull(text);
+        Assert.NotEmpty(text);                                                // 没有被当作 BOM 整个去掉
+        Assert.Contains('\uFFFD', text);                                      // 坏字节变成了替换字符
+        Assert.DoesNotContain('\uFEFF', text);
+    }
+
     [Fact]
     public void InvalidUtf8BytesBecomeReplacementCharactersWithoutThrowing()
     {
