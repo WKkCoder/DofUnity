@@ -323,8 +323,6 @@ namespace Dnf.Client
         // 给 Town / Loading / Dungeon 叠层看的瞬态提示(Select 内提示直接放 Select.Notice)
         private DungeonSelectNotice _transientNotice;
         private DungeonSelectNotice _activeRunNotice;
-        private bool _pendingSelectNoticeForNextOpen;
-        private DungeonSelectNotice _nextSelectNotice;
 
         /// <summary>进副本结算就绪(且已完成 <c>LeaveExclusiveReceiveAsync</c> 恢复正常收发)后触发,供 <c>r18-settleui</c> 接手。</summary>
         public event Action<OnlineDungeonSettlementReady> SettlementStarted;
@@ -491,6 +489,8 @@ namespace Dnf.Client
             DetachHandlers();
             CancelAndWaitBounded(_options.QuitWaitTimeoutMs);
             ClearRunState();
+            // 释放之后 Poll 直接返回,瞬时提示的到期检查再也不会跑;不在这里清掉,ActiveNotice 会一直返回这条过期提示。
+            _transientNotice = null;
             _phase = OnlineDungeonFlowPhase.Idle;
         }
 
@@ -531,12 +531,6 @@ namespace Dnf.Client
                 screen.Fonts = _options.Fonts;
             }
             screen.RefreshDifficulty();
-            if (_pendingSelectNoticeForNextOpen)
-            {
-                screen.Notice = _nextSelectNotice;
-                _pendingSelectNoticeForNextOpen = false;
-                _nextSelectNotice = null;
-            }
         }
 
         private void SyncPermissionTableToSelect()
@@ -582,7 +576,6 @@ namespace Dnf.Client
             if (_disconnected || _port.IsDisconnected)
             {
                 WriteLog(OnlineDungeonLog.Fail("Disconnected", "PreEnter"));
-                _nextSelectNotice = new DungeonSelectNotice(DungeonSelectNoticeKind.Disconnected);
                 TriggerDisconnectCleanup();
                 return;
             }
