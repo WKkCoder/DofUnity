@@ -55,6 +55,16 @@ namespace Dnf.Play
         private double _clearedAtMs;
         private bool _gateOpened;
 
+        // 跨房间累计的本地战绩(供 r18-settleui 本地评分与对账,换房时累加,每局新 HostedRoomRun 自动清零)
+        private int _priorKills;
+        private int _priorComboKills;
+        private int _priorMaxCombo;
+        private int _priorHitsTaken;
+        private int _priorRevivesUsed;
+        private long _priorExpEarned;
+        private long _priorGoldEarned;
+        private int _priorItemsPicked;
+
         /// <param name="room">已经造好的房间会话(联网宿主用 <see cref="RoomCombatSession.Create"/> 的 <c>spawnPlan</c> 造)。</param>
         /// <param name="reportKill">交出一只怪的序号;返回 true 表示收下了,false 表示不收(例如联网战斗已经结束)。</param>
         /// <param name="finished">这一局是不是结束了(例如联网结算收齐);每步查一次,为 true 过一次就记住,不会再变回去。</param>
@@ -148,6 +158,52 @@ namespace Dnf.Play
         /// </summary>
         public bool HasExitGate => ExitSide.HasValue && FindGate(_room, ExitSide.Value) != null;
 
+        /// <summary>这一局已经推进的本地时钟(毫秒;换房不清零)。</summary>
+        public double ClockMs => _clockMs;
+
+        /// <summary>整局累计的本地击杀数(各房间之和;换房不清零)。</summary>
+        public int LocalKills => _priorKills + _room.Kills;
+
+        /// <summary>整局累计的本地连击击杀数(各房间之和)。</summary>
+        public int LocalComboKills => _priorComboKills + _room.ComboKills;
+
+        /// <summary>整局最高连击数(各房间取最大)。</summary>
+        public int LocalMaxCombo => _room.MaxCombo > _priorMaxCombo ? _room.MaxCombo : _priorMaxCombo;
+
+        /// <summary>整局主角受击次数(各房间之和)。</summary>
+        public int LocalHitsTaken => _priorHitsTaken + _room.HeroHits;
+
+        /// <summary>整局使用的复活币次数(各房间之和)。</summary>
+        public int LocalRevivesUsed => _priorRevivesUsed + _room.Revived;
+
+        /// <summary>整局本地击杀经验累计(各房间之和)。</summary>
+        public long LocalExpEarned => _priorExpEarned + _room.ExpEarned;
+
+        /// <summary>整局本地拾取金币累计(各房间之和)。</summary>
+        public long LocalGoldEarned => _priorGoldEarned + _room.GoldEarned;
+
+        /// <summary>整局本地拾取物品件数累计(各房间之和)。</summary>
+        public int LocalItemsPicked => _priorItemsPicked + _room.ItemsPicked;
+
+        /// <summary>取当前这一局的本地战绩快照(用于离线同款评分字母计算与对账)。</summary>
+        public RunStats SnapshotLocalStats()
+        {
+            double clamped = _clockMs < 0.0 ? 0.0 : (_clockMs > int.MaxValue ? int.MaxValue : _clockMs);
+            return new RunStats(
+                (int)Math.Round(clamped),
+                LocalKills,
+                LocalComboKills,
+                LocalMaxCombo,
+                LocalHitsTaken,
+                LocalRevivesUsed);
+        }
+
+        /// <summary>
+        /// 可选的外部结算/HUD 精灵供给(r18-settleui 用:联网结算停留期间在 <see cref="Build"/> 中把两层黑幕、营火、菜单与战果面板
+        /// 送进 <see cref="RoomCombatSession.Build(long, IReadOnlyList{SceneSprite})"/> 按原版图层大类排序)。未设(缺省 null)时行为与以前一字不变。
+        /// </summary>
+        public Func<HostedRoomRun, long, IReadOnlyList<SceneSprite>> HudOverlay { get; set; }
+
         /// <summary>设(或清掉)通向下一间房的出口侧。联网宿主在起始房间对齐成功之后设,对不齐时清掉(这一间房就当最后一间)。</summary>
         public void SetExit(GateSide? side)
         {
@@ -204,6 +260,18 @@ namespace Dnf.Play
             }
             next.SkillsHeld = old.SkillsHeld;
             next.CommandsEnabled = old.CommandsEnabled;
+
+            _priorKills += old.Kills;
+            _priorComboKills += old.ComboKills;
+            if (old.MaxCombo > _priorMaxCombo)
+            {
+                _priorMaxCombo = old.MaxCombo;
+            }
+            _priorHitsTaken += old.HeroHits;
+            _priorRevivesUsed += old.Revived;
+            _priorExpEarned += old.ExpEarned;
+            _priorGoldEarned += old.GoldEarned;
+            _priorItemsPicked += old.ItemsPicked;
 
             _room = next;
             _watcher = new RoomKillWatcher(next);
@@ -270,7 +338,8 @@ namespace Dnf.Play
         public List<SceneSprite> Build(long timeMs)
         {
             OpenExitGate(timeMs);
-            return _room.Build(timeMs);
+            IReadOnlyList<SceneSprite> hud = HudOverlay?.Invoke(this, timeMs);
+            return hud != null && hud.Count > 0 ? _room.Build(timeMs, hud) : _room.Build(timeMs);
         }
 
         // —— 推进:先让房间会话走一步,再盯击杀与结束 ——

@@ -208,6 +208,20 @@ namespace Dnf.Play
         /// </summary>
         public void Build(List<SceneSprite> into, ref int order, OverlayArt font, int hoverRow = -1)
         {
+            BuildCore(into, ref order, font, hoverRow, null);
+        }
+
+        /// <summary>
+        /// 可注入逐行启用判定的面板构建入口(r18-settleui 用):对 <paramref name="isChoiceEnabled"/> 返回 false 的行画禁用图(<see cref="StateDisabled"/>)并禁止悬停;
+        /// <paramref name="isChoiceEnabled"/> 为 null 时与 <see cref="Build(List{SceneSprite}, ref int, OverlayArt, int)"/> 一字不变。
+        /// </summary>
+        public void Build(List<SceneSprite> into, ref int order, OverlayArt font, int hoverRow, Func<SettlementChoice, bool> isChoiceEnabled)
+        {
+            BuildCore(into, ref order, font, hoverRow, isChoiceEnabled);
+        }
+
+        private void BuildCore(List<SceneSprite> into, ref int order, OverlayArt font, int hoverRow, Func<SettlementChoice, bool> isChoiceEnabled)
+        {
             into.Add(OverlayArt.Place(_header, PanelX + _header.OffsetX, PanelY + _header.OffsetY, order++, "settle-header"));
             for (int i = 0; i < RowCount; i++)
             {
@@ -217,7 +231,17 @@ namespace Dnf.Play
             for (int i = 0; i < RowCount; i++)
             {
                 SettlementChoice choice = RowChoices[i];
-                int state = i == hoverRow && IsEnabled(choice) ? StateHover : StateNormal;
+                bool baseEnabled = IsEnabled(choice);
+                bool enabled = baseEnabled && (isChoiceEnabled == null || isChoiceEnabled(choice));
+                int state;
+                if (isChoiceEnabled != null && !enabled)
+                {
+                    state = StateDisabled;
+                }
+                else
+                {
+                    state = i == hoverRow && enabled ? StateHover : StateNormal;
+                }
                 int top = RowTop + RowHeight * i;
                 int right = LabelX;
                 if (_sprites.TryGetFrame(Image, LabelFrameIndex(choice, state), out SpriteFrame label) && label.Width > 0)
@@ -234,6 +258,14 @@ namespace Dnf.Play
         /// </summary>
         public static void BuildFallback(List<SceneSprite> into, ref int order, OverlayArt font, int hoverRow = -1)
         {
+            BuildFallback(into, ref order, font, hoverRow, null);
+        }
+
+        /// <summary>
+        /// 占位面板的可注入启用判定重载(r18-settleui 用):对禁用行统一灰显并禁止悬停。
+        /// </summary>
+        public static void BuildFallback(List<SceneSprite> into, ref int order, OverlayArt font, int hoverRow, Func<SettlementChoice, bool> isChoiceEnabled)
+        {
             int height = HeaderHeight + RowHeight * RowCount + FooterHeight;
             into.Add(OverlayArt.Place(font.Solid(PanelWidth, height, 0x101820u), PanelX, PanelY, order++, "settle-fallback", 210));
             SpriteFrame title = font.Text("CLEAR!", 3, OverlayArt.Yellow);
@@ -242,8 +274,9 @@ namespace Dnf.Play
             for (int i = 0; i < RowCount; i++)
             {
                 SettlementChoice choice = RowChoices[i];
+                bool enabled = IsEnabled(choice) && (isChoiceEnabled == null || isChoiceEnabled(choice));
                 int top = RowTop + RowHeight * i;
-                uint color = !IsEnabled(choice) ? 0x808080u : (i == hoverRow ? OverlayArt.Yellow : OverlayArt.White);
+                uint color = !enabled ? 0x808080u : (i == hoverRow ? OverlayArt.Yellow : OverlayArt.White);
                 SpriteFrame text = font.Text(names[i], 2, color);
                 into.Add(OverlayArt.Place(text, LabelX, top + (RowHeight - text.Height) / 2, order++, "settle-label"));
                 AddHint(into, ref order, font, choice, LabelX + text.Width, top);

@@ -445,6 +445,12 @@ namespace Dnf.Client
                     }
                     break;
                 case OnlineDungeonFlowPhase.HoldingForSettlement:
+                    if (_disconnected || _port.IsDisconnected)
+                    {
+                        ClearRunState();
+                        _phase = OnlineDungeonFlowPhase.Idle;
+                        TriggerDisconnectCleanup();
+                    }
                     break;
             }
 
@@ -949,6 +955,55 @@ namespace Dnf.Client
                     int reported = _activeRun?.Reported ?? combat?.Sent ?? 0;
                     int dropped = _activeRun?.Dropped ?? combat?.Refused ?? 0;
                     int rooms = _activeRun?.RoomsEntered ?? (combat != null ? combat.Room + 1 : 1);
+
+                    // 结算通知超时(Settling 阶段 SettlementTimeout 到点):若有结算 UI 订阅且会话未断,交给结算 UI 展示超时提示与"返回城镇"。
+                    if (kind == PendingExitKind.CombatAbort
+                        && releasedOk && !_disconnected && !_port.IsDisconnected
+                        && SettlementStarted != null
+                        && combat != null
+                        && combat.Outcome == OnlineDungeonCombatOutcome.Timeout
+                        && combat.Phase == OnlineCombatPhase.Settling)
+                    {
+                        OnlineDungeonSettlementData timeoutData = OnlineDungeonSettlementMapper.Map(
+                            _activeDungeonId,
+                            _activeDungeonPath,
+                            _activeDifficulty,
+                            reported,
+                            dropped,
+                            rooms,
+                            combat,
+                            isTimedOut: true);
+
+                        WriteLog(OnlineDungeonLog.Leave(
+                            "SettlementTimeout",
+                            reported,
+                            dropped,
+                            rooms,
+                            timeoutData.ResultParseState.ToString(),
+                            timeoutData.RewardParseState.ToString()));
+
+                        _exclusiveReleased = true;
+                        _activeRunNotice = null;
+
+                        var timeoutReady = new OnlineDungeonSettlementReady(timeoutData, _port.RawSession, CompleteSettlementChoice);
+                        try
+                        {
+                            SettlementStarted?.Invoke(timeoutReady);
+                        }
+                        catch (Exception e)
+                        {
+                            WriteLog(OnlineDungeonLog.Fail("SettlementHandlerFault", e.GetType().Name));
+                        }
+
+                        if (timeoutReady.HoldForMenu)
+                        {
+                            _holdSettlementForMenu = true;
+                            _flow.OnlineHoldDungeonExit = true;
+                            _phase = OnlineDungeonFlowPhase.HoldingForSettlement;
+                            break;
+                        }
+                    }
+
                     string reason = kind == PendingExitKind.RoomAbort
                         ? _pendingRoomAbort.ToString()
                         : (combat != null ? combat.Outcome.ToString() : "Aborted");

@@ -2399,6 +2399,7 @@ namespace Dnf.Client
                 _flow.Splash?.Advance(deltaMs);      // 加载画面:停够时间之后流程切到目标阶段
                 PollOnlineTown();
                 PollOnlineDungeon();
+                PollOnlineSettlement(deltaMs);
                 _flow.Poll();
             }
             if (_flow.StageSerial != _shownSerial)
@@ -2593,6 +2594,7 @@ namespace Dnf.Client
                 townWorld = new AvatarTownWorld(townWorld, _avatars);   // 进城、换区域、副本回城造出来的主角都按装扮栏穿(r15-avatarhost)
             }
             townWorld = WrapOnlineTownWorld(townWorld);
+            townWorld = WrapOnlineSettlementTownWorld(townWorld);
             Func<string, SplashScene> dungeonSplash = _legacyTown || _noSplash ? (Func<string, SplashScene>)null : path => SplashCatalog.ForDungeon(_assets, path);
             // 选角界面(E-096):原版图包与鬼剑士头像;名册是本地存档占位(一个 1 级的默认鬼剑士)
             CharacterSelectScene characterScene = CharacterSelectScene.From(_assets);
@@ -2801,7 +2803,8 @@ namespace Dnf.Client
             {
                 return _touch != null && _state == State.Running && _session != null && _heroInput && _script.IsEmpty && _bot == null
                     && !InSelect && !InCharacterSelect && !InLoading
-                    && !(_session is DungeonSession settling && settling.SettlementActive);
+                    && !(_session is DungeonSession settling && settling.SettlementActive)
+                    && !IsOnlineSettlementActive;
             }
         }
 
@@ -3652,6 +3655,13 @@ namespace Dnf.Client
                         settling.Click(cx, cy);
                     }
                 }
+                else if (IsOnlineSettlementActive)
+                {
+                    if (TryGetCanvasPoint(Input.mousePosition, out int cx, out int cy))
+                    {
+                        TryClickOnlineSettlement(cx, cy);
+                    }
+                }
                 else if (InSelect)
                 {
                     // 副本选择界面:点卡片选中(再点一下进入)、点"返回城镇"按钮返回(触摸也走这条)
@@ -3677,6 +3687,10 @@ namespace Dnf.Client
 
         private void ChooseSettlement(SettlementChoice choice)
         {
+            if (TryChooseOnlineSettlement(choice))
+            {
+                return;
+            }
             if (_session is DungeonSession dungeon)
             {
                 dungeon.Choose(choice);
@@ -3689,6 +3703,14 @@ namespace Dnf.Client
         /// </summary>
         private void PressNumber(int slot, SettlementChoice? settlement)
         {
+            if (IsOnlineSettlementActive)
+            {
+                if (settlement.HasValue)
+                {
+                    ChooseSettlement(settlement.Value);
+                }
+                return;
+            }
             if (_session is DungeonSession settling && settling.SettlementActive)
             {
                 if (settlement.HasValue)
@@ -3738,6 +3760,11 @@ namespace Dnf.Client
         /// </summary>
         private void UpdateSettlement()
         {
+            if (IsOnlineSettlementActive)
+            {
+                UpdateOnlineSettlementPointer();
+                return;
+            }
             if (!(_session is DungeonSession dungeon))
             {
                 return;
