@@ -14,6 +14,8 @@ namespace Dnf.Client.Tests;
 /// 用来触及"没有这一局时退回用战斗结果的数"的回退。</item>
 /// <item><c>OnlineDungeonFlowController._activeRunNotice</c>:读/写当前这一局的叠层提示(正常路径上空闲时它一定是空的;进图失败收尾时它一定有值)。</item>
 /// <item><c>OnlineDungeonFlowController._exitKind</c>:待收尾的退出种类;只读它的枚举名(私有枚举类型 <c>PendingExitKind</c> 本身不引用)。</item>
+/// <item><c>OnlineDungeonCombatRunner._options</c>:战斗跑器手里的选项对象(战斗循环每圈读的就是这同一个对象);只在"整局超时中止"那条用例里取它,
+/// 在击杀确认到手之后把它的 <c>OverallTimeout</c>(公有可写)改成 1 毫秒——公开面上整局超时只能等战斗任务自己的真实时钟走到,"确认在前、超时在后"的先后没法由用例保证。</item>
 /// </list>
 /// 这些回退与防御在公开面上走不到,但各自守的行为(退出日志里的数、失败提示的种类、空闲不留旧提示、新控制器没有待收尾的退出)是明确的。
 /// </summary>
@@ -70,19 +72,27 @@ public sealed class OnlineDungeonFlowGapR4WhiteBoxTests
     {
         // 保护:战斗中止(这里是整局超时)的收尾同样在没有这一局时退回用战斗结果的数:击杀数取"已发出"的(1)、房间数取"序号加一"(1);
         // 日志里的离场原因是战斗的结局名(Timeout),并弹"超时"提示。
+        // 时序:整局超时用的是战斗任务自己的真实时钟,原先配成 0.8 秒,线程池被别的用例占满时"发击杀、收确认"会比它还慢,
+        // 超时抢先把战斗收了场,击杀确认就永远等不到。现在整局超时先配成 60 秒,进副本、发击杀、收确认在任何负载下都不会被它抢跑;
+        // 确认到手之后再把同一份选项里的整局超时改成 1 毫秒(战斗循环每圈都重读它),下一圈就收成 Timeout,"确认在前、超时在后"由用例自己保证。
         var releaseGate = new TaskCompletionSource<bool>();
-        using var rig = new Rig4(o => o.CombatOptions = CombatKit.Options(pollMilliseconds: 10, overallSeconds: 0.8));
+        using var rig = new Rig4(o => o.CombatOptions = CombatKit.Options(pollMilliseconds: 10, overallSeconds: 60));
         ServeRoomDungeon(rig, 2);
         EnterDungeon(rig);
         rig.Port.LeaveExclusiveBehavior = _ => releaseGate.Task;
         OnlineDungeonCombatRunner runner = rig.LastContext.CombatRunner;
         Assert.True(runner.PostKill(0, 0));
-        rig.PumpControllerUntil(() => runner.Machine.Confirmed == 1, 1500);
+        rig.PumpControllerUntil(() => runner.Machine.Confirmed == 1, 4000);
 
-        rig.PumpControllerUntil(() => rig.Ctrl.Phase == OnlineDungeonFlowPhase.ReleasingExclusive, 1500);
+        // 确认已到手:取跑器手里的选项对象(与战斗循环读的是同一个),让整局超时立刻到点。
+        FieldInfo optionsField = typeof(OnlineDungeonCombatRunner).GetField("_options", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingFieldException(typeof(OnlineDungeonCombatRunner).FullName, "_options");
+        ((OnlineDungeonCombatOptions)optionsField.GetValue(runner)).OverallTimeout = TimeSpan.FromMilliseconds(1);
+
+        rig.PumpControllerUntil(() => rig.Ctrl.Phase == OnlineDungeonFlowPhase.ReleasingExclusive, 4000);
         Field("_activeRun").SetValue(rig.Ctrl, null);
         releaseGate.SetResult(true);
-        rig.PumpControllerUntil(() => rig.Ctrl.Phase == OnlineDungeonFlowPhase.Idle, 1500);
+        rig.PumpControllerUntil(() => rig.Ctrl.Phase == OnlineDungeonFlowPhase.Idle, 4000);
 
         string[] expected = EnteredLogs().Concat(new[]
         {
