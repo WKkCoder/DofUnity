@@ -1,4 +1,5 @@
 using System.Reflection;
+using Dnf.Data;
 using Dnf.Game;
 using Dnf.Render;
 
@@ -88,6 +89,26 @@ internal static class OnlineSettlementGapBKit
         PropertyInfo property = target.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         Assert.NotNull(property);
         property.SetValue(target, value);
+    }
+
+    /// <summary>一件合成的可叠加物品(材料):拾取统计测试用,编号由调用方给(9900 段)。</summary>
+    public static ItemInfo StackItem(int code)
+    {
+        return new ItemInfo(code, "stackable/" + code + ".stk", ItemKind.Stackable)
+        {
+            Grade = 10,
+            CreationRate = 10,
+            StackableType = StackableTypes.Material,
+            FieldImage = "Item/FieldImage.img",
+            FieldFrame = 26,
+            MoveSound = "TEST_TOUCH",
+        };
+    }
+
+    /// <summary>一张 2×2 的全透明合成帧:覆盖层钩子测试里的标记精灵用。</summary>
+    public static SpriteFrame Pixel()
+    {
+        return new SpriteFrame(2, 2, 0, 0, 2, 2, new byte[2 * 2 * 4]);
     }
 }
 
