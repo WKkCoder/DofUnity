@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using Dnf.Data;
 
 // 证据:Script.pvf 与 ImagePacks2 的布局见 E-001、E-002;像素规则见 E-023。
@@ -20,6 +21,10 @@ namespace Dnf.Render
         private readonly Dictionary<string, SpriteFrame> _frames = new Dictionary<string, SpriteFrame>(StringComparer.Ordinal);
         private readonly Dictionary<string, ImgFile> _imgs = new Dictionary<string, ImgFile>(StringComparer.Ordinal);
         private readonly List<string> _imgOrder = new List<string>();
+        private readonly Lazy<ClientTextTable> _clientText;
+
+        /// <summary>数据目录里客户端可执行文件的文件名(查找时不区分大小写)。</summary>
+        public const string ClientExecutableName = "DNF.exe";
 
         public PvfArchive Pvf { get; }
         public PvfStringTable Strings { get; }
@@ -36,6 +41,53 @@ namespace Dnf.Render
             Pvf = pvf ?? throw new ArgumentNullException(nameof(pvf));
             Images = images ?? throw new ArgumentNullException(nameof(images));
             Strings = new PvfStringTable(Pvf.Read("stringtable.bin"));
+            _clientText = new Lazy<ClientTextTable>(LoadClientText, LazyThreadSafetyMode.ExecutionAndPublication);
+        }
+
+        /// <summary>
+        /// 客户端内嵌的"数字编号文字表"(选频道界面第二行的固定文字等,台账 E-442;不在 Script.pvf 里,而在 <c>DNF.exe</c> 的 PE 资源里):
+        /// 惰性读取一次(线程安全,之后总是同一个结果)。数据目录(<see cref="DataDirectory"/>)里找文件名不区分大小写地等于 <see cref="ClientExecutableName"/> 的那个
+        /// (区分大小写的文件系统上也找得到);没有数据目录(用构造函数直接组装的情形)、没有这个文件或读不出来都是 null。不抛异常,不打日志。
+        /// </summary>
+        public ClientTextTable ClientText => _clientText.Value;
+
+        private ClientTextTable LoadClientText()
+        {
+            string directory = DataDirectory;
+            if (string.IsNullOrEmpty(directory))
+            {
+                return null;
+            }
+            string executable = FindClientExecutable(directory);
+            return executable != null && ClientTextTable.TryLoadFromExecutable(executable, out ClientTextTable table) ? table : null;
+        }
+
+        /// <summary>在目录的第一层里找文件名不区分大小写地等于 <see cref="ClientExecutableName"/> 的文件;找不到或目录读不了返回 null。</summary>
+        private static string FindClientExecutable(string directory)
+        {
+            try
+            {
+                foreach (string path in Directory.EnumerateFiles(directory))
+                {
+                    if (string.Equals(Path.GetFileName(path), ClientExecutableName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return path;
+                    }
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+            catch (ArgumentException)
+            {
+            }
+            catch (NotSupportedException)
+            {
+            }
+            return null;
         }
 
         /// <summary>打开游戏目录:里面应当有 Script.pvf 与 ImagePacks2/。</summary>

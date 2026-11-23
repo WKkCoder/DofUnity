@@ -68,10 +68,10 @@ internal static class SyntheticPe
         /// <summary>可选头里写的数据目录个数(NumberOfRvaAndSizes),可选头的大小也按这个个数算(小于 3 时放不下资源目录项)。</summary>
         public int DirectoryCount = 16;
 
-        public bool OmitResourceDirectory;
+        public bool OmitResourceDirectory = false;
 
         /// <summary>在 .text、.rsrc(、数据节)之后再加几个空节(原始大小 0)。</summary>
-        public int ExtraSections;
+        public int ExtraSections = 0;
 
         /// <summary>.text 节的原始数据大小(填充字节;测试"不整文件读进内存"时放很大)。</summary>
         public int TextBytes = 0x200;

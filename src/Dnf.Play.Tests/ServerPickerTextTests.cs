@@ -84,6 +84,63 @@ public sealed class ServerPickerTextTests
         Assert.Equal(string.Empty, ServerPickerText.Level(Channel(1, "x", 55, 41)));
     }
 
+    /// <summary>带固定文字的频道;文字全是合成的,不是真实文案。</summary>
+    private static DirectoryChannel WithFixedText(string fixedText, int min = 0, int max = 0)
+        => new DirectoryChannel(7, "测试", ChannelCongestion.Smooth, new ChannelTarget(30007), min, max, DirectoryChannel.DefaultSlotFrame, fixedText);
+
+    [Fact]
+    public void A_fixed_level_text_replaces_the_numeric_range_verbatim_when_the_font_can_draw_it()
+    {
+        // 原样返回:不加括号、不去空白、不改大小写;默认参数(cjk = true)与显式 true 一致
+        Assert.Equal("合成备注", ServerPickerText.Level(WithFixedText("合成备注", 41, 55)));
+        Assert.Equal("合成备注", ServerPickerText.Level(WithFixedText("合成备注", 41, 55), true));
+        Assert.Equal("SYNTH-NOTE", ServerPickerText.Level(WithFixedText("SYNTH-NOTE", 41, 55), true));
+        Assert.Equal(" Syn (a) ", ServerPickerText.Level(WithFixedText(" Syn (a) ", 41, 55), true));
+        Assert.Equal("a>b\\nc", ServerPickerText.Level(WithFixedText("a>b\\nc", 1, 20), true));              // 文字里的 > 与两字符 \n 不动
+    }
+
+    [Fact]
+    public void A_fixed_level_text_does_not_need_a_recommended_range()
+    {
+        // 类型 2 的频道没有推荐等级,照样有第二行;区间反了(HasRecommendedLevel 为假)也一样
+        Assert.False(WithFixedText("合成备注").HasRecommendedLevel);
+        Assert.Equal("合成备注", ServerPickerText.Level(WithFixedText("合成备注")));
+        Assert.Equal("SYNTH-NOTE", ServerPickerText.Level(WithFixedText("SYNTH-NOTE"), false));
+        Assert.Equal("合成备注", ServerPickerText.Level(WithFixedText("合成备注", 55, 41)));
+    }
+
+    [Fact]
+    public void Without_a_cjk_font_only_an_ascii_fixed_text_is_drawn_and_a_cjk_one_falls_back_to_the_numeric_range()
+    {
+        // 点阵字库只有 ASCII:含汉字的固定文字退回数值区间(没有区间就是空串);全 ASCII 的照画
+        Assert.Equal("(Lv.41~55)", ServerPickerText.Level(WithFixedText("合成备注", 41, 55), false));
+        Assert.Equal(string.Empty, ServerPickerText.Level(WithFixedText("合成备注"), false));
+        Assert.Equal("SYNTH-NOTE", ServerPickerText.Level(WithFixedText("SYNTH-NOTE", 41, 55), false));
+        Assert.Equal("SYNTH-NOTE", ServerPickerText.Level(WithFixedText("SYNTH-NOTE"), false));
+        // 边界:U+007F 仍算 ASCII,U+0080 起不算(混进一个字符就整句当中文)
+        Assert.Equal("SYNTH\u007FNOTE", ServerPickerText.Level(WithFixedText("SYNTH\u007FNOTE", 41, 55), false));
+        Assert.Equal("(Lv.41~55)", ServerPickerText.Level(WithFixedText("SYNTH\u0080NOTE", 41, 55), false));
+        Assert.Equal("(Lv.41~55)", ServerPickerText.Level(WithFixedText("SYNTH-NOTE合", 41, 55), false));
+        Assert.Equal("(Lv.41~55)", ServerPickerText.Level(WithFixedText("合SYNTH-NOTE", 41, 55), false));
+    }
+
+    [Fact]
+    public void An_empty_or_missing_fixed_text_means_none_and_keeps_the_old_behaviour()
+    {
+        DirectoryChannel empty = WithFixedText(string.Empty, 41, 55);
+        DirectoryChannel none = WithFixedText(null, 41, 55);
+        Assert.Null(empty.FixedLevelText);                           // 空串与 null 都表示"没有"
+        Assert.Null(none.FixedLevelText);
+        Assert.Equal("(Lv.41~55)", ServerPickerText.Level(empty));
+        Assert.Equal("(Lv.41~55)", ServerPickerText.Level(none, false));
+        Assert.Equal(string.Empty, ServerPickerText.Level(WithFixedText(string.Empty)));
+        Assert.Equal(string.Empty, ServerPickerText.Level(WithFixedText(null), false));
+        // 老的构造调用不带这个参数,还是"没有"
+        Assert.Null(Channel(1).FixedLevelText);
+        Assert.Null(new DirectoryChannel(1, "x", ChannelCongestion.Smooth, new ChannelTarget(30001), 1, 20, 5).FixedLevelText);
+        Assert.Equal("SYNTH-NOTE", WithFixedText("SYNTH-NOTE").FixedLevelText);
+    }
+
     [Fact]
     public void Page_text_is_current_over_total_counting_from_one()
     {

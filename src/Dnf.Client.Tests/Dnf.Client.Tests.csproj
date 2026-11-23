@@ -53,6 +53,9 @@
     <Compile Include="..\Dnf.Play.Tests\OnlineShellTestKit.cs" Link="OnlineShellTestKit.cs" />
     <Compile Include="..\Dnf.Play.Tests\ServerPickerTestKit.cs" Link="ServerPickerTestKit.cs" />
     <Compile Include="..\Dnf.Render.Tests\BlockFont.cs" Link="BlockFont.cs" />
+    <!-- 客户端固定文字(频道项第二行)的测试夹具:合成的 PE 映像构造器与"最小游戏目录"(临时目录里的合成 Script.pvf + 合成 DNF.exe) -->
+    <Compile Include="..\Dnf.Data.Tests\SyntheticPe.cs" Link="SyntheticPe.cs" />
+    <Compile Include="..\Dnf.Render.Tests\MiniGameDirectory.cs" Link="MiniGameDirectory.cs" />
   </ItemGroup>
 
   <ItemGroup>

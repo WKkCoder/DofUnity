@@ -920,7 +920,7 @@ namespace Dnf.Play
             uint textColor = channel.SlotFrame == ItemFrame ? PickerArt.ItemTextColor : PickerArt.NormalItemTextColor;
             SpriteFrame title = _paint.Line(ServerPickerText.ChannelTitle(channel, cjk), TextPixel, textColor, ShellPaint.Navy, TextMaxWidth);
             OnlineShellArt.Add(into, ref order, title, rect.X + TitleDX - 1, rect.Y + TitleDY - 2, "channel-item-title");
-            string level = ServerPickerText.Level(channel);
+            string level = ServerPickerText.Level(channel, cjk);
             if (level.Length > 0)
             {
                 SpriteFrame levelLine = _paint.Line(level, TextPixel, textColor, ShellPaint.Navy, TextMaxWidth);

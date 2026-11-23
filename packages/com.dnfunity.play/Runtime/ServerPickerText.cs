@@ -112,9 +112,19 @@ namespace Dnf.Play
             return title.Length > 0 ? "ch" + num + "." + title : "ch" + num;
         }
 
-        /// <summary>频道项第二行:推荐等级 "(Lv.%02d~%02d)"(原版 <c>0x010f699a</c>);没有推荐等级返回空串。</summary>
-        public static string Level(DirectoryChannel channel)
+        /// <summary>
+        /// 频道项第二行。有固定文字(<see cref="DirectoryChannel.FixedLevelText"/>,类型 2 的频道与 <c>[granfloris]</c> 区域,原版 <c>0x010f6560</c>,台账 E-442、E-445)
+        /// 且画得出来(<paramref name="cjk"/> 为真,或固定文字全是 ASCII)时原样返回它(括号已在文字里,这里不改写、不加括号),不要求有推荐等级;
+        /// 否则是推荐等级 "(Lv.%02d~%02d)"(原版 <c>0x010f699a</c>),没有推荐等级返回空串。
+        /// 实现的选择:没有汉字字体(<paramref name="cjk"/> 为假)而固定文字含汉字时,点阵字库画不出来,退回数值区间(没有推荐等级就是空串)。
+        /// </summary>
+        public static string Level(DirectoryChannel channel, bool cjk = true)
         {
+            string fixedText = channel.FixedLevelText;
+            if (!string.IsNullOrEmpty(fixedText) && (cjk || IsAscii(fixedText)))
+            {
+                return fixedText;
+            }
             if (!channel.HasRecommendedLevel)
             {
                 return string.Empty;
@@ -134,6 +144,19 @@ namespace Dnf.Play
         public static string ServerPlaceholder(int index)
         {
             return "SERVER " + (index + 1);
+        }
+
+        /// <summary>每个字符都在 ASCII 范围内(U+0000 到 U+007F)。</summary>
+        private static bool IsAscii(string text)
+        {
+            foreach (char c in text)
+            {
+                if (c > 0x7F)
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         /// <summary>只留 ASCII 可见字符(去掉点阵字库画不出来的中文)。</summary>

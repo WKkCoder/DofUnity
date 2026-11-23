@@ -747,7 +747,7 @@ namespace Dnf.Client
             return Task.Run(async () =>
             {
                 OnlineDirectoryReport report = await hostPort.LoadDirectoryAsync(cancellationToken).ConfigureAwait(false);
-                return ChannelDirectoryAdapter.Result(report.Outcome, report.Snapshot, _directoryCatalog?.ResolveString);
+                return ChannelDirectoryAdapter.Result(report.Outcome, report.Snapshot, _directoryCatalog?.ResolveString, _directoryCatalog?.ResolveClientText);
             }, cancellationToken);
         }
 
