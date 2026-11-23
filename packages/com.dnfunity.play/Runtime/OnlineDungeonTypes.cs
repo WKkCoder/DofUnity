@@ -691,6 +691,33 @@ namespace Dnf.Play
             OnlineSettlementResultData result,
             OnlineSettlementParseState rewardParseState,
             OnlineSettlementRewardData reward)
+            : this(
+                dungeonId,
+                dungeonPath,
+                difficulty,
+                reportedKills,
+                droppedKills,
+                roomsEntered,
+                resultParseState,
+                result,
+                rewardParseState,
+                reward,
+                isTimedOut: false)
+        {
+        }
+
+        public OnlineDungeonSettlementData(
+            int dungeonId,
+            string dungeonPath,
+            int difficulty,
+            int reportedKills,
+            int droppedKills,
+            int roomsEntered,
+            OnlineSettlementParseState resultParseState,
+            OnlineSettlementResultData result,
+            OnlineSettlementParseState rewardParseState,
+            OnlineSettlementRewardData reward,
+            bool isTimedOut)
         {
             DungeonId = dungeonId;
             DungeonPath = dungeonPath ?? string.Empty;
@@ -702,6 +729,7 @@ namespace Dnf.Play
             Result = result;
             RewardParseState = rewardParseState;
             Reward = reward;
+            IsTimedOut = isTimedOut;
         }
 
         public int DungeonId { get; }
@@ -714,6 +742,9 @@ namespace Dnf.Play
         public OnlineSettlementResultData Result { get; }
         public OnlineSettlementParseState RewardParseState { get; }
         public OnlineSettlementRewardData Reward { get; }
+
+        /// <summary>是否在等待结算通知(0x22/0x23)期间超时(战斗路径 <c>SettlementTimeout</c> 到点仍未收齐两段通知)。</summary>
+        public bool IsTimedOut { get; }
     }
 
     /// <summary>
