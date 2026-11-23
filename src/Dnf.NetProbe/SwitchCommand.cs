@@ -8,6 +8,7 @@ namespace Dnf.NetProbe;
 ///
 /// 用法:
 ///   dnf-netprobe switch [仓库根] --to-index &lt;K&gt; | --to-port &lt;N&gt; [--client-version &lt;u32&gt;] [--server-group &lt;0..17&gt;]
+///   dnf-netprobe switch [仓库根] --list
 ///
 /// 只读验证:一条会话、网关只登录一次 → 读频道目录 → 连第一个频道(设置里的频道端口)并记下角色列表 → 换频道到目标并记下角色列表 → 断开。
 /// 不选角、不进城、不发任何命令包,也没有任何循环重试(会话内部台账 E-443 的有限重试是产品行为,原样保留)。
@@ -22,6 +23,17 @@ namespace Dnf.NetProbe;
 /// 退出码:0 两步都成功且两次都收到角色列表;2 本地配置装配失败;3 第一个频道连接失败;4 换频道失败;
 /// 5 网关认证失败(立即结束,绝不重试);6 读目录失败;7 目录里选不出目标;64 用法错误(没读配置、没有任何网络访问)。
 /// 另有两个规格之外的补充:15 被取消(Ctrl+C)、70 流程自己没料到的异常(只打异常类型名);两者照样打最后一行。
+///
+/// 目录摘要(<c>--list</c>,真服换频道验证之前先看,与上面的换频道流程互斥):
+///   dnf-netprobe switch [仓库根] --list
+/// 读本地设置 → 网关登录(只一次,失败立即结束)→ 读频道目录 → 逐条目打摘要 → 结束并释放会话。<b>不连任何频道</b>、不做游戏登录、不选角、不发命令包。
+/// <c>--list</c> 与 <c>--to-index</c>、<c>--to-port</c>、<c>--client-version</c>、<c>--server-group</c> 都互斥,同时出现是用法错误(64)。
+/// 输出同样只含小整数与枚举名(阶段行 <c>to=list</c>);每个目录条目一行
+/// <c>PROBE_SWITCH dir entry=&lt;i&gt; usable=&lt;0|1&gt; first=&lt;0|1&gt; candidate=&lt;K 或 -&gt; group=&lt;0..17&gt; kind=&lt;整数,没有槽位规则为 -1&gt;</c>
+/// (<c>candidate=K</c> 的条目就是 <c>--to-index K</c> 会选中的条目;<c>group</c> 是设置里的服务器组为 0 时目录解出、会写进游戏登录请求的值),
+/// 然后一行汇总 <c>PROBE_SWITCH dir-summary entries=&lt;N&gt; usable=&lt;U&gt; candidates=&lt;C&gt; firstInDirectory=&lt;0|1&gt;</c>,
+/// 最后一行 <c>PROBE_SWITCH result=ok|fail mode=list [failedStage=&lt;阶段名&gt;] elapsedMs=&lt;n&gt;</c>。
+/// 退出码:0 成功;2 本地配置装配失败;5 网关登录失败(立即结束、绝不重试);6 读目录失败;15 被取消;64 用法错误;70 流程自己没料到的异常。
 /// </summary>
 internal static class SwitchCommand
 {

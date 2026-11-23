@@ -36,6 +36,12 @@ namespace Dnf.Net.Session
 
         /// <summary>出现了不认识的参数,或仓库根不在第一个位置。</summary>
         UnknownArgument,
+
+        /// <summary>
+        /// <c>--list</c>(只读目录摘要模式)与 <c>--to-index</c>、<c>--to-port</c>、<c>--client-version</c>、<c>--server-group</c> 中的任何一个同时出现
+        /// (这个模式不连频道、不做游戏登录,这几个选项对它没有意义,所以互斥)。排在各个选项自己的取值与重复问题之后判。
+        /// </summary>
+        ConflictingList,
     }
 
     /// <summary>
@@ -182,19 +188,29 @@ namespace Dnf.Net.Session
     }
 
     /// <summary>
-    /// 探针 <c>switch</c> 子命令的命令行:
-    /// <c>[仓库根] --to-index &lt;K&gt; | --to-port &lt;N&gt; [--client-version &lt;u32&gt;] [--server-group &lt;0..17&gt;]</c>。
-    /// <c>--to-index</c> 与 <c>--to-port</c> 二选一(同时给或都不给都是错);任何选项重复、缺值、值不合规、出现不认识的参数、仓库根不在第一个位置,都是用法错误。
+    /// 探针 <c>switch</c> 子命令的命令行,两种形式:
+    /// <list type="bullet">
+    /// <item>换频道验证:<c>[仓库根] --to-index &lt;K&gt; | --to-port &lt;N&gt; [--client-version &lt;u32&gt;] [--server-group &lt;0..17&gt;]</c>;
+    /// <c>--to-index</c> 与 <c>--to-port</c> 二选一(同时给或都不给都是错)。</item>
+    /// <item>只读目录摘要:<c>[仓库根] --list</c>;<c>--list</c> 与上面四个选项互斥(同时出现是 <see cref="OnlineProbeArgumentProblem.ConflictingList"/>)。</item>
+    /// </list>
+    /// 任何选项重复、缺值、值不合规、出现不认识的参数、仓库根不在第一个位置,都是用法错误。
     /// 解析是纯函数,不读环境、不连网;问题只给问题名,不回显用户输入。
     /// </summary>
     public sealed class OnlineSwitchArguments
     {
+        /// <summary>只读目录摘要模式的选项名。</summary>
+        public const string ListOption = "--list";
+
         private OnlineSwitchArguments()
         {
         }
 
         /// <summary>仓库根;没给为 null(探针退回当前目录)。</summary>
         public string RepoRoot { get; private set; }
+
+        /// <summary>给了 <c>--list</c>:只读目录摘要模式(此时没有换频道目标,也没有两个开关)。</summary>
+        public bool ListMode { get; private set; }
 
         /// <summary>目标按"目录序号"选时的序号 K(从 0 起);按端口选时为 -1。</summary>
         public int ToIndex { get; private set; } = -1;
@@ -220,6 +236,7 @@ namespace Dnf.Net.Session
             bool havePort = false;
             bool haveVersion = false;
             bool haveGroup = false;
+            bool haveList = false;
             int count = args == null ? 0 : args.Count;
             for (int i = 0; i < count; i++)
             {
@@ -237,6 +254,16 @@ namespace Dnf.Net.Session
 
                 switch (token)
                 {
+                    case ListOption:
+                    {
+                        if (haveList)
+                        {
+                            problem = OnlineProbeArgumentProblem.DuplicateOption;
+                            return false;
+                        }
+                        haveList = true;
+                        break;
+                    }
                     case "--to-index":
                     {
                         if (haveIndex)
@@ -311,6 +338,20 @@ namespace Dnf.Net.Session
                 }
             }
 
+            // 目录摘要模式:与换频道的四个选项互斥(每个参数都读得通之后才判,不分先后);它没有换频道目标,所以不走下面的二选一
+            if (haveList)
+            {
+                if (haveIndex || havePort || haveVersion || haveGroup)
+                {
+                    problem = OnlineProbeArgumentProblem.ConflictingList;
+                    return false;
+                }
+                result.ListMode = true;
+                parsed = result;
+                problem = OnlineProbeArgumentProblem.None;
+                return true;
+            }
+
             // 目标二选一:每个参数都读得通之后才判(不分先后)
             if (haveIndex && havePort)
             {
@@ -326,6 +367,23 @@ namespace Dnf.Net.Session
             parsed = result;
             problem = OnlineProbeArgumentProblem.None;
             return true;
+        }
+
+        /// <summary>
+        /// 命令行里是否出现了 <c>--list</c> 这个记号(不管出现在哪、值是否合规):用法错误时据此在用法行里把目录摘要的写法也列出来。
+        /// 纯函数,不读环境、不连网;<paramref name="args"/> 为 null 或没有这个记号为 false。
+        /// </summary>
+        public static bool MentionsList(IReadOnlyList<string> args)
+        {
+            int count = args == null ? 0 : args.Count;
+            for (int i = 0; i < count; i++)
+            {
+                if (string.Equals(args[i], ListOption, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }

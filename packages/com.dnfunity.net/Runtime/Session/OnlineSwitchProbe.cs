@@ -201,6 +201,12 @@ namespace Dnf.Net.Session
     /// 各步耗时毫秒、<c>to=index:K</c> 或 <c>to=port</c> 这样的序号式记号(异常只带类型名)。绝不输出账号、口令、令牌、主机、IP、端口号、URL、频道名、角色名与任何载荷字节
     /// (目录里的主机与端口只在进程内用来选目标与连接)。最后一行总是 <c>PROBE_SWITCH result=…</c>(用法错误除外:只有一行用法提示)。
     /// </para>
+    /// <para>
+    /// 给了 <c>--list</c> 时是另一个只读流程(<see cref="OnlineSwitchListRun"/>):读本地设置 → 网关登录(只一次)→ 读频道目录 → 逐条目打脱敏摘要 → 结束,
+    /// 一个频道也不连(不调用 <see cref="IOnlineSwitchSession.ConnectAsync"/> 与 <see cref="IOnlineSwitchSession.SwitchChannelAsync(int, CancellationToken)"/>)、
+    /// 不做游戏登录、不选角、不发命令包;用途是在真服换频道验证之前先看到"哪个序号会被 <c>--to-index</c> 选中、各频道会写什么服务器组"。
+    /// 不给 <c>--list</c> 的行为与加这个模式之前一字不差。
+    /// </para>
     /// </summary>
     public static class OnlineSwitchProbe
     {
@@ -210,11 +216,16 @@ namespace Dnf.Net.Session
         /// <summary>命令行语法(用法行里用)。</summary>
         public const string Syntax = "dnf-netprobe switch [仓库根] --to-index <K> | --to-port <N> [--client-version <u32>] [--server-group <0..17>]";
 
+        /// <summary>只读目录摘要的命令行语法(命令行里出现了 <c>--list</c> 的用法行里,接在 <see cref="Syntax"/> 之后)。</summary>
+        public const string ListSyntax = "dnf-netprobe switch [仓库根] --list";
+
         /// <summary>
         /// 跑一遍;返回进程退出码(见 <see cref="OnlineSwitchExitCodes"/>)。<paramref name="args"/> 是 <c>switch</c> 之后的全部参数;
         /// <paramref name="defaultRepoRoot"/> 在没给仓库根时使用;<paramref name="writeLine"/> 收每一行输出。
         /// 命令行不合规时在碰 <paramref name="port"/> 之前就返回 64。会话调用抛的异常(取消除外)在各步里收成 Faulted 结局;
         /// 取消返回 <see cref="OnlineSwitchExitCodes.Cancelled"/>,流程自己没料到的异常返回 <see cref="OnlineSwitchExitCodes.Unexpected"/>,两者都照样打最后一行。
+        /// 给了 <c>--list</c> 时走只读的目录摘要流程(网关登录 → 读目录 → 打摘要,不连任何频道、不做游戏登录,见 <see cref="OnlineDirectorySummary"/>),
+        /// 退出码只有 0、2、5、6、15、64、70。
         /// </summary>
         public static async Task<int> RunAsync(IReadOnlyList<string> args, string defaultRepoRoot, IOnlineSwitchPort port,
             Action<string> writeLine, CancellationToken cancellationToken = default)
@@ -230,8 +241,15 @@ namespace Dnf.Net.Session
 
             if (!OnlineSwitchArguments.TryParse(args, out OnlineSwitchArguments parsed, out OnlineProbeArgumentProblem usageProblem))
             {
-                writeLine(LinePrefix + " usage problem=" + usageProblem + " exit=" + Num(OnlineSwitchExitCodes.Usage) + " syntax: " + Syntax);
+                // 命令行里出现了 --list 时,用法行里把目录摘要的写法也列出来;其余情形的用法行与以前一字不差
+                string syntax = OnlineSwitchArguments.MentionsList(args) ? Syntax + " | " + ListSyntax : Syntax;
+                writeLine(LinePrefix + " usage problem=" + usageProblem + " exit=" + Num(OnlineSwitchExitCodes.Usage) + " syntax: " + syntax);
                 return OnlineSwitchExitCodes.Usage;
+            }
+
+            if (parsed.ListMode)
+            {
+                return await OnlineSwitchListRun.RunAsync(parsed, defaultRepoRoot, port, writeLine, cancellationToken).ConfigureAwait(false);
             }
 
             var run = new Run(parsed, writeLine, cancellationToken);
@@ -307,13 +325,22 @@ namespace Dnf.Net.Session
                 {
                     continue;
                 }
-                if (entry.Port == firstPort && SameHost(entry.Host, firstHost))
+                if (IsFirstChannel(entry, firstHost, firstPort))
                 {
                     continue;
                 }
                 result.Add(entry);
             }
             return result;
+        }
+
+        /// <summary>
+        /// 这个条目是不是"第一个频道":端口等于设置里的频道端口(<paramref name="firstPort"/>)、并且与网关给的主机(<paramref name="firstHost"/>)是同一个主机
+        /// (目录里没写主机的条目视为在网关给的那个主机上)。<see cref="Candidates"/> 排除第一个频道与目录摘要里的 <c>first=</c> 用的是同一个判定。
+        /// </summary>
+        public static bool IsFirstChannel(ChannelEntry entry, string firstHost, int firstPort)
+        {
+            return entry != null && entry.Port == firstPort && SameHost(entry.Host, firstHost);
         }
 
         /// <summary>候选里按目录顺序的第 <paramref name="index"/> 个(从 0 起);不够时为 null。</summary>
