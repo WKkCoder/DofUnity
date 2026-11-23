@@ -19,6 +19,13 @@ namespace Dnf.NetProbe;
 ///        无头战斗:进城 → 进副本 → 杀光起始地图的怪 → 清图 → 结算 → 可回城(详见 FightCommand.cs),输出行以 PROBE_FIGHT 开头
 ///   dnf-netprobe live [--register] [--channel-port N] [--data-version N] [--seconds N]
 ///        网关健康检查 → 登录(或先注册测试号) → 取游戏服地址 → 连频道 → 收首包 → 发 LOGIN → 收集 N 秒回包
+///   dnf-netprobe orchestrated [仓库根] [--stay N] [--client-version &lt;u32&gt;] [--server-group &lt;0..17&gt;]
+///        走产品编排的整条链(网关登录 → 连频道 → 选角进城,可再挂 N 秒)。两个开关缺省不给、不动入参;给了就在读完本机配置之后写进联网入参(命令行优先):
+///        --client-version 是登录请求里数据版本之后的 u32(0 到 4294967295,缺省 0),--server-group 是登录请求里的服务器组(0 到 17;0 = 由会话按频道目录解)。
+///        值不合规、缺值或同一选项重复 → 只打一行用法、退出码 64,不读本机配置、不联网
+///   dnf-netprobe switch [仓库根] --to-index &lt;K&gt; | --to-port &lt;N&gt; [--client-version &lt;u32&gt;] [--server-group &lt;0..17&gt;]
+///        只读的换频道验证:一条会话、网关只登录一次 → 读频道目录 → 连第一个频道 → 换到目标频道 → 断开;不选角、不进城、不发命令包(详见 SwitchCommand.cs),
+///        输出行以 PROBE_SWITCH 开头;退出码 0 成功、2 装配失败、3 第一个频道失败、4 换频道失败、5 网关认证失败、6 读目录失败、7 选不出目标、64 用法错误
 /// 在仓库根目录(或带 local.env 的工作树根目录)下运行。
 /// </summary>
 internal static class Program
@@ -41,23 +48,30 @@ internal static class Program
         {
             return await FightCommand.RunAsync(args);
         }
+        if (args.Length >= 1 && args[0] == "switch")
+        {
+            return await SwitchCommand.RunAsync(args);
+        }
         if (args.Length >= 1 && args[0] == "channel")
         {
             return await ChannelProbe.RunAsync(args);
         }
-        Console.WriteLine("用法: dnf-netprobe offline <首包文件> | live [--register] [--channel-port N] [--data-version N] [--seconds N] | orchestrated [仓库根] | fight [仓库根] --dungeon <副本编号> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] | channel [仓库根] [--channel-port N] [--version V]");
+        Console.WriteLine("用法: dnf-netprobe offline <首包文件> | live [--register] [--channel-port N] [--data-version N] [--seconds N] | orchestrated [仓库根] [--stay N] [--client-version <u32>] [--server-group <0..17>] | switch [仓库根] --to-index <K> | --to-port <N> [--client-version <u32>] [--server-group <0..17>] | fight [仓库根] --dungeon <副本编号> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] | channel [仓库根] [--channel-port N] [--version V]");
         return 64;
     }
 
     // 走产品编排 OnlineTownEntry 的整条链(与 Unity 宿主同路),逐阶段与结局只报脱敏信息。
     // --stay N:进城后继续挂 N 秒(心跳保活泵独占接收),结束时报回过几次心跳与连接是否还活。
+    // --client-version <u32>、--server-group <0..17>:写进联网入参的两个开关(命令行优先于本机配置;不给就不动,与以前一字不差)。
+    // 仓库根与这两个开关的解析、本机配置的读取与覆盖在 Net 层的 OnlineOrchestratedSetup.Prepare 里(有单元测试):
+    // 开关不合规就只打一行用法并返回 64,不读本机配置、不联网;读配置失败仍是原来的"装配失败: …"与退出码 2。
     private static async Task<int> Orchestrated(string[] args)
     {
-        string repoRoot = args.Length >= 2 && !args[1].StartsWith("--") ? args[1] : Directory.GetCurrentDirectory();
-        if (!LocalDevEntrySettings.TryLoad(repoRoot, out OnlineEntrySettings settings, out string problem))
+        int prepared = OnlineOrchestratedSetup.Prepare(args.Skip(1).ToArray(), Directory.GetCurrentDirectory(),
+            LocalDevEntrySettings.TryLoad, Console.WriteLine, out OnlineEntrySettings settings);
+        if (prepared != 0)
         {
-            Console.WriteLine("装配失败: " + problem);
-            return 2;
+            return prepared;
         }
         var entry = new OnlineTownEntry(settings);
         OnlineEntryResult result = await entry.RunAsync(stage => Console.WriteLine("阶段: " + stage));

@@ -385,6 +385,9 @@ namespace Dnf.Net.Session
             set => _settings.ClientVersion = value;
         }
 
+        /// <summary>网关给的游戏服主机文本(IP 字面量);还没登录为 null。只供进程内判断"是不是同一个主机",探针的 switch 子命令用它,绝不打印。</summary>
+        internal string GameServerHost => _address?.ToString();
+
         /// <summary>网关登录并取游戏服地址；重复登录属于顺序错误。</summary>
         public async Task<OnlineLoginResult> LoginAsync(string account, string password, CancellationToken cancellationToken = default)
         {
