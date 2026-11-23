@@ -22,6 +22,8 @@
   <ItemGroup>
     <!-- 合成数据构造器与数据层测试共用(它是 internal 的,所以直接编译进来) -->
     <Compile Include="..\Dnf.Data.Tests\TestData.cs" Link="TestData.cs" />
+    <!-- 合成的 PE 映像构造器(DnfAssets.ClientText 的测试用它造"客户端可执行文件") -->
+    <Compile Include="..\Dnf.Data.Tests\SyntheticPe.cs" Link="SyntheticPe.cs" />
   </ItemGroup>
 
   <ItemGroup>

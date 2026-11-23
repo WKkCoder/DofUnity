@@ -34,8 +34,12 @@ namespace Dnf.Play
         /// <param name="recommendedMinLevel">推荐最低等级;没有推荐等级时 0。</param>
         /// <param name="recommendedMaxLevel">推荐最高等级;没有推荐等级时 0。</param>
         /// <param name="slotFrame"><c>channelslot.img</c> 的图标帧号;默认 <see cref="DefaultSlotFrame"/>。</param>
+        /// <param name="fixedLevelText">
+        /// 第二行要画的固定文字(客户端文字表里的一项,括号已在文字里;台账 E-442、E-445);没有时为 null,空串也当作没有。
+        /// 有它的时候界面画它,不画 "(Lv.下限~上限)"。
+        /// </param>
         public DirectoryChannel(int number, string title, ChannelCongestion congestion, ChannelTarget target,
-            int recommendedMinLevel = 0, int recommendedMaxLevel = 0, int slotFrame = DefaultSlotFrame)
+            int recommendedMinLevel = 0, int recommendedMaxLevel = 0, int slotFrame = DefaultSlotFrame, string fixedLevelText = null)
         {
             if (number < 0)
             {
@@ -48,6 +52,7 @@ namespace Dnf.Play
             RecommendedMinLevel = recommendedMinLevel;
             RecommendedMaxLevel = recommendedMaxLevel;
             SlotFrame = slotFrame;
+            FixedLevelText = string.IsNullOrEmpty(fixedLevelText) ? null : fixedLevelText;
         }
 
         public int Number { get; }
@@ -64,7 +69,14 @@ namespace Dnf.Play
 
         public int SlotFrame { get; }
 
-        /// <summary>有推荐等级(两头都为正且最高不低于最低);没有时界面不画第二行。</summary>
+        /// <summary>
+        /// 第二行的固定文字(原样,不改写、不再加括号);没有时为 null(构造时传 null 或空串都是没有)。
+        /// 原版对类型 2 的频道与 <c>[granfloris]</c> 区域的频道画这句固定文字而不是数值区间(台账 E-442、E-445);由客户端层的适配器取好交进来。
+        /// 类型 2 的频道没有推荐等级也可以有它。
+        /// </summary>
+        public string FixedLevelText { get; }
+
+        /// <summary>有推荐等级(两头都为正且最高不低于最低);没有时界面不画第二行(除非有 <see cref="FixedLevelText"/>)。</summary>
         public bool HasRecommendedLevel => RecommendedMinLevel > 0 && RecommendedMaxLevel >= RecommendedMinLevel;
 
         public bool IsFull => Congestion == ChannelCongestion.Full;

@@ -1116,4 +1116,70 @@ public sealed class ChannelSelectScreenTests
         SceneSprite normalTitle = PickerSprites.One(normalScreen.Build(0), "channel-item-title");
         Assert.False(diceTitle.Frame.Rgba.SequenceEqual(normalTitle.Frame.Rgba));
     }
+
+    // ------------------------------------------------------------------ 第二行:固定文字(类型 2 与 [granfloris] 区域)
+
+    /// <summary>带固定文字的频道;文字是合成的。</summary>
+    private static DirectoryChannel FixedCh(int number, string fixedText, int min = 0, int max = 0)
+        => new DirectoryChannel(number, "测试", ChannelCongestion.Smooth, PickerData.Target(number), min, max, DirectoryChannel.DefaultSlotFrame, fixedText);
+
+    /// <summary>用一份会记下"被要过哪些字"的字体集建画面(有汉字字体的情形),只放给定频道。</summary>
+    private static ChannelSelectScreen ReadyWithFonts(RecordingFonts fonts, params DirectoryChannel[] channels)
+    {
+        var screen = new ChannelSelectScreen(null, fonts);
+        screen.SetServer(new DirectoryServer("希洛克", channels), null);
+        return screen;
+    }
+
+    [Fact]
+    public void With_fonts_the_second_line_draws_the_fixed_text_instead_of_the_numeric_range()
+    {
+        var fonts = new RecordingFonts();
+        List<SceneSprite> scene = ReadyWithFonts(fonts, FixedCh(1, "合成备注", 41, 55)).Build(0);
+        Assert.Equal(1, PickerRig.Count(scene, "channel-item-level"));
+        Assert.True(fonts.Asked("合成备注"), "固定文字的每个字都该向字体集要过");
+        Assert.DoesNotContain((int)'~', fonts.CodePoints);                  // 数值区间 "(Lv.41~55)" 里才有的 '~' 没被要过
+        Assert.DoesNotContain((int)'L', fonts.CodePoints);
+
+        // 对照:同一个频道不带固定文字 → 画数值区间,"~" 与 "L" 被要过,合成文字没被要过
+        var plainFonts = new RecordingFonts();
+        List<SceneSprite> plain = ReadyWithFonts(plainFonts, Ch(1, ChannelCongestion.Smooth, false, 41, 55)).Build(0);
+        Assert.Equal(1, PickerRig.Count(plain, "channel-item-level"));
+        Assert.Contains((int)'~', plainFonts.CodePoints);
+        Assert.Contains((int)'L', plainFonts.CodePoints);
+        Assert.False(plainFonts.Asked("合成备注"));
+    }
+
+    [Fact]
+    public void With_fonts_a_channel_without_a_recommended_range_still_gets_its_second_line_from_the_fixed_text()
+    {
+        var fonts = new RecordingFonts();
+        List<SceneSprite> scene = ReadyWithFonts(fonts, FixedCh(1, "合成备注"), Ch(2)).Build(0);
+        Assert.Equal(2, PickerRig.Count(scene, "channel-item-title"));
+        Assert.Equal(1, PickerRig.Count(scene, "channel-item-level"));             // 只有带固定文字的第一个有第二行
+        Assert.True(fonts.Asked("合成备注"));
+
+        // 没有固定文字也没有推荐等级 → 没有第二行(老行为)
+        var none = new RecordingFonts();
+        Assert.Equal(0, PickerRig.Count(ReadyWithFonts(none, Ch(1)).Build(0), "channel-item-level"));
+    }
+
+    [Fact]
+    public void Without_fonts_a_cjk_fixed_text_falls_back_to_the_numeric_range_and_an_ascii_one_is_drawn()
+    {
+        // 没有汉字字体:含汉字的固定文字画不出来,第二行与不带固定文字的频道一模一样(数值区间)
+        SceneSprite fallback = PickerSprites.One(Ready(Srv("希洛克", FixedCh(1, "合成备注", 41, 55))).Build(0), "channel-item-level");
+        SceneSprite numeric = PickerSprites.One(Ready(Srv("希洛克", Ch(1, ChannelCongestion.Smooth, false, 41, 55))).Build(0), "channel-item-level");
+        Assert.Equal((numeric.Frame.Width, numeric.Frame.Height), (fallback.Frame.Width, fallback.Frame.Height));
+        Assert.True(fallback.Frame.Rgba.SequenceEqual(numeric.Frame.Rgba));
+
+        // 含汉字的固定文字没有推荐区间 → 没有第二行
+        Assert.Equal(0, PickerRig.Count(Ready(Srv("希洛克", FixedCh(1, "合成备注"))).Build(0), "channel-item-level"));
+
+        // 全 ASCII 的固定文字点阵字库画得出来:有第二行,而且不是数值区间那张图
+        SceneSprite ascii = PickerSprites.One(Ready(Srv("希洛克", FixedCh(1, "SYNTH-NOTE", 41, 55))).Build(0), "channel-item-level");
+        Assert.False(ascii.Frame.Rgba.SequenceEqual(numeric.Frame.Rgba));
+        SceneSprite asciiOnly = PickerSprites.One(Ready(Srv("希洛克", FixedCh(1, "SYNTH-NOTE"))).Build(0), "channel-item-level");
+        Assert.True(asciiOnly.Frame.Rgba.SequenceEqual(ascii.Frame.Rgba));          // 有没有推荐区间,画出来的都是这行字
+    }
 }

@@ -256,7 +256,7 @@ internal sealed class BackendRig
 
     private readonly object _sync = new();
 
-    public BackendRig(bool configured = true, Action<FakeSessionPort> onPort = null, bool legacyOnly = false)
+    public BackendRig(bool configured = true, Action<FakeSessionPort> onPort = null, bool legacyOnly = false, ChannelDirectoryCatalog directoryCatalog = null)
     {
         Key = GatewayTestSupport.SynthKey();
         Assert.True(GatewayOptions.TryCreate("http://localhost", GatewayTestSupport.HexLower(Key), TimeSpan.FromSeconds(2), out GatewayOptions options, out _));
@@ -299,7 +299,8 @@ internal sealed class BackendRig
                     Transports.Add(transport);
                 }
                 return transport;
-            });
+            },
+            directoryCatalog);
     }
 
     public byte[] Key { get; }

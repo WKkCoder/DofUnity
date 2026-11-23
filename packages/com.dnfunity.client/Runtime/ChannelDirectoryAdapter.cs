@@ -16,10 +16,11 @@ namespace Dnf.Client
     /// </summary>
     public sealed class ChannelDirectoryCatalog
     {
-        internal ChannelDirectoryCatalog(ChannelScriptData fallbackScript, Func<int, string, string> resolveString)
+        internal ChannelDirectoryCatalog(ChannelScriptData fallbackScript, Func<int, string, string> resolveString, Func<int, string> resolveClientText = null)
         {
             FallbackScript = fallbackScript ?? ChannelScriptData.Default;
             ResolveString = resolveString;
+            ResolveClientText = resolveClientText;
         }
 
         /// <summary>本地脚本提取的推荐等级与槽位规则（作 <c>0x09</c> 回包缺失字段的回退/合并源）。</summary>
@@ -28,7 +29,13 @@ namespace Dnf.Client
         /// <summary>按文字列种类编号与键解析本地化名称；未装汉字字体或无文本表时为 null。</summary>
         public Func<int, string, string> ResolveString { get; }
 
-        /// <summary>从游戏数据中读取推荐等级与频道槽位；只有在装好汉字字体时才加载文字列以解析中文频道名。</summary>
+        /// <summary>
+        /// 按"数字编号文字表"的编号取客户端内嵌的固定文字（频道项第二行用，见 <see cref="ChannelDirectoryAdapter.FixedLevelTextId"/>；该表在 <c>DNF.exe</c> 的 PE 资源里，台账 E-442）；
+        /// 查不到的编号返回 null。没有这张表（没有数据目录、读不到可执行文件）或未装汉字字体时为 null——固定文字是汉字，没有字体画不出来，与 <see cref="ResolveString"/> 的条件一致。
+        /// </summary>
+        public Func<int, string> ResolveClientText { get; }
+
+        /// <summary>从游戏数据中读取推荐等级与频道槽位；只有在装好汉字字体时才加载文字列以解析中文频道名、并接上客户端内嵌的固定文字表。</summary>
         public static ChannelDirectoryCatalog Create(DnfAssets assets, bool hasFonts)
         {
             if (assets == null)
@@ -36,16 +43,22 @@ namespace Dnf.Client
                 throw new ArgumentNullException(nameof(assets));
             }
             StrLibrary library = null;
+            Func<int, string> clientText = null;
             if (hasFonts)
             {
                 PvfArchive pvf = assets.Pvf;
                 library = new StrLibrary(path => pvf.TryGetEntry(path, out PvfEntry entry) ? pvf.Read(entry) : null);
+                ClientTextTable table = assets.ClientText;
+                if (table != null)
+                {
+                    clientText = id => table.TryGet(id, out string text) ? text : null;
+                }
             }
-            return FromScripts(assets.ReadScript, library);
+            return FromScripts(assets.ReadScript, library, clientText);
         }
 
-        /// <summary>从已解析脚本行与可选文字列组装频道目录参数。</summary>
-        public static ChannelDirectoryCatalog FromScripts(Func<string, ScriptLine[]> readScript, StrLibrary strings)
+        /// <summary>从已解析脚本行、可选文字列与可选的客户端固定文字解析器组装频道目录参数。</summary>
+        public static ChannelDirectoryCatalog FromScripts(Func<string, ScriptLine[]> readScript, StrLibrary strings, Func<int, string> resolveClientText = null)
         {
             if (readScript == null)
             {
@@ -131,7 +144,7 @@ namespace Dnf.Client
 
             var script = new ChannelScriptData(string.Empty, fullThreshold, recommendRules, serverSlots, hasExplicitFull);
             Func<int, string, string> resolver = strings == null ? null : (Func<int, string, string>)strings.Get;
-            return new ChannelDirectoryCatalog(script, resolver);
+            return new ChannelDirectoryCatalog(script, resolver, resolveClientText);
         }
     }
 
@@ -154,6 +167,14 @@ namespace Dnf.Client
     {
         /// <summary>选频道界面分隔线下方特殊频道栏的最大容量（<c>DNF.exe</c> <c>0x010f8eb7</c> / <c>0x010f9050</c>）。</summary>
         public const int MaxSpecialChannels = 3;
+
+        /// <summary>
+        /// "数字编号文字表"里频道项第二行固定文字的编号（<c>DNF.exe</c> <c>0x010f6560</c>：类型 2 的频道，以及区域标签为 <c>[granfloris]</c> 且查到推荐等级记录的频道，
+        /// 画的都是这一项而不是 "(Lv.下限~上限)"；台账 E-442、E-445）。
+        /// </summary>
+        public const int FixedLevelTextId = 0x5362;
+
+        private const string GranflorisAreaTag = "[granfloris]";
 
         private static readonly IReadOnlyDictionary<string, int> AreaTagSlotFrames = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
         {
@@ -179,13 +200,14 @@ namespace Dnf.Client
         public static ServerDirectoryResult Result(
             ChannelDirectoryLoadOutcome outcome,
             ChannelDirectorySnapshot snapshot,
-            Func<int, string, string> resolveString = null)
+            Func<int, string, string> resolveString = null,
+            Func<int, string> resolveClientText = null)
         {
             if (outcome == ChannelDirectoryLoadOutcome.Ok)
             {
                 return snapshot == null
                     ? ServerDirectoryResult.Fail(OnlineNoticeKind.Unexpected)
-                    : ServerDirectoryResult.Ok(Map(snapshot, resolveString));
+                    : ServerDirectoryResult.Ok(Map(snapshot, resolveString, resolveClientText));
             }
             return ServerDirectoryResult.Fail(Failure(outcome));
         }
@@ -215,7 +237,7 @@ namespace Dnf.Client
         }
 
         /// <summary>整份快照翻成中性目录(按原版频道类型分流到主网格、底部特殊频道栏或屏蔽决斗场/未知频道);快照为 null 当空目录。</summary>
-        public static ServerDirectory Map(ChannelDirectorySnapshot snapshot, Func<int, string, string> resolveString = null)
+        public static ServerDirectory Map(ChannelDirectorySnapshot snapshot, Func<int, string, string> resolveString = null, Func<int, string> resolveClientText = null)
         {
             if (snapshot == null || snapshot.Groups.Count == 0)
             {
@@ -235,20 +257,20 @@ namespace Dnf.Client
                     {
                         if (!hasGroupSlots)
                         {
-                            mainChannels.Add(Channel(entry, resolveString));
+                            mainChannels.Add(Channel(entry, resolveString, resolveClientText));
                         }
                         continue;
                     }
                     switch (entry.SlotRule.SelectPlacement)
                     {
                         case ChannelSelectPlacement.MainGrid:
-                            mainChannels.Add(Channel(entry, resolveString));
+                            mainChannels.Add(Channel(entry, resolveString, resolveClientText));
                             break;
                         case ChannelSelectPlacement.SpecialTower:
-                            towerChannels.Add(Channel(entry, resolveString));
+                            towerChannels.Add(Channel(entry, resolveString, resolveClientText));
                             break;
                         case ChannelSelectPlacement.SpecialTrade:
-                            tradeChannels.Add(Channel(entry, resolveString));
+                            tradeChannels.Add(Channel(entry, resolveString, resolveClientText));
                             break;
                     }
                 }
@@ -269,8 +291,16 @@ namespace Dnf.Client
             }
         }
 
-        /// <summary>一个频道条目 → 中性频道。</summary>
-        public static DirectoryChannel Channel(ChannelEntry entry, Func<int, string, string> resolveString = null)
+        /// <summary>
+        /// 一个频道条目 → 中性频道。
+        /// <para>
+        /// 第二行的固定文字（<c>DNF.exe</c> <c>0x010f6560</c>，台账 E-445）：槽位规则的类型是 2 → 固定文字（不要求有推荐等级）；
+        /// 否则、推荐等级可用（没被类型 3 压掉、条目带推荐等级）且槽位规则的区域标签（去空白、不区分大小写）是 <c>[granfloris]</c> → 同样的固定文字；
+        /// 类型 3 一律不画，其余照旧画数值区间。固定文字 = <paramref name="resolveClientText"/> 对 <see cref="FixedLevelTextId"/> 的返回值（原样，不改写）；
+        /// 解析器为 null、或返回 null/空白时行为与没有这条规则时完全一致（<c>[granfloris]</c> 仍画数值区间，类型 2 仍不画）。
+        /// </para>
+        /// </summary>
+        public static DirectoryChannel Channel(ChannelEntry entry, Func<int, string, string> resolveString = null, Func<int, string> resolveClientText = null)
         {
             if (entry == null)
             {
@@ -278,6 +308,7 @@ namespace Dnf.Client
             }
             int min = 0;
             int max = 0;
+            bool hasRecommendLevel = false;
             bool suppressRecommendLevel = entry.SlotRule != null && entry.SlotRule.ChannelKind == 3;
             if (!suppressRecommendLevel
                 && (entry.Flags & ChannelEntryFlags.HasRecommendLevel) != 0
@@ -286,11 +317,30 @@ namespace Dnf.Client
             {
                 min = entry.RecommendedMinLevel.Value;
                 max = entry.RecommendedMaxLevel.Value;
+                hasRecommendLevel = true;
             }
             int number = entry.ParsedChannelNo > 0 ? entry.ParsedChannelNo : Math.Max(0, entry.ChannelNo);
             string title = ResolveChannelTitle(entry, resolveString);
             int slotFrame = ResolveSlotFrame(entry.SlotRule);
-            return new DirectoryChannel(number, title, Congestion(entry), Target(entry), min, max, slotFrame);
+            string fixedLevelText = ResolveFixedLevelText(entry.SlotRule, hasRecommendLevel, resolveClientText);
+            return new DirectoryChannel(number, title, Congestion(entry), Target(entry), min, max, slotFrame, fixedLevelText);
+        }
+
+        /// <summary>第二行的固定文字:规则见 <see cref="Channel"/>;不该画固定文字、没有解析器、解析不出（null/空白）都返回 null。</summary>
+        private static string ResolveFixedLevelText(ChannelServerSlotRule rule, bool hasRecommendLevel, Func<int, string> resolveClientText)
+        {
+            if (resolveClientText == null || rule == null)
+            {
+                return null;
+            }
+            bool wanted = rule.ChannelKind == 2
+                || (hasRecommendLevel && string.Equals((rule.AreaTag ?? string.Empty).Trim(), GranflorisAreaTag, StringComparison.OrdinalIgnoreCase));
+            if (!wanted)
+            {
+                return null;
+            }
+            string text = resolveClientText(FixedLevelTextId);
+            return string.IsNullOrWhiteSpace(text) ? null : text;
         }
 
         /// <summary>

@@ -51,6 +51,23 @@ public sealed class ServerDirectoryTests
     }
 
     [Fact]
+    public void A_channel_built_with_only_the_first_four_arguments_has_the_documented_defaults()
+    {
+        // 只带前四个参数:没有推荐等级(两头都是 0)、槽位图标是默认帧、没有固定文字。
+        var target = new ChannelTarget(30009);
+        var channel = new DirectoryChannel(9, "SYNTH-TITLE", ChannelCongestion.Normal, target);
+        Assert.Equal(9, channel.Number);
+        Assert.Equal("SYNTH-TITLE", channel.Title);
+        Assert.Equal(ChannelCongestion.Normal, channel.Congestion);
+        Assert.Same(target, channel.Target);
+        Assert.Equal(0, channel.RecommendedMinLevel);
+        Assert.Equal(0, channel.RecommendedMaxLevel);
+        Assert.Equal(DirectoryChannel.DefaultSlotFrame, channel.SlotFrame);
+        Assert.Null(channel.FixedLevelText);
+        Assert.False(channel.HasRecommendedLevel);
+    }
+
+    [Fact]
     public void A_negative_channel_number_is_refused()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new DirectoryChannel(-1, "x", ChannelCongestion.Smooth, null));
