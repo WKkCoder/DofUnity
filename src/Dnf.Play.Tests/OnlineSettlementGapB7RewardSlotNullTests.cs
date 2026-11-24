@@ -125,7 +125,7 @@ public sealed class OnlineSettlementGapB7RewardSlotNullTests
         Assert.Equal(0, spy.Enumerations);
     }
 
-    // 保护的行为:常见的两种空表实现(空数组、空 List)与 null 一样返回 false、输出参数为默认值,队伍位置有值与无值都一样。
+    // 保护的行为:常见的两种空表实现(空数组、空 List)与 null 一样返回 false、输出参数为默认值,队伍位置有值与无值都一样;调用后表仍是空的(函数不往传入的表里写东西)。
     [Theory]
     [InlineData(null)]
     [InlineData(0)]
@@ -143,6 +143,7 @@ public sealed class OnlineSettlementGapB7RewardSlotNullTests
             Assert.Null(error);
             Assert.False(result);
             Assert.Equal(DefaultFields, Fields(selected));
+            Assert.Empty(empty);
         }
     }
 
@@ -163,6 +164,9 @@ public sealed class OnlineSettlementGapB7RewardSlotNullTests
         Assert.Null(directError);
         Assert.True(direct);
         Assert.Equal(((byte)2, 0, 300, 0, 0), Fields(party));
+        // 选取只读不写:传入的槽位表内容原封不动
+        Assert.Equal(new[] { 100, 200, 300 }, slots.Select(s => s.Value));
+        Assert.Equal(new byte[] { 0, 1, 2 }, slots.Select(s => s.Status));
     }
 
     // 保护的行为:整条公开路径(Build)在奖励载荷的槽位表缺失(null)时不抛异常——没有奖励金币(无值、来源 None)、
