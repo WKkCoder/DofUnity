@@ -105,7 +105,4 @@ internal static class OnlineSettlementGapA5Kit
     {
         t.Push(PacketClass.Noti, TownAreaPayloads.AreaUsersPacketId, AreaUsersBytes(village, area));
     }
-
-    /// <summary>已发出命令的包号序列。</summary>
-    public static ushort[] SentIds(DirectRig rig) => rig.Transport.Sent.Select(s => s.PacketId).ToArray();
 }
