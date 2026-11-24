@@ -16,6 +16,12 @@ internal static class OnlineSettlementGapA2Kit
     /// <summary>非超时结算开始的"展示"日志(<see cref="DirectRig"/> 里没有联网房间局:解析状态记"不适用"、没有掉落、没有差异字段)。</summary>
     public const string Show = "DNF_ONLINE stage=settle event=show timedout=false result=NotApplicable reward=NotApplicable drops=0 diffs=0";
 
+    /// <summary>"结算通知超时"那种数据的展示日志(解析状态都是"不适用"、没有掉落、没有差异字段)。</summary>
+    public const string ShowTimedOut = "DNF_ONLINE stage=settle event=show timedout=true result=NotApplicable reward=NotApplicable drops=0 diffs=0";
+
+    /// <summary>"结算通知超时"路径开局写的失败行。</summary>
+    public const string TimeoutNotice = "DNF_ONLINE stage=settle event=fail reason=settlement_timeout step=notices";
+
     // ----- 自动推进 1/72 → 1/73 → 1/74 -----
     public const string Sent72 = "DNF_ONLINE stage=settle event=advance step=score_scroll status=sent";
     public const string Ok72 = "DNF_ONLINE stage=settle event=advance step=score_scroll status=ok";
@@ -57,6 +63,20 @@ internal static class OnlineSettlementGapA2Kit
             }
         }
         return list.ToArray();
+    }
+
+    /// <summary>
+    /// 标准推进到菜单就绪:服务端对 72 回 <c>[1]</c>、对 73 回"第 0 槽有权",对 1/75 的应答交给 <paramref name="onEplp"/>(null 表示静默)。
+    /// 时间线:空闲轮询 1000、开始结算 1000;1016 排空 72/73 回复并发 74;1032 读到 74 发送成功,菜单就绪、倒计时起算(到点 6032)。
+    /// </summary>
+    public static void ReachMenu(DirectRig rig, Action<byte[]> onEplp = null)
+    {
+        AutoAdvance(rig.Transport, CardRightBytes(1), onEplp);
+        rig.PollAt(1000);
+        rig.StartSettlement();
+        rig.PollUntil(() => rig.Ctrl.Phase == OnlineSettlementPhase.MenuReady);
+        Assert.Equal(1032, rig.NowMs);
+        Assert.Equal(StandardPreamble, AllLogs(rig));
     }
 
     /// <summary>控制器写出的全部日志(按写出顺序)。</summary>
