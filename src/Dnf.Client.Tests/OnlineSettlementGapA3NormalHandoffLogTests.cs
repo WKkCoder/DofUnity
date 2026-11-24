@@ -55,7 +55,7 @@ public sealed class OnlineSettlementGapA3NormalHandoffLogTests
         // 保护:正常结算路径上订阅者抛异常(抛之前没要求挂起)——异常不传出控制器;控制器先写"离开(ReturnReady,结果与奖励都解析成功)"行,
         // 再写"订阅者失败"行(原因 SettlementHandlerFault、步骤是实际抛出的异常类型名);因为没人要求挂起,控制器照常停在"结算退出"阶段、
         // 放开房间闸门,流程在返回延迟之后自己回城。整份日志序列逐行相等,没有通用中止的行。
-        using var scene = new HandoffScene(timedOut: false, Subscriber.ThrowOnly, faultTypeName);
+        using var scene = new HandoffScene(timedOut: false, HandoffSubscriber.ThrowOnly, faultTypeName);
 
         AssertNoHoldSettlementLeavesByItself(scene, Lines(Opening, LeaveReturnReady, HandlerFault(faultTypeName)));
 
@@ -77,7 +77,7 @@ public sealed class OnlineSettlementGapA3NormalHandoffLogTests
         // 订阅者之后选择回城才收尾(记一次结算、原因 online settlement ReturnToTown),此后控制器不再写日志。
         // 注意:这是"现状行为"的钉子——真结算控制器的处理函数一进来就先要求挂起,若它随后在自己内部抛异常(例如宿主回调出错),
         // 流程会一直挂着、没有人来收尾(疑似缺陷,待作者定夺);若日后改成"抛异常即放弃挂起",本用例的挂起断言与日志序列要随之改写。
-        using var scene = new HandoffScene(timedOut: false, Subscriber.HoldThenThrow, faultTypeName);
+        using var scene = new HandoffScene(timedOut: false, HandoffSubscriber.HoldThenThrow, faultTypeName);
         SettleRig rig = scene.Rig;
 
         scene.EnterAndKillEverything();
@@ -120,7 +120,7 @@ public sealed class OnlineSettlementGapA3NormalHandoffLogTests
     {
         // 保护:正常路径上订阅者正常接手并要求挂起——控制器只写一行"离开(ReturnReady,结果与奖励都解析成功)",
         // 没有"订阅者失败"行;挂起期间与选择之后都不再多写日志。选"选择地下城"时流程回到副本选择屏、原因 online settlement SelectDungeon。
-        using var scene = new HandoffScene(timedOut: false, Subscriber.Hold);
+        using var scene = new HandoffScene(timedOut: false, HandoffSubscriber.Hold);
         SettleRig rig = scene.Rig;
 
         scene.EnterAndKillEverything();
@@ -151,7 +151,7 @@ public sealed class OnlineSettlementGapA3NormalHandoffLogTests
     {
         // 保护:正常路径上订阅者收到了交接、既没要求挂起也没抛——控制器只写一行"离开(ReturnReady)",没有"订阅者失败"行,
         // 停在"结算退出"阶段,流程在返回延迟之后自己回城。
-        using var scene = new HandoffScene(timedOut: false, Subscriber.Plain);
+        using var scene = new HandoffScene(timedOut: false, HandoffSubscriber.Plain);
 
         AssertNoHoldSettlementLeavesByItself(scene, Lines(Opening, LeaveReturnReady));
 
@@ -165,7 +165,7 @@ public sealed class OnlineSettlementGapA3NormalHandoffLogTests
     {
         // 保护:正常路径上事件没有任何订阅者——控制器照常写"离开(ReturnReady)"一行,不写"订阅者失败"行、不抛异常,
         // 停在"结算退出"阶段,流程在返回延迟之后自己回城。
-        using var scene = new HandoffScene(timedOut: false, Subscriber.None);
+        using var scene = new HandoffScene(timedOut: false, HandoffSubscriber.None);
 
         AssertNoHoldSettlementLeavesByItself(scene, Lines(Opening, LeaveReturnReady));
 

@@ -50,7 +50,7 @@ internal static class OnlineSettlementGapA3Kit
     // ----- 订阅者的几种行为 -----
 
     /// <summary>"结算开始"事件订阅者的行为。</summary>
-    public enum Subscriber
+    public enum HandoffSubscriber
     {
         /// <summary>不订阅(事件上没有任何订阅者)。</summary>
         None,
@@ -110,7 +110,7 @@ internal static class OnlineSettlementGapA3Kit
         /// <summary>最近一次交给订阅者的交接对象(没订阅或还没触发是 null)。</summary>
         public OnlineDungeonSettlementReady Ready { get; private set; }
 
-        public HandoffScene(bool timedOut, Subscriber subscriber, string faultTypeName = null)
+        public HandoffScene(bool timedOut, HandoffSubscriber subscriber, string faultTypeName = null)
         {
             Action<OnlineDungeonFlowOptions> configureDungeon = null;
             if (timedOut)
@@ -124,17 +124,17 @@ internal static class OnlineSettlementGapA3Kit
             Rig = new SettleRig(attachSettlement: false, configureDungeon: configureDungeon);
             WireStandardDungeonResponder(Rig, monsterCount: 2, omitSettlementB: timedOut);
 
-            if (subscriber != Subscriber.None)
+            if (subscriber != HandoffSubscriber.None)
             {
                 Rig.DungeonCtrl.SettlementStarted += ready =>
                 {
                     Invocations++;
                     Ready = ready;
-                    if (subscriber == Subscriber.Hold || subscriber == Subscriber.HoldThenThrow)
+                    if (subscriber == HandoffSubscriber.Hold || subscriber == HandoffSubscriber.HoldThenThrow)
                     {
                         ready.HoldForMenu = true;
                     }
-                    if (subscriber == Subscriber.ThrowOnly || subscriber == Subscriber.HoldThenThrow)
+                    if (subscriber == HandoffSubscriber.ThrowOnly || subscriber == HandoffSubscriber.HoldThenThrow)
                     {
                         throw MakeFault(faultTypeName);
                     }

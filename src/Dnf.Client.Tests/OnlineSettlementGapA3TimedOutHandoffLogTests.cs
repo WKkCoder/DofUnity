@@ -40,7 +40,7 @@ public sealed class OnlineSettlementGapA3TimedOutHandoffLogTests
         // 保护:结算通知超时路径上订阅者抛异常(抛之前没要求挂起)——异常不传出控制器;控制器先写超时的"离开"行,
         // 再写"订阅者失败"行(原因 SettlementHandlerFault、步骤是实际抛出的异常类型名),因为没人要求挂起,随后照常走通用的超时中止收尾:
         // 再写"离开(Timeout)"与"失败(Timeout/Combat)"两行,回城镇、记一次失败。整份日志序列逐行相等,收尾后不再多写。
-        using var scene = new HandoffScene(timedOut: true, Subscriber.ThrowOnly, faultTypeName);
+        using var scene = new HandoffScene(timedOut: true, HandoffSubscriber.ThrowOnly, faultTypeName);
         SettleRig rig = scene.Rig;
 
         scene.EnterAndKillEverything();
@@ -74,7 +74,7 @@ public sealed class OnlineSettlementGapA3TimedOutHandoffLogTests
         // 订阅者之后做出选择才回城(记一次结算、原因 online settlement ReturnToTown),此后控制器不再写日志。
         // 注意:这是"现状行为"的钉子——真结算控制器的处理函数一进来就先要求挂起,若它随后在自己内部抛异常(例如宿主回调出错),
         // 流程会一直挂着、没有人来收尾(疑似缺陷,待作者定夺);若日后改成"抛异常即放弃挂起",本用例的挂起断言与日志序列要随之改写。
-        using var scene = new HandoffScene(timedOut: true, Subscriber.HoldThenThrow, faultTypeName);
+        using var scene = new HandoffScene(timedOut: true, HandoffSubscriber.HoldThenThrow, faultTypeName);
         SettleRig rig = scene.Rig;
 
         scene.EnterAndKillEverything();
@@ -119,7 +119,7 @@ public sealed class OnlineSettlementGapA3TimedOutHandoffLogTests
     {
         // 保护:超时路径上订阅者正常接手并要求挂起——控制器只写一行"离开(SettlementTimeout,结果解析成功、奖励不适用)",
         // 没有"订阅者失败"行、也没有通用超时中止的两行;挂起期间与选择回城之后都不再多写。
-        using var scene = new HandoffScene(timedOut: true, Subscriber.Hold);
+        using var scene = new HandoffScene(timedOut: true, HandoffSubscriber.Hold);
         SettleRig rig = scene.Rig;
 
         scene.EnterAndKillEverything();
@@ -148,7 +148,7 @@ public sealed class OnlineSettlementGapA3TimedOutHandoffLogTests
     {
         // 保护:超时路径上订阅者收到了交接、但既没要求挂起也没抛——控制器已经写了"离开(SettlementTimeout)"一行,
         // 因为没人挂起,接着走通用的超时中止:"离开(Timeout)"与"失败(Timeout/Combat)"两行,回城镇、记一次失败;没有"订阅者失败"行。
-        using var scene = new HandoffScene(timedOut: true, Subscriber.Plain);
+        using var scene = new HandoffScene(timedOut: true, HandoffSubscriber.Plain);
         SettleRig rig = scene.Rig;
 
         scene.EnterAndKillEverything();
@@ -171,7 +171,7 @@ public sealed class OnlineSettlementGapA3TimedOutHandoffLogTests
     {
         // 保护:超时路径上事件没有任何订阅者——控制器不走"结算通知超时"的交接(不写"离开(SettlementTimeout)"行、不造交接数据),
         // 直接走通用的超时中止:"离开(Timeout)"与"失败(Timeout/Combat)"两行,回城镇、记一次失败、亮"超时"提示。
-        using var scene = new HandoffScene(timedOut: true, Subscriber.None);
+        using var scene = new HandoffScene(timedOut: true, HandoffSubscriber.None);
         SettleRig rig = scene.Rig;
 
         scene.EnterAndKillEverything();
