@@ -156,9 +156,10 @@ internal static class OnlineSettlementGapA4Kit
 
     /// <summary>
     /// 把假端口摆成"杀光就结算"的标准联网副本(与 <see cref="OnlineSettlementGapAKit.WireStandardDungeonResponder"/> 同一套回包,只是直接收端口):
-    /// 进副本两步按标准回包;CMD 49 回 0x22 + 0x23;其余命令交给战斗假服务端。每次"开始游戏"都重新造一份假战斗服务端,所以能连进两次副本。
+    /// 进副本两步按标准回包;CMD 49 回 0x22 + 0x23(<paramref name="omitSettlementB"/> 为真时只回 0x22,让战斗在等 0x23 时超时);其余命令交给战斗假服务端。
+    /// 每次"开始游戏"都重新造一份假战斗服务端,所以能连进两次副本。
     /// </summary>
-    public static void WireStandardResponder(FakeDungeonPort port, int monsterCount = 1)
+    public static void WireStandardResponder(FakeDungeonPort port, int monsterCount = 1, bool omitSettlementB = false)
     {
         var combatServer = new FakeCombatServer(CombatKit.Sequential(monsterCount));
         port.SetResponder((cls, id, payload) =>
@@ -178,6 +179,10 @@ internal static class OnlineSettlementGapA4Kit
             }
             if (cls == PacketClass.Cmd && id == OnlineDungeonCombat.SettlementPacketId)
             {
+                if (omitSettlementB)
+                {
+                    return new[] { new CombatKit.ServerFrame(CombatKit.Noti, SettlementNoticeAParser.PacketId, ValidSettlementABytes()) };
+                }
                 return new[]
                 {
                     new CombatKit.ServerFrame(CombatKit.Noti, SettlementNoticeAParser.PacketId, ValidSettlementABytes()),
@@ -228,7 +233,7 @@ internal static class OnlineSettlementGapA4Kit
 
         public long NowMs { get; private set; } = 10000; // 故意从非零时间起点开始
 
-        public FaultRig(Action<OnlineSettlementOptions> configureSettle = null)
+        public FaultRig(Action<OnlineSettlementOptions> configureSettle = null, Action<OnlineDungeonFlowOptions> configureDungeon = null)
         {
             RawWorld = new RecordingTownWorld(new TownPlace(1, 3), new TownPlace(1, 1, TownEntry.Return));
             TownWorld = new OnlineSettlementTownWorld(RawWorld);
@@ -260,6 +265,7 @@ internal static class OnlineSettlementGapA4Kit
                 Log = l => { lock (Logs) Logs.Add(l); },
                 OnDisconnected = () => Disconnects++,
             };
+            configureDungeon?.Invoke(dungeonOpts);
 
             DungeonCtrl = new OnlineDungeonFlowController(Port, Flow, policy, ctx =>
             {
