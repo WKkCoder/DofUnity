@@ -100,7 +100,7 @@ src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe live [--register] [--seconds N
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe orchestrated [仓库根] [--stay N] [--client-version V] [--server-group G]  # 与 Unity 宿主同一条编排:网关登录 → 取游戏服地址 → 连频道 → 游戏登录 → 逐槽选角 → 进城;--stay N 进城后再挂 N 秒(心跳保活);V 是登录请求里的客户端版本号(0 到 4294967295,缺省 0),G 是服务器组(0 到 17,0 = 由会话按频道目录解)
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe fight [仓库根] --dungeon <副本号 0–65535> <模式 0–4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S]  # 无头:进城 → 进副本 → 对起始地图的怪逐只发击杀 → 等清图通知 → 等两段结算;只打脱敏的 PROBE_FIGHT 行,退出码 0 才是收齐;认证失败退出码 5 且绝不重试(E-416)
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe fight [仓库根] --permits-only  # 进城后只打副本许可表(副本号与档位,只给你自己的终端看、不落库)就退出,不进副本;用来挑单房间副本
-src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe channel [仓库根] [--channel-port N] [--version V]  # 只读:网关健康检查 → 登录 → 取目录服务地址 → 连选频道目录服务走四步 → 只打组数、频道总数、推荐规则数、有效端口数与各档位计数;每次运行是一次网关登录,还没有联网跑过(E-423、E-424)
+src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe channel [仓库根] [--channel-port N] [--version V]  # 只读:网关健康检查 → 登录 → 取目录服务地址 → 连选频道目录服务走四步 → 只打组数、频道总数、推荐规则数、有效端口数与各档位计数;每次运行是一次网关登录;这个子命令本身还没有联网跑过,但同一个目录读取已由下面的 `switch --list` 在真服上只读读通一次(E-450)
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe switch [仓库根] --to-index K [--client-version V] [--server-group G]  # 只读的换频道验证(E-448):一条会话、网关只登录一次 → 读频道目录 → 连第一个频道 → 换到目录里第 K 个候选频道(端口有效且不是第一个频道,按目录顺序从 0 起)→ 断开;不选角、不进城、不发命令包
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe switch [仓库根] --to-port N [--client-version V] [--server-group G]  # 同上,目标改为同一主机上的指定端口
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe switch [仓库根] --list  # 只读的目录摘要:只做网关登录与读目录,逐条目打一行(序号、端口是否有效、是否第一个频道、候选序号、会写的服务器组、频道种类)加一行汇总;不连任何频道、不做游戏登录;与目标和两个开关互斥
