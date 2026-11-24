@@ -11,7 +11,7 @@ namespace Dnf.Client.Tests;
 /// 联网进副本控制器向 <c>SettlementStarted</c> 订阅者交接时写出的<b>全部</b>日志行——五种情形各自整份序列逐行相等:
 /// 订阅者抛异常且没要求挂起、先要求挂起再抛异常、只要求挂起、既不挂起也不抛、根本没有订阅者。
 /// 带真联网进副本控制器的 <see cref="OnlineSettlementGapAKit.SettleRig"/>(不挂结算控制器,订阅者由用例自己摆;逻辑时钟轮询)。
-/// 期望值都是手算的整行字面量(夹具:一只怪、单房间、全部上报,房间返回延迟 20 毫秒),异常类型名写在 InlineData 里,不从被抛的对象取。
+/// 期望值都是手算的整行字面量(夹具:两只怪、单房间、全部上报,房间返回延迟 20 毫秒),异常类型名写在 InlineData 里,不从被抛的对象取。
 /// </summary>
 public sealed class OnlineSettlementGapA3NormalHandoffLogTests
 {
@@ -75,6 +75,8 @@ public sealed class OnlineSettlementGapA3NormalHandoffLogTests
         // 保护:正常结算路径上订阅者先要求挂起、再抛异常——异常被吞掉并写"订阅者失败"行(类型名逐字);挂起的要求仍然生效:
         // 控制器停在"挂起等结算"阶段、流程被拦着不退出副本、房间收尾闸门保持关闭(过多久都不变);
         // 订阅者之后选择回城才收尾(记一次结算、原因 online settlement ReturnToTown),此后控制器不再写日志。
+        // 注意:这是"现状行为"的钉子——真结算控制器的处理函数一进来就先要求挂起,若它随后在自己内部抛异常(例如宿主回调出错),
+        // 流程会一直挂着、没有人来收尾(疑似缺陷,待作者定夺);若日后改成"抛异常即放弃挂起",本用例的挂起断言与日志序列要随之改写。
         using var scene = new HandoffScene(timedOut: false, Subscriber.HoldThenThrow, faultTypeName);
         SettleRig rig = scene.Rig;
 

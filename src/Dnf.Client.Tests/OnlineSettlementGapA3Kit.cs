@@ -15,26 +15,26 @@ internal static class OnlineSettlementGapA3Kit
     // ----- 进副本三行(两条路相同) -----
     //  select:副本权限表给该副本的权限档是 1 → 难度上限 1;选的难度 0。
     //  enter:夹具没给当前区域(种类写 unknown);英雄等级缺省 1,等级 ≤ 1 一律算入口区域 → entrance=true。
-    //  room:一只怪、单房间 → 摆出 1 只、预期 1 只、进过 1 个房间。
+    //  room:两只怪、单房间 → 摆出 2 只、预期 2 只、进过 1 个房间。
     public const string SelectEnter = "DNF_ONLINE stage=dungeon event=select outcome=enter difficulty=0 max=1";
     public const string EnterLine = "DNF_ONLINE stage=dungeon event=enter areakind=unknown entrance=true difficulty=0";
-    public const string RoomReady = "DNF_ONLINE stage=dungeon event=room status=Ready multi=off spawned=1 expected=1 rooms=1";
+    public const string RoomReady = "DNF_ONLINE stage=dungeon event=room status=Ready multi=off spawned=2 expected=2 rooms=1";
 
     /// <summary>进副本三行。</summary>
     public static readonly string[] Opening = { SelectEnter, EnterLine, RoomReady };
 
     // ----- 结算交接那一段的日志行 -----
-    //  上报 1(夹具杀光唯一一只怪并全部上报)、丢弃 0、房间 1。
+    //  上报 2(夹具杀光两只怪并全部上报)、丢弃 0、房间 1:三个数各不相同,"上报/丢弃/房间"三项互换就会露馅。
     /// <summary>结算通知超时路径开局的"离开"行:0x22 解析成功、0x23 一直没来 → 奖励"不适用"。</summary>
     public const string LeaveSettlementTimeout =
-        "DNF_ONLINE stage=dungeon event=leave reason=SettlementTimeout reported=1 dropped=0 rooms=1 result=Succeeded reward=NotApplicable";
+        "DNF_ONLINE stage=dungeon event=leave reason=SettlementTimeout reported=2 dropped=0 rooms=1 result=Succeeded reward=NotApplicable";
 
     /// <summary>正常结算路径的"离开"行:两个结算通知都解析成功。</summary>
     public const string LeaveReturnReady =
-        "DNF_ONLINE stage=dungeon event=leave reason=ReturnReady reported=1 dropped=0 rooms=1 result=Succeeded reward=Succeeded";
+        "DNF_ONLINE stage=dungeon event=leave reason=ReturnReady reported=2 dropped=0 rooms=1 result=Succeeded reward=Succeeded";
 
     /// <summary>通用的"战斗超时中止"那两行(超时路径上没人接手挂起时落到这里):离开原因取战斗结局名 Timeout,不带结果/奖励解析状态。</summary>
-    public const string LeaveTimeout = "DNF_ONLINE stage=dungeon event=leave reason=Timeout reported=1 dropped=0 rooms=1";
+    public const string LeaveTimeout = "DNF_ONLINE stage=dungeon event=leave reason=Timeout reported=2 dropped=0 rooms=1";
 
     public const string FailTimeoutCombat = "DNF_ONLINE stage=dungeon event=fail reason=Timeout step=Combat";
 
@@ -96,7 +96,7 @@ internal static class OnlineSettlementGapA3Kit
 
     /// <summary>
     /// 带真联网进副本控制器(<see cref="SettleRig"/>,不挂结算控制器)的"结算交接"场景台:
-    /// 一间单房间、一只怪的联网副本;<paramref name="timedOut"/> 为真时服务端只回 0x22、不回 0x23,战斗在 80 毫秒后以"结算通知超时"收场,
+    /// 一间单房间、两只怪的联网副本;<paramref name="timedOut"/> 为真时服务端只回 0x22、不回 0x23,战斗在 80 毫秒后以"结算通知超时"收场,
     /// 否则标准回 0x22 + 0x23。按 <paramref name="subscriber"/> 在 <c>SettlementStarted</c> 上摆订阅者(<paramref name="faultTypeName"/> 是抛出的异常类型名)。
     /// 时间全部走夹具的逻辑时钟(每圈 20 毫秒),只有战斗任务自己的 80 毫秒结算等待用真实时间(等不到 0x23 就一定超时,没有竞态)。
     /// </summary>
@@ -122,7 +122,7 @@ internal static class OnlineSettlementGapA3Kit
                 };
             }
             Rig = new SettleRig(attachSettlement: false, configureDungeon: configureDungeon);
-            WireStandardDungeonResponder(Rig, monsterCount: 1, omitSettlementB: timedOut);
+            WireStandardDungeonResponder(Rig, monsterCount: 2, omitSettlementB: timedOut);
 
             if (subscriber != Subscriber.None)
             {
@@ -142,7 +142,7 @@ internal static class OnlineSettlementGapA3Kit
             }
         }
 
-        /// <summary>进城镇 → 进副本 → 杀光唯一一只怪(之后战斗会自己发结算命令)。</summary>
+        /// <summary>进城镇 → 进副本 → 杀光两只怪(之后战斗会自己发结算命令)。</summary>
         public void EnterAndKillEverything()
         {
             Rig.EnterTownAndDungeon();
