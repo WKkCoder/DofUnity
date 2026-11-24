@@ -282,118 +282,151 @@ namespace Dnf.Client
             return true;
         }
 
-        /// <summary>收到 <see cref="OnlineDungeonFlowController.SettlementStarted"/> 交接事件:接管停留、展示结果并启动 72/73/74 推进。</summary>
+        /// <summary>
+        /// 收到 <see cref="OnlineDungeonFlowController.SettlementStarted"/> 交接事件:接管停留、展示结果并启动 72/73/74 推进。
+        /// 方法体中途任何异常(宿主回调、摘要构造、营地创建、传输挂接……)都就地收拾、绝不外传:
+        /// 撤回 <c>HoldForMenu</c>(流程控制器据此走与"没有订阅者"相同的默认结算退出,不会被永久留在副本里)、
+        /// 把被摘掉的 <see cref="HostedRoomRun.Pump"/> 装回去、撤绘制钩子/传输订阅/取消源/入队帧并回到空闲,只写一行脱敏失败日志(令牌 <c>start_fault</c>,步骤只放异常类型名)。
+        /// </summary>
         public void OnSettlementStarted(OnlineDungeonSettlementReady ready)
         {
             if (_disposed || ready == null)
             {
                 return;
             }
-            if (IsActive)
+
+            // 被本方法摘掉过 Pump 的那一局与它的原 Pump:失败时据此还原,使这一局与"没有订阅者"的默认路径等价(HudOverlay 由 ResetActiveState 撤)。
+            HostedRoomRun pumpRun = null;
+            Action<HostedRoomRun> pumpBackup = null;
+            try
             {
-                ResetActiveState();
+                if (IsActive)
+                {
+                    ResetActiveState();
+                }
+
+                ready.HoldForMenu = true;
+                _ready = ready;
+                _activeRun = _flow.Run as HostedRoomRun;
+                _serverInitiatedReturn = false;
+                _disconnectNotifiedForActive = false;
+                Interlocked.Exchange(ref _disconnectedFlag, 0);
+
+                TownPlace? currentPlace = _options.GetCurrentTownPlace?.Invoke();
+                if (currentPlace.HasValue)
+                {
+                    _preDungeonPlace = currentPlace.Value;
+                }
+                else if (_flow.Place.HasValue)
+                {
+                    _preDungeonPlace = _flow.Place.Value;
+                }
+
+                HeroProgress progress = _options.GetProgress?.Invoke();
+                _selfUniqueId = _options.GetSelfUniqueId?.Invoke();
+                RunStats? localStats = _activeRun != null ? (RunStats?)_activeRun.SnapshotLocalStats() : null;
+                DungeonResult localResult = null;
+                if (localStats.HasValue)
+                {
+                    localResult = _options.LocalResultComputer != null
+                        ? _options.LocalResultComputer(ready.Data, localStats.Value, progress)
+                        : OnlineSettlementHeroHelpers.ComputeLocalResult(
+                            _options.Assets,
+                            ready.Data.DungeonPath,
+                            ready.Data.DungeonId,
+                            ready.Data.Difficulty,
+                            localStats.Value,
+                            progress);
+                }
+
+                var localCtx = new OnlineSettlementLocalContext
+                {
+                    LocalStats = localStats,
+                    LocalResult = localResult,
+                    LocalGoldEarned = _activeRun?.LocalGoldEarned ?? 0,
+                    LocalItemsPicked = _activeRun?.LocalItemsPicked ?? 0,
+                    LocalExpEarned = _activeRun?.LocalExpEarned ?? 0,
+                    SelfUniqueId = _selfUniqueId,
+                    PartySlot = _options.GetPartySlot?.Invoke(),
+                };
+
+                _summary = OnlineSettlementSummaryBuilder.Build(ready.Data, localCtx, _itemNameResolver);
+                WriteLog(OnlineSettlementLog.Show(
+                    _summary.IsTimedOut,
+                    _summary.ResultParseState,
+                    _summary.RewardParseState,
+                    _summary.Drops.Count,
+                    _summary.DiffFields.Count));
+                for (int i = 0; i < _summary.DiffFields.Count; i++)
+                {
+                    WriteLog(OnlineSettlementLog.Diff(_summary.DiffFields[i]));
+                }
+
+                // 仅刷新有把握的已知经验(BaseExp + RankBonusExp),每次结算至多一次;物品/金币不同步。
+                if (progress != null && _summary.ConfidentExpGrant > 0)
+                {
+                    OnlineSettlementHeroHelpers.ApplyConfidentExp(progress, _summary, out _, out _);
+                }
+
+                if (_activeRun != null && _options.Assets != null && _activeRun.Room?.Hero != null)
+                {
+                    _camp = ClearCamp.Create(_options.Assets, _activeRun.MapPath, _activeRun.Room.Hero.X, _activeRun.Room.Hero.Y);
+                }
+                if (_activeRun != null)
+                {
+                    pumpRun = _activeRun;
+                    pumpBackup = _activeRun.Pump;
+                    _activeRun.Pump = null;
+                    _activeRun.HudOverlay = BuildHud;
+                }
+
+                AttachTransport(ready.Session);
+                _sendCts = new CancellationTokenSource();
+
+                if (_summary.IsTimedOut)
+                {
+                    WriteLog(OnlineSettlementLog.Fail("settlement_timeout", step: "notices"));
+                    _phase = OnlineSettlementPhase.MenuDegraded;
+                    _notice = new OnlineSettlementNotice(OnlineSettlementNoticeKind.SettlementTimeout);
+                    ArmCountdown();
+                    return;
+                }
+
+                if (_transport == null)
+                {
+                    _phase = OnlineSettlementPhase.MenuReady;
+                    _notice = null;
+                    ArmCountdown();
+                    return;
+                }
+
+                if (_transport.IsDisconnected)
+                {
+                    HandleDisconnect();
+                    return;
+                }
+
+                BeginSend72();
             }
-
-            ready.HoldForMenu = true;
-            _ready = ready;
-            _activeRun = _flow.Run as HostedRoomRun;
-            _serverInitiatedReturn = false;
-            _disconnectNotifiedForActive = false;
-            Interlocked.Exchange(ref _disconnectedFlag, 0);
-
-            TownPlace? currentPlace = _options.GetCurrentTownPlace?.Invoke();
-            if (currentPlace.HasValue)
+            catch (Exception e)
             {
-                _preDungeonPlace = currentPlace.Value;
+                // 先撤回"挂起等结算":流程控制器在处理函数返回后才读它;不撤回就会挂在副本里,而这里已是空闲、没人收尾。
+                ready.HoldForMenu = false;
+                try
+                {
+                    if (pumpRun != null)
+                    {
+                        pumpRun.Pump = pumpBackup;
+                    }
+                    ResetActiveState();
+                    _retryCycleCount = 0;
+                }
+                catch (Exception)
+                {
+                    // 收尾本身再出错也不外传(挂起已撤回,流程会走默认退出)。
+                }
+                WriteLog(OnlineSettlementLog.Fail("start_fault", step: e.GetType().Name));
             }
-            else if (_flow.Place.HasValue)
-            {
-                _preDungeonPlace = _flow.Place.Value;
-            }
-
-            HeroProgress progress = _options.GetProgress?.Invoke();
-            _selfUniqueId = _options.GetSelfUniqueId?.Invoke();
-            RunStats? localStats = _activeRun != null ? (RunStats?)_activeRun.SnapshotLocalStats() : null;
-            DungeonResult localResult = null;
-            if (localStats.HasValue)
-            {
-                localResult = _options.LocalResultComputer != null
-                    ? _options.LocalResultComputer(ready.Data, localStats.Value, progress)
-                    : OnlineSettlementHeroHelpers.ComputeLocalResult(
-                        _options.Assets,
-                        ready.Data.DungeonPath,
-                        ready.Data.DungeonId,
-                        ready.Data.Difficulty,
-                        localStats.Value,
-                        progress);
-            }
-
-            var localCtx = new OnlineSettlementLocalContext
-            {
-                LocalStats = localStats,
-                LocalResult = localResult,
-                LocalGoldEarned = _activeRun?.LocalGoldEarned ?? 0,
-                LocalItemsPicked = _activeRun?.LocalItemsPicked ?? 0,
-                LocalExpEarned = _activeRun?.LocalExpEarned ?? 0,
-                SelfUniqueId = _selfUniqueId,
-                PartySlot = _options.GetPartySlot?.Invoke(),
-            };
-
-            _summary = OnlineSettlementSummaryBuilder.Build(ready.Data, localCtx, _itemNameResolver);
-            WriteLog(OnlineSettlementLog.Show(
-                _summary.IsTimedOut,
-                _summary.ResultParseState,
-                _summary.RewardParseState,
-                _summary.Drops.Count,
-                _summary.DiffFields.Count));
-            for (int i = 0; i < _summary.DiffFields.Count; i++)
-            {
-                WriteLog(OnlineSettlementLog.Diff(_summary.DiffFields[i]));
-            }
-
-            // 仅刷新有把握的已知经验(BaseExp + RankBonusExp),每次结算至多一次;物品/金币不同步。
-            if (progress != null && _summary.ConfidentExpGrant > 0)
-            {
-                OnlineSettlementHeroHelpers.ApplyConfidentExp(progress, _summary, out _, out _);
-            }
-
-            if (_activeRun != null && _options.Assets != null && _activeRun.Room?.Hero != null)
-            {
-                _camp = ClearCamp.Create(_options.Assets, _activeRun.MapPath, _activeRun.Room.Hero.X, _activeRun.Room.Hero.Y);
-            }
-            if (_activeRun != null)
-            {
-                _activeRun.Pump = null;
-                _activeRun.HudOverlay = BuildHud;
-            }
-
-            AttachTransport(ready.Session);
-            _sendCts = new CancellationTokenSource();
-
-            if (_summary.IsTimedOut)
-            {
-                WriteLog(OnlineSettlementLog.Fail("settlement_timeout", step: "notices"));
-                _phase = OnlineSettlementPhase.MenuDegraded;
-                _notice = new OnlineSettlementNotice(OnlineSettlementNoticeKind.SettlementTimeout);
-                ArmCountdown();
-                return;
-            }
-
-            if (_transport == null)
-            {
-                _phase = OnlineSettlementPhase.MenuReady;
-                _notice = null;
-                ArmCountdown();
-                return;
-            }
-
-            if (_transport.IsDisconnected)
-            {
-                HandleDisconnect();
-                return;
-            }
-
-            BeginSend72();
         }
 
         /// <summary>玩家通过热键(F13/F11/F12 或 1/2/3)或点击选择结算项。</summary>
