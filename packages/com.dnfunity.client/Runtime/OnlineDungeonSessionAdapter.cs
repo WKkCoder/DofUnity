@@ -55,6 +55,19 @@ namespace Dnf.Client
             int roomsEntered,
             OnlineDungeonCombatResult combat)
         {
+            return Map(dungeonId, dungeonPath, difficulty, reportedKills, droppedKills, roomsEntered, combat, isTimedOut: false);
+        }
+
+        public static OnlineDungeonSettlementData Map(
+            int dungeonId,
+            string dungeonPath,
+            int difficulty,
+            int reportedKills,
+            int droppedKills,
+            int roomsEntered,
+            OnlineDungeonCombatResult combat,
+            bool isTimedOut)
+        {
             OnlineSettlementParseState resultState = OnlineSettlementParseState.NotApplicable;
             OnlineSettlementParseState rewardState = OnlineSettlementParseState.NotApplicable;
 
@@ -100,7 +113,8 @@ namespace Dnf.Client
                 resultState,
                 resultData,
                 rewardState,
-                rewardData);
+                rewardData,
+                isTimedOut);
         }
 
         private static OnlineSettlementParseState MapParseState(OnlineCombatSettlementParseStatus status)

@@ -22,6 +22,8 @@
     <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineDungeonRoom.cs" Link="Runtime\OnlineDungeonRoom.cs" />
     <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineDungeonSessionAdapter.cs" Link="Runtime\OnlineDungeonSessionAdapter.cs" />
     <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineDungeonFlowController.cs" Link="Runtime\OnlineDungeonFlowController.cs" />
+    <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineSettlementTransport.cs" Link="Runtime\OnlineSettlementTransport.cs" />
+    <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineSettlementController.cs" Link="Runtime\OnlineSettlementController.cs" />
     <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineShellMapping.cs" Link="Runtime\OnlineShellMapping.cs" />
     <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineShellBackend.cs" Link="Runtime\OnlineShellBackend.cs" />
     <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineShellSetup.cs" Link="Runtime\OnlineShellSetup.cs" />

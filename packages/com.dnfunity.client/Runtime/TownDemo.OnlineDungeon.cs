@@ -61,6 +61,7 @@ namespace Dnf.Client
                 policy,
                 ctx => BuildOnlineDungeonRoom(ctx),
                 options);
+            AttachOnlineSettlement(usedAtlas);
         }
 
         private OnlineDungeonRoomBuildResult BuildOnlineDungeonRoom(OnlineDungeonRoomBuildContext context)
@@ -115,6 +116,7 @@ namespace Dnf.Client
 
         private void DisposeOnlineDungeon()
         {
+            DisposeOnlineSettlement();
             if (_onlineDungeon != null)
             {
                 _onlineDungeon.Dispose();
