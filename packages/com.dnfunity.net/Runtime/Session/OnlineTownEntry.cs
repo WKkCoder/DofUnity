@@ -100,6 +100,25 @@ namespace Dnf.Net.Session
 
         /// <summary>登录包(CMD 1/1)里的服务器组编号(1..17; 0 表示未指定,由普通频道按自身配置决定)。</summary>
         public ushort ServerGroup { get; set; }
+
+        /// <summary>
+        /// 客户端版本号,台账 E-441;写进登录请求的 <see cref="LoginRequest.ClientParam"/>(数据版本之后的那个 u32)。
+        /// 缺省 0(真服已确认接受 0,台账 E-444),此时发出的登录帧与没有这个设置项时逐字节相同。
+        /// </summary>
+        public uint ClientVersion { get; set; }
+    }
+
+    /// <summary>
+    /// 一次游戏登录尝试的"实际发出了什么"记录,由 <see cref="OnlineTownEntry.TryGameLogin"/> 在登录请求交给会话发出之后填写;
+    /// 只有两个小整数,不含令牌、账号或载荷。没发出请求(本地检查不过、写出失败)时保持缺省:<see cref="Sent"/> 为 false,<see cref="ServerGroup"/> 为 0。
+    /// </summary>
+    internal sealed class GameLoginTrace
+    {
+        /// <summary>登录请求是否已成功写出(<see cref="GameClientSession.SendAsync"/> 返回 Ok)。</summary>
+        internal bool Sent { get; set; }
+
+        /// <summary>已写出的那份登录请求里实际写进去的服务器组(没写出为 0)。</summary>
+        internal ushort ServerGroup { get; set; }
     }
 
     /// <summary>联网进城的结局。成功时 <see cref="Session"/> 与连接归调用方,记得释放本结果对象。</summary>
@@ -343,7 +362,7 @@ namespace Dnf.Net.Session
         /// </summary>
         internal async Task<OnlineEntryResult> TryGameLogin(GameClientSession session, string token, uint localAddress,
             IDisposable connection, OnlineTownWindows windows, List<DecodedFrame> earlyFrames, CancellationToken cancellationToken,
-            ushort? serverGroupOverride = null)
+            ushort? serverGroupOverride = null, GameLoginTrace trace = null)
         {
             byte[] mouseCipher = _settings.MouseCipher != null && _settings.MouseCipher.Length == LoginRequest.MouseCipherBytes
                 ? _settings.MouseCipher
@@ -357,6 +376,7 @@ namespace Dnf.Net.Session
                 LoginMode = 0,
                 MouseCipher = mouseCipher,
                 DataVersion = _settings.DataVersion,
+                ClientParam = _settings.ClientVersion,
                 ServerGroup = serverGroupOverride ?? _settings.ServerGroup,
                 LocalAddress = localAddress,
             };
@@ -366,6 +386,12 @@ namespace Dnf.Net.Session
             }
 
             FrameStatus sent = await session.SendAsync(PacketClass.Cmd, LoginRequest.PacketId, request.Build(), cancellationToken).ConfigureAwait(false);
+            if (trace != null && sent == FrameStatus.Ok)
+            {
+                // 只有请求真的写出去了才记:服务器组取请求体里最终写进去的值(含按目录解出的),不是设置里的原值
+                trace.Sent = true;
+                trace.ServerGroup = request.ServerGroup;
+            }
             if (sent != FrameStatus.Ok)
             {
                 return Fail(OnlineStage.GameLogin, OnlineFailure.GameLoginNoReply, null, -1, session.Events.Count, null, connection, 0);

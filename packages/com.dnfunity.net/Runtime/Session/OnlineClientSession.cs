@@ -101,7 +101,7 @@ namespace Dnf.Net.Session
     {
         internal OnlineConnectResult(OnlineStage stage, OnlineFailure failure, byte? loginFailureCode,
             ChannelInfo channel, UserInfoNotice characterList, OnlineCharacterListStatus characterListStatus,
-            OnlineEntryResult entryResult)
+            OnlineEntryResult entryResult, int gameLoginAttempts = 0, ushort effectiveServerGroup = 0)
         {
             Stage = stage;
             Failure = failure;
@@ -110,6 +110,8 @@ namespace Dnf.Net.Session
             CharacterList = characterList;
             CharacterListStatus = characterListStatus;
             EntryResult = entryResult;
+            GameLoginAttempts = gameLoginAttempts;
+            EffectiveServerGroup = effectiveServerGroup;
         }
 
         public OnlineStage Stage { get; }
@@ -121,6 +123,27 @@ namespace Dnf.Net.Session
         public OnlineCharacterListStatus CharacterListStatus { get; }
         public bool CharacterListReceived => CharacterListStatus == OnlineCharacterListStatus.Received;
         internal OnlineEntryResult EntryResult { get; }
+
+        /// <summary>
+        /// 这一步(一次连频道或换频道)里游戏登录请求实际发出了几次:连上频道但没发出登录请求就断了为 0(含登录请求本地检查不过、写出失败),
+        /// 一次通过或一次被拒为 1,"刚关掉一条已通过游戏登录的频道连接之后 5 秒窗口内被拒且拒绝码为 1"的结算重试(台账 E-443)用了 k 次为 1 加 k;
+        /// 重试用尽仍失败也如实计(1 加重试上限)。只是诊断信息,不影响阶段与失败的判定。
+        /// </summary>
+        public int GameLoginAttempts { get; }
+
+        /// <summary>
+        /// 这一步里最后一次登录请求实际写进 <see cref="LoginRequest.ServerGroup"/> 的服务器组值(0 到 17;一次登录请求也没发出为 0)。
+        /// 是会话最终算出来的值:设置里非零时就是设置值,设置为 0 时是按最近读到的频道目录里该端口所属的组解出的值(解不出仍是 0),
+        /// 不是"设置里填的值"。结算重试时取最后一次真正发出的那份请求。
+        /// </summary>
+        public ushort EffectiveServerGroup { get; }
+
+        /// <summary>同一结果带上累计的游戏登录次数与最后一次发出的服务器组(结算重试把几次尝试合成一个结果时用)。</summary>
+        internal OnlineConnectResult WithLoginTrace(int gameLoginAttempts, ushort effectiveServerGroup)
+        {
+            return new OnlineConnectResult(Stage, Failure, LoginFailureCode, Channel, CharacterList, CharacterListStatus,
+                EntryResult, gameLoginAttempts, effectiveServerGroup);
+        }
     }
 
     /// <summary>单个槽位的选角结果。失败后可否继续试下一槽由 <see cref="MayTryAnotherSlot"/> 表示。</summary>
@@ -335,6 +358,7 @@ namespace Dnf.Net.Session
                 ChannelPort = settings.ChannelPort,
                 MaxSlots = settings.MaxSlots,
                 ServerGroup = settings.ServerGroup,
+                ClientVersion = settings.ClientVersion,
             };
             _entry = new OnlineTownEntry(_settings);
             _onStage = onStage;
@@ -353,6 +377,16 @@ namespace Dnf.Net.Session
             get => _settings.ServerGroup;
             set => _settings.ServerGroup = value;
         }
+
+        /// <summary>连接与换频道时写入 <see cref="LoginRequest.ClientParam"/> 的客户端版本号(台账 E-441;缺省 0)。运行中可改,下一次连频道或换频道生效。</summary>
+        public uint ClientVersion
+        {
+            get => _settings.ClientVersion;
+            set => _settings.ClientVersion = value;
+        }
+
+        /// <summary>网关给的游戏服主机文本(IP 字面量);还没登录为 null。只供进程内判断"是不是同一个主机",探针的 switch 子命令用它,绝不打印。</summary>
+        internal string GameServerHost => _address?.ToString();
 
         /// <summary>网关登录并取游戏服地址；重复登录属于顺序错误。</summary>
         public async Task<OnlineLoginResult> LoginAsync(string account, string password, CancellationToken cancellationToken = default)
@@ -749,6 +783,9 @@ namespace Dnf.Net.Session
             {
                 OnlineConnectResult result = await ConnectNoGateAsync(
                     address, channelPort, maxRetries > 0, cancellationToken).ConfigureAwait(false);
+                // 诊断:游戏登录请求累计发出几次、最后一次发出的请求里写的服务器组(没发出过为 0);不参与下面的重试判断
+                int loginAttempts = result.GameLoginAttempts;
+                ushort lastSentServerGroup = result.EffectiveServerGroup;
                 for (int attempt = 0; attempt < maxRetries; attempt++)
                 {
                     if (result.IsSuccess || result.Failure != OnlineFailure.GameLoginRejected || result.LoginFailureCode != 1)
@@ -763,8 +800,13 @@ namespace Dnf.Net.Session
                     bool suppressDisconnect = attempt + 1 < maxRetries;
                     result = await ConnectNoGateAsync(
                         address, channelPort, suppressDisconnect, cancellationToken).ConfigureAwait(false);
+                    loginAttempts += result.GameLoginAttempts;
+                    if (result.GameLoginAttempts > 0)
+                    {
+                        lastSentServerGroup = result.EffectiveServerGroup;
+                    }
                 }
-                return result;
+                return result.WithLoginTrace(loginAttempts, lastSentServerGroup);
             }
             finally
             {
@@ -802,29 +844,33 @@ namespace Dnf.Net.Session
             ushort effectiveServerGroup = _settings.ServerGroup != 0
                 ? _settings.ServerGroup
                 : ResolveDirectoryServerGroup(address, channelPort);
+            var loginTrace = new GameLoginTrace();
             OnlineEntryResult loginFailure = await _entry.TryGameLogin(link.Session, _token, link.LocalAddress,
                 link.Connection, _hooks.Windows ?? OnlineTownWindows.Default, _earlyFrames, cancellationToken,
-                effectiveServerGroup).ConfigureAwait(false);
+                effectiveServerGroup, loginTrace).ConfigureAwait(false);
             if (loginFailure != null)
             {
                 if (!(suppressCode1Disconnect && loginFailure.Failure == OnlineFailure.GameLoginRejected && loginFailure.LoginFailureCode == 1))
                 {
                     NotifyIfDisconnected(link);
                 }
-                return ConnectFailure(loginFailure);
+                return ConnectFailure(loginFailure, loginTrace);
             }
             NotifyIfDisconnected(link);
             _currentLinkAuthenticated = true;
             State = OnlineClientSessionState.Connected;
             ParseCharacterList(out UserInfoNotice list, out OnlineCharacterListStatus listStatus);
             return new OnlineConnectResult(OnlineStage.GameLogin, OnlineFailure.None, null,
-                link.Session.Channel, list, listStatus, null);
+                link.Session.Channel, list, listStatus, null,
+                loginTrace.Sent ? 1 : 0, loginTrace.ServerGroup);
         }
 
-        private OnlineConnectResult ConnectFailure(OnlineEntryResult result)
+        private OnlineConnectResult ConnectFailure(OnlineEntryResult result, GameLoginTrace loginTrace = null)
         {
+            // 没走到游戏登录(trace 为 null)或请求没写出去:发出次数 0、服务器组 0
             return new OnlineConnectResult(result.Stage, result.Failure, result.LoginFailureCode,
-                null, null, OnlineCharacterListStatus.NotReceived, result);
+                null, null, OnlineCharacterListStatus.NotReceived, result,
+                loginTrace != null && loginTrace.Sent ? 1 : 0, loginTrace?.ServerGroup ?? (ushort)0);
         }
 
         private async Task<OnlineSelectCharacterResult> SelectNoGateAsync(int slot, CancellationToken cancellationToken)
