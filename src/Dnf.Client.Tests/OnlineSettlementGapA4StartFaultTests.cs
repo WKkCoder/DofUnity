@@ -294,6 +294,44 @@ public sealed class OnlineSettlementGapA4StartFaultTests
         Assert.DoesNotContain(rig.LogSnapshot(), l => l.Contains("start_fault") || l.Contains("SettlementHandlerFault"));
     }
 
+    [Theory]
+    [InlineData("InvalidOperationException")]
+    [InlineData("SyntheticStartFault")]
+    public void A_cleanup_that_itself_throws_is_contained_and_still_withdraws_the_hold_and_restores_the_pump(string typeName)
+    {
+        // 保护:收尾(摘传输订阅)本身也抛异常时——异常仍不外传(探针被调到),挂起照样撤回,这一局的 Pump 照样装回,
+        // 日志仍只有一行 start_fault 且写的是<b>原始</b>异常的类型名(不是收尾里那个 InvalidCastException);流程走默认结算退出。
+        // 收尾中途出错时其余清理只能尽力而为,所以这里不断言绘制钩子与订阅数;摘订阅只在第一次抛(之后正常,让夹具释放时不再出错)。
+        int subscribeCalls = 0;
+        int unsubscribeCalls = 0;
+        var transport = new FaultTransport(
+            onDisconnectedSubscribe: () =>
+            {
+                subscribeCalls++;
+                return MakeFault(typeName);
+            },
+            onFrameUnsubscribe: () => ++unsubscribeCalls == 1 ? new InvalidCastException(SecretMessage) : null);
+        using var rig = new FaultRig(o => o.TransportFactory = _ => transport);
+        WireStandardResponder(rig.Port);
+        rig.EnterTownAndDungeon();
+        HostedRoomRun run = Assert.IsType<HostedRoomRun>(rig.Flow.Run);
+        Action<HostedRoomRun> pump = _ => { };
+        run.Pump = pump;
+        rig.KillAllInCurrentRun();
+        rig.PumpUntil(() => LeftInDungeon(rig));
+
+        Assert.Equal(1, subscribeCalls);
+        Assert.Equal(1, unsubscribeCalls);   // 收尾确实去摘了、并且在那里抛了
+        Assert.Equal(1, rig.ProbeCalls);
+        Assert.False(rig.Ready.HoldForMenu);
+        Assert.Equal(OnlineDungeonFlowPhase.SettlingExit, rig.DungeonCtrl.Phase);
+        Assert.False(rig.Flow.OnlineHoldDungeonExit);
+        Assert.False(rig.SettleCtrl.IsActive);
+        Assert.Same(pump, run.Pump);
+        Assert.Equal(ShowAndDiffs.Append(StartFault(typeName)).ToArray(), rig.SettleLines());
+        Assert.DoesNotContain(rig.LogSnapshot(), l => l.Contains("SettlementHandlerFault") || l.Contains(SecretMessage) || l.Contains("InvalidCastException"));
+    }
+
     [Fact]
     public void A_throwing_item_name_resolver_is_absorbed_by_the_summary_builder_and_is_not_a_start_fault()
     {

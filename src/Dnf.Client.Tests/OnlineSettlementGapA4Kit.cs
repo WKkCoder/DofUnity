@@ -97,13 +97,18 @@ internal static class OnlineSettlementGapA4Kit
     {
         private readonly Func<Exception> _onDisconnectedSubscribe;
         private readonly Func<Exception> _onIsDisconnected;
+        private readonly Func<Exception> _onFrameUnsubscribe;
         private Action<PacketClass, int, byte[]> _frameReceived;
         private Action<OnlineDisconnectReason> _disconnected;
 
-        public FaultTransport(Func<Exception> onDisconnectedSubscribe = null, Func<Exception> onIsDisconnected = null)
+        /// <param name="onDisconnectedSubscribe">挂 Disconnected 事件时要抛的异常(返回 null 表示这一次不抛)。</param>
+        /// <param name="onIsDisconnected">读 IsDisconnected 时要抛的异常。</param>
+        /// <param name="onFrameUnsubscribe">摘 FrameReceived 订阅时要抛的异常(返回 null 表示这一次不抛;用来让"收尾本身"也失败)。</param>
+        public FaultTransport(Func<Exception> onDisconnectedSubscribe = null, Func<Exception> onIsDisconnected = null, Func<Exception> onFrameUnsubscribe = null)
         {
             _onDisconnectedSubscribe = onDisconnectedSubscribe;
             _onIsDisconnected = onIsDisconnected;
+            _onFrameUnsubscribe = onFrameUnsubscribe;
         }
 
         public bool Disposed { get; private set; }
@@ -126,16 +131,25 @@ internal static class OnlineSettlementGapA4Kit
         public event Action<PacketClass, int, byte[]> FrameReceived
         {
             add { _frameReceived += value; }
-            remove { _frameReceived -= value; }
+            remove
+            {
+                Exception fault = _onFrameUnsubscribe?.Invoke();
+                if (fault != null)
+                {
+                    throw fault;
+                }
+                _frameReceived -= value;
+            }
         }
 
         public event Action<OnlineDisconnectReason> Disconnected
         {
             add
             {
-                if (_onDisconnectedSubscribe != null)
+                Exception fault = _onDisconnectedSubscribe?.Invoke();
+                if (fault != null)
                 {
-                    throw _onDisconnectedSubscribe();
+                    throw fault;
                 }
                 _disconnected += value;
             }

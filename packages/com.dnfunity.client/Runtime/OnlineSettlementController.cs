@@ -418,8 +418,8 @@ namespace Dnf.Client
                     {
                         pumpRun.Pump = pumpBackup;
                     }
-                    ResetActiveState();
                     _retryCycleCount = 0;
+                    ResetActiveState();
                 }
                 catch (Exception)
                 {
