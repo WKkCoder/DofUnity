@@ -73,4 +73,54 @@ public class OnlineSettlementGapA7ReentrantPollTests
         Assert.Empty(rig.Completed);
         Assert.Equal(0, rig.Disconnects);
     }
+
+    /// <summary>
+    /// 保护的行为:与上一条同理,前一步(1/72 → 1/73)的防线:宿主日志回调在"72 回复成功"那行日志里重入轮询、同批排着第二份 1/72 回复时,
+    /// 也只发出一条 1/73、只写一行"发出 73"日志;之后 1/73 的回复照常把流程推进到发出 1/74。
+    /// (若"已发 73"标志没有置位,外层会在内层已发出之后再发一条 1/73,发送序列变成 72,73,73。)
+    /// </summary>
+    [Fact]
+    public void A_host_log_callback_that_reenters_poll_cannot_make_the_controller_send_the_card_right_query_twice()
+    {
+        var logs = new List<string>();
+        int reentries = 0;
+        DirectRig rig = null!;
+        rig = new DirectRig(o => o.Log = line =>
+        {
+            logs.Add(line);
+            if (line == OnlineSettlementGapA2Kit.Ok72 && reentries == 0)
+            {
+                reentries++;
+                rig.Ctrl.Poll(rig.NowMs, 0);   // 宿主日志回调里重入轮询(只在第一次写出"72 回复成功"时触发一次)
+            }
+        });
+        using var owned = rig;
+
+        rig.PollAt(1000);
+        rig.StartSettlement();
+        Assert.Equal(OnlineSettlementPhase.AdvancingScoreScroll, rig.Ctrl.Phase);
+        Assert.Equal(new ushort[] { 72 }, SentIds(rig));
+
+        // 同一批里排两份相同的 1/72 回复,一次轮询里处理
+        rig.Transport.Push(PacketClass.Cmd, 72, new byte[] { 1 });
+        rig.Transport.Push(PacketClass.Cmd, 72, new byte[] { 1 });
+        rig.Poll();
+
+        Assert.Equal(1, reentries);
+        Assert.Equal(new ushort[] { 72, 73 }, SentIds(rig));
+        Assert.Equal(OnlineSettlementPhase.AdvancingCardRight, rig.Ctrl.Phase);
+        string[] expected = { OnlineSettlementGapA2Kit.Show, OnlineSettlementGapA2Kit.Sent72, OnlineSettlementGapA2Kit.Ok72,
+            OnlineSettlementGapA2Kit.Ok72, OnlineSettlementGapA2Kit.Sent73 };
+        Assert.Equal(expected, logs);
+
+        // 73 的回复到达:照常选第一个有权的槽 0 发出 1/74
+        rig.Transport.Push(PacketClass.Cmd, 73, CardRightBytes(1));
+        rig.Poll();
+        Assert.Equal(new ushort[] { 72, 73, 74 }, SentIds(rig));
+        Assert.Equal(new byte[] { 0, 0 }, rig.Transport.Sent[2].Payload);    // [模式 0, 槽 0]
+        Assert.Equal(OnlineSettlementPhase.SendingSelectCard, rig.Ctrl.Phase);
+        Assert.Equal(
+            expected.Concat(new[] { OnlineSettlementGapA2Kit.Ok73, OnlineSettlementGapA2Kit.Sent74 }).ToArray(),
+            logs);
+    }
 }
