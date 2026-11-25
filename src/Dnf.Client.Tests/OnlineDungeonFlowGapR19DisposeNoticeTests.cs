@@ -33,7 +33,7 @@ public sealed class OnlineDungeonFlowGapR19DisposeNoticeTests
         EnterDungeon(rig);
         HostedRoomRun run = Assert.IsType<HostedRoomRun>(rig.Flow.Run);
         run.Abort(HostedAbort.MoveRefused);
-        rig.PumpControllerUntil(() => rig.Ctrl.Phase == OnlineDungeonFlowPhase.Idle, 600);
+        rig.PumpControllerUntil(() => rig.Ctrl.Phase == OnlineDungeonFlowPhase.Idle);
         Assert.Equal(GameStage.Town, rig.Flow.Stage);
         return rig.Ctrl.ActiveNotice;
     }

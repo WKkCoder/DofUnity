@@ -90,14 +90,14 @@ public sealed class OnlineDungeonFlowGapR4OptionsTests
         OnlineDungeonCombatRunner runner = rig.LastContext.CombatRunner;
 
         Assert.True(runner.PostKill(0, 0));
-        rig.PumpControllerUntil(() => runner.Machine.RoomCleared, 600);
+        rig.PumpControllerUntil(() => runner.Machine.RoomCleared);
         Assert.True(runner.PostMoveRoom(0, new OnlineMoveRoomRequest(3, 2)));
-        rig.PumpControllerUntil(() => events.Any(e => e.Kind == OnlineCombatEventKind.RoomMoveRefused), 600);
+        rig.PumpControllerUntil(() => events.Any(e => e.Kind == OnlineCombatEventKind.RoomMoveRefused));
         Assert.Single(server.Moves);
 
         Assert.True(runner.PostMoveRoom(0, new OnlineMoveRoomRequest(3, 2)));
         rig.PumpControllerUntil(() => events.Any(e => e.Kind == OnlineCombatEventKind.RoomMoveBlocked)
-            || events.Count(e => e.Kind == OnlineCombatEventKind.RoomMoveSent) >= 2, 600);
+            || events.Count(e => e.Kind == OnlineCombatEventKind.RoomMoveSent) >= 2);
 
         Assert.Contains((OnlineCombatEventKind.RoomMoveBlocked, OnlineCombatBlock.MoveBudgetExhausted), events);
         Assert.Equal(1, events.Count(e => e.Kind == OnlineCombatEventKind.RoomMoveSent));

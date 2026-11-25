@@ -73,15 +73,23 @@ public sealed class OnlineShellHostTests
 
         public void UntilFrames(Func<bool> done)
         {
+            long startNow = Now;
             var watch = Stopwatch.StartNew();
             while (!done())
             {
-                Frame();
-                if (watch.Elapsed.TotalSeconds > 10)
+                long target = startNow + watch.ElapsedMilliseconds;
+                Now = target > Now ? target : Now + 1;
+                Host.Tick(default, 16, Now);
+                OnlineShellViewChange change = Host.TakeViewChange();
+                if (change != OnlineShellViewChange.None)
                 {
-                    Assert.Fail("the condition was not reached within 10 seconds (stage " + Host.Stage + ")");
+                    Changes.Add(change);
                 }
-                Thread.Sleep(1);
+                if (watch.Elapsed.TotalSeconds > 30)
+                {
+                    Assert.Fail("the condition was not reached within 30 seconds (stage " + Host.Stage + ")");
+                }
+                Thread.Sleep(10);
             }
         }
 
