@@ -30,7 +30,7 @@ namespace Dnf.NetProbe;
 /// </summary>
 internal static class FightCommand
 {
-    private const string UsageText = "用法: dnf-netprobe fight [仓库根] --dungeon <副本编号 0-65535> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S]";
+    private const string UsageText = "用法: dnf-netprobe fight [仓库根] --dungeon <副本编号 0-65535> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] [--min-clear-seconds S] [--after-settle [--menu-choice town]]";
 
     // 只在 --permits-only 与 --dungeon 冲突时多打这一行(默认路径的用法文字一字不变)。
     private const string PermitsUsageText = "只看许可表: dnf-netprobe fight [仓库根] --permits-only(不要 --dungeon;登录进城后打印一行许可表就退出,不进副本)";
@@ -144,7 +144,12 @@ internal static class FightCommand
 
             // ---- 战斗:跑器的两个上限只当后备(驱动自己的两段等待先到),所以放宽到驱动的等待之后
             setAt("fight");
-            TimeSpan backstop = TimeSpan.FromMilliseconds((double)monsters * parsed.PaceMs) + parsed.ClearWait + parsed.SettleWait + TimeSpan.FromSeconds(60);
+            TimeSpan paceSpan = TimeSpan.FromMilliseconds((double)monsters * parsed.PaceMs);
+            if (parsed.MinClearDuration.HasValue && parsed.MinClearDuration.Value > paceSpan)
+            {
+                paceSpan = parsed.MinClearDuration.Value;
+            }
+            TimeSpan backstop = paceSpan + parsed.ClearWait + parsed.SettleWait + TimeSpan.FromSeconds(60);
             OnlineDungeonCombatRunner runner = dungeonRunner.UseCombat(new OnlineDungeonCombatOptions
             {
                 SettlementTimeout = parsed.SettleWait + TimeSpan.FromSeconds(10),
@@ -153,6 +158,7 @@ internal static class FightCommand
             var driver = new OnlineFightDriver(runner, map, new OnlineFightOptions
             {
                 PaceMs = parsed.PaceMs,
+                MinClearDuration = parsed.MinClearDuration,
                 ContinueOnRefuse = parsed.ContinueOnRefuse,
                 ClearWait = parsed.ClearWait,
                 SettleWait = parsed.SettleWait,
@@ -160,14 +166,38 @@ internal static class FightCommand
             OnlineFightSummary summary = await driver.RunAsync(line => SayNet(clock, line), token);
             Say(clock, "stage=verdict " + OnlineFightLog.VerdictFields(summary));
 
+            // ---- 结算后菜单推进与回城(仅开启 --after-settle 且战斗走到 ReturnReady 时)
+            OnlineAfterSettleSummary menuSummary = null;
+            if (parsed.AfterSettle && summary.Outcome == OnlineFightOutcome.AllDone && summary.ReturnReady)
+            {
+                setAt("settle-menu");
+                var afterSettle = new OnlineAfterSettleDriver(town.Session, new OnlineAfterSettleOptions
+                {
+                    Command = parsed.EffectiveMenuChoice ?? EplpCommand.ReturnToTown,
+                });
+                menuSummary = await afterSettle.RunAsync(Console.WriteLine, token);
+            }
+
             // ---- 挂着看服务端之后还有没有动作
-            if (parsed.StaySeconds > 0 && summary.Outcome != OnlineFightOutcome.Cancelled)
+            if (parsed.StaySeconds > 0
+                && summary.Outcome != OnlineFightOutcome.Cancelled
+                && (menuSummary == null || menuSummary.Outcome != OnlineAfterSettleOutcome.Cancelled))
             {
                 await StayAsync(clock, town, parsed.StaySeconds);
             }
 
-            Console.WriteLine("PROBE_FIGHT result " + OnlineFightLog.ResultFields(summary));
-            return OnlineFightExitCodes.ForOutcome(summary.Outcome);
+            bool hasNewFlags = parsed.AfterSettle || parsed.MinClearSeconds.HasValue;
+            string resultFields = hasNewFlags
+                ? OnlineFightLog.ResultFieldsWithAfterSettle(summary, menuSummary)
+                : OnlineFightLog.ResultFields(summary);
+            Console.WriteLine("PROBE_FIGHT result " + resultFields);
+            if (summary.Outcome != OnlineFightOutcome.AllDone)
+            {
+                return OnlineFightExitCodes.ForOutcome(summary.Outcome);
+            }
+            return menuSummary != null
+                ? OnlineAfterSettleExitCodes.ForOutcome(menuSummary.Outcome)
+                : OnlineFightExitCodes.Success;
         }
     }
 

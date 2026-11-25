@@ -238,7 +238,8 @@ internal sealed class FightRig
         TimeSpan? settleWait = null,
         double runnerSettlementSeconds = 10,
         double runnerOverallSeconds = 60,
-        int? holdSendOfCommand = null)
+        int? holdSendOfCommand = null,
+        TimeSpan? minClearDuration = null)
     {
         Ids = CombatKit.Sequential(count);
         Map = CombatKit.Map(Ids);
@@ -258,6 +259,7 @@ internal sealed class FightRig
         Options = new OnlineFightOptions
         {
             PaceMs = paceMs,
+            MinClearDuration = minClearDuration,
             ContinueOnRefuse = continueOnRefuse,
             ClearWait = clearWait ?? TimeSpan.FromSeconds(25),
             SettleWait = settleWait ?? TimeSpan.FromSeconds(25),

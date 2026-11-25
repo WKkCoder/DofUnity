@@ -71,6 +71,39 @@ namespace Dnf.Net.Session
         }
 
         /// <summary>
+        /// 带结算后菜单与最短清图用时的汇总字段(在 <see cref="ResultFields"/> 之后追加 <c>clearMs=&lt;n&gt; menu=&lt;outcome|-&gt;</c>):
+        /// 只有命令行开启了 <c>--after-settle</c> 或 <c>--min-clear-seconds</c> 时才使用,不带新选项时仍用 <see cref="ResultFields"/>。
+        /// </summary>
+        public static string ResultFieldsWithAfterSettle(OnlineFightSummary r, OnlineAfterSettleSummary afterSettle)
+        {
+            return ResultFieldsWithAfterSettle(r, afterSettle != null ? afterSettle.Outcome : (OnlineAfterSettleOutcome?)null);
+        }
+
+        /// <summary>同 <see cref="ResultFieldsWithAfterSettle(OnlineFightSummary, OnlineAfterSettleSummary)"/>,直接传菜单结局枚举。</summary>
+        public static string ResultFieldsWithAfterSettle(OnlineFightSummary r, OnlineAfterSettleOutcome? menuOutcome)
+        {
+            long clearMs = Math.Max(0L, (long)r.ClearDuration.TotalMilliseconds);
+            string menu = menuOutcome.HasValue ? menuOutcome.Value.ToString() : "-";
+            return ResultFields(r)
+                + " clearMs=" + Number(clearMs)
+                + " menu=" + menu;
+        }
+
+        /// <summary>
+        /// 结算后菜单每步的脱敏输出行:<c>PROBE_FIGHT stage=settle-menu step=&lt;72|73|74|75|return&gt; sent=&lt;0|1&gt; reply=&lt;ok|skipped|timeout|failed|malformed|closed&gt; elapsedMs=&lt;n&gt; ignored=&lt;m&gt;</c>。
+        /// </summary>
+        public static string AfterSettleStep(string step, bool sent, string reply, long elapsedMs, int ignored)
+        {
+            return ProbePrefix
+                + " stage=settle-menu"
+                + " step=" + step
+                + " sent=" + Flag(sent)
+                + " reply=" + reply
+                + " elapsedMs=" + Number(elapsedMs)
+                + " ignored=" + Number(ignored);
+        }
+
+        /// <summary>
         /// 头号问题(击杀载荷在服务端那里的待遇)的判读字段:<c>kill=accepted pending=0 firstRefused=-</c>。
         /// <c>kill</c> 是小写的 none、accepted、partial、refused、silent(含义见 <see cref="OnlineFightKillVerdict"/>);<c>pending</c> 是收场时仍在途的击杀数;
         /// <c>firstRefused</c> 是第一只被拒的怪的本地序号,没有写 <c>-</c>。
