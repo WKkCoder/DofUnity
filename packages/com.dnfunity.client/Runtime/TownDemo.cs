@@ -132,6 +132,7 @@ namespace Dnf.Client
         private bool _noHero;
         private bool _heroInput = true;
         private SkillKeys _heldSkills;            // 这一帧还按着的技能键(蓄力类技能用,E-138)
+        private readonly OnlineSettlementInputGate _settleInputGate = new OnlineSettlementInputGate();
         private string _heroSpec;
         private bool? _monsters;
         private bool _noDamage;
@@ -2339,30 +2340,49 @@ namespace Dnf.Client
                 int dirX = 0, dirY = 0;
                 bool attack = false, jump = false;
                 SkillKeys skills = SkillKeys.None;
-                if (_heroInput && !IsOnlineAreaChangePending())
+                bool settlementActive = IsOnlineSettlementActive;
+                if (_heroInput && !IsOnlineAreaChangePending() && !settlementActive)
                 {
                     attack = ReadHeroInput(out dirX, out dirY, out jump, out skills);
                 }
+                else
+                {
+                    _heldSkills = SkillKeys.None;
+                }
+                bool rawCommandsEnabled = _heroInput && (_script.IsEmpty || _script.UsesCommands);
+                OnlineSettlementInputDecision decision = _settleInputGate.Evaluate(
+                    settlementActive,
+                    dirX,
+                    dirY,
+                    attack,
+                    jump,
+                    skills,
+                    _heldSkills,
+                    rawCommandsEnabled);
+                if (decision.ReleaseTouch)
+                {
+                    _touch?.Release();
+                }
                 if (_session is ISkillHoldSession holdSession)
                 {
-                    holdSession.SkillsHeld = _heroInput ? _heldSkills : SkillKeys.None;   // 蓄力类技能每步查键是否还按着(E-138)
+                    holdSession.SkillsHeld = decision.SkillsHeld;   // 蓄力类技能每步查键是否还按着(E-138)
                 }
                 if (_session is ICommandSession commandSession)
                 {
                     // 出招指令(M47,E-140):人用键盘(或触屏)操作时开;时间表里写了 z 或 buff 的那一局也开;自动机走另一条路,不开
-                    commandSession.CommandsEnabled = _heroInput && (_script.IsEmpty || _script.UsesCommands);
+                    commandSession.CommandsEnabled = decision.CommandsEnabled;
                 }
                 if (_session is ISkillSession skillSession)
                 {
-                    skillSession.Update(deltaMs, dirX, dirY, attack, jump, skills);
+                    skillSession.Update(deltaMs, decision.DirX, decision.DirY, decision.Attack, decision.Jump, decision.Skills);
                 }
                 else if (_session is IActionSession action)
                 {
-                    action.Update(deltaMs, dirX, dirY, attack, jump);
+                    action.Update(deltaMs, decision.DirX, decision.DirY, decision.Attack, decision.Jump);
                 }
                 else
                 {
-                    _session.Update(deltaMs, dirX, dirY);
+                    _session.Update(deltaMs, decision.DirX, decision.DirY);
                 }
             }
             if (_session is HostedRoomRun hostedRun)
@@ -2572,6 +2592,7 @@ namespace Dnf.Client
         /// <summary>流程模式的初始化:造 <see cref="GameFlow"/>(城镇、副本两种会话的工厂接上这个演示的数据与参数)并进入起始阶段;带自动机参数时再造流程自动机。</summary>
         private void StartFlow()
         {
+            _settleInputGate.Reset();
             DisposeOnlineDungeon();
             OpenSave();
             // 城镇里就要按存档里穿的武器造主角,装扮会话也要在进城之前包进城镇世界,所以进度(与装扮会话)在流程之前就造好;
