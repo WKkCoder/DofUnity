@@ -30,6 +30,9 @@ namespace Dnf.NetProbe;
 ///        只读的频道目录摘要(换频道验证之前先看):读本机配置 → 网关登录(只一次)→ 读频道目录 → 逐条目打脱敏摘要(序号、端口是否有效、是否第一个频道、
 ///        --to-index 候选序号、会写进游戏登录请求的服务器组、频道种类)→ 结束;不连任何频道、不做游戏登录、不选角、不发命令包(详见 SwitchCommand.cs)。
 ///        与 --to-index/--to-port/--client-version/--server-group 互斥(同时出现 → 用法错误 64);退出码 0 成功、2 装配失败、5 网关登录失败、6 读目录失败、15 取消、64 用法错误、70 没料到的异常
+///   dnf-netprobe client-version &lt;客户端程序文件&gt;
+///        只读、不联网、不读本机配置:读你自己的原版客户端程序文件自带的文件版本,折成登录请求里的客户端版本号,只打两行到终端
+///        (<c>文件版本 A.B.C.D</c> 与 <c>客户端版本号 N</c>,不回显路径;N 写进 local.env 的 DNF_CLIENT_VERSION 即可,详见 ClientVersionTool);退出码 0 成功、64 用法错误、65 读不出版本、66 读不到文件
 /// 在仓库根目录(或带 local.env 的工作树根目录)下运行。
 /// </summary>
 internal static class Program
@@ -60,7 +63,11 @@ internal static class Program
         {
             return await ChannelProbe.RunAsync(args);
         }
-        Console.WriteLine("用法: dnf-netprobe offline <首包文件> | live [--register] [--channel-port N] [--data-version N] [--seconds N] | orchestrated [仓库根] [--stay N] [--client-version <u32>] [--server-group <0..17>] | switch [仓库根] --to-index <K> | --to-port <N> [--client-version <u32>] [--server-group <0..17>] | switch [仓库根] --list | fight [仓库根] --dungeon <副本编号> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] | channel [仓库根] [--channel-port N] [--version V]");
+        if (args.Length >= 1 && args[0] == "client-version")
+        {
+            return ClientVersionTool.RunFile(args.Skip(1).ToArray(), Console.WriteLine);
+        }
+        Console.WriteLine("用法: dnf-netprobe offline <首包文件> | live [--register] [--channel-port N] [--data-version N] [--seconds N] | orchestrated [仓库根] [--stay N] [--client-version <u32>] [--server-group <0..17>] | switch [仓库根] --to-index <K> | --to-port <N> [--client-version <u32>] [--server-group <0..17>] | switch [仓库根] --list | fight [仓库根] --dungeon <副本编号> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] | channel [仓库根] [--channel-port N] [--version V] | client-version <客户端程序文件>");
         return 64;
     }
 

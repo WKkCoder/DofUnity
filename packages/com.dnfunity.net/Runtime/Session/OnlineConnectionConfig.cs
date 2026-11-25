@@ -8,7 +8,7 @@ namespace Dnf.Net.Session
 {
     /// <summary>
     /// 连接配置读不出来的原因。每一项只点名缺的或不合规的那个配置项,不带任何值(网关地址、密钥、鼠标口令密文都是用户自己的服务器配置)。
-    /// 一次只报第一个问题,顺序固定:网关地址、网关密钥、鼠标口令密文、数据版本、频道端口。
+    /// 一次只报第一个问题,顺序固定:网关地址、网关密钥、鼠标口令密文、数据版本、频道端口、客户端版本号。
     /// </summary>
     public enum OnlineConnectionProblem
     {
@@ -44,6 +44,9 @@ namespace Dnf.Net.Session
 
         /// <summary>频道端口(channel_port)不是 1 到 65535 的十进制整数。</summary>
         ChannelPortInvalid,
+
+        /// <summary>客户端版本号(client_version)不是 0 到 4294967295 的十进制整数。</summary>
+        ClientVersionInvalid,
     }
 
     /// <summary>
@@ -52,7 +55,8 @@ namespace Dnf.Net.Session
     /// <para>
     /// 文件格式:每行一项,<c>键 = 值</c>,值两侧的空白与成对的引号会去掉;空行与 <c>#</c> 开头的行忽略;键不分大小写;重复的键以后写的为准;不认识的键忽略。键名:
     /// <c>server_url</c>(必填,网关地址)、<c>aes_key</c>(必填,64 个十六进制字符)、<c>mouse_cipher</c>(必填,16 个十六进制字符 = 8 字节)、
-    /// <c>data_version</c>(可选,缺省 <see cref="LocalDevEntrySettings.DefaultDataVersion"/>)、<c>channel_port</c>(可选,缺省 <see cref="DefaultChannelPort"/>,1 到 65535)。
+    /// <c>data_version</c>(可选,缺省 <see cref="LocalDevEntrySettings.DefaultDataVersion"/>)、<c>channel_port</c>(可选,缺省 <see cref="DefaultChannelPort"/>,1 到 65535)、
+    /// <c>client_version</c>(可选,缺省 0:登录请求里的客户端版本号,0 到 4294967295 的十进制整数,E-453;空值当没写,值怎么折出来见探针的 <c>client-version</c> 子命令)。
     /// <c>server_url</c> 与 <c>aes_key</c> 的写法与游戏数据目录里 Config.toml 的同名项一样,可以直接抄过来。
     /// </para>
     /// <para>
@@ -72,6 +76,7 @@ namespace Dnf.Net.Session
         public const string KeyMouseCipher = "mouse_cipher";
         public const string KeyDataVersion = "data_version";
         public const string KeyChannelPort = "channel_port";
+        public const string KeyClientVersion = "client_version";
 
         /// <summary>频道端口缺省值(与 <see cref="OnlineEntrySettings.ChannelPort"/> 的缺省值相同)。</summary>
         public const int DefaultChannelPort = 30011;
@@ -85,12 +90,13 @@ namespace Dnf.Net.Session
 
         private readonly byte[] _mouseCipher;
 
-        private OnlineConnectionConfig(GatewayOptions gateway, byte[] mouseCipher, uint dataVersion, int channelPort)
+        private OnlineConnectionConfig(GatewayOptions gateway, byte[] mouseCipher, uint dataVersion, int channelPort, uint clientVersion)
         {
             Gateway = gateway;
             _mouseCipher = mouseCipher;
             DataVersion = dataVersion;
             ChannelPort = channelPort;
+            ClientVersion = clientVersion;
         }
 
         /// <summary>网关连接参数(地址与密钥)。</summary>
@@ -101,6 +107,9 @@ namespace Dnf.Net.Session
 
         /// <summary>默认频道端口。</summary>
         public int ChannelPort { get; }
+
+        /// <summary>登录请求里的客户端版本号(缺省 0)。</summary>
+        public uint ClientVersion { get; }
 
         /// <summary>8 字节鼠标口令密文的副本。</summary>
         public byte[] CopyMouseCipher()
@@ -119,6 +128,7 @@ namespace Dnf.Net.Session
                 MouseCipher = CopyMouseCipher(),
                 DataVersion = DataVersion,
                 ChannelPort = ChannelPort,
+                ClientVersion = ClientVersion,
             };
         }
 
@@ -214,6 +224,14 @@ namespace Dnf.Net.Session
                 return false;
             }
 
+            uint clientVersion = 0;
+            if (values.TryGetValue(KeyClientVersion, out string clientVersionText) && !string.IsNullOrEmpty(clientVersionText)
+                && !OnlineProbeKnobParser.TryParseClientVersion(clientVersionText, out clientVersion))
+            {
+                problem = OnlineConnectionProblem.ClientVersionInvalid;
+                return false;
+            }
+
             if (!GatewayOptions.TryCreate(url, aesKey, GatewayTimeout, out GatewayOptions gateway, out _))
             {
                 // 地址与密钥分开都合规、合起来却不行:不会发生;保险起见按地址问题报,不放过
@@ -221,7 +239,7 @@ namespace Dnf.Net.Session
                 return false;
             }
 
-            config = new OnlineConnectionConfig(gateway, mouseCipher, dataVersion, channelPort);
+            config = new OnlineConnectionConfig(gateway, mouseCipher, dataVersion, channelPort, clientVersion);
             problem = OnlineConnectionProblem.None;
             return true;
         }
@@ -253,6 +271,8 @@ namespace Dnf.Net.Session
                     return KeyDataVersion + " 不合规(要 0 到 4294967295 的整数)";
                 case OnlineConnectionProblem.ChannelPortInvalid:
                     return KeyChannelPort + " 不合规(要 1 到 65535 的整数)";
+                case OnlineConnectionProblem.ClientVersionInvalid:
+                    return KeyClientVersion + " 不合规(要 0 到 4294967295 的整数)";
                 default:
                     return string.Empty;
             }

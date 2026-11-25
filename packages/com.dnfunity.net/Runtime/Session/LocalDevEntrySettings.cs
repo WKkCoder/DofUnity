@@ -10,11 +10,19 @@ namespace Dnf.Net.Session
     /// 本地机密文件(local.secrets.env 的账号/口令/鼠标口令密文)组出 <see cref="OnlineEntrySettings"/>。
     /// 这些文件都不入库,值只在进程内使用;正式分发不要用这条路径(凭据应来自登录界面输入)。
     /// 失败时 <paramref name="problem"/> 只说缺了哪一项,不带任何值。
+    /// <para>
+    /// 可选项 <see cref="KeyClientVersion"/>(写在 local.env 里,不是机密):登录请求里的客户端版本号(E-441、E-451、E-453)。
+    /// 没有这一项或值为空就是 0(与此前发出的登录帧逐字节相同);写了但不是 0 到 4294967295 的十进制整数则读取失败,说明只点名这个项、不带值。
+    /// 探针命令行上的 <c>--client-version</c> 仍然优先于它。
+    /// </para>
     /// </summary>
     public static class LocalDevEntrySettings
     {
         /// <summary>实测能通过的数据版本默认值(要与服务端参数脚本一致,E-328)。</summary>
         public const uint DefaultDataVersion = 20080418;
+
+        /// <summary>local.env 里客户端版本号的键名(可选;缺省 0)。</summary>
+        public const string KeyClientVersion = "DNF_CLIENT_VERSION";
 
         /// <summary>从 <paramref name="repoRoot"/> 读本地开发入参;缺项返回 false 并说明是哪一项。</summary>
         public static bool TryLoad(string repoRoot, out OnlineEntrySettings settings, out string problem)
@@ -40,6 +48,14 @@ namespace Dnf.Net.Session
             if (!localEnv.TryGetValue("DNF_DIR", out string dnfDir) || string.IsNullOrEmpty(dnfDir))
             {
                 problem = "local.env 里没有 DNF_DIR";
+                return false;
+            }
+
+            uint clientVersion = 0;
+            if (localEnv.TryGetValue(KeyClientVersion, out string clientVersionText) && !string.IsNullOrEmpty(clientVersionText)
+                && !OnlineProbeKnobParser.TryParseClientVersion(clientVersionText, out clientVersion))
+            {
+                problem = "local.env 里的 " + KeyClientVersion + " 不合规(要 0 到 4294967295 的十进制整数)";
                 return false;
             }
 
@@ -117,6 +133,7 @@ namespace Dnf.Net.Session
                 Password = password,
                 MouseCipher = mouseCipher,
                 DataVersion = DefaultDataVersion,
+                ClientVersion = clientVersion,
             };
             return true;
         }

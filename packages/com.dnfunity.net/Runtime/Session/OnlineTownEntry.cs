@@ -106,6 +106,25 @@ namespace Dnf.Net.Session
         /// 缺省 0(真服已确认接受 0,台账 E-444),此时发出的登录帧与没有这个设置项时逐字节相同。
         /// </summary>
         public uint ClientVersion { get; set; }
+
+        /// <summary>
+        /// 复制一份入参,账号与口令留空(给只存"模板"、登录时才由界面输入凭据的宿主用);鼠标口令密文复制成新数组,其余设置项原样带上。
+        /// 以前宿主各自抄一张固定的字段表,E-441 加客户端版本号时漏抄了两处,版本号在到达会话之前就丢了(E-453);
+        /// 现在统一走这里,测试用反射钉住:<see cref="OnlineEntrySettings"/> 新增任何公开设置项而这里没抄,测试就失败。
+        /// </summary>
+        public OnlineEntrySettings CloneWithoutCredentials()
+        {
+            return new OnlineEntrySettings
+            {
+                Gateway = Gateway,
+                MouseCipher = MouseCipher == null ? null : (byte[])MouseCipher.Clone(),
+                DataVersion = DataVersion,
+                ChannelPort = ChannelPort,
+                MaxSlots = MaxSlots,
+                ServerGroup = ServerGroup,
+                ClientVersion = ClientVersion,
+            };
+        }
     }
 
     /// <summary>
