@@ -37,6 +37,9 @@ namespace Dnf.Client
         private readonly TownAtlas _atlas;
         private readonly OnlineTownCommandCoordinator _coordinator;
         private readonly Action<string> _log;
+        private OnlineItemLiveSync _itemLiveSync;
+        private HeroProgress _boundProgress;
+        private Action _onEquipsChanged;
         private bool _exiting;
         private bool _disconnectLogged;
         private bool _disposed;
@@ -134,7 +137,50 @@ namespace Dnf.Client
             World?.RecordSafePosition();
         }
 
-        /// <summary>每帧在流程 <c>Poll</c> 前推进在线切区状态机并处理 <c>0/199</c> 踢下线/掉线通知。</summary>
+        /// <summary>把进城物品快照转成 Play 层中立同步数据(无快照时返回各标志为 false 的空数据)。</summary>
+        public OnlineItemSyncData BuildInitialItemSyncData()
+        {
+            return OnlineItemSyncAdapter.ToPlayData(_host.ItemSync, Profile.ServerUniqueId);
+        }
+
+        /// <summary>
+        /// 绑定联网主角进度与 Stage 2 实时物品增量同步(<see cref="OnlineItemLiveSync"/>):
+        /// 以进城快照播种影子槽表、按需立即应用到 <paramref name="progress"/>、更新 <see cref="Profile"/> 同步标志,
+        /// 并订阅会话帧事件(回调只入队,主线程在 <see cref="Poll"/> 中消费)。
+        /// </summary>
+        public OnlineItemSyncReport BindOnlineItems(
+            HeroProgress progress,
+            DnfAssets assets = null,
+            Action onEquipsChanged = null,
+            bool applyInitial = true)
+        {
+            if (progress == null)
+            {
+                throw new ArgumentNullException(nameof(progress));
+            }
+            if (_disposed)
+            {
+                return null;
+            }
+            _itemLiveSync?.Dispose();
+            _itemLiveSync = new OnlineItemLiveSync(_host.Session, _host.ItemSync, Profile.ServerUniqueId, assets);
+            _boundProgress = progress;
+            _onEquipsChanged = onEquipsChanged;
+            if (applyInitial)
+            {
+                OnlineItemSyncReport report = _itemLiveSync.ApplyCurrent(progress, Profile);
+                if (report.EquipsApplied > 0)
+                {
+                    _onEquipsChanged?.Invoke();
+                }
+                return report;
+            }
+            OnlineItemSyncData initialData = _itemLiveSync.ProjectData();
+            Profile.ApplyItemSyncState(initialData.HasGold, initialData.HasBagData, initialData.HasEquipData);
+            return null;
+        }
+
+        /// <summary>每帧在流程 <c>Poll</c> 前推进在线切区状态机、主线程消费实时物品增量并处理 <c>0/199</c> 踢下线/掉线通知。</summary>
         public void Poll(long nowMs)
         {
             if (_disposed)
@@ -148,6 +194,15 @@ namespace Dnf.Client
             else
             {
                 _coordinator.Poll(nowMs);
+            }
+            if (!_exiting && _itemLiveSync != null && _boundProgress != null)
+            {
+                int beforeEquipVersion = _boundProgress.EquipVersion;
+                OnlineItemSyncReport liveReport = _itemLiveSync.DrainAndApply(_boundProgress, Profile);
+                if (liveReport != null && _boundProgress.EquipVersion != beforeEquipVersion)
+                {
+                    _onEquipsChanged?.Invoke();
+                }
             }
             if ((_coordinator.IsKicked || _coordinator.IsLost) && !_exiting && !_disconnectLogged)
             {
@@ -218,6 +273,10 @@ namespace Dnf.Client
                 return;
             }
             _disposed = true;
+            _itemLiveSync?.Dispose();
+            _itemLiveSync = null;
+            _boundProgress = null;
+            _onEquipsChanged = null;
             _coordinator.Dispose();
         }
     }

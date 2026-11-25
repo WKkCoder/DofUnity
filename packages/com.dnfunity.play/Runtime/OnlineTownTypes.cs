@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using Dnf.Game;
 using Dnf.Render;
@@ -129,11 +130,19 @@ namespace Dnf.Play
         /// <summary>服务端职业不是鬼剑士时为 true:外显与技能退回鬼剑士并在界面与日志中明确声明。</summary>
         public bool JobFallback { get; }
 
-        /// <summary>本阶段不同步背包物品、装备属性与金币,统一显式为 false。</summary>
-        public bool InventorySynced => false;
-        public bool EquipsSynced => false;
-        public bool GoldSynced => false;
+        /// <summary>物品/装备/金币同步状态(默认 false,同步落地后按实际写入置位);技能本轮恒为 false。</summary>
+        public bool InventorySynced { get; private set; }
+        public bool EquipsSynced { get; private set; }
+        public bool GoldSynced { get; private set; }
         public bool SkillsSynced => false;
+
+        /// <summary>更新金币、背包、装备栏同步标志(不影响技能标志)。</summary>
+        public void ApplyItemSyncState(bool goldSynced, bool inventorySynced, bool equipsSynced)
+        {
+            GoldSynced = goldSynced;
+            InventorySynced = inventorySynced;
+            EquipsSynced = equipsSynced;
+        }
 
         /// <summary>当职业退回鬼剑士时返回明确提示文案;否则返回 null。</summary>
         public string JobFallbackMessage(bool hasFonts)
@@ -318,12 +327,30 @@ namespace Dnf.Play
             OnlineTownSnapshotCheck snap = profile != null ? profile.SnapshotCheck : default;
             return "DNF_ONLINE stage=town event=enter"
                 + " mode=" + (synced ? "online" : "offline")
-                + " unsynced=inventory,equips,gold"
+                + " unsynced=" + UnsyncedToken(profile)
                 + " jobfallback=" + BoolToken(jobFallback)
                 + " townfallback=" + BoolToken(townFallback)
                 + " areasync=" + (areaSyncEnabled ? "on" : "off")
                 + " perms=" + (profile != null && profile.DungeonPermissionCount.HasValue ? "present" : "none")
                 + " " + snap.FormatDiagnostic();
+        }
+
+        private static string UnsyncedToken(OnlineHeroProfile profile)
+        {
+            bool invSynced = profile != null && profile.InventorySynced;
+            bool eqSynced = profile != null && profile.EquipsSynced;
+            bool goldSynced = profile != null && profile.GoldSynced;
+            bool skillsSynced = profile != null && profile.SkillsSynced;
+            if (!invSynced && !eqSynced && !goldSynced)
+            {
+                return "inventory,equips,gold";
+            }
+            var parts = new List<string>(4);
+            if (!invSynced) parts.Add("inventory");
+            if (!eqSynced) parts.Add("equips");
+            if (!goldSynced) parts.Add("gold");
+            if (!skillsSynced) parts.Add("skills");
+            return parts.Count == 0 ? "none" : string.Join(",", parts);
         }
 
         public static string AreaChange(string outcome, int? errorCode = null, int? minutes = null)

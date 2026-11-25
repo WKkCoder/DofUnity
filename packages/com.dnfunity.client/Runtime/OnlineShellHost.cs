@@ -210,6 +210,9 @@ namespace Dnf.Client
         /// <summary>最近一次成功选角收到的副本权限快照;未进城时为 null。</summary>
         public DungeonPermissionSnapshot DungeonPermissions => _backend.DungeonPermissions;
 
+        /// <summary>最近一次成功选角收到的进城物品快照;未进城时为 null。</summary>
+        public ItemSyncSnapshot ItemSync => _backend.ItemSync;
+
         /// <summary>每帧调一次(渲染线程):先把这一帧的输入交给外壳,再推动选角界面的动画,最后轮询阶段机。<paramref name="nowMs"/> 要单调递增。</summary>
         public void Tick(OnlineShellFrameInput input, double deltaMs, long nowMs)
         {

@@ -49,12 +49,19 @@ namespace Dnf.Client
     internal readonly struct OnlineSelectReport
     {
         public OnlineSelectReport(bool entered, bool mayTryAnotherSlot, string snapshotLine)
-            : this(entered, mayTryAnotherSlot, snapshotLine, null, null, null)
+            : this(entered, mayTryAnotherSlot, snapshotLine, null, null, null, null)
         {
         }
 
         public OnlineSelectReport(bool entered, bool mayTryAnotherSlot, string snapshotLine,
             SelectCharacterResult selectCharacter, TownEntrySnapshot snapshot, DungeonPermissionSnapshot dungeonPermissions)
+            : this(entered, mayTryAnotherSlot, snapshotLine, selectCharacter, snapshot, dungeonPermissions, null)
+        {
+        }
+
+        public OnlineSelectReport(bool entered, bool mayTryAnotherSlot, string snapshotLine,
+            SelectCharacterResult selectCharacter, TownEntrySnapshot snapshot, DungeonPermissionSnapshot dungeonPermissions,
+            ItemSyncSnapshot itemSync)
         {
             Entered = entered;
             MayTryAnotherSlot = mayTryAnotherSlot;
@@ -62,6 +69,7 @@ namespace Dnf.Client
             SelectCharacter = selectCharacter;
             Snapshot = snapshot;
             DungeonPermissions = dungeonPermissions;
+            ItemSync = itemSync;
         }
 
         public bool Entered { get; }
@@ -70,6 +78,7 @@ namespace Dnf.Client
         public SelectCharacterResult SelectCharacter { get; }
         public TownEntrySnapshot Snapshot { get; }
         public DungeonPermissionSnapshot DungeonPermissions { get; }
+        public ItemSyncSnapshot ItemSync { get; }
     }
 
     /// <summary>读频道目录一步的报告(结局与快照;联网层的结果类没有公开构造函数,假会话只能造报告)。</summary>
@@ -204,7 +213,7 @@ namespace Dnf.Client
         {
             return result.Entered
                 ? new OnlineSelectReport(true, result.MayTryAnotherSlot, OnlineNetLog.Snapshot(result.Snapshot),
-                    result.SelectCharacter, result.Snapshot, result.DungeonPermissions)
+                    result.SelectCharacter, result.Snapshot, result.DungeonPermissions, result.ItemSync)
                 : new OnlineSelectReport(false, result.MayTryAnotherSlot, null);
         }
 
@@ -329,6 +338,7 @@ namespace Dnf.Client
             public SelectCharacterResult SelectCharacter;
             public TownEntrySnapshot Snapshot;
             public DungeonPermissionSnapshot DungeonPermissions;
+            public ItemSyncSnapshot ItemSync;
         }
 
         private readonly OnlineEntrySettings _template;
@@ -417,6 +427,18 @@ namespace Dnf.Client
             }
         }
 
+        /// <summary>最近一次成功选角收到的进城物品快照;没进城或未收到时为 null。</summary>
+        public ItemSyncSnapshot ItemSync
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _slot?.ItemSync;
+                }
+            }
+        }
+
         /// <summary>现在有没有会话(登录请求发出之后到放弃之前)。</summary>
         public bool HasSession
         {
@@ -490,12 +512,14 @@ namespace Dnf.Client
                             current.SelectCharacter = report.SelectCharacter;
                             current.Snapshot = report.Snapshot;
                             current.DungeonPermissions = report.DungeonPermissions;
+                            current.ItemSync = report.ItemSync;
                         }
                         else
                         {
                             current.SelectCharacter = null;
                             current.Snapshot = null;
                             current.DungeonPermissions = null;
+                            current.ItemSync = null;
                         }
                     }
                 }
@@ -684,6 +708,7 @@ namespace Dnf.Client
                 slot.SelectCharacter = null;
                 slot.Snapshot = null;
                 slot.DungeonPermissions = null;
+                slot.ItemSync = null;
             }
             if (target.Host != null)
             {

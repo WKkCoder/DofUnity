@@ -56,15 +56,51 @@ namespace Dnf.Play
         /// <summary>返回明确的未同步/职业退回说明文本。</summary>
         public static string StatusBadgeText(OnlineHeroProfile profile, bool hasFonts)
         {
-            if (profile != null && profile.JobFallback)
+            bool jobFallback = profile != null && profile.JobFallback;
+            bool invSynced = profile != null && profile.InventorySynced;
+            bool eqSynced = profile != null && profile.EquipsSynced;
+            bool goldSynced = profile != null && profile.GoldSynced;
+            bool skillsSynced = profile != null && profile.SkillsSynced;
+
+            if (!invSynced && !eqSynced && !goldSynced)
             {
+                if (jobFallback)
+                {
+                    return hasFonts
+                        ? "当前仅支持鬼剑士外观与技能，暂按鬼剑士显示 · 道具/装备/金币未同步"
+                        : "SWORDMAN FALLBACK / ITEMS EQUIPS GOLD UNSYNCED";
+                }
                 return hasFonts
-                    ? "当前仅支持鬼剑士外观与技能，暂按鬼剑士显示 · 道具/装备/金币未同步"
-                    : "SWORDMAN FALLBACK / ITEMS EQUIPS GOLD UNSYNCED";
+                    ? "联机城镇 · 道具/装备/金币暂未同步"
+                    : "ONLINE TOWN / ITEMS EQUIPS GOLD UNSYNCED";
             }
-            return hasFonts
-                ? "联机城镇 · 道具/装备/金币暂未同步"
-                : "ONLINE TOWN / ITEMS EQUIPS GOLD UNSYNCED";
+
+            if (hasFonts)
+            {
+                string prefix = jobFallback
+                    ? "当前仅支持鬼剑士外观与技能，暂按鬼剑士显示"
+                    : "联机城镇";
+                var parts = new List<string>(4);
+                if (!invSynced) parts.Add("道具");
+                if (!eqSynced) parts.Add("装备");
+                if (!goldSynced) parts.Add("金币");
+                if (!skillsSynced) parts.Add("技能");
+                return parts.Count == 0
+                    ? prefix + " · 全部已同步"
+                    : prefix + " · " + string.Join("/", parts) + "未同步";
+            }
+            else
+            {
+                string prefix = jobFallback ? "SWORDMAN FALLBACK" : "ONLINE TOWN";
+                var parts = new List<string>(4);
+                if (!invSynced) parts.Add("ITEMS");
+                if (!eqSynced) parts.Add("EQUIPS");
+                if (!goldSynced) parts.Add("GOLD");
+                if (!skillsSynced) parts.Add("SKILLS");
+                return parts.Count == 0
+                    ? prefix + " / ALL SYNCED"
+                    : prefix + " / " + string.Join(" ", parts) + " UNSYNCED";
+            }
         }
 
         private static ShellTone ToneOf(OnlineTownPromptKind kind)
