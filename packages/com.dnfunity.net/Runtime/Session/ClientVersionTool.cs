@@ -86,28 +86,34 @@ namespace Dnf.Net.Session
             return Run(args, path => ReadBounded(path, MaxFileBytes), write);
         }
 
-        /// <summary>读整个文件;大于 <paramref name="maxBytes"/> 时在分配之前就抛 <see cref="IOException"/>。</summary>
+        /// <summary>读整个文件;大于 <paramref name="maxBytes"/>(或装不进一个数组)时在分配之前就抛 <see cref="IOException"/>。</summary>
         public static byte[] ReadBounded(string path, long maxBytes)
         {
             using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
-                if (stream.Length > maxBytes)
+                if (stream.Length > maxBytes || stream.Length > int.MaxValue)
                 {
                     throw new IOException("file too large");
                 }
-                var buffer = new byte[(int)stream.Length];
-                int total = 0;
-                while (total < buffer.Length)
-                {
-                    int read = stream.Read(buffer, total, buffer.Length - total);
-                    if (read <= 0)
-                    {
-                        throw new IOException("file shrank while reading");
-                    }
-                    total += read;
-                }
-                return buffer;
+                return ReadFully(stream, (int)stream.Length);
             }
+        }
+
+        /// <summary>从流里读恰好 <paramref name="length"/> 字节:流一次可能只给一部分,读到够为止;流提前结束(读到 0 字节)就抛 <see cref="IOException"/>。</summary>
+        public static byte[] ReadFully(Stream stream, int length)
+        {
+            var buffer = new byte[length];
+            int total = 0;
+            while (total < buffer.Length)
+            {
+                int read = stream.Read(buffer, total, buffer.Length - total);
+                if (read <= 0)
+                {
+                    throw new IOException("file shrank while reading");
+                }
+                total += read;
+            }
+            return buffer;
         }
     }
 }

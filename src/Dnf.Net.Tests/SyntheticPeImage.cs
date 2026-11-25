@@ -17,6 +17,9 @@ internal static class SyntheticPeImage
 
         public byte[] Data;
 
+        /// <summary>叶子在数据项里声明的大小;不设就是 <see cref="Data"/> 的长度。</summary>
+        public int? DeclaredSize;
+
         public static Node Dir(params (bool Named, uint Id, Node Child)[] entries)
         {
             var node = new Node();
@@ -24,9 +27,9 @@ internal static class SyntheticPeImage
             return node;
         }
 
-        public static Node Leaf(byte[] data)
+        public static Node Leaf(byte[] data, int? declaredSize = null)
         {
-            return new Node { Data = data };
+            return new Node { Data = data, DeclaredSize = declaredSize };
         }
     }
 
@@ -46,6 +49,24 @@ internal static class SyntheticPeImage
 
         /// <summary>可选头里的数据目录项数;默认 16。</summary>
         public uint DirectoryCount = 16;
+
+        /// <summary>不管数据目录项数是多少、也不管 <see cref="DeclareResourceDirectory"/>,都把第 2 项(资源)的位置写上值。</summary>
+        public bool ForceResourceDirectoryEntry;
+
+        /// <summary>数据目录里登记的资源 RVA(默认就是 <see cref="ResourceRva"/>)。</summary>
+        public uint? DeclaredResourceRva;
+
+        /// <summary>数据目录里登记的资源大小(默认是资源节内容的长度)。</summary>
+        public uint? DeclaredResourceSize;
+
+        /// <summary>可选头大小字段的取值(默认 PE32 是 224、PE32+ 是 240);节表紧跟在这么多字节之后。</summary>
+        public int? OptionalHeaderSize;
+
+        /// <summary>文件头里声明的节数(默认 2);节表里实际写了几个不受它影响。</summary>
+        public ushort? DeclaredSectionCount;
+
+        /// <summary>资源节写在节表的第一项、代码节写在第二项(默认反过来)。</summary>
+        public bool ResourceSectionFirst;
     }
 
     public static (bool Named, uint Id, Node Child) Id(uint id, Node child) => (false, id, child);
@@ -104,7 +125,7 @@ internal static class SyntheticPeImage
         options ??= new Options();
         byte[] rsrc = BuildResourceSection(root, options.ResourceRva);
 
-        int optionalSize = options.Pe32Plus ? 240 : 224;
+        int optionalSize = options.OptionalHeaderSize ?? (options.Pe32Plus ? 240 : 224);
         uint fileEnd = options.ResourceRawPointer + (uint)rsrc.Length;
         var image = new byte[Math.Max(0x400u, fileEnd)];
 
@@ -116,7 +137,7 @@ internal static class SyntheticPeImage
         image[pe] = (byte)'P';
         image[pe + 1] = (byte)'E';
         W16(image, pe + 4, options.Pe32Plus ? 0x8664u : 0x14Cu);          // 机器类型
-        W16(image, pe + 6, 2);                                            // 两个节:.text 与 .rsrc
+        W16(image, pe + 6, options.DeclaredSectionCount ?? 2);            // 默认两个节:.text 与 .rsrc
         W16(image, pe + 20, (uint)optionalSize);
         W16(image, pe + 22, 0x0102);
 
@@ -125,15 +146,23 @@ internal static class SyntheticPeImage
         int countOffset = optional + (options.Pe32Plus ? 108 : 92);
         int directories = optional + (options.Pe32Plus ? 112 : 96);
         W32(image, countOffset, options.DirectoryCount);
-        if (options.DeclareResourceDirectory && options.DirectoryCount > 2)
+        if ((options.DeclareResourceDirectory && options.DirectoryCount > 2) || options.ForceResourceDirectoryEntry)
         {
-            W32(image, directories + 2 * 8, options.ResourceRva);
-            W32(image, directories + 2 * 8 + 4, (uint)rsrc.Length);
+            W32(image, directories + 2 * 8, options.DeclaredResourceRva ?? options.ResourceRva);
+            W32(image, directories + 2 * 8 + 4, options.DeclaredResourceSize ?? (uint)rsrc.Length);
         }
 
         int sections = optional + optionalSize;
-        WriteSection(image, sections, ".text", 0x200, 0x1000, 0x200, 0x200);
-        WriteSection(image, sections + 40, ".rsrc", (uint)rsrc.Length, options.ResourceRva, (uint)rsrc.Length, options.ResourceRawPointer);
+        if (options.ResourceSectionFirst)
+        {
+            WriteSection(image, sections, ".rsrc", (uint)rsrc.Length, options.ResourceRva, (uint)rsrc.Length, options.ResourceRawPointer);
+            WriteSection(image, sections + 40, ".text", 0x200, 0x1000, 0x200, 0x200);
+        }
+        else
+        {
+            WriteSection(image, sections, ".text", 0x200, 0x1000, 0x200, 0x200);
+            WriteSection(image, sections + 40, ".rsrc", (uint)rsrc.Length, options.ResourceRva, (uint)rsrc.Length, options.ResourceRawPointer);
+        }
 
         Array.Copy(rsrc, 0, image, options.ResourceRawPointer, rsrc.Length);
         return image;
@@ -195,6 +224,10 @@ internal static class SyntheticPeImage
         {
             int at = directoryOffset[directory];
             int named = directory.Entries.Count(e => e.Named);
+            W32(bytes, at, 0x7E7E7E7Eu);                               // 特征字段(保留位):读版本不看它,填非零假数,读错位的字段就不会恰好读到 0
+            W32(bytes, at + 4, 0x5A3C1E87u);                           // 时间戳:随手写的非零假数
+            W16(bytes, at + 8, 0x0405);                                // 主版本号、次版本号也不是 0:偏一个字节读到的数就不会恰好是 0
+            W16(bytes, at + 10, 0x0607);
             W16(bytes, at + 12, (uint)named);
             W16(bytes, at + 14, (uint)(directory.Entries.Count - named));
             int entry = at + 16;
@@ -209,7 +242,7 @@ internal static class SyntheticPeImage
         {
             int at = entryOffset[leaf];
             W32(bytes, at, rsrcRva + (uint)blobOffset[leaf]);          // 数据的 RVA
-            W32(bytes, at + 4, (uint)leaf.Data.Length);
+            W32(bytes, at + 4, (uint)(leaf.DeclaredSize ?? leaf.Data.Length));
             Array.Copy(leaf.Data, 0, bytes, blobOffset[leaf], leaf.Data.Length);
         }
         return bytes;

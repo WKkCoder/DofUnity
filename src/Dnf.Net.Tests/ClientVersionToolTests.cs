@@ -249,9 +249,93 @@ public sealed class ClientVersionToolTests
     }
 
     [Fact]
-    public void The_size_cap_constant_is_generous_but_bounded()
+    public void The_size_cap_constant_is_exactly_256_mebibytes()
     {
-        Assert.True(ClientVersionTool.MaxFileBytes >= 64L * 1024 * 1024);
-        Assert.True(ClientVersionTool.MaxFileBytes <= 1024L * 1024 * 1024);
+        Assert.Equal(256L * 1024 * 1024, ClientVersionTool.MaxFileBytes);
+    }
+
+    // 一个按"每次最多给 chunk 字节"读、并像真的流一样检查参数的假流;读够 give 字节之后返回 0(提前结束);调用次数太多就抛(防止"读到 0 不退出"的错误写法挂住测试)
+    private sealed class TrickleStream : Stream
+    {
+        private readonly byte[] _source;
+        private readonly int _chunk;
+        private int _position;
+        private int _calls;
+
+        public TrickleStream(byte[] source, int chunk)
+        {
+            _source = source;
+            _chunk = chunk;
+        }
+
+        public int Calls => _calls;
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (++_calls > 200)
+            {
+                throw new InvalidOperationException("反复读不到数据还在继续读");
+            }
+            if (offset < 0 || count < 0 || offset + count > buffer.Length)
+            {
+                throw new ArgumentException("读的范围越过了缓冲区");
+            }
+            int n = Math.Min(Math.Min(_chunk, count), _source.Length - _position);
+            Array.Copy(_source, _position, buffer, offset, n);
+            _position += n;
+            return n;
+        }
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    [InlineData(7)]
+    [InlineData(100)]
+    public void ReadFully_keeps_reading_until_it_has_everything_even_when_the_stream_gives_only_a_little_at_a_time(int chunk)
+    {
+        byte[] content = Enumerable.Range(1, 23).Select(i => (byte)i).ToArray();
+        var stream = new TrickleStream(content, chunk);
+
+        byte[] read = ClientVersionTool.ReadFully(stream, content.Length);
+
+        Assert.Equal(content, read);
+        Assert.Equal((content.Length + chunk - 1) / chunk, stream.Calls);       // 每次都带着剩余的长度去要,不多一次不少一次
+    }
+
+    [Fact]
+    public void ReadFully_of_zero_bytes_does_not_touch_the_stream_and_a_stream_that_ends_early_is_an_io_error()
+    {
+        var untouched = new TrickleStream(new byte[] { 1, 2, 3 }, 1);
+        Assert.Empty(ClientVersionTool.ReadFully(untouched, 0));
+        Assert.Equal(0, untouched.Calls);
+
+        var shortStream = new TrickleStream(new byte[] { 1, 2, 3 }, 2);
+        Assert.Throws<IOException>(() => ClientVersionTool.ReadFully(shortStream, 5));      // 只有 3 字节,要 5 字节
+        Assert.Equal(3, shortStream.Calls);                                                  // 2 + 1 + 一次读到 0 字节就收场
     }
 }

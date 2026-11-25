@@ -98,6 +98,32 @@ public sealed class ClientVersionFoldingTests
     }
 
     [Fact]
+    public void Every_value_in_a_dense_band_around_the_32_bit_limit_agrees_with_the_reference()
+    {
+        // 随机取值几乎碰不到 32 位上限附近(那里 A 约 429、B 约 49、C 约 600):这一带逐个核对,
+        // C 取 580 到 640 每个整数(⌊C÷100⌋ 在 5 与 6 之间换挡的地方),D 取小数、刚好够与刚好超出的几个值
+        BigInteger modulus = BigInteger.Pow(2, 32);
+        int checkedCount = 0;
+        foreach (int a in new[] { 428, 429, 430 })
+        {
+            foreach (int b in new[] { 48, 49, 50, 99 })
+            {
+                for (int c = 580; c <= 640; c++)
+                {
+                    foreach (int d in new[] { 0, 1, 95, 96, 99, 7295, 7296, 8000, 65535 })
+                    {
+                        BigInteger exact = Reference(a, b, c, d);
+                        Assert.Equal((uint)(exact % modulus), ClientVersionFolding.Fold((ushort)a, (ushort)b, (ushort)c, (ushort)d));
+                        Assert.Equal(exact < modulus, ClientVersionFolding.IsExact((ushort)a, (ushort)b, (ushort)c, (ushort)d));
+                        checkedCount++;
+                    }
+                }
+            }
+        }
+        Assert.Equal(3 * 4 * 61 * 9, checkedCount);
+    }
+
+    [Fact]
     public void The_extreme_values_wrap_instead_of_throwing()
     {
         // 全 65535:折出的数远超 32 位;只要求按 32 位回绕、不抛异常(项目开了溢出检查的构建也一样)
