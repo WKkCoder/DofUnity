@@ -165,6 +165,7 @@ namespace Dnf.Net.Session
         public SelectCharacterResult SelectCharacter => EntryResult.SelectCharacter;
         public TownEntrySnapshot Snapshot => EntryResult.Snapshot;
         public DungeonPermissionSnapshot DungeonPermissions => EntryResult.DungeonPermissions;
+        public ItemSyncSnapshot ItemSync => EntryResult?.ItemSync;
         internal OnlineEntryResult EntryResult { get; }
     }
 
@@ -750,7 +751,8 @@ namespace Dnf.Net.Session
             OnlineChannelLink link = _link;
             OnlineEntryResult result = new OnlineEntryResult(outcome.Stage, outcome.Failure, outcome.LoginFailureCode,
                 outcome.Slot, outcome.Entered ? link?.Session : null, link?.Connection, outcome.FramesSeen,
-                outcome.SecondLayerMismatches, outcome.Snapshot, outcome.DungeonPermissions, outcome.SelectCharacter);
+                outcome.SecondLayerMismatches, outcome.Snapshot, outcome.DungeonPermissions, outcome.SelectCharacter,
+                outcome.ItemSync);
             _detached = true;
             _restoreHeartbeatOnLeave = false;
             _currentLinkAuthenticated = false;

@@ -130,6 +130,15 @@ namespace Dnf.Net.Session
             GameClientSession session, IDisposable connection, int framesSeen, int secondLayerMismatches,
             TownEntrySnapshot snapshot = null, DungeonPermissionSnapshot dungeonPermissions = null,
             SelectCharacterResult selectCharacter = null)
+            : this(stage, failure, loginFailureCode, slot, session, connection, framesSeen, secondLayerMismatches,
+                snapshot, dungeonPermissions, selectCharacter, null)
+        {
+        }
+
+        internal OnlineEntryResult(OnlineStage stage, OnlineFailure failure, byte? loginFailureCode, int slot,
+            GameClientSession session, IDisposable connection, int framesSeen, int secondLayerMismatches,
+            TownEntrySnapshot snapshot, DungeonPermissionSnapshot dungeonPermissions,
+            SelectCharacterResult selectCharacter, ItemSyncSnapshot itemSync)
         {
             Stage = stage;
             Failure = failure;
@@ -142,6 +151,7 @@ namespace Dnf.Net.Session
             Snapshot = snapshot;
             DungeonPermissions = dungeonPermissions;
             SelectCharacter = selectCharacter;
+            ItemSync = itemSync;
         }
 
         /// <summary>停在的阶段(成功为 <see cref="OnlineStage.Done"/>)。</summary>
@@ -190,6 +200,15 @@ namespace Dnf.Net.Session
         /// 不要用 <see cref="Slot"/> 去对应它。只是附加信息:选角的流程与 <see cref="Stage"/>、<see cref="Failure"/> 的判定仍由 <see cref="SlotJudge"/> 定,不受它影响。
         /// </summary>
         public SelectCharacterResult SelectCharacter { get; }
+
+        /// <summary>
+        /// 进城回程里物品下行包归约出的只读快照(没进城为 null;进城后永不为 null,没有任何物品帧时为空快照)。
+        /// 喂给解析器的帧与 <see cref="Snapshot"/> 是同一批(城镇阶段收到的全部帧,各一遍),进副本阶段的帧不在其中。
+        /// 解析时不传物品类型回调(<see cref="IItemKindResolver"/> 为 null):宠物栏与身上装备增量里需要判定的条目会计入
+        /// <see cref="ItemSyncSnapshot.FramesKindUnresolved"/>,这是探测阶段的预期行为,不是错误。
+        /// 只是附加信息:不影响阶段与失败判定。
+        /// </summary>
+        public ItemSyncSnapshot ItemSync { get; }
 
         /// <summary>关闭连接与会话。</summary>
         public void Dispose()
@@ -340,8 +359,11 @@ namespace Dnf.Net.Session
             TownEntrySnapshot snapshot = TownEntryParser.Parse(entryFrames, slot);
             DungeonPermissionSnapshot permissions = DungeonPermissionParser.Collect(entryFrames);
             SelectCharacterResult selectResult = outcome.SelectResult ?? FirstSelectSuccess(tail);
+            // 不传物品类型回调(kindResolver 为 null):宠物栏与身上装备增量里需要类型判定的条目会计入 FramesKindUnresolved,这是探测阶段的预期行为;
+            // 空列表或没有物品帧时产生空的 ItemSyncSnapshot(Fail 路径传 null)。
+            ItemSyncSnapshot itemSync = ItemSyncParser.Parse(entryFrames, kindResolver: null);
             return new OnlineTownSelection(new OnlineEntryResult(OnlineStage.Done, OnlineFailure.None, null, slot,
-                session, connection, session.Events.Count, session.SecondLayerMismatches, snapshot, permissions, selectResult), false);
+                session, connection, session.Events.Count, session.SecondLayerMismatches, snapshot, permissions, selectResult, itemSync), false);
         }
 
         /// <summary>本机出口地址按小端 u32 取(登录请求里要带);不是 IPv4 或取不到就是 0。</summary>
@@ -450,7 +472,7 @@ namespace Dnf.Net.Session
         internal static OnlineEntryResult Fail(OnlineStage stage, OnlineFailure failure, byte? code, int slot, int framesSeen, GameClientSession session, IDisposable connection, int mismatches,
             SelectCharacterResult selectCharacter = null)
         {
-            return new OnlineEntryResult(stage, failure, code, slot, session, connection, framesSeen, mismatches, null, null, selectCharacter);
+            return new OnlineEntryResult(stage, failure, code, slot, session, connection, framesSeen, mismatches, null, null, selectCharacter, null);
         }
 
         // 一批帧里第一个读得通的选角成功回包(类 1、包号 4)的解析结果,没有为 null。只在选角窗口里没找到时,拿来看尾窗口。
