@@ -93,6 +93,7 @@ internal static class Program
             {
                 return 3;
             }
+            Console.WriteLine(OnlineItemSyncLog.FormatProbeLine(result.ItemSync));
             // 副本探路:--try-dungeon <u16> <f> <m10> <m11> 进城后静置看 3 秒补发,再发选副本命令并收 8 秒,
             // 只报回帧的类/号/长度序列(不报载荷)。状态不到选副本门(5 或 0xd)时服务端静默,所以"有没有回"本身就是判据。
             int dIndex = Array.IndexOf(args, "--try-dungeon");
