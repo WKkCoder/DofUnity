@@ -106,10 +106,12 @@ namespace Dnf.Client
             {
                 return null;
             }
-            HeroProgress progress = HeroProgress.CreateForOnlineHero(_assets, _onlineTown.Profile);
+            OnlineItemSyncData initialItems = _onlineTown.BuildInitialItemSyncData();
+            HeroProgress progress = HeroProgress.CreateForOnlineHero(_assets, _onlineTown.Profile, initialItems);
             if (progress != null)
             {
                 _progress = progress;
+                _onlineTown.BindOnlineItems(progress, _assets, SyncHeroLook, applyInitial: false);
                 CreateAvatars();
             }
             return progress;
