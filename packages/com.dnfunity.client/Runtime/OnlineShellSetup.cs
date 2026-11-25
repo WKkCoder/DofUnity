@@ -60,15 +60,7 @@ namespace Dnf.Client
             {
                 return null;
             }
-            return new OnlineEntrySettings
-            {
-                Gateway = _settings.Gateway,
-                MouseCipher = _settings.MouseCipher == null ? null : (byte[])_settings.MouseCipher.Clone(),
-                DataVersion = _settings.DataVersion,
-                ChannelPort = _settings.ChannelPort,
-                MaxSlots = _settings.MaxSlots,
-                ServerGroup = _settings.ServerGroup,
-            };
+            return _settings.CloneWithoutCredentials();
         }
 
         public override string ToString()

@@ -256,7 +256,8 @@ internal sealed class BackendRig
 
     private readonly object _sync = new();
 
-    public BackendRig(bool configured = true, Action<FakeSessionPort> onPort = null, bool legacyOnly = false, ChannelDirectoryCatalog directoryCatalog = null)
+    public BackendRig(bool configured = true, Action<FakeSessionPort> onPort = null, bool legacyOnly = false, ChannelDirectoryCatalog directoryCatalog = null,
+        uint clientVersion = 0)
     {
         Key = GatewayTestSupport.SynthKey();
         Assert.True(GatewayOptions.TryCreate("http://localhost", GatewayTestSupport.HexLower(Key), TimeSpan.FromSeconds(2), out GatewayOptions options, out _));
@@ -268,6 +269,7 @@ internal sealed class BackendRig
                 MouseCipher = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 },
                 DataVersion = 7,
                 ChannelPort = 31000,
+                ClientVersion = clientVersion,
             }
             : null;
         Gateway = new FakeGateway(Key);

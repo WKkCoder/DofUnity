@@ -613,15 +613,7 @@ namespace Dnf.Client
 
         private OnlineEntrySettings CopyTemplate()
         {
-            return new OnlineEntrySettings
-            {
-                Gateway = _template.Gateway,
-                MouseCipher = _template.MouseCipher == null ? null : (byte[])_template.MouseCipher.Clone(),
-                DataVersion = _template.DataVersion,
-                ChannelPort = _template.ChannelPort,
-                MaxSlots = _template.MaxSlots,
-                ServerGroup = _template.ServerGroup,
-            };
+            return _template.CloneWithoutCredentials();
         }
 
         /// <summary>造一个全新的会话顶替当前的(旧的被放弃)。在调用线程上做,很轻:这样紧跟着的 <see cref="Disconnect"/> 一定看得到它。</summary>
