@@ -328,6 +328,7 @@ namespace Dnf.Net.Session
         private IPAddress _address;
         private OnlineChannelLink _link;
         private List<DecodedFrame> _earlyFrames = new List<DecodedFrame>();
+        private UserInfoNotice _characterList;
         private bool _selectionStageReported;
         private CancellationTokenSource _heartbeatStop;
         private Task _heartbeatTask;
@@ -371,6 +372,9 @@ namespace Dnf.Net.Session
         public OnlineClientSessionState State { get; private set; } = OnlineClientSessionState.Created;
         public OnlineHeartbeatState HeartbeatState { get; private set; } = OnlineHeartbeatState.Disabled;
         public GameClientSession GameSession => _link?.Session;
+
+        /// <summary>最近一次连频道、换频道或创建/删除角色刷新到的角色列表(没有或尚未收到为 null)。</summary>
+        public UserInfoNotice CharacterList => _characterList;
 
         /// <summary>连接与换频道时写入 <see cref="LoginRequest.ServerGroup"/> 的服务器组编号（1..17；0 时尝试从最近目录按端口解析）。</summary>
         public ushort ServerGroup
@@ -727,6 +731,7 @@ namespace Dnf.Net.Session
                 stop?.Cancel();
                 _link?.Dispose();
                 _link = null;
+                _characterList = null;
                 if (stop != null)
                 {
                     (heartbeat ?? Task.CompletedTask).ContinueWith(_ => stop.Dispose(),
@@ -820,6 +825,7 @@ namespace Dnf.Net.Session
             IPAddress address, int channelPort, bool suppressCode1Disconnect, CancellationToken cancellationToken)
         {
             _earlyFrames = new List<DecodedFrame>();
+            _characterList = null;
             _selectionStageReported = false;
             _restoreHeartbeatOnLeave = false;
             _currentLinkAuthenticated = false;
@@ -862,6 +868,7 @@ namespace Dnf.Net.Session
             _currentLinkAuthenticated = true;
             State = OnlineClientSessionState.Connected;
             ParseCharacterList(out UserInfoNotice list, out OnlineCharacterListStatus listStatus);
+            _characterList = list;
             return new OnlineConnectResult(OnlineStage.GameLogin, OnlineFailure.None, null,
                 link.Session.Channel, list, listStatus, null,
                 loginTrace.Sent ? 1 : 0, loginTrace.ServerGroup);
@@ -1095,6 +1102,7 @@ namespace Dnf.Net.Session
                 _link.Dispose();
                 _link = null;
             }
+            _characterList = null;
             _currentLinkAuthenticated = false;
             HeartbeatState = OnlineHeartbeatState.Disabled;
         }

@@ -70,6 +70,12 @@ namespace Dnf.Play
 
         /// <summary>真界面的素材(图包、光束、提示条光);为 null 时用 <see cref="Art"/> 的图包与光束,没有 <see cref="Art"/> 就画程序底板。只在 <see cref="ChannelDirectory"/> 不为 null 时有用。</summary>
         public ServerPickerScene PickerScene { get; set; }
+
+        /// <summary>
+        /// 角色创建/删除的后端(可选注入)。为 null(默认)或 <see cref="ICharacterManageBackend.AllowCharacterWrite"/> 为 false 时,
+        /// 选角界面保持只读,"创立角色"与"删除角色"按钮灰显、点击提示"暂未开放"。
+        /// </summary>
+        public ICharacterManageBackend CharacterManage { get; set; }
     }
 
     /// <summary>本地的输入检查(没过就不发请求)。账号规则与网关一致:4 到 32 个 ASCII 字母、数字或下划线。</summary>
@@ -148,6 +154,8 @@ namespace Dnf.Play
             Connect,
             Select,
             Directory,
+            CreateCharacter,
+            DeleteCharacter,
         }
 
         private sealed class Operation
@@ -229,6 +237,9 @@ namespace Dnf.Play
         /// <summary>有网络操作在途。</summary>
         public bool Busy => _op != null;
 
+        /// <summary>是否已配置且允许创建/删除角色写操作。</summary>
+        public bool CanManageCharacters => _options.CharacterManage != null && _options.CharacterManage.AllowCharacterWrite;
+
         /// <summary>玩家点了选角界面上的"结束游戏":宿主据此退出。</summary>
         public bool QuitRequested { get; private set; }
 
@@ -247,12 +258,20 @@ namespace Dnf.Play
 
         // ------------------------------------------------------------------ 输入(只记意图,Poll 里处理)
 
-        /// <summary>键盘文字输入;只有登录阶段用它。</summary>
+        /// <summary>键盘文字输入;登录阶段与选角阶段(模态面板打开时)用它。</summary>
         public void Type(string text)
         {
-            if (!_shutdown && Stage == OnlineShellStage.Login)
+            if (_shutdown)
+            {
+                return;
+            }
+            if (Stage == OnlineShellStage.Login)
             {
                 _login.Type(text);
+            }
+            else if (Stage == OnlineShellStage.CharacterSelect)
+            {
+                ModalType(text);
             }
         }
 
@@ -291,6 +310,10 @@ namespace Dnf.Play
                     }
                     break;
                 case OnlineShellStage.CharacterSelect:
+                    if (ModalKey(key))
+                    {
+                        break;
+                    }
                     switch (key)
                     {
                         case OnlineShellKey.Left: _select.Move(-1, 0); break;
@@ -322,6 +345,10 @@ namespace Dnf.Play
             }
             else if (Stage == OnlineShellStage.CharacterSelect)
             {
+                if (ModalClick(x, y))
+                {
+                    return;
+                }
                 if (_options.Art != null && _select.Outcome == CharacterSelectOutcome.None
                     && CharacterSelectArt.HitButton(x, y) == CharacterSelectButton.Channel)
                 {
@@ -338,6 +365,7 @@ namespace Dnf.Play
             if (Stage == OnlineShellStage.CharacterSelect && _select != null)
             {
                 _select.Advance(deltaMs);
+                ModalAdvance(deltaMs);
             }
             PickerAdvance(deltaMs);
         }
@@ -617,6 +645,10 @@ namespace Dnf.Play
 
         private void CharacterSelectIntents(bool back, bool channel)
         {
+            if (ModalIntents())
+            {
+                return;
+            }
             if (_select.Outcome == CharacterSelectOutcome.Quit)
             {
                 QuitRequested = true;
@@ -638,6 +670,17 @@ namespace Dnf.Play
                 {
                     EnterStage(OnlineShellStage.ChannelSelect, "back");
                 }
+                return;
+            }
+            CharacterSelectButton manageAction = _select.TakeManageAction();
+            if (manageAction == CharacterSelectButton.Create)
+            {
+                OpenCreateModal();
+                return;
+            }
+            if (manageAction == CharacterSelectButton.Delete)
+            {
+                OpenDeleteModal();
                 return;
             }
             if (_select.Outcome == CharacterSelectOutcome.Start)
@@ -725,6 +768,12 @@ namespace Dnf.Play
                     break;
                 case OpKind.Directory:
                     FinishDirectory(op, error);
+                    break;
+                case OpKind.CreateCharacter:
+                    FinishManageCharacter(op, error, isCreate: true);
+                    break;
+                case OpKind.DeleteCharacter:
+                    FinishManageCharacter(op, error, isCreate: false);
                     break;
                 default:
                     FinishSelect(op, error);
@@ -926,6 +975,12 @@ namespace Dnf.Play
                 case OpKind.Directory:
                     DirectoryFailed(notice);
                     break;
+                case OpKind.CreateCharacter:
+                    TimeoutManageCharacter(isCreate: true);
+                    break;
+                case OpKind.DeleteCharacter:
+                    TimeoutManageCharacter(isCreate: false);
+                    break;
                 default:
                     GoToLogin(notice, "timeout");
                     break;
@@ -987,7 +1042,12 @@ namespace Dnf.Play
             _select = real == null
                 ? new CharacterSelectScreen(OnlineShellRoster.Placeholder(Characters), _options.Art, index)
                 : CharacterSelectScreen.Online(OnlineCharacterRoster.From(Characters, real.Titles), _options.Art, index, _options.Fonts);
-            _selectScene = new OnlineShellNoticeOverlay(_select, _options.Fonts);
+            if (_select.IsOnline)
+            {
+                _select.CreateEnabled = CanManageCharacters;
+                _select.DeleteEnabled = CanManageCharacters && Characters != null && Characters.Entries.Count > 0;
+            }
+            _selectScene = new OnlineShellNoticeOverlay(_select, _options.Fonts) { Modal = ActiveModal };
             EnterStage(OnlineShellStage.CharacterSelect, reason);
             SetNotice(notice);
         }
@@ -997,6 +1057,7 @@ namespace Dnf.Play
         {
             OnlineShellStage from = Stage;
             DropOperation();
+            ModalReset();
             _backend.Disconnect();
             _hasLink = false;
             _channelHold = false;

@@ -48,6 +48,7 @@ namespace Dnf.Play
         private double _ageMs;
         private double _promptLeftMs;
         private CharacterSelectPrompt _prompt;
+        private CharacterSelectButton _pendingManage;
 
         /// <summary>提示条显示多久(毫秒)。</summary>
         public const int PromptMs = 2400;
@@ -95,6 +96,40 @@ namespace Dnf.Play
 
         /// <summary>联网模式。</summary>
         public bool IsOnline => _view != null;
+
+        /// <summary>是否启用"创立角色"按钮(仅联网模式有效,默认 false)。</summary>
+        public bool CreateEnabled
+        {
+            get => _view != null && _view.CreateEnabled;
+            set
+            {
+                if (_view != null)
+                {
+                    _view.CreateEnabled = value;
+                }
+            }
+        }
+
+        /// <summary>是否启用"删除角色"按钮(仅联网模式有效,默认 false)。</summary>
+        public bool DeleteEnabled
+        {
+            get => _view != null && _view.DeleteEnabled;
+            set
+            {
+                if (_view != null)
+                {
+                    _view.DeleteEnabled = value;
+                }
+            }
+        }
+
+        /// <summary>取走待处理的"创立角色/删除角色"点击动作(取走即清);没有时为 <see cref="CharacterSelectButton.None"/>。</summary>
+        public CharacterSelectButton TakeManageAction()
+        {
+            CharacterSelectButton action = _pendingManage;
+            _pendingManage = CharacterSelectButton.None;
+            return action;
+        }
 
         /// <summary>窗口里第一行是名册的第几行(0 起);离线模式恒为 0。</summary>
         public int FirstRow { get; private set; }
@@ -243,10 +278,32 @@ namespace Dnf.Play
                     Back();
                     return true;
                 case CharacterSelectButton.Create:
+                    if (_view != null)
+                    {
+                        if (_view.CreateEnabled)
+                        {
+                            _pendingManage = CharacterSelectButton.Create;
+                        }
+                        else
+                        {
+                            ShowPrompt(CharacterSelectPrompt.NotAvailable);
+                        }
+                    }
+                    return true;
                 case CharacterSelectButton.Delete:
                     if (_view != null)
                     {
-                        ShowPrompt(CharacterSelectPrompt.NotAvailable);   // 联网版没有创角与删角:按钮灰着,点了提示
+                        if (_view.DeleteEnabled)
+                        {
+                            if (Selected != null)
+                            {
+                                _pendingManage = CharacterSelectButton.Delete;
+                            }
+                        }
+                        else if (!_view.CreateEnabled)
+                        {
+                            ShowPrompt(CharacterSelectPrompt.NotAvailable);
+                        }
                     }
                     return true;
                 case CharacterSelectButton.None:

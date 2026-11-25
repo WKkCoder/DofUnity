@@ -197,6 +197,15 @@ namespace Dnf.Cli
         /// <summary>charselect-shot --char-prompt:联网画法里显示的提示:cannot(不能进入)、deleting(待删除)、na(暂未开放)。</summary>
         public string? CharPrompt { get; set; }
 
+        /// <summary>charcreate-shot --mode:create 或 delete。</summary>
+        public string CharCreateMode { get; set; } = "create";
+
+        /// <summary>charcreate-shot --job:基础职业编号 0..10。</summary>
+        public int CharCreateJob { get; set; }
+
+        /// <summary>charcreate-shot --name:输入框预填的合成角色名。</summary>
+        public string CharCreateName { get; set; } = "Hero900";
+
         /// <summary>login-shot --user:账号框里预填的账号(只用合成的名字,默认 player_01;不会打印出来)。</summary>
         public string LoginUser { get; set; } = "player_01";
 
@@ -383,6 +392,8 @@ namespace Dnf.Cli
             "      (联网登录界面(-dnfonline 的第一屏)在界面打开 --time 毫秒时的 800×600 画面:账号预填 --user(不打印),密码框里有 --typed 个字符(只画圆点),--notice 显示某一类提示(wrong-credentials、rate-limited 配 --countdown 等),--busy 画请求在途,--change-password 画修改密码形态;没有汉字字体,标签是英文占位;背景是选角底图(用户数据,只在本机看,不入库),--no-art 不读数据、背景纯色)\n" +
             "  dnf " + Dnf.Cli.Analysis.ServerSelectShot.Usage + "\n" +
             "      (选服务器、选频道两张界面(-dnfonline 联网外壳的第二、三屏,r18-serverui,基线 S02-client-00 到 03)在界面打开 --time 毫秒时的 800×600 画面:目录是合成的(--servers 个服务器 × --channels 个频道,档位按 --congestion 循环,默认画基线的内容),--select 选中第几个服务器,--page 翻页,--state 画读目录中/空/失败/连接中/刷新中,--start-button 画大按钮悬停或按下,--hover 放鼠标指针,--tint 把光晕强度钉成指定值;没有汉字字体,文字是英文占位;背景与各件素材来自用户数据(只在本机看,不入库),--no-art 不读数据)\n" +
+            "  dnf " + Dnf.Cli.Analysis.CharCreateShot.Usage + "\n" +
+            "      (创建/删除角色模态面板离屏快照,布局未对拍原版)\n" +
             "  dnf town-check [--town N]\n" +
             "      (城镇图册检查:读 town.lst 与每座 .twn,汇总区域类型、出口的去处与对称性、到地下城入口的路线;--town N 逐区域打印出口矩形、触发方向与按规则算出的落脚点(本机查看,数值不入库))\n" +
             "  dnf arrival-check [--dungeon <副本定义>] [--hero-id N] [--scan 起:止 --expect 房间:侧:x:y:容差,…] [--probe 房间:侧:y,…]\n" +
@@ -689,6 +700,15 @@ namespace Dnf.Cli
                     case "--char-prompt":
                         opts.CharPrompt = NextValue(args, ref i);
                         break;
+                    case "--mode":
+                        opts.CharCreateMode = NextValue(args, ref i);
+                        break;
+                    case "--job":
+                        opts.CharCreateJob = int.TryParse(NextValue(args, ref i), out int charJob) ? charJob : throw new UserError("--job 需要整数");
+                        break;
+                    case "--name":
+                        opts.CharCreateName = NextValue(args, ref i);
+                        break;
                     case "--user":
                         opts.LoginUser = NextValue(args, ref i);
                         break;
@@ -961,6 +981,8 @@ namespace Dnf.Cli
                     return TownShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
                 case "charselect-shot":
                     return CharSelectShot.Run(Locator.Resolve(opts.DnfDir, opts.OutDir), opts);
+                case "charcreate-shot":
+                    return CharCreateShot.Run(opts);
                 case "login-shot":
                     return LoginShot.Run(opts);
                 case "serverselect-shot":

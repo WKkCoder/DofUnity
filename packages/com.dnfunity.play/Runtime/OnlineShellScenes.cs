@@ -327,15 +327,12 @@ namespace Dnf.Play
         /// <summary>要叠的提示;没有为 null。</summary>
         public OnlineNotice Notice { get; set; }
 
+        /// <summary>在选角界面之上叠画的创建/删除模态面板;没有为 null。</summary>
+        public ICharacterManageModal Modal { get; set; }
+
         public List<SceneSprite> Build(long timeMs)
         {
             List<SceneSprite> sprites = _inner.Build(timeMs);
-            if (Notice == null)
-            {
-                return sprites;
-            }
-            // 联网选角界面自己的提示条(不能进入、暂未开放、正在进入)与这里的提示在同一个位置:外壳有提示时只留外壳的,不叠两条
-            sprites.RemoveAll(s => CharacterSelectArt.IsOwnBar(s.AnimationPath));
             int order = 0;
             foreach (SceneSprite sprite in sprites)
             {
@@ -344,10 +341,27 @@ namespace Dnf.Play
                     order = sprite.SortKey + 1;      // 叠在最上面:排序键比里面任何一张都大
                 }
             }
-            string text = OnlineShellText.Notice(Notice, _paint.HasFonts);
-            int width = OnlineShellArt.NoticeBarWidth(_paint, text, 560);
-            OnlineShellArt.AddNoticeBar(sprites, ref order, _paint, OnlineShellArt.ToneOf(Notice), text,
-                OnlineShellArt.ScreenWidth / 2 - width / 2, NoticeY, width, timeMs, "online-select-notice");
+            if (Notice != null)
+            {
+                // 联网选角界面自己的提示条(不能进入、暂未开放、正在进入)与这里的提示在同一个位置:外壳有提示时只留外壳的,不叠两条
+                sprites.RemoveAll(s => CharacterSelectArt.IsOwnBar(s.AnimationPath));
+                order = 0;
+                foreach (SceneSprite sprite in sprites)
+                {
+                    if (sprite.SortKey >= order)
+                    {
+                        order = sprite.SortKey + 1;
+                    }
+                }
+                string text = OnlineShellText.Notice(Notice, _paint.HasFonts);
+                int width = OnlineShellArt.NoticeBarWidth(_paint, text, 560);
+                OnlineShellArt.AddNoticeBar(sprites, ref order, _paint, OnlineShellArt.ToneOf(Notice), text,
+                    OnlineShellArt.ScreenWidth / 2 - width / 2, NoticeY, width, timeMs, "online-select-notice");
+            }
+            if (Modal != null)
+            {
+                Modal.BuildInto(sprites, ref order, timeMs);
+            }
             return sprites;
         }
     }

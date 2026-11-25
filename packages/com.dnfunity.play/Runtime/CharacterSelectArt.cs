@@ -594,8 +594,8 @@ namespace Dnf.Play
             bool startDisabled = view.Busy || roster.Count == 0;
             AddFrame(into, ref order, UiImage, startDisabled ? StartDisabledFrame : StartNormalFrame, StartX, StartY,
                 startDisabled ? "select-char-start-disabled" : "select-char-start", false);
-            AddOnlineSmallButton(into, ref order, font, view, CreateButtonX, CharacterSelectButton.Create, true);
-            AddOnlineSmallButton(into, ref order, font, view, DeleteButtonX, CharacterSelectButton.Delete, true);
+            AddOnlineSmallButton(into, ref order, font, view, CreateButtonX, CharacterSelectButton.Create, view.Busy || !view.CreateEnabled);
+            AddOnlineSmallButton(into, ref order, font, view, DeleteButtonX, CharacterSelectButton.Delete, view.Busy || !view.DeleteEnabled);
             AddOnlineSmallButton(into, ref order, font, view, ChannelButtonX, CharacterSelectButton.Channel, false);
             AddOnlineSmallButton(into, ref order, font, view, QuitButtonX, CharacterSelectButton.Quit, false);
         }

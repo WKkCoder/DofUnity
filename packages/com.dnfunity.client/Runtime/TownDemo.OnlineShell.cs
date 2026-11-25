@@ -26,6 +26,7 @@ namespace Dnf.Client
         private bool _onlineMode;            // -dnfonline
         private string _onlineUser;          // -dnfonlineuser <账号>:预填登录界面的账号(口令不走命令行)
         private bool _serverUi;              // -dnfserverui:选服务器、选频道用真界面(不带时这两个阶段是占位、自动放行)
+        private bool _onlineAllowCharWrite;  // -dnfallowcharwrite:仅开发构建生效，允许联网选角创角/删角写操作(默认 false)
         private OnlineShellHost _shell;      // 联网外壳;进游戏之后它继续拥有联网会话
         private string _shellDir;            // 数据目录(第一次进游戏时开声音要用)
         private GameFlow _frozenFlow;        // 掉线或换角色时外壳拿回屏幕:被冻住的游戏流程
@@ -78,6 +79,7 @@ namespace Dnf.Client
                 _flowFrom = "town";              // 进游戏落在城镇,不管 -dnfflowfrom 写了什么
                 InstallFonts();
                 bool dev = Application.isEditor || Debug.isDebugBuild;
+                bool allowCharWrite = OnlineShellSetupLoader.ResolveAllowCharWrite(dev, _onlineAllowCharWrite);
                 string remembered = PlayerPrefs.HasKey(OnlineUserPrefsKey) ? PlayerPrefs.GetString(OnlineUserPrefsKey) : null;
                 OnlineShellSetup setup = OnlineShellSetupLoader.Load(dev, _netRoot, _netPort, Application.persistentDataPath, _onlineUser, remembered);
                 CharacterSelectScene shellArt = CharacterSelectScene.ForOnline(_assets);
@@ -86,7 +88,8 @@ namespace Dnf.Client
                     _serverUi ? ServerPickerScene.From(shellArt, _assets.LoadAni) : null,
                     _onlineSelectOptions,
                     _serverUi ? ChannelDirectoryCatalog.Create(_assets, _fonts != null) : null,
-                    _fonts);
+                    _fonts,
+                    allowCharWrite);
                 _shellDir = dir;
                 _shell.TakeViewChange();         // 第一个视图就是下面造的这一个
                 _view = new TownView(_assets, _shell.Flow.Scene, StageBackground);
