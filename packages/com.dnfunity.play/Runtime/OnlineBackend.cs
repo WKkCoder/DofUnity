@@ -42,6 +42,23 @@ namespace Dnf.Play
         event Action Disconnected;
     }
 
+    /// <summary>
+    /// 角色创建与删除的后端接口(可选注入,<see cref="OnlineShellOptions.CharacterManage"/>):
+    /// 独立于 <see cref="IOnlineBackend"/>,避免破坏既有的实现与测试替身。
+    /// 默认关闭写权限时返回 <see cref="OnlineCharacterManageStatus.Disabled"/>,不触碰会话。
+    /// </summary>
+    public interface ICharacterManageBackend
+    {
+        /// <summary>当前后端是否允许写服务端角色库(<c>1/5</c>、<c>1/6</c>);缺省为 false。</summary>
+        bool AllowCharacterWrite { get; }
+
+        /// <summary>创建角色(<c>1/5</c>),成功后返回服务端推送的刷新名册。</summary>
+        Task<OnlineCharacterManageOutcome> CreateCharacterAsync(byte job, string name, CancellationToken cancellationToken);
+
+        /// <summary>删除指定槽位角色(<c>1/6</c>,需原样提交确认名),成功后返回服务端推送的刷新名册。</summary>
+        Task<OnlineCharacterManageOutcome> DeleteCharacterAsync(byte slotIndex, string confirmName, CancellationToken cancellationToken);
+    }
+
     /// <summary>登录、注册、改密的结果:成功,或带类别的失败(限流时带建议等待的秒数)。</summary>
     public sealed class OnlineAuthOutcome
     {

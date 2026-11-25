@@ -94,6 +94,39 @@ namespace Dnf.Client
         public ChannelDirectorySnapshot Snapshot { get; }
     }
 
+    /// <summary>角色创建/删除一步的报告(供假会话造报告与映射层翻译用)。</summary>
+    internal readonly struct OnlineCharacterManageReport
+    {
+        public OnlineCharacterManageReport(
+            OnlineCharacterManageKind operation,
+            OnlineCharacterManageOutcomeKind outcome,
+            CharacterCreateFailure createFailure,
+            CharacterDeleteFailure deleteFailure,
+            byte? rawErrorCode,
+            UserInfoNotice characterList,
+            OnlineCharacterListStatus characterListStatus,
+            bool eventCharacterFlagCleared = false)
+        {
+            Operation = operation;
+            Outcome = outcome;
+            CreateFailure = createFailure;
+            DeleteFailure = deleteFailure;
+            RawErrorCode = rawErrorCode;
+            CharacterList = characterList;
+            CharacterListStatus = characterListStatus;
+            EventCharacterFlagCleared = eventCharacterFlagCleared;
+        }
+
+        public OnlineCharacterManageKind Operation { get; }
+        public OnlineCharacterManageOutcomeKind Outcome { get; }
+        public CharacterCreateFailure CreateFailure { get; }
+        public CharacterDeleteFailure DeleteFailure { get; }
+        public byte? RawErrorCode { get; }
+        public UserInfoNotice CharacterList { get; }
+        public OnlineCharacterListStatus CharacterListStatus { get; }
+        public bool EventCharacterFlagCleared { get; }
+    }
+
     /// <summary>
     /// 一个联网会话的最小接口(<see cref="OnlineClientSession"/> 的一层薄皮):把它的结果对象压成上面几个"报告"。
     /// 存在的唯一理由是测试:联网层的结果类没有公开构造函数,假会话只能造报告;生命周期(一次登录一个新会话、放弃时在后台释放、过期会话的断线事件不算数)就能不连网络地测。
@@ -130,8 +163,20 @@ namespace Dnf.Client
         Task<OnlineDirectoryReport> LoadDirectoryAsync(CancellationToken cancellationToken);
     }
 
+    /// <summary>
+    /// 会话薄皮的角色创建/删除扩展(r20-createcharui)。单独成接口以保持 <see cref="IOnlineSessionHostPort"/> 与旧假会话 <c>LegacyOnlyPort</c> 不受影响。
+    /// </summary>
+    internal interface IOnlineSessionManagePort : IOnlineSessionHostPort
+    {
+        Task<OnlineCharacterManageReport> CreateCharacterAsync(
+            byte job, byte[] nameUtf8, byte eventFlag, bool allowWrite, CancellationToken cancellationToken);
+
+        Task<OnlineCharacterManageReport> DeleteCharacterAsync(
+            byte slotIndex, byte[] confirmNameUtf8, bool allowWrite, CancellationToken cancellationToken);
+    }
+
     /// <summary>真会话的皮。进城之后心跳由会话自己管(默认自管心跳);只在通道成功建立之后掉线才向外壳报 <see cref="Lost"/>。</summary>
-    internal sealed class RealOnlineSessionPort : IOnlineSessionHostPort
+    internal sealed class RealOnlineSessionPort : IOnlineSessionManagePort
     {
         private readonly OnlineClientSession _session;
         private readonly ChannelScriptData _fallbackScript;
@@ -215,6 +260,73 @@ namespace Dnf.Client
                 ? new OnlineSelectReport(true, result.MayTryAnotherSlot, OnlineNetLog.Snapshot(result.Snapshot),
                     result.SelectCharacter, result.Snapshot, result.DungeonPermissions, result.ItemSync)
                 : new OnlineSelectReport(false, result.MayTryAnotherSlot, null);
+        }
+
+        public async Task<OnlineCharacterManageReport> CreateCharacterAsync(
+            byte job, byte[] nameUtf8, byte eventFlag, bool allowWrite, CancellationToken cancellationToken)
+        {
+            try
+            {
+                _session.AllowCharacterManageWrites = allowWrite;
+                OnlineCharacterManageResult result = await _session.CreateCharacterAsync(
+                    job, nameUtf8, eventFlag, cancellationToken).ConfigureAwait(false);
+                if (result.IsDisconnected)
+                {
+                    lock (_stateLock)
+                    {
+                        _channelEstablished = false;
+                    }
+                }
+                return ToManageReport(result);
+            }
+            catch (OperationCanceledException)
+            {
+                lock (_stateLock)
+                {
+                    _channelEstablished = false;
+                }
+                throw;
+            }
+        }
+
+        public async Task<OnlineCharacterManageReport> DeleteCharacterAsync(
+            byte slotIndex, byte[] confirmNameUtf8, bool allowWrite, CancellationToken cancellationToken)
+        {
+            try
+            {
+                _session.AllowCharacterManageWrites = allowWrite;
+                OnlineCharacterManageResult result = await _session.DeleteCharacterAsync(
+                    slotIndex, confirmNameUtf8, cancellationToken).ConfigureAwait(false);
+                if (result.IsDisconnected)
+                {
+                    lock (_stateLock)
+                    {
+                        _channelEstablished = false;
+                    }
+                }
+                return ToManageReport(result);
+            }
+            catch (OperationCanceledException)
+            {
+                lock (_stateLock)
+                {
+                    _channelEstablished = false;
+                }
+                throw;
+            }
+        }
+
+        internal static OnlineCharacterManageReport ToManageReport(OnlineCharacterManageResult result)
+        {
+            return new OnlineCharacterManageReport(
+                result.Operation,
+                result.Outcome,
+                result.CreateResult != null ? result.CreateResult.Failure : CharacterCreateFailure.None,
+                result.DeleteResult != null ? result.DeleteResult.Failure : CharacterDeleteFailure.None,
+                result.RawFailureCode,
+                result.CharacterList,
+                result.CharacterListStatus,
+                result.DeleteResult != null && result.DeleteResult.IsEventCharacterFlagCleared);
         }
 
         public void Dispose()
@@ -318,7 +430,7 @@ namespace Dnf.Client
     /// </list>
     /// 不打印账号、口令、地址、令牌;只在选角成功时记一行进城快照(槽号、等级、职业与计数)。
     /// </summary>
-    public sealed class OnlineShellBackend : IOnlineBackend, IChannelDirectoryBackend, IDisposable
+    public sealed class OnlineShellBackend : IOnlineBackend, IChannelDirectoryBackend, ICharacterManageBackend, IDisposable
     {
         private static readonly TimeSpan DisposeWait = TimeSpan.FromSeconds(1);
 
@@ -361,20 +473,29 @@ namespace Dnf.Client
         /// <param name="log">日志去处(只写进城快照一行);可为 null。</param>
         /// <param name="directoryCatalog">从本地游戏数据预读的频道目录规则与文本查询;可为 null。</param>
         public OnlineShellBackend(OnlineEntrySettings template, Action<string> log = null, ChannelDirectoryCatalog directoryCatalog = null)
-            : this(template, log, settings => new RealOnlineSessionPort(settings, directoryCatalog?.FallbackScript), CreateHttpTransport, directoryCatalog)
+            : this(template, log, settings => new RealOnlineSessionPort(settings, directoryCatalog?.FallbackScript), CreateHttpTransport, directoryCatalog, false)
+        {
+        }
+
+        public OnlineShellBackend(OnlineEntrySettings template, Action<string> log, ChannelDirectoryCatalog directoryCatalog, bool allowCharacterWrite)
+            : this(template, log, settings => new RealOnlineSessionPort(settings, directoryCatalog?.FallbackScript), CreateHttpTransport, directoryCatalog, allowCharacterWrite)
         {
         }
 
         internal OnlineShellBackend(OnlineEntrySettings template, Action<string> log,
             Func<OnlineEntrySettings, IOnlineSessionPort> portFactory, Func<GatewayOptions, IGatewayTransport> transportFactory,
-            ChannelDirectoryCatalog directoryCatalog = null)
+            ChannelDirectoryCatalog directoryCatalog = null, bool allowCharacterWrite = false)
         {
             _template = template;
             _directoryCatalog = directoryCatalog;
             _log = log;
             _portFactory = portFactory ?? throw new ArgumentNullException(nameof(portFactory));
             _transportFactory = transportFactory ?? throw new ArgumentNullException(nameof(transportFactory));
+            AllowCharacterWrite = allowCharacterWrite;
         }
+
+        /// <summary>是否允许发出创建/删除角色的写命令(缺省 false);为 false 时直接返回 Disabled、不触碰会话。</summary>
+        public bool AllowCharacterWrite { get; set; } = false;
 
         /// <summary>连接掉线(只在当前会话、连接建立之后掉线时触发;可能在任何线程上)。</summary>
         public event Action Disconnected;
@@ -765,6 +886,73 @@ namespace Dnf.Client
             {
                 OnlineDirectoryReport report = await hostPort.LoadDirectoryAsync(cancellationToken).ConfigureAwait(false);
                 return ChannelDirectoryAdapter.Result(report.Outcome, report.Snapshot, _directoryCatalog?.ResolveString, _directoryCatalog?.ResolveClientText);
+            }, cancellationToken);
+        }
+
+        /// <summary>创建角色(<see cref="ICharacterManageBackend"/>):<see cref="AllowCharacterWrite"/> 为 false 时直接返回 Disabled、不触碰会话。</summary>
+        public Task<OnlineCharacterManageOutcome> CreateCharacterAsync(byte job, string name, CancellationToken cancellationToken)
+        {
+            if (!AllowCharacterWrite)
+            {
+                return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.Disabled));
+            }
+            if (job > OnlineCharacterNameRules.MaxCreateJobId
+                || !OnlineCharacterNameRules.TryEncodeStrictUtf8(name, out byte[] nameUtf8)
+                || OnlineCharacterNameRules.ValidateCreateName(nameUtf8) != OnlineCharacterNameError.Valid)
+            {
+                return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.InvalidInput));
+            }
+            Slot slot;
+            try
+            {
+                slot = Current();
+            }
+            catch (Exception e)
+            {
+                return Task.FromException<OnlineCharacterManageOutcome>(e);
+            }
+            if (!(slot.Port is IOnlineSessionManagePort managePort))
+            {
+                return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.Disabled));
+            }
+            return Task.Run(async () =>
+            {
+                OnlineCharacterManageReport report = await managePort.CreateCharacterAsync(
+                    job, nameUtf8, 0, true, cancellationToken).ConfigureAwait(false);
+                return OnlineShellMapping.Manage(report);
+            }, cancellationToken);
+        }
+
+        /// <summary>删除角色(<see cref="ICharacterManageBackend"/>):<see cref="AllowCharacterWrite"/> 为 false 时直接返回 Disabled、不触碰会话。</summary>
+        public Task<OnlineCharacterManageOutcome> DeleteCharacterAsync(byte slotIndex, string confirmName, CancellationToken cancellationToken)
+        {
+            if (!AllowCharacterWrite)
+            {
+                return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.Disabled));
+            }
+            if (!OnlineCharacterNameRules.TryEncodeStrictUtf8(confirmName, out byte[] confirmNameUtf8)
+                || OnlineCharacterNameRules.ValidateDeleteConfirmationName(confirmNameUtf8) != OnlineCharacterNameError.Valid)
+            {
+                return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.InvalidInput));
+            }
+            Slot slot;
+            try
+            {
+                slot = Current();
+            }
+            catch (Exception e)
+            {
+                return Task.FromException<OnlineCharacterManageOutcome>(e);
+            }
+            if (!(slot.Port is IOnlineSessionManagePort managePort))
+            {
+                return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.Disabled));
+            }
+            return Task.Run(async () =>
+            {
+                OnlineCharacterManageReport report = await managePort.DeleteCharacterAsync(
+                    slotIndex, confirmNameUtf8, true, cancellationToken).ConfigureAwait(false);
+                return OnlineShellMapping.Manage(report);
             }, cancellationToken);
         }
 

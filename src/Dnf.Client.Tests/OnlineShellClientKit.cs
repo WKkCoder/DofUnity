@@ -11,7 +11,7 @@ namespace Dnf.Client.Tests;
 /// 内存里的假会话(不连任何网络):联网层的结果类没有公开构造函数,所以假会话只造"报告"。
 /// 记下被调用的次数与参数、释放发生在哪个线程,释放可以被一道门卡住(模拟真会话 Dispose 会等在途操作)。
 /// </summary>
-internal sealed class FakeSessionPort : IOnlineSessionHostPort
+internal sealed class FakeSessionPort : IOnlineSessionManagePort
 {
     private readonly object _sync = new();
     private Action _lost;
@@ -28,6 +28,22 @@ internal sealed class FakeSessionPort : IOnlineSessionHostPort
         OnConnectHost = (host, port, ct) => Task.FromResult(new OnlineConnectReport(OnlineFailure.None, OnlineCharacterListStatus.Received, FakeRoster(2)));
         OnSwitchHost = (host, port, ct) => Task.FromResult(new OnlineConnectReport(OnlineFailure.None, OnlineCharacterListStatus.Received, FakeRoster(2)));
         OnDirectory = ct => Task.FromResult(new OnlineDirectoryReport(ChannelDirectoryLoadOutcome.Ok, DirectoryTestData.Default()));
+        OnCreateCharacter = (job, nameUtf8, eventFlag, allowWrite, ct) => Task.FromResult(new OnlineCharacterManageReport(
+            OnlineCharacterManageKind.Create,
+            OnlineCharacterManageOutcomeKind.Succeeded,
+            CharacterCreateFailure.None,
+            CharacterDeleteFailure.None,
+            null,
+            FakeRoster(3),
+            OnlineCharacterListStatus.Received));
+        OnDeleteCharacter = (slot, confirmUtf8, allowWrite, ct) => Task.FromResult(new OnlineCharacterManageReport(
+            OnlineCharacterManageKind.Delete,
+            OnlineCharacterManageOutcomeKind.Succeeded,
+            CharacterCreateFailure.None,
+            CharacterDeleteFailure.None,
+            null,
+            FakeRoster(1),
+            OnlineCharacterListStatus.Received));
     }
 
     public OnlineEntrySettings Settings { get; }
@@ -41,6 +57,8 @@ internal sealed class FakeSessionPort : IOnlineSessionHostPort
     public Func<string, int, CancellationToken, Task<OnlineConnectReport>> OnConnectHost { get; set; }
     public Func<string, int, CancellationToken, Task<OnlineConnectReport>> OnSwitchHost { get; set; }
     public Func<CancellationToken, Task<OnlineDirectoryReport>> OnDirectory { get; set; }
+    public Func<byte, byte[], byte, bool, CancellationToken, Task<OnlineCharacterManageReport>> OnCreateCharacter { get; set; }
+    public Func<byte, byte[], bool, CancellationToken, Task<OnlineCharacterManageReport>> OnDeleteCharacter { get; set; }
 
     /// <summary>非 null 时 <see cref="Dispose"/> 会卡在它上面,直到被放行。</summary>
     public ManualResetEventSlim DisposeGate { get; set; }
@@ -55,11 +73,19 @@ internal sealed class FakeSessionPort : IOnlineSessionHostPort
     public int ConnectHostCalls;
     public int SwitchHostCalls;
     public int DirectoryCalls;
+    public int CreateCharacterCalls;
+    public int DeleteCharacterCalls;
     public string LastHost;
     public string LastUser;
     public string LastPassword;
     public int LastPort;
     public int LastSlot;
+    public byte LastCreateJob;
+    public byte[] LastCreateNameUtf8;
+    public byte LastCreateEventFlag;
+    public byte LastDeleteSlot;
+    public byte[] LastDeleteConfirmUtf8;
+    public bool LastAllowWrite;
     public CancellationToken LastToken;
 
     public int DisposeCount => Volatile.Read(ref _disposeCount);
@@ -166,6 +192,29 @@ internal sealed class FakeSessionPort : IOnlineSessionHostPort
         LastSlot = slot;
         LastToken = cancellationToken;
         return OnSelect(slot, cancellationToken);
+    }
+
+    public Task<OnlineCharacterManageReport> CreateCharacterAsync(
+        byte job, byte[] nameUtf8, byte eventFlag, bool allowWrite, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref CreateCharacterCalls);
+        LastCreateJob = job;
+        LastCreateNameUtf8 = (byte[])nameUtf8?.Clone();
+        LastCreateEventFlag = eventFlag;
+        LastAllowWrite = allowWrite;
+        LastToken = cancellationToken;
+        return OnCreateCharacter(job, nameUtf8, eventFlag, allowWrite, cancellationToken);
+    }
+
+    public Task<OnlineCharacterManageReport> DeleteCharacterAsync(
+        byte slotIndex, byte[] confirmNameUtf8, bool allowWrite, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref DeleteCharacterCalls);
+        LastDeleteSlot = slotIndex;
+        LastDeleteConfirmUtf8 = (byte[])confirmNameUtf8?.Clone();
+        LastAllowWrite = allowWrite;
+        LastToken = cancellationToken;
+        return OnDeleteCharacter(slotIndex, confirmNameUtf8, allowWrite, cancellationToken);
     }
 
     public void Dispose()

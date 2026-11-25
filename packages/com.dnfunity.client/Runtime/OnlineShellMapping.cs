@@ -148,5 +148,87 @@ namespace Dnf.Client
             }
             return new OnlineCharacterList(notice.A, notice.B, notice.C, notice.D, entries, notice.TrailingByteCount);
         }
+
+        /// <summary>Net 层角色创建失败枚举 → Play 层状态枚举。</summary>
+        public static OnlineCharacterManageStatus CreateFailure(CharacterCreateFailure failure)
+        {
+            switch (failure)
+            {
+                case CharacterCreateFailure.DatabaseOrUnknownError: return OnlineCharacterManageStatus.DatabaseOrUnknownError;
+                case CharacterCreateFailure.SlotLimitReached: return OnlineCharacterManageStatus.SlotLimitReached;
+                case CharacterCreateFailure.ClientRestricted: return OnlineCharacterManageStatus.ClientRestricted;
+                case CharacterCreateFailure.CreationRestrictedEmptyAccount: return OnlineCharacterManageStatus.CreationRestrictedEmptyAccount;
+                case CharacterCreateFailure.CreationRestrictedByEvent: return OnlineCharacterManageStatus.CreationRestrictedByEvent;
+                case CharacterCreateFailure.DuplicateActiveName: return OnlineCharacterManageStatus.DuplicateActiveName;
+                case CharacterCreateFailure.StateLocked: return OnlineCharacterManageStatus.StateLocked;
+                case CharacterCreateFailure.EventCharacterConditionFailed: return OnlineCharacterManageStatus.EventCharacterConditionFailed;
+                case CharacterCreateFailure.ClientSilentIgnored: return OnlineCharacterManageStatus.ClientSilentIgnored;
+                case CharacterCreateFailure.CreationBlocked: return OnlineCharacterManageStatus.CreationBlocked;
+                case CharacterCreateFailure.DuplicateDeletedName: return OnlineCharacterManageStatus.DuplicateDeletedName;
+                case CharacterCreateFailure.DailyCreationLimitReached: return OnlineCharacterManageStatus.DailyCreationLimitReached;
+                case CharacterCreateFailure.ChannelNotAllowed: return OnlineCharacterManageStatus.ChannelNotAllowed;
+                case CharacterCreateFailure.InvalidName: return OnlineCharacterManageStatus.InvalidName;
+                case CharacterCreateFailure.ServiceRestricted: return OnlineCharacterManageStatus.ServiceRestricted;
+                default: return OnlineCharacterManageStatus.UnknownError;
+            }
+        }
+
+        /// <summary>Net 层角色删除失败枚举 → Play 层状态枚举。</summary>
+        public static OnlineCharacterManageStatus DeleteFailure(CharacterDeleteFailure failure)
+        {
+            switch (failure)
+            {
+                case CharacterDeleteFailure.DatabaseOrUnknownError: return OnlineCharacterManageStatus.DatabaseOrUnknownError;
+                case CharacterDeleteFailure.StateLocked: return OnlineCharacterManageStatus.StateLocked;
+                case CharacterDeleteFailure.EmptySlot: return OnlineCharacterManageStatus.EmptySlot;
+                case CharacterDeleteFailure.CooldownOrActiveCharacter: return OnlineCharacterManageStatus.CooldownOrActiveCharacter;
+                case CharacterDeleteFailure.GuildMasterCannotDelete: return OnlineCharacterManageStatus.GuildMasterCannotDelete;
+                case CharacterDeleteFailure.ClientDeletionBlocked: return OnlineCharacterManageStatus.ClientDeletionBlocked;
+                case CharacterDeleteFailure.TradePunished: return OnlineCharacterManageStatus.TradePunished;
+                case CharacterDeleteFailure.RestingUserRestricted: return OnlineCharacterManageStatus.RestingUserRestricted;
+                case CharacterDeleteFailure.ServiceRestricted: return OnlineCharacterManageStatus.ServiceRestricted;
+                case CharacterDeleteFailure.ItemLockActive: return OnlineCharacterManageStatus.ItemLockActive;
+                case CharacterDeleteFailure.TradePunishRestricted: return OnlineCharacterManageStatus.TradePunishRestricted;
+                case CharacterDeleteFailure.RestorePunishRestricted: return OnlineCharacterManageStatus.RestorePunishRestricted;
+                case CharacterDeleteFailure.SecurityServiceRequired: return OnlineCharacterManageStatus.SecurityServiceRequired;
+                case CharacterDeleteFailure.SharedSecurityRestriction: return OnlineCharacterManageStatus.SharedSecurityRestriction;
+                default: return OnlineCharacterManageStatus.UnknownError;
+            }
+        }
+
+        /// <summary>Net 层角色创建/删除报告 → Play 层只读结局。</summary>
+        internal static OnlineCharacterManageOutcome Manage(OnlineCharacterManageReport report)
+        {
+            switch (report.Outcome)
+            {
+                case OnlineCharacterManageOutcomeKind.Succeeded:
+                    if (report.CharacterListStatus != OnlineCharacterListStatus.Received || report.CharacterList == null)
+                    {
+                        return OnlineCharacterManageOutcome.Fail(
+                            OnlineCharacterManageStatus.RosterMissing,
+                            commandSucceeded: true);
+                    }
+                    return OnlineCharacterManageOutcome.Ok(
+                        CharacterList(report.CharacterList),
+                        report.EventCharacterFlagCleared);
+                case OnlineCharacterManageOutcomeKind.Rejected:
+                    OnlineCharacterManageStatus status = report.Operation == OnlineCharacterManageKind.Create
+                        ? CreateFailure(report.CreateFailure)
+                        : DeleteFailure(report.DeleteFailure);
+                    return OnlineCharacterManageOutcome.Fail(status, report.RawErrorCode);
+                case OnlineCharacterManageOutcomeKind.NoReply:
+                    return OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.NoReply);
+                case OnlineCharacterManageOutcomeKind.RosterMissing:
+                    return OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.RosterMissing, commandSucceeded: true);
+                case OnlineCharacterManageOutcomeKind.RosterMalformed:
+                    return OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.RosterMalformed, commandSucceeded: true);
+                case OnlineCharacterManageOutcomeKind.Disconnected:
+                    return OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.Disconnected);
+                case OnlineCharacterManageOutcomeKind.FrameError:
+                    return OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.InvalidInput);
+                default:
+                    return OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.ProtocolError);
+            }
+        }
     }
 }

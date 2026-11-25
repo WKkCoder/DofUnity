@@ -226,8 +226,11 @@ internal static class ShellTestData
 /// 假的联网后端:每个操作默认立刻成功,测试替换对应的委托来给出别的结局(失败、异常、一个手动完成的任务)。
 /// 记录每个方法被调了几次、最近一次的参数与令牌,以及调用顺序。
 /// </summary>
-internal sealed class FakeOnlineBackend : IOnlineBackend
+internal sealed class FakeOnlineBackend : IOnlineBackend, ICharacterManageBackend
 {
+    private ushort _nextUid = 900;
+    private bool _useManagedRoster;
+
     public int LoginCalls;
     public int RegisterCalls;
     public int ChangePasswordCalls;
@@ -235,13 +238,23 @@ internal sealed class FakeOnlineBackend : IOnlineBackend
     public int SwitchCalls;
     public int SelectCalls;
     public int DisconnectCalls;
+    public int CreateCalls;
+    public int DeleteCalls;
     public string LastUser;
     public string LastPassword;
     public string LastNewPassword;
     public ChannelTarget LastTarget;
     public int LastSlot = -1;
+    public byte LastCreateJob;
+    public string LastCreateName;
+    public byte LastDeleteSlot;
+    public string LastDeleteConfirmName;
     public CancellationToken LastToken;
     public readonly List<string> Calls = new List<string>();
+    public readonly List<OnlineCharacterEntry> ManagedRoster = new List<OnlineCharacterEntry>();
+
+    public bool AllowCharacterWrite { get; set; }
+    public bool SimulateManageDisconnect { get; set; }
 
     public Func<string, string, CancellationToken, Task<OnlineAuthOutcome>> OnLogin = (u, p, ct) => Task.FromResult(OnlineAuthOutcome.Ok());
     public Func<string, string, CancellationToken, Task<OnlineAuthOutcome>> OnRegister = (u, p, ct) => Task.FromResult(OnlineAuthOutcome.Ok());
@@ -249,6 +262,8 @@ internal sealed class FakeOnlineBackend : IOnlineBackend
     public Func<ChannelTarget, CancellationToken, Task<OnlineConnectOutcome>> OnConnect = (t, ct) => Task.FromResult(OnlineConnectOutcome.Ok(ShellTestData.Roster(2)));
     public Func<ChannelTarget, CancellationToken, Task<OnlineConnectOutcome>> OnSwitch = (t, ct) => Task.FromResult(OnlineConnectOutcome.Ok(ShellTestData.Roster(2)));
     public Func<int, CancellationToken, Task<OnlineSelectOutcome>> OnSelect = (s, ct) => Task.FromResult(OnlineSelectOutcome.Ok());
+    public Func<byte, string, CancellationToken, Task<OnlineCharacterManageOutcome>> OnCreateCharacter { get; set; }
+    public Func<byte, string, CancellationToken, Task<OnlineCharacterManageOutcome>> OnDeleteCharacter { get; set; }
 
     public event Action Disconnected;
 
@@ -318,6 +333,125 @@ internal sealed class FakeOnlineBackend : IOnlineBackend
     {
         DisconnectCalls++;
         Calls.Add("disconnect");
+    }
+
+    public void SeedManagedRoster(params (string Name, byte Job, byte Level)[] characters)
+    {
+        _useManagedRoster = true;
+        ManagedRoster.Clear();
+        if (characters != null)
+        {
+            foreach ((string name, byte job, byte level) in characters)
+            {
+                byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(name);
+                ManagedRoster.Add(new OnlineCharacterEntry(
+                    _nextUid++, nameBytes, 0, job, 0, level, 0, 0,
+                    Array.Empty<OnlineCharacterEquip>(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+            }
+        }
+        OnConnect = (t, ct) => Task.FromResult(OnlineConnectOutcome.Ok(SnapshotManagedRoster()));
+        OnSwitch = (t, ct) => Task.FromResult(OnlineConnectOutcome.Ok(SnapshotManagedRoster()));
+    }
+
+    public OnlineCharacterList SnapshotManagedRoster()
+    {
+        return new OnlineCharacterList(36, 0, 0, 0u, ManagedRoster.ToArray(), 0);
+    }
+
+    public Task<OnlineCharacterManageOutcome> CreateCharacterAsync(byte job, string name, CancellationToken cancellationToken)
+    {
+        CreateCalls++;
+        Calls.Add("create-char");
+        LastCreateJob = job;
+        LastCreateName = name;
+        LastToken = cancellationToken;
+        if (!AllowCharacterWrite)
+        {
+            return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.Disabled));
+        }
+        if (OnCreateCharacter != null)
+        {
+            return OnCreateCharacter(job, name, cancellationToken);
+        }
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<OnlineCharacterManageOutcome>(cancellationToken);
+        }
+        if (SimulateManageDisconnect)
+        {
+            RaiseDisconnected();
+            return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.Disconnected));
+        }
+        if (job > OnlineCharacterNameRules.MaxCreateJobId)
+        {
+            return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.InvalidInput));
+        }
+        if (OnlineCharacterNameRules.ValidateCreateName(name) != OnlineCharacterNameError.Valid)
+        {
+            return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.InvalidName, 0x9f));
+        }
+        if (!_useManagedRoster)
+        {
+            SeedManagedRoster();
+        }
+        if (ManagedRoster.Count >= OnlineCharacterNameRules.MaxServerCharacterSlots)
+        {
+            return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.SlotLimitReached, 0x04));
+        }
+        byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(name);
+        foreach (OnlineCharacterEntry existing in ManagedRoster)
+        {
+            if (existing.NameBytes.Count == nameBytes.Length && existing.NameBytes.SequenceEqual(nameBytes))
+            {
+                return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.DuplicateActiveName, 0x12));
+            }
+        }
+        ManagedRoster.Add(new OnlineCharacterEntry(
+            _nextUid++, nameBytes, 0, job, 0, 1, 0, 0,
+            Array.Empty<OnlineCharacterEquip>(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+        return Task.FromResult(OnlineCharacterManageOutcome.Ok(SnapshotManagedRoster()));
+    }
+
+    public Task<OnlineCharacterManageOutcome> DeleteCharacterAsync(byte slotIndex, string confirmName, CancellationToken cancellationToken)
+    {
+        DeleteCalls++;
+        Calls.Add("delete-char");
+        LastDeleteSlot = slotIndex;
+        LastDeleteConfirmName = confirmName;
+        LastToken = cancellationToken;
+        if (!AllowCharacterWrite)
+        {
+            return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.Disabled));
+        }
+        if (OnDeleteCharacter != null)
+        {
+            return OnDeleteCharacter(slotIndex, confirmName, cancellationToken);
+        }
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<OnlineCharacterManageOutcome>(cancellationToken);
+        }
+        if (SimulateManageDisconnect)
+        {
+            RaiseDisconnected();
+            return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.Disconnected));
+        }
+        if (OnlineCharacterNameRules.ValidateDeleteConfirmationName(confirmName) != OnlineCharacterNameError.Valid)
+        {
+            return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.InvalidInput));
+        }
+        if (slotIndex >= ManagedRoster.Count)
+        {
+            return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.EmptySlot, 0x15));
+        }
+        byte[] confirmBytes = System.Text.Encoding.UTF8.GetBytes(confirmName);
+        IReadOnlyList<byte> targetName = ManagedRoster[slotIndex].NameBytes;
+        if (targetName.Count != confirmBytes.Length || !targetName.SequenceEqual(confirmBytes))
+        {
+            return Task.FromResult(OnlineCharacterManageOutcome.Fail(OnlineCharacterManageStatus.DatabaseOrUnknownError, 0x02));
+        }
+        ManagedRoster.RemoveAt(slotIndex);
+        return Task.FromResult(OnlineCharacterManageOutcome.Ok(SnapshotManagedRoster()));
     }
 }
 

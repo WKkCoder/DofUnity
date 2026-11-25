@@ -137,5 +137,11 @@ namespace Dnf.Client
         {
             return string.IsNullOrEmpty(text) ? null : text;
         }
+
+        /// <summary>非开发构建强制关闭角色创建/删除写操作，仅 devBuild == true 且显式传 -dnfallowcharwrite 时开启。</summary>
+        public static bool ResolveAllowCharWrite(bool devBuild, bool flagRequested)
+        {
+            return devBuild && flagRequested;
+        }
     }
 }

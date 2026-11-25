@@ -145,17 +145,18 @@ namespace Dnf.Client
         /// <paramref name="characterSelect"/> 非 null 时选角界面用服务器给的真名册(<see cref="OnlineShellOptions.CharacterSelect"/>),为 null 是外壳原来的占位名册。
         /// </summary>
         public static OnlineShellHost Create(OnlineShellSetup setup, CharacterSelectScene art, Action<string> log, bool serverUi = false, ServerPickerScene picker = null,
-            OnlineCharacterSelectOptions characterSelect = null, ChannelDirectoryCatalog directoryCatalog = null, IGlyphFonts fonts = null)
+            OnlineCharacterSelectOptions characterSelect = null, ChannelDirectoryCatalog directoryCatalog = null, IGlyphFonts fonts = null, bool allowCharacterWrite = false)
         {
             if (setup == null)
             {
                 throw new ArgumentNullException(nameof(setup));
             }
-            return new OnlineShellHost(setup, new OnlineShellBackend(setup.CreateSettings(), log, directoryCatalog), art, log, fonts, serverUi, picker, characterSelect);
+            return new OnlineShellHost(setup, new OnlineShellBackend(setup.CreateSettings(), log, directoryCatalog, allowCharacterWrite),
+                art, log, fonts, serverUi, picker, characterSelect, allowCharacterWrite);
         }
 
         internal OnlineShellHost(OnlineShellSetup setup, OnlineShellBackend backend, CharacterSelectScene art, Action<string> log, IGlyphFonts fonts,
-            bool serverUi = false, ServerPickerScene picker = null, OnlineCharacterSelectOptions characterSelect = null)
+            bool serverUi = false, ServerPickerScene picker = null, OnlineCharacterSelectOptions characterSelect = null, bool allowCharacterWrite = false)
         {
             if (setup == null)
             {
@@ -172,6 +173,7 @@ namespace Dnf.Client
                 InitialUsername = setup.PrefillUser,
                 Fonts = fonts,
                 CharacterSelect = characterSelect,
+                CharacterManage = allowCharacterWrite && backend.AllowCharacterWrite ? backend : null,
             };
             if (serverUi)
             {
@@ -187,6 +189,8 @@ namespace Dnf.Client
         }
 
         public OnlineShellFlow Flow => _flow;
+
+        internal OnlineShellBackend Backend => _backend;
 
         public OnlineShellStage Stage => _flow.Stage;
 

@@ -464,6 +464,9 @@ namespace Dnf.Client
                     case "-dnfserverui":
                         _serverUi = true;        // 联网外壳的选服务器、选频道用真界面(r18-serverui);没带 -dnfonline 时没有作用
                         break;
+                    case "-dnfallowcharwrite":
+                        _onlineAllowCharWrite = true; // 仅开发构建生效：允许联网外壳创建/删除角色写操作(1/5、1/6)
+                        break;
                     case "-dnfonlineareas":
                         if (value != null && TryParseOnlineSwitch(value, out bool areaSync)) { _onlineAreaSync = areaSync; i++; }
                         break;

@@ -144,5 +144,11 @@ namespace Dnf.Play
 
         /// <summary>正在显示的提示;没有是 <see cref="CharacterSelectPrompt.None"/>。</summary>
         public CharacterSelectPrompt Prompt { get; set; }
+
+        /// <summary>是否允许"创立角色"按钮(默认为 false,灰显且点击只提示暂未开放)。</summary>
+        public bool CreateEnabled { get; set; }
+
+        /// <summary>是否允许"删除角色"按钮(默认为 false,灰显且点击只提示暂未开放)。</summary>
+        public bool DeleteEnabled { get; set; }
     }
 }
