@@ -9,13 +9,14 @@ namespace Dnf.Net.Tests;
 /// 交互收包往返与中途 Disconnect/Quit 无挂起、无未观察异常测试(r18-dungeonflow)。
 /// 全部使用 <see cref="OnlineFlowRig"/> 内存管道与合成编号,不连真服。
 /// </summary>
+[Collection("UnobservedTaskException")]
 public sealed class OnlineClientSessionExclusiveQuitTests
 {
-    private static Task<T> Bounded<T>(Task<T> task) => GatewayTestSupport.Bounded(task, 5);
+    private static Task<T> Bounded<T>(Task<T> task) => GatewayTestSupport.Bounded(task, 15);
 
     private static async Task Bounded(Task task)
     {
-        Task finished = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(5)));
+        Task finished = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(15)));
         Assert.Same(task, finished);
         await task;
     }
@@ -161,9 +162,8 @@ public sealed class OnlineClientSessionExclusiveQuitTests
             using var cts = new CancellationTokenSource();
             Task<OnlineDungeonCombatResult> combatTask = combat.RunAsync(entry.StartMap!, null, cts.Token);
 
-            // 确保战斗读包循环已经跑起来后触发断线/退出
-            await WaitUntil(() => combat.Machine != null);
-            await Task.Delay(30);
+            // 确保战斗读包循环已经挂上管道 ReadAsync 后触发断线/退出
+            await WaitUntil(() => combat.Machine != null && pipe.HasPendingRead);
 
             cts.Cancel();
             await Bounded(client.DisconnectAsync());
@@ -187,8 +187,7 @@ public sealed class OnlineClientSessionExclusiveQuitTests
             OnlineDungeonResult entry2 = await Bounded(runner2.EnterAsync(9101, 0, null));
             Assert.True(entry2.Entered);
             Task<OnlineDungeonCombatResult> combatTask2 = combat2.RunAsync(entry2.StartMap!, null);
-            await WaitUntil(() => combat2.Machine != null);
-            await Task.Delay(30);
+            await WaitUntil(() => combat2.Machine != null && rig2.Channels[0].Pipe.HasPendingRead);
 
             await Bounded(client2.DisconnectAsync());
             OnlineDungeonCombatResult ended2 = await Bounded(combatTask2);

@@ -907,6 +907,14 @@ namespace Dnf.Net.Session
             Task timeoutTask = Task.Delay(OnlineTownEntry.ConnectTimeout, cancellationToken);
             if (await Task.WhenAny(connectTask, timeoutTask).ConfigureAwait(false) != connectTask || !tcp.Connected)
             {
+                if (connectTask.IsCompleted)
+                {
+                    _ = connectTask.Exception;
+                }
+                else
+                {
+                    GameClientSession.ObserveFaulted(connectTask);
+                }
                 tcp.Dispose();
                 if (cancellationToken.IsCancellationRequested)
                 {

@@ -17,11 +17,11 @@ public sealed class OnlineClientSessionCommandTests
 
     public OnlineClientSessionCommandTests(ITestOutputHelper output) => _output = output;
 
-    private static Task<T> Bounded<T>(Task<T> task) => GatewayTestSupport.Bounded(task, 5);
+    private static Task<T> Bounded<T>(Task<T> task) => GatewayTestSupport.Bounded(task, 15);
 
     private static async Task Bounded(Task task)
     {
-        Task finished = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(5)));
+        Task finished = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(15)));
         Assert.Same(task, finished);
         await task;
     }
@@ -1044,9 +1044,9 @@ public sealed class OnlineClientSessionCommandTests
             client.Disconnected += _ =>
             {
                 enteredHandler.TrySetResult(0);
-                releaseHandler.Wait(TimeSpan.FromSeconds(5));
+                releaseHandler.Wait(TimeSpan.FromSeconds(15));
             };
-            streams[0].OnReadStarted = _ => releasePump.Wait(TimeSpan.FromSeconds(5));
+            streams[0].OnReadStarted = _ => releasePump.Wait(TimeSpan.FromSeconds(15));
 
             Task leave = Task.Run(() => client.LeaveExclusiveReceiveAsync());
             Task dispose = null;

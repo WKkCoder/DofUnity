@@ -307,6 +307,7 @@ namespace Dnf.Net.Session
             if (_pendingRead == null)
             {
                 _pendingRead = _stream.ReadAsync(_chunk, 0, _chunk.Length, CancellationToken.None);
+                ObserveFaulted(_pendingRead);
             }
             Task<int> read = _pendingRead;
             if (!read.IsCompleted)
@@ -336,6 +337,15 @@ namespace Dnf.Net.Session
                 _closed = true;
                 return 0;
             }
+        }
+
+        internal static void ObserveFaulted(Task task)
+        {
+            task.ContinueWith(
+                t => { _ = t.Exception; },
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
         }
     }
 }

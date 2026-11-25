@@ -166,7 +166,7 @@ public sealed class OnlineDungeonFlowGapR4CombatEndTests
 
         HostedRoomRun run = Assert.IsType<HostedRoomRun>(rig.Flow.Run);
         run.Abort(HostedAbort.MoveRefused);
-        rig.PumpControllerUntil(() => rig.Ctrl.Phase == OnlineDungeonFlowPhase.Idle, 600);
+        rig.PumpControllerUntil(() => rig.Ctrl.Phase == OnlineDungeonFlowPhase.Idle);
 
         string[] expected = EnteredLogs().Concat(new[]
         {
@@ -244,7 +244,7 @@ public sealed class OnlineDungeonFlowGapR4CombatEndTests
         });
         ServeRoomDungeon(rig);
         EnterDungeon(rig);
-        rig.PumpControllerUntil(() => rig.Ctrl.Phase == OnlineDungeonFlowPhase.Idle, 600);
+        rig.PumpControllerUntil(() => rig.Ctrl.Phase == OnlineDungeonFlowPhase.Idle);
 
         DungeonSelectNotice notice = rig.Ctrl.ActiveNotice;
         Assert.NotNull(notice);

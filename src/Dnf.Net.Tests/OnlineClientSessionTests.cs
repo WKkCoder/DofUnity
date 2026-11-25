@@ -1159,6 +1159,11 @@ public sealed class OnlineClientSessionTests
     public async Task A_select_reply_pushed_past_the_64_frame_window_is_taken_from_the_tail_window()
     {
         var rig = new OnlineFlowRig();
+        rig.Hooks.Windows = new OnlineTownWindows(
+            TimeSpan.FromMilliseconds(100),
+            TimeSpan.FromMilliseconds(100),
+            TimeSpan.FromSeconds(2),
+            TimeSpan.FromMilliseconds(30));
         SelectCharacterSpec late = SelectCharacterSpec.Variant(5);
         byte[][] frames = Enumerable.Repeat(IdleNotice(), 63)                   // 窗口里的前 63 帧:无关通知
             .Concat(HostTestKit.EnterComplete())                                // 第 64 帧:进城完成,窗口到此为止

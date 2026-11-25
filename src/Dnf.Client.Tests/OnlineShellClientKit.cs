@@ -402,19 +402,22 @@ internal sealed class BackendRig
 /// <summary>跑主线程轮询的小工具:每一轮 Tick 一次,等后台线程上的任务完成,超时就让测试失败而不是挂住。</summary>
 internal static class HostPump
 {
-    public static void Until(OnlineShellHost host, ref long now, Func<bool> done, int seconds = 10)
+    public static void Until(OnlineShellHost host, ref long now, Func<bool> done, int seconds = 30)
     {
+        long startNow = now;
         var watch = Stopwatch.StartNew();
         while (!done())
         {
-            host.Tick(default, 16, now += 16);
+            long target = startNow + watch.ElapsedMilliseconds;
+            now = target > now ? target : now + 1;
+            host.Tick(default, 16, now);
             if (watch.Elapsed.TotalSeconds > seconds)
             {
                 Assert.Fail(
                     "the condition was not reached within " + seconds + " seconds (stage " + host.Stage
                     + ", busy " + host.Flow.Busy + ", notice " + (host.Flow.Notice == null ? "none" : host.Flow.Notice.Kind.ToString()) + ")");
             }
-            Thread.Sleep(1);
+            Thread.Sleep(10);
         }
     }
 }

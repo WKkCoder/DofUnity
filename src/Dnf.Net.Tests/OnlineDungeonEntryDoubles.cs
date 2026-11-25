@@ -206,6 +206,18 @@ internal sealed class DungeonEntryPipe : Stream
         }
     }
 
+    /// <summary>当前是否有异步读请求正挂在管道上等待服务端推字节或关流。</summary>
+    public bool HasPendingRead
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _pending != null;
+            }
+        }
+    }
+
     /// <summary>服务端往客户端发一段字节(读端挂着就直接交给它)。</summary>
     public void Push(byte[] bytes)
     {
