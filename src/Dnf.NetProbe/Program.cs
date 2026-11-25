@@ -67,7 +67,7 @@ internal static class Program
         {
             return ClientVersionTool.RunFile(args.Skip(1).ToArray(), Console.WriteLine);
         }
-        Console.WriteLine("用法: dnf-netprobe offline <首包文件> | live [--register] [--channel-port N] [--data-version N] [--seconds N] | orchestrated [仓库根] [--stay N] [--client-version <u32>] [--server-group <0..17>] | switch [仓库根] --to-index <K> | --to-port <N> [--client-version <u32>] [--server-group <0..17>] | switch [仓库根] --list | fight [仓库根] --dungeon <副本编号> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] | channel [仓库根] [--channel-port N] [--version V] | client-version <客户端程序文件>");
+        Console.WriteLine("用法: dnf-netprobe offline <首包文件> | live [--register] [--channel-port N] [--data-version N] [--seconds N] | orchestrated [仓库根] [--stay N] [--client-version <u32>] [--server-group <0..17>] | switch [仓库根] --to-index <K> | --to-port <N> [--client-version <u32>] [--server-group <0..17>] | switch [仓库根] --list | fight [仓库根] --dungeon <副本编号> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] [--min-clear-seconds S] [--after-settle [--menu-choice town]] | channel [仓库根] [--channel-port N] [--version V] | client-version <客户端程序文件>");
         return 64;
     }
 

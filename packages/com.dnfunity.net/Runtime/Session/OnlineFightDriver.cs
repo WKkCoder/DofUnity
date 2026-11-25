@@ -102,6 +102,13 @@ namespace Dnf.Net.Session
 
         /// <summary>时钟;null 用 <see cref="SystemFightClock.Instance"/>。测试换成手拨的假时钟。</summary>
         public IFightClock Clock { get; set; }
+
+        /// <summary>
+        /// 从第一只击杀发出到最后一只击杀发出的最短清图时长;null 或不大于 0 表示不拉长,缺省 null(行为与以前逐字相同)。
+        /// 怪数不少于 2 时把击杀间隔拉大到至少 <c>ceil(MinClearDuration / (N - 1))</c>(与 <see cref="PaceMs"/> 取更慢者),并在最后一只发出前保证距第一只不少于本值;
+        /// 怪数为 1 时没有"第一只到最后一只"的间隔,立即发出。
+        /// </summary>
+        public TimeSpan? MinClearDuration { get; set; }
     }
 
     /// <summary>
@@ -114,7 +121,7 @@ namespace Dnf.Net.Session
         internal OnlineFightSummary(OnlineFightOutcome outcome, int monsters, int posted, int sent, int confirmed, int refused, int blocked,
             bool clearNoticeSeen, OnlineFightSettlement settlement, bool returnReady, OnlineCombatPhase phase,
             OnlineDungeonCombatOutcome? runnerOutcome, string faultType, int firstRefusedLocal, int heartbeatsAnswered,
-            TimeSpan elapsed, IReadOnlyList<TimeSpan> postTimes)
+            TimeSpan elapsed, IReadOnlyList<TimeSpan> postTimes, TimeSpan? clearDuration = null)
         {
             Outcome = outcome;
             Monsters = monsters;
@@ -133,6 +140,7 @@ namespace Dnf.Net.Session
             HeartbeatsAnswered = heartbeatsAnswered;
             Elapsed = elapsed;
             PostTimes = postTimes;
+            ClearDuration = clearDuration ?? elapsed;
         }
 
         /// <summary>结局。</summary>
@@ -185,6 +193,9 @@ namespace Dnf.Net.Session
 
         /// <summary>每次排击杀时驱动的时钟读数(相对驱动开始),按排的顺序;第 0 只恒为 0 附近。</summary>
         public IReadOnlyList<TimeSpan> PostTimes { get; }
+
+        /// <summary>从驱动开始到观察到清图(或未清图时到驱动收场)的时长(取驱动的时钟)。</summary>
+        public TimeSpan ClearDuration { get; }
 
         /// <summary>已发出击杀却还没等到确认或拒绝的怪数(收场时的在途数)。</summary>
         public int Pending => Sent - Confirmed - Refused;
@@ -244,6 +255,7 @@ namespace Dnf.Net.Session
         private readonly OnlineDungeonCombatRunner _runner;
         private readonly StartMapNotice _map;
         private readonly int _paceMs;
+        private readonly TimeSpan? _minClearDuration;
         private readonly bool _continueOnRefuse;
         private readonly TimeSpan _clearWait;
         private readonly TimeSpan _settleWait;
@@ -265,10 +277,15 @@ namespace Dnf.Net.Session
             {
                 throw new ArgumentOutOfRangeException(nameof(options), "PaceMs 不能为负");
             }
+            if (o.MinClearDuration.HasValue && (o.MinClearDuration.Value < TimeSpan.Zero || o.MinClearDuration.Value.TotalMilliseconds > int.MaxValue))
+            {
+                throw new ArgumentOutOfRangeException(nameof(options), "MinClearDuration 不能为负或超过 int.MaxValue 毫秒");
+            }
             CheckWindow(o.ClearWait, "ClearWait");
             CheckWindow(o.SettleWait, "SettleWait");
             CheckWindow(o.PollInterval, "PollInterval");
             _paceMs = o.PaceMs;
+            _minClearDuration = o.MinClearDuration.HasValue && o.MinClearDuration.Value > TimeSpan.Zero ? o.MinClearDuration : (TimeSpan?)null;
             _continueOnRefuse = o.ContinueOnRefuse;
             _clearWait = o.ClearWait;
             _settleWait = o.SettleWait;
@@ -333,6 +350,15 @@ namespace Dnf.Net.Session
         private async Task DriveAsync(Task<OnlineDungeonCombatResult> runTask, RunState state, Action<string> log, CancellationToken token)
         {
             int total = _map.Monsters.Count;
+            long effectivePaceMs = _paceMs;
+            if (total >= 2 && _minClearDuration.HasValue)
+            {
+                long spread = (long)Math.Ceiling(_minClearDuration.Value.TotalMilliseconds / (total - 1));
+                if (spread > effectivePaceMs)
+                {
+                    effectivePaceMs = spread;
+                }
+            }
 
             Say(log, OnlineFightLog.Phase("kills", 0));
             for (int i = 0; i < total; i++)
@@ -341,6 +367,10 @@ namespace Dnf.Net.Session
                 OnlineDungeonCombat machine = _runner.Machine;
                 if (machine.Phase >= OnlineCombatPhase.Cleared)
                 {
+                    if (!state.ClearedAt.HasValue)
+                    {
+                        state.ClearedAt = _clock.Now;
+                    }
                     break;                                  // 服务端已经说清图了:没有怪可杀,不再排
                 }
                 if (runTask.IsCompleted)
@@ -353,16 +383,49 @@ namespace Dnf.Net.Session
                     return;
                 }
 
+                if (i == total - 1 && i > 0 && _minClearDuration.HasValue)
+                {
+                    TimeSpan remain = _minClearDuration.Value - (_clock.Now - state.FirstPostAt);
+                    if (remain > TimeSpan.Zero)
+                    {
+                        await WaitAsync(runTask, remain, token).ConfigureAwait(false);
+                        token.ThrowIfCancellationRequested();
+                        machine = _runner.Machine;
+                        if (machine.Phase >= OnlineCombatPhase.Cleared)
+                        {
+                            if (!state.ClearedAt.HasValue)
+                            {
+                                state.ClearedAt = _clock.Now;
+                            }
+                            break;
+                        }
+                        if (runTask.IsCompleted)
+                        {
+                            return;
+                        }
+                        if (NoteRefusal(machine, state, log) && !_continueOnRefuse)
+                        {
+                            state.Verdict = OnlineFightOutcome.RefusedStop;
+                            return;
+                        }
+                    }
+                }
+
                 if (!_runner.PostKill(i))
                 {
                     return;                                 // 跑器已收场:结局按它的结局认
                 }
-                state.Posted++;
-                state.PostTimes.Add(_clock.Now - state.Started);
-
-                if (i + 1 < total && _paceMs > 0)
+                TimeSpan postNow = _clock.Now;
+                if (i == 0)
                 {
-                    await WaitAsync(runTask, TimeSpan.FromMilliseconds(_paceMs), token).ConfigureAwait(false);
+                    state.FirstPostAt = postNow;
+                }
+                state.Posted++;
+                state.PostTimes.Add(postNow - state.Started);
+
+                if (i + 1 < total && effectivePaceMs > 0)
+                {
+                    await WaitAsync(runTask, TimeSpan.FromMilliseconds(effectivePaceMs), token).ConfigureAwait(false);
                 }
             }
 
@@ -374,6 +437,10 @@ namespace Dnf.Net.Session
                 OnlineDungeonCombat machine = _runner.Machine;
                 if (machine.Phase >= OnlineCombatPhase.Cleared)
                 {
+                    if (!state.ClearedAt.HasValue)
+                    {
+                        state.ClearedAt = _clock.Now;
+                    }
                     break;
                 }
                 if (runTask.IsCompleted)
@@ -521,9 +588,11 @@ namespace Dnf.Net.Session
             }
 
             OnlineFightOutcome outcome = Decide(state, phase, refused, runnerOutcome, fault != null);
+            TimeSpan elapsed = _clock.Now - state.Started;
+            TimeSpan clearDuration = state.ClearedAt.HasValue ? state.ClearedAt.Value - state.Started : elapsed;
             return new OnlineFightSummary(outcome, _map.Monsters.Count, state.Posted, sent, confirmed, refused, blocked,
                 phase >= OnlineCombatPhase.Cleared, settlement, phase == OnlineCombatPhase.Settled, phase,
-                runnerOutcome, fault, firstRefused, heartbeats, _clock.Now - state.Started, state.PostTimes.ToArray());
+                runnerOutcome, fault, firstRefused, heartbeats, elapsed, state.PostTimes.ToArray(), clearDuration);
         }
 
         // 结局的判法,先后即优先级:
@@ -648,6 +717,8 @@ namespace Dnf.Net.Session
         private sealed class RunState
         {
             public TimeSpan Started;
+            public TimeSpan FirstPostAt;
+            public TimeSpan? ClearedAt;
             public int Posted;
             public readonly List<TimeSpan> PostTimes = new List<TimeSpan>();
             public int FirstRefusedLocal = -1;

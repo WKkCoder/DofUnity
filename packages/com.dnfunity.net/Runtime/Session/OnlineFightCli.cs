@@ -32,10 +32,25 @@ namespace Dnf.Net.Session
         UnknownArgument,
 
         /// <summary>
-        /// <c>--permits-only</c>(只看副本许可表、不进副本)与 <c>--dungeon</c>(进这个副本)同时出现:二选一,不分先后。
+        /// <c>--permits-only</c>(只看副本许可表、不进副本)与 <c>--dungeon</c>(进这个副本)或结算后选项同时出现:二选一,不分先后。
         /// 和别的问题一样只给问题名,不回显用户输入。
         /// </summary>
         Conflict,
+
+        /// <summary><c>--min-clear-seconds</c> 缺值或不是 1 到 <see cref="OnlineFightArguments.MaxWaitSeconds"/> 的纯数字(秒)。</summary>
+        BadMinClearSeconds,
+
+        /// <summary><c>--menu-choice</c> 缺值或不是 <c>town</c>。</summary>
+        BadMenuChoice,
+
+        /// <summary>给了 <c>--after-settle</c> 却没有同时给 <c>--min-clear-seconds</c>。</summary>
+        MissingMinClearSeconds,
+
+        /// <summary>给了 <c>--menu-choice</c> 却没有同时给 <c>--after-settle</c>。</summary>
+        MenuChoiceWithoutAfterSettle,
+
+        /// <summary>新增选项(<c>--after-settle</c>、<c>--min-clear-seconds</c>、<c>--menu-choice</c>)重复出现。</summary>
+        DuplicateOption,
     }
 
     /// <summary>
@@ -88,14 +103,32 @@ namespace Dnf.Net.Session
         /// </summary>
         public bool PermitsOnly { get; private set; }
 
+        /// <summary>是否在结算到达 <c>ReturnReady</c> 之后继续无头走结算后菜单与回城(<c>--after-settle</c>),缺省 false。</summary>
+        public bool AfterSettle { get; private set; }
+
+        /// <summary>最短清图时间(秒,1 至 <see cref="MaxWaitSeconds"/>;<c>--min-clear-seconds</c>),没给为 null。</summary>
+        public int? MinClearSeconds { get; private set; }
+
+        /// <summary>最短清图时间间隔(没给为 null)。</summary>
+        public TimeSpan? MinClearDuration => MinClearSeconds.HasValue ? TimeSpan.FromSeconds(MinClearSeconds.Value) : (TimeSpan?)null;
+
+        /// <summary>命令行显式指定的 <c>--menu-choice</c> 取值(没给为 null;本版仅支持 <c>"town"</c>)。</summary>
+        public string MenuChoice { get; private set; }
+
+        /// <summary>开启 <see cref="AfterSettle"/> 时实际执行的菜单命令(缺省为 <see cref="EplpCommand.ReturnToTown"/>),未开启时为 null。</summary>
+        public EplpCommand? EffectiveMenuChoice => AfterSettle ? EplpCommand.ReturnToTown : (EplpCommand?)null;
+
         /// <summary>
-        /// 解析 <c>fight</c> 之后的那些参数。仓库根只能出现在第一个位置(不以 <c>--</c> 开头的那个);同一个选项给了多次以最后一次为准。
+        /// 解析 <c>fight</c> 之后的那些参数。仓库根只能出现在第一个位置(不以 <c>--</c> 开头的那个);旧选项重复以最后一次为准,新增选项重复判错。
         /// </summary>
         public static bool TryParse(IReadOnlyList<string> args, out OnlineFightArguments parsed, out OnlineFightArgumentProblem problem)
         {
             parsed = null;
             var result = new OnlineFightArguments();
             bool haveDungeon = false;
+            bool seenAfterSettle = false;
+            bool seenMinClearSeconds = false;
+            bool seenMenuChoice = false;
             int count = args == null ? 0 : args.Count;
             for (int i = 0; i < count; i++)
             {
@@ -188,14 +221,58 @@ namespace Dnf.Net.Session
                     case "--permits-only":
                         result.PermitsOnly = true;
                         break;
+                    case "--after-settle":
+                        if (seenAfterSettle)
+                        {
+                            problem = OnlineFightArgumentProblem.DuplicateOption;
+                            return false;
+                        }
+                        seenAfterSettle = true;
+                        result.AfterSettle = true;
+                        break;
+                    case "--min-clear-seconds":
+                    {
+                        int value;
+                        if (!TryNext(args, i, 1, MaxWaitSeconds, out value))
+                        {
+                            problem = OnlineFightArgumentProblem.BadMinClearSeconds;
+                            return false;
+                        }
+                        if (seenMinClearSeconds)
+                        {
+                            problem = OnlineFightArgumentProblem.DuplicateOption;
+                            return false;
+                        }
+                        seenMinClearSeconds = true;
+                        result.MinClearSeconds = value;
+                        i++;
+                        break;
+                    }
+                    case "--menu-choice":
+                    {
+                        if (i + 1 >= count || !string.Equals(args[i + 1], "town", StringComparison.Ordinal))
+                        {
+                            problem = OnlineFightArgumentProblem.BadMenuChoice;
+                            return false;
+                        }
+                        if (seenMenuChoice)
+                        {
+                            problem = OnlineFightArgumentProblem.DuplicateOption;
+                            return false;
+                        }
+                        seenMenuChoice = true;
+                        result.MenuChoice = "town";
+                        i++;
+                        break;
+                    }
                     default:
                         problem = OnlineFightArgumentProblem.UnknownArgument;
                         return false;
                 }
             }
 
-            // 只看许可表与进副本二选一:每个参数都读得通之后才判(不分先后);只看许可表时不要求 --dungeon,否则一如既往必须给
-            if (result.PermitsOnly && haveDungeon)
+            // 只看许可表与进副本/结算后选项二选一:每个参数都读得通之后才判(不分先后);只看许可表时不要求 --dungeon,否则一如既往必须给
+            if (result.PermitsOnly && (haveDungeon || result.AfterSettle || result.MinClearSeconds.HasValue || seenMenuChoice))
             {
                 problem = OnlineFightArgumentProblem.Conflict;
                 return false;
@@ -203,6 +280,16 @@ namespace Dnf.Net.Session
             if (!haveDungeon && !result.PermitsOnly)
             {
                 problem = OnlineFightArgumentProblem.MissingDungeon;
+                return false;
+            }
+            if (result.AfterSettle && !result.MinClearSeconds.HasValue)
+            {
+                problem = OnlineFightArgumentProblem.MissingMinClearSeconds;
+                return false;
+            }
+            if (seenMenuChoice && !result.AfterSettle)
+            {
+                problem = OnlineFightArgumentProblem.MenuChoiceWithoutAfterSettle;
                 return false;
             }
 
