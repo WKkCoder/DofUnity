@@ -214,6 +214,27 @@ public sealed class ClientVersionFileEdgeTests
     }
 
     [Fact]
+    public void A_truncated_entry_table_without_a_version_type_is_a_bad_directory_and_a_whole_one_just_has_no_version_resource()
+    {
+        // 类型层只有编号 3 与 24 两项(没有版本类型 16),表占资源节偏移 16..32;表的最后一项只缺最后一个字节时是资源目录的问题,
+        // 表完整(后面的子目录有没有都无所谓)时才是"没有版本资源"
+        byte[] full = Build(Node.Dir(Id(3, Filler()), Id(24, Filler())));
+        int tableEnd = 0x600 + 16 + 16;
+        AssertProblem(full, ClientVersionFileProblem.NoVersionResource);
+        AssertProblem(full.Take(tableEnd).ToArray(), ClientVersionFileProblem.NoVersionResource);
+        AssertProblem(full.Take(tableEnd - 1).ToArray(), ClientVersionFileProblem.BadResourceDirectory);
+    }
+
+    [Fact]
+    public void A_language_directory_whose_only_entry_is_named_still_yields_that_entry()
+    {
+        // 语言层不挑语言:取第一项,哪怕它是按名字的项。目录头里名字项数在偏移 12、编号项数在偏移 14(各两字节):
+        // 只有一个名字项时前者为 1、后者为 0,数量字段读偏了位置就会把总数读成 0
+        Node languages = Node.Dir(Named(Node.Leaf(VersionBlob(1, 2, 3, 4))));
+        AssertVersion(Build(Node.Dir(Id(16, Node.Dir(Id(1, languages))))), 1, 2, 3, 4);
+    }
+
+    [Fact]
     public void An_empty_language_directory_means_there_is_no_version_resource()
     {
         AssertProblem(Build(Node.Dir(Id(16, Node.Dir(Id(1, Node.Dir()))))), ClientVersionFileProblem.NoVersionResource);
