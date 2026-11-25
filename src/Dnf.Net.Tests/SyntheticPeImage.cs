@@ -20,6 +20,9 @@ internal static class SyntheticPeImage
         /// <summary>叶子在数据项里声明的大小;不设就是 <see cref="Data"/> 的长度。</summary>
         public int? DeclaredSize;
 
+        /// <summary>目录头里声明的"按编号的项"数;不设就是真实的编号项个数。声明得比实际少时,多出来的项物理上还在表里,只是不在声明的范围内。</summary>
+        public int? DeclaredIdEntries;
+
         public static Node Dir(params (bool Named, uint Id, Node Child)[] entries)
         {
             var node = new Node();
@@ -40,6 +43,9 @@ internal static class SyntheticPeImage
 
         /// <summary>资源节的内存地址(RVA)。</summary>
         public uint ResourceRva = 0x3000;
+
+        /// <summary>节表里资源节的原始大小(默认是资源节内容的长度);改小时文件里的内容还是完整的,只是节表声明的范围变小。</summary>
+        public uint? ResourceRawSize;
 
         /// <summary>资源节在文件里的位置;与 RVA 刻意不同。</summary>
         public uint ResourceRawPointer = 0x600;
@@ -155,13 +161,13 @@ internal static class SyntheticPeImage
         int sections = optional + optionalSize;
         if (options.ResourceSectionFirst)
         {
-            WriteSection(image, sections, ".rsrc", (uint)rsrc.Length, options.ResourceRva, (uint)rsrc.Length, options.ResourceRawPointer);
+            WriteSection(image, sections, ".rsrc", (uint)rsrc.Length, options.ResourceRva, options.ResourceRawSize ?? (uint)rsrc.Length, options.ResourceRawPointer);
             WriteSection(image, sections + 40, ".text", 0x200, 0x1000, 0x200, 0x200);
         }
         else
         {
             WriteSection(image, sections, ".text", 0x200, 0x1000, 0x200, 0x200);
-            WriteSection(image, sections + 40, ".rsrc", (uint)rsrc.Length, options.ResourceRva, (uint)rsrc.Length, options.ResourceRawPointer);
+            WriteSection(image, sections + 40, ".rsrc", (uint)rsrc.Length, options.ResourceRva, options.ResourceRawSize ?? (uint)rsrc.Length, options.ResourceRawPointer);
         }
 
         Array.Copy(rsrc, 0, image, options.ResourceRawPointer, rsrc.Length);
@@ -229,7 +235,7 @@ internal static class SyntheticPeImage
             W16(bytes, at + 8, 0x0405);                                // 主版本号、次版本号也不是 0:偏一个字节读到的数就不会恰好是 0
             W16(bytes, at + 10, 0x0607);
             W16(bytes, at + 12, (uint)named);
-            W16(bytes, at + 14, (uint)(directory.Entries.Count - named));
+            W16(bytes, at + 14, (uint)(directory.DeclaredIdEntries ?? directory.Entries.Count - named));
             int entry = at + 16;
             foreach ((bool isNamed, uint id, Node child) in directory.Entries)
             {

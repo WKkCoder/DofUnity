@@ -275,7 +275,7 @@ namespace Dnf.Net.Session
             {
                 return false;
             }
-            return InRange(image, directory + 16, 8) && TryU32(image, directory + 16 + 4, out offsetField);
+            return TryU32(image, directory + 16 + 4, out offsetField);
         }
 
         // 目录项的"数据或子目录偏移"字段:高位置 1 表示子目录,低 31 位是相对资源根的偏移

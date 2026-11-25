@@ -90,8 +90,38 @@ public sealed class ClientVersionFileEdgeTests
         AssertProblem(Build(1, 2, 3, 4, new Options { DeclaredResourceSize = 0 }), ClientVersionFileProblem.NoResourceDirectory);
         AssertProblem(Build(1, 2, 3, 4, new Options { DeclaredResourceRva = 0 }), ClientVersionFileProblem.NoResourceDirectory);
 
-        // 登记的大小只是"有没有"的标志:哪怕只写 1,读多少由目录自己的结构决定
+        // 登记的大小只是"有没有"的标志:哪怕只写 1,读多少由目录自己的结构决定;
+        // 只有最高字节非零的大小(0x01000000)也是非零,四个字节都要看,不能错位几个字节读到 0
         AssertVersion(Build(1, 2, 3, 4, new Options { DeclaredResourceSize = 1 }), 1, 2, 3, 4);
+        AssertVersion(Build(1, 2, 3, 4, new Options { DeclaredResourceSize = 0x01000000u }), 1, 2, 3, 4);
+        AssertVersion(Build(1, 2, 3, 4, new Options { DeclaredResourceSize = 0x01000000u, Pe32Plus = true }), 1, 2, 3, 4);
+    }
+
+    [Fact]
+    public void The_section_raw_size_bounds_the_resource_directory_root()
+    {
+        // 资源目录根(16 字节头)必须整个落在节的原始数据里:节表声明只有 15 字节时就是资源目录的问题,而不是往下读到别的问题
+        AssertProblem(Build(1, 2, 3, 4, new Options { ResourceRawSize = 15 }), ClientVersionFileProblem.BadResourceDirectory);
+        AssertProblem(Build(1, 2, 3, 4, new Options { ResourceRawSize = 0 }), ClientVersionFileProblem.BadResourceDirectory);
+    }
+
+    [Fact]
+    public void Every_byte_of_the_pe_signature_is_checked()
+    {
+        byte[] good = Build(1, 2, 3, 4);
+        AssertVersion(good, 1, 2, 3, 4);
+        for (int i = 0; i < 4; i++)
+        {
+            byte[] bad = (byte[])good.Clone();
+            bad[0x80 + i] ^= 0x20;
+            AssertProblem(bad, ClientVersionFileProblem.NotPeImage);
+        }
+        for (int i = 0; i < 2; i++)
+        {
+            byte[] bad = (byte[])good.Clone();
+            bad[i] ^= 0x20;
+            AssertProblem(bad, ClientVersionFileProblem.NotPeImage);
+        }
     }
 
     // ---------------- 节表 ----------------
@@ -152,6 +182,36 @@ public sealed class ClientVersionFileEdgeTests
     }
 
     // ---------------- 语言层 ----------------
+
+    [Fact]
+    public void Entries_beyond_the_declared_id_count_are_not_looked_at_in_the_type_and_name_levels()
+    {
+        // 类型层声明只有 1 个编号项,但紧跟着表的第二项物理上就是编号 16 的版本类型:不在声明范围内,当没有版本资源
+        Node typeLevel = Node.Dir(Id(3, Filler()), Id(16, Node.Dir(Id(1, Node.Dir(Id(0x409, Node.Leaf(VersionBlob(1, 2, 3, 4))))))));
+        typeLevel.DeclaredIdEntries = 1;
+        AssertProblem(Build(typeLevel), ClientVersionFileProblem.NoVersionResource);
+        typeLevel.DeclaredIdEntries = null;                              // 同一棵树按真实数量声明:读得出
+        AssertVersion(Build(typeLevel), 1, 2, 3, 4);
+
+        // 编号层同理:编号 1 排在声明的范围之外
+        Node nameLevel = Node.Dir(Id(2, Node.Dir(Id(0x409, Node.Leaf(new byte[8])))), Id(1, Node.Dir(Id(0x409, Node.Leaf(VersionBlob(1, 2, 3, 4))))));
+        nameLevel.DeclaredIdEntries = 1;
+        AssertProblem(Build(Node.Dir(Id(16, nameLevel))), ClientVersionFileProblem.NoVersionResource);
+        nameLevel.DeclaredIdEntries = null;
+        AssertVersion(Build(Node.Dir(Id(16, nameLevel))), 1, 2, 3, 4);
+    }
+
+    [Fact]
+    public void An_image_cut_inside_the_first_directorys_entry_table_is_a_bad_directory()
+    {
+        // 典型的树:类型层 4 项(16 字节头 + 32 字节表)在资源节偏移 0;文件在表中间任何位置断掉,都是资源目录的问题
+        byte[] full = Build(TypicalTree(VersionBlob(1, 2, 3, 4)));
+        int root = 0x600;
+        for (int cut = root; cut < root + 16 + 32; cut++)
+        {
+            AssertProblem(full.Take(cut).ToArray(), ClientVersionFileProblem.BadResourceDirectory);
+        }
+    }
 
     [Fact]
     public void An_empty_language_directory_means_there_is_no_version_resource()
