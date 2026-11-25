@@ -4,7 +4,9 @@
 #       引用 Unity 安装里的 UnityEngine*.dll,再引用 Dnf.Data / Dnf.Render / Dnf.Play / Dnf.Net 四个库的工程(与 Dnf.Client.asmdef 一致)。
 # 用法: tools/typecheck-client.sh [--selftest] [-h|--help]
 #   (无参数)    检查宿主源码。0 个编译错误退出 0;有错误退出 1,并打印错误行(最多前 50 行)。警告不算失败。
-#   --selftest   自测("负对照"):把宿主源码复制到临时目录,注入一个故意的类型错误,断言检查必须失败且错误里含 CS0029,
+#   --selftest   自测("负对照"):把宿主源码复制到临时目录,分别验证:
+#                1. 注入 UnityEngine 类型错误(CS0029),检查必须失败;
+#                2. 注入跨程序集间接引用(Dnf.Play.RoomCombatSession.Create),非严格模式能过,默认严格模式必须报 CS0012 失败。
 #                然后清理临时目录。通过退出 0,不通过退出 1。改了本工具之后、或怀疑它"没真检查"时跑。
 # 环境变量:
 #   UNITY_MANAGED   含 UnityEngine.CoreModule.dll 的目录;设了就只用它(优先),不对就报错,不会悄悄改用别的。
@@ -142,12 +144,14 @@ LOG="$TMP/build.log"
 ERRS="$TMP/errors.txt"
 
 # ---------- 编译与错误行 ----------
-# build_check <源码目录>:编译,全部输出落到 $LOG,dotnet 的退出码放进 BUILD_CODE(本函数总是返回 0,免得 set -e 中途退出)
+# build_check <源码目录> [额外 MSBuild 参数...]:编译,全部输出落到 $LOG,dotnet 的退出码放进 BUILD_CODE(本函数总是返回 0,免得 set -e 中途退出)
 BUILD_CODE=0
 build_check() {
+  local src_dir="$1"
+  shift
   BUILD_CODE=0
   dotnet build "$PROJ" -c Release -nologo -v:q -clp:NoSummary -p:NuGetAudit=false \
-    -p:UnityManaged="$MANAGED" -p:ClientSourceDir="$1" >"$LOG" 2>&1 || BUILD_CODE=$?
+    -p:UnityManaged="$MANAGED" -p:ClientSourceDir="$src_dir" "$@" >"$LOG" 2>&1 || BUILD_CODE=$?
   return 0
 }
 
@@ -163,9 +167,9 @@ line_count() { wc -l <"$1" | tr -d ' '; }
 
 echo "Unity 引擎程序集: $(tilde "$MANAGED")($(count_engine_dlls "$MANAGED") 个 UnityEngine*.dll)"
 
-# ---------- 自测:注入故意的类型错误,检查必须失败 ----------
+# ---------- 自测:注入故意的类型错误与严格模式间接引用,检查必须失败 ----------
 if [ "$mode" = selftest ]; then
-  echo "== 自测:注入一个故意的类型错误,检查必须失败且含 CS0029 =="
+  echo "== 自测 1/2:注入一个故意的类型错误,检查必须失败且含 CS0029 =="
   SRC="$TMP/src"
   mkdir -p "$SRC"
   cp -R "$CLIENT_SRC/." "$SRC/"
@@ -190,22 +194,62 @@ EOF
   extract_errors
   N_ERR="$(line_count "$ERRS")"
   HIT="$(grep -E 'TypeCheckSelfTestInjection\.cs\([0-9]+,[0-9]+\): error CS0029: ' "$ERRS" | head -n 1 || true)"
-  if [ "$BUILD_CODE" -ne 0 ] && [ -n "$HIT" ]; then
-    echo "检出:退出码 $BUILD_CODE,共 $N_ERR 个错误行,其中注入的 CS0029 为:"
-    printf '  %s\n' "$(printf '%s' "$HIT" | sed -e "s|$(esc_sed "$TMP/src/")|<临时目录>/|g")"
-    echo "自测通过:检查会在有类型错误时失败,工具可信。(临时目录已清理)"
-    exit 0
+  if [ "$BUILD_CODE" -eq 0 ] || [ -z "$HIT" ]; then
+    echo "自测不通过:注入了类型错误,检查却没有按预期失败。" >&2
+    echo "  dotnet 退出码: $BUILD_CODE;错误行 $N_ERR 条;其中指向注入文件的 CS0029: $([ -n "$HIT" ] && echo 有 || echo 没有)" >&2
+    if [ "$N_ERR" -gt 0 ]; then
+      echo "  实际的错误行(前 10 行):" >&2
+      head -n 10 "$ERRS" | sed -e "s|$(esc_sed "$TMP/src/")|<临时目录>/|g" -e 's/^/  /' >&2
+    else
+      echo "  日志末尾 10 行:" >&2
+      tail -n 10 "$LOG" | sed -e "s|$ROOT_SED||g" -e 's/^/  /' >&2
+    fi
+    exit 1
   fi
-  echo "自测不通过:注入了类型错误,检查却没有按预期失败。" >&2
-  echo "  dotnet 退出码: $BUILD_CODE;错误行 $N_ERR 条;其中指向注入文件的 CS0029: $([ -n "$HIT" ] && echo 有 || echo 没有)" >&2
-  if [ "$N_ERR" -gt 0 ]; then
-    echo "  实际的错误行(前 10 行):" >&2
-    head -n 10 "$ERRS" | sed -e "s|$(esc_sed "$TMP/src/")|<临时目录>/|g" -e 's/^/  /' >&2
-  else
-    echo "  日志末尾 10 行:" >&2
-    tail -n 10 "$LOG" | sed -e "s|$ROOT_SED||g" -e 's/^/  /' >&2
+  echo "检出:退出码 $BUILD_CODE,共 $N_ERR 个错误行,其中注入的 CS0029 为:"
+  printf '  %s\n' "$(printf '%s' "$HIT" | sed -e "s|$(esc_sed "$TMP/src/")|<临时目录>/|g")"
+
+  echo "== 自测 2/2:注入跨程序集间接引用(CS0012 严格模式负对照) =="
+  SRC_STRICT="$TMP/src-strict"
+  mkdir -p "$SRC_STRICT"
+  cp -R "$CLIENT_SRC/." "$SRC_STRICT/"
+  cat >"$SRC_STRICT/TypeCheckStrictSelfTestInjection.cs" <<'EOF'
+namespace Dnf.Client
+{
+    internal static class TypeCheckStrictSelfTestInjection
+    {
+        internal static object TransitiveRefLeak()
+        {
+            return Dnf.Play.RoomCombatSession.Create(null, null);
+        }
+    }
+}
+EOF
+  build_check "$SRC_STRICT" -p:DisableTransitiveProjectReferences=false
+  extract_errors
+  if [ "$BUILD_CODE" -ne 0 ] || [ "$(line_count "$ERRS")" -ne 0 ]; then
+    echo "自测不通过:非严格模式下(DisableTransitiveProjectReferences=false)注入的间接引用应当能编过,实际退出码 $BUILD_CODE。" >&2
+    head -n 10 "$ERRS" | sed -e "s|$(esc_sed "$TMP/src-strict/")|<临时目录>/|g" -e 's/^/  /' >&2
+    exit 1
   fi
-  exit 1
+  build_check "$SRC_STRICT"
+  extract_errors
+  N_STRICT_ERR="$(line_count "$ERRS")"
+  HIT_STRICT="$(grep -E 'TypeCheckStrictSelfTestInjection\.cs\([0-9]+,[0-9]+\): error CS0012: ' "$ERRS" | head -n 1 || true)"
+  if [ "$BUILD_CODE" -eq 0 ] || [ -z "$HIT_STRICT" ]; then
+    echo "自测不通过:默认严格模式下注入的间接引用应当报 CS0012 失败。" >&2
+    echo "  dotnet 退出码: $BUILD_CODE;错误行 $N_STRICT_ERR 条;CS0012: $([ -n "$HIT_STRICT" ] && echo 有 || echo 没有)" >&2
+    if [ "$N_STRICT_ERR" -gt 0 ]; then
+      head -n 10 "$ERRS" | sed -e "s|$(esc_sed "$TMP/src-strict/")|<临时目录>/|g" -e 's/^/  /' >&2
+    else
+      tail -n 10 "$LOG" | sed -e "s|$ROOT_SED||g" -e 's/^/  /' >&2
+    fi
+    exit 1
+  fi
+  echo "检出(仅严格模式):退出码 $BUILD_CODE,共 $N_STRICT_ERR 个错误行,其中 CS0012 为:"
+  printf '  %s\n' "$(printf '%s' "$HIT_STRICT" | sed -e "s|$(esc_sed "$TMP/src-strict/")|<临时目录>/|g")"
+  echo "自测通过:普通类型错误(CS0029)与严格模式间接引用(CS0012)均被检出。(临时目录已清理)"
+  exit 0
 fi
 
 # ---------- 正式检查 ----------

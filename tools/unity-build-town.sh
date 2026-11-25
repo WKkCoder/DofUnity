@@ -63,6 +63,29 @@ case "$platform" in
 esac
 
 mkdir -p re out
+log_run_diag() {
+  python3 - "$1" <<'PY'
+import re, sys
+try:
+    text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+except OSError:
+    sys.exit(0)
+hits = re.findall(r'DNF_TOWN_DEMO ran [^\n]*', text)
+if not hits:
+    sys.exit(0)
+line = hits[-1]
+m = re.search(r'frames=(\d+)\s+seconds=([\d.]+)', line)
+if not m:
+    sys.exit(0)
+frames, secs = int(m.group(1)), float(m.group(2))
+fps = frames / secs if secs > 0.0 else 0.0
+ms = re.search(r'simMs=(\d+)', line)
+qb = re.search(r'quitBy=(\S+)', line)
+sim = ms.group(1) if ms else "?"
+by = qb.group(1) if qb else "?"
+print(f"  diag: fps={fps:.1f} frames={frames} wall={secs:.2f}s simMs={sim} quitBy={by}")
+PY
+}
 log="$PWD/re/unity-build-town-$platform.log"
 if [ "${DNF_SKIP_BUILD:-}" = "1" ] && [ "$platform" = "macos" ] && [ -d "$PWD/unity/DnfUnity/Builds/macos/DnfTownDemo.app" ]; then
   # 调试用:只改了本脚本里的校验、没动 packages/ 时,沿用上次构建出来的播放器重跑校验(动过 packages/ 之后不要用)
@@ -119,6 +142,7 @@ if [ "$platform" = "macos" ]; then
     set -e
     echo "播放器退出码(实时运行 4 秒): $rc"
     grep -E 'DNF_TOWN_DEMO' "$live_log" || true
+    log_run_diag "$live_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$live_log"; then
       echo "实时运行的日志里有异常:$live_log" >&2
@@ -134,6 +158,7 @@ if [ "$platform" = "macos" ]; then
     set -e
     echo "播放器退出码(主角自动向左走): $rc"
     grep -E 'DNF_TOWN_DEMO' "$walk_log" || true
+    log_run_diag "$walk_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     grep -q 'DNF_TOWN_DEMO ran .* facing=left motion=Rest cameraX=0 leftEdge=True' "$walk_log" \
       || { echo "自动行走后主角不在预期的状态(应停在可走区域左边界上、朝左、站立、镜头 0):$walk_log" >&2; exit 1; }
@@ -171,6 +196,7 @@ if [ "$platform" = "macos" ]; then
     set -e
     echo "播放器退出码(房间里自动行走): $rc"
     grep -E 'DNF_TOWN_DEMO' "$room_walk_log" || true
+    log_run_diag "$room_walk_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     cli_hero="$(dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll combat-check --map map/lorien/s2.map --play 0.5:left,5:down,6.5:none --seconds 7 --no-damage \
       | sed -n 's/^结束:主角 (\([0-9.]*,[0-9.]*\)),.*/\1/p')"
@@ -210,6 +236,7 @@ if [ "$platform" = "macos" ]; then
     set -e
     echo "播放器退出码(房间里实时战斗): $rc"
     grep -E 'DNF_TOWN_DEMO' "$fight_log" || true
+    log_run_diag "$fight_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$fight_log"; then
       echo "实时战斗的日志里有异常:$fight_log" >&2
@@ -269,6 +296,7 @@ if [ "$platform" = "macos" ]; then
     set -e
     echo "播放器退出码(房间里实时放技能): $rc"
     grep -E 'DNF_TOWN_DEMO' "$skill_log" || true
+    log_run_diag "$skill_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$skill_log"; then
       echo "实时放技能的日志里有异常:$skill_log" >&2
@@ -288,6 +316,7 @@ if [ "$platform" = "macos" ]; then
     set -e
     echo "播放器退出码(触屏摇杆向左奔跑): $rc"
     grep -E 'DNF_TOUCH|DNF_TOWN_DEMO' "$touch_walk_log" || true
+    log_run_diag "$touch_walk_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$touch_walk_log"; then
       echo "触屏行走的日志里有异常:$touch_walk_log" >&2
@@ -305,6 +334,7 @@ if [ "$platform" = "macos" ]; then
     set -e
     echo "播放器退出码(房间里触屏放技能): $rc"
     grep -E 'DNF_TOUCH|DNF_TOWN_DEMO' "$touch_skill_log" || true
+    log_run_diag "$touch_skill_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$touch_skill_log"; then
       echo "触屏放技能的日志里有异常:$touch_skill_log" >&2
@@ -365,6 +395,7 @@ if [ "$platform" = "macos" ]; then
     set -e
     echo "播放器退出码(房间里实时挨打): $rc"
     grep -E 'DNF_TOWN_DEMO' "$hurt_log" || true
+    log_run_diag "$hurt_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$hurt_log"; then
       echo "实时挨打的日志里有异常:$hurt_log" >&2
@@ -412,14 +443,16 @@ if [ "$platform" = "macos" ]; then
       python3 tools/py/png_diff.py "out/town-demo-$tag.png" "out/town-cpu-dungeon-$mode-$(printf '%.2f' "$at").png" --max-diff 0
     done
     # 实时运行:自动机逛遍整座副本再打首领。帧率不固定,所以不比像素,只检查走完了(进过 6 个房间、全清、首领清空)、没有异常
+    # 实机完整打通约需 ~85-90 游戏秒(含首领清空 3 秒出结算),改用 -dnfquitaftersim 95 保证低帧率下也能推完模拟,-dnfquitafter 300 仅作墙钟兜底
     dungeon_log="$PWD/re/unity-run-town-dungeon-explore-macos.log"
     rm -f "$dungeon_log"
     set +e
-    "$app" -batchmode -logFile "$dungeon_log" -dnfdir "$DNF_DIR" -dnfdungeon "$dungeon" -dnfexplore -dnfquitafter 90
+    "$app" -batchmode -logFile "$dungeon_log" -dnfdir "$DNF_DIR" -dnfdungeon "$dungeon" -dnfexplore -dnfquitaftersim 95 -dnfquitafter 300
     rc=$?
     set -e
     echo "播放器退出码(实时自动打副本): $rc"
     grep -E 'DNF_TOWN_DEMO' "$dungeon_log" || true
+    log_run_diag "$dungeon_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$dungeon_log"; then
       echo "实时打副本的日志里有异常:$dungeon_log" >&2
@@ -516,11 +549,12 @@ if [ "$platform" = "macos" ]; then
     rm -f "$flow_log"
     set +e
     "$app" -batchmode -logFile "$flow_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom char -dnfbot -dnfnodamage -dnfdungeon "$dungeon" -dnfflowchoices retry,select,town \
-      -dnftimescale 4 -dnfquitafter 150
+      -dnftimescale 4 -dnfquitaftersim 227 -dnfquitafter 450
     rc=$?
     set -e
     echo "播放器退出码(实时走完整条流程): $rc"
     grep -E 'DNF_FLOW|DNF_TOWN_DEMO ran' "$flow_log" | cut -c1-260 || true
+    log_run_diag "$flow_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$flow_log"; then
       echo "整条流程的日志里有异常:$flow_log" >&2
@@ -576,11 +610,12 @@ if [ "$platform" = "macos" ]; then
     rm -f "$fail_log"
     set +e
     "$app" -batchmode -logFile "$fail_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" \
-      -dnfmonsterdamage 100000 -dnfcoins 0 -dnftimescale 4 -dnfquitafter 30
+      -dnfmonsterdamage 100000 -dnfcoins 0 -dnftimescale 4 -dnfquitaftersim 161 -dnfquitafter 120
     rc=$?
     set -e
     echo "播放器退出码(失败回城): $rc"
     grep -E 'DNF_FLOW|DNF_REVIVE' "$fail_log" | cut -c1-260 || true
+    log_run_diag "$fail_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$fail_log"; then
       echo "失败回城的日志里有异常:$fail_log" >&2
@@ -595,11 +630,12 @@ if [ "$platform" = "macos" ]; then
     rm -f "$revive_log"
     set +e
     "$app" -batchmode -logFile "$revive_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" \
-      -dnfmonsterdamage 100000 -dnfcoins 99 -dnftimescale 4 -dnfquitafter 25
+      -dnfmonsterdamage 100000 -dnfcoins 99 -dnftimescale 4 -dnfquitaftersim 130 -dnfquitafter 100
     rc=$?
     set -e
     echo "播放器退出码(死亡复活): $rc"
     grep -E 'DNF_FLOW|DNF_REVIVE|DNF_GOLD' "$revive_log" | cut -c1-260 | head -16 || true
+    log_run_diag "$revive_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$revive_log"; then
       echo "死亡复活的日志里有异常:$revive_log" >&2
@@ -620,11 +656,12 @@ if [ "$platform" = "macos" ]; then
     rm -f "$clear_log"
     set +e
     "$app" -batchmode -logFile "$clear_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" -dnflevel 20 \
-      -dnftimescale 4 -dnfquitafter 25
+      -dnftimescale 4 -dnfquitaftersim 130 -dnfquitafter 100
     rc=$?
     set -e
     echo "播放器退出码(副本结算与通关经验): $rc"
     grep -E 'DNF_CLEAR difficulty=[0-9]+ opened=[0-9]+ rank=' "$clear_log" | cut -c1-200 || true
+    log_run_diag "$clear_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$clear_log"; then
       echo "副本结算的日志里有异常:$clear_log" >&2
@@ -640,11 +677,12 @@ if [ "$platform" = "macos" ]; then
     rm -f "$difficulty_log"
     set +e
     "$app" -batchmode -logFile "$difficulty_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" -dnflevel 20 -dnfraisedifficulty \
-      -dnfflowchoices select,retry,town -dnftimescale 4 -dnfquitafter 120
+      -dnfflowchoices select,retry,town -dnftimescale 4 -dnfquitaftersim 228 -dnfquitafter 360
     rc=$?
     set -e
     echo "播放器退出码(副本难度): $rc"
     grep -E 'DNF_CLEAR difficulty=' "$difficulty_log" | cut -c1-120 || true
+    log_run_diag "$difficulty_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$difficulty_log"; then
       echo "副本难度的日志里有异常:$difficulty_log" >&2
@@ -662,11 +700,12 @@ if [ "$platform" = "macos" ]; then
     rm -f "$menu_log"
     set +e
     "$app" -batchmode -logFile "$menu_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfnodamage -dnfdungeon "$dungeon" \
-      -dnfmenuat 3 -dnfmenuchoose 2 -dnftimescale 4 -dnfquitafter 20
+      -dnfmenuat 3 -dnfmenuchoose 2 -dnftimescale 4 -dnfquitaftersim 96 -dnfquitafter 80
     rc=$?
     set -e
     echo "播放器退出码(系统菜单放弃回城): $rc"
     grep -E 'DNF_FLOW|DNF_MENU' "$menu_log" | cut -c1-260 || true
+    log_run_diag "$menu_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$menu_log"; then
       echo "系统菜单的日志里有异常:$menu_log" >&2
@@ -683,11 +722,12 @@ if [ "$platform" = "macos" ]; then
     rm -f "$bag_log"
     set +e
     "$app" -batchmode -logFile "$bag_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" -dnflevel 30 \
-      -dnfbagat 3 -dnftimescale 4 -dnfquitafter 25
+      -dnfbagat 3 -dnftimescale 4 -dnfquitaftersim 119 -dnfquitafter 100
     rc=$?
     set -e
     echo "播放器退出码(背包与装备栏): $rc"
     grep -E 'DNF_BAG' "$bag_log" | cut -c1-260 || true
+    log_run_diag "$bag_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$bag_log"; then
       echo "背包与装备栏的日志里有异常:$bag_log" >&2
@@ -708,11 +748,12 @@ if [ "$platform" = "macos" ]; then
     rm -f "$shop_log"
     set +e
     "$app" -batchmode -logFile "$shop_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom town -dnflevel 30 \
-      -dnfshopat 3 -dnftimescale 4 -dnfquitafter 10
+      -dnfshopat 3 -dnftimescale 4 -dnfquitaftersim 47 -dnfquitafter 40
     rc=$?
     set -e
     echo "播放器退出码(NPC 商店): $rc"
     grep -E 'DNF_SHOP' "$shop_log" | cut -c1-260 || true
+    log_run_diag "$shop_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$shop_log"; then
       echo "NPC 商店的日志里有异常:$shop_log" >&2
@@ -742,11 +783,12 @@ if [ "$platform" = "macos" ]; then
     rm -f "$quest_log"
     set +e
     "$app" -batchmode -logFile "$quest_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom town -dnflevel 40 \
-      -dnfquestat 3 -dnftimescale 4 -dnfquitafter 25
+      -dnfquestat 3 -dnftimescale 4 -dnfquitaftersim 125 -dnfquitafter 100
     rc=$?
     set -e
     echo "播放器退出码(任务系统): $rc"
     grep -E 'DNF_QUEST' "$quest_log" | cut -c1-260 || true
+    log_run_diag "$quest_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed|DNF_QUEST problem' "$quest_log"; then
       echo "任务系统的日志里有异常:$quest_log" >&2
@@ -778,11 +820,12 @@ if [ "$platform" = "macos" ]; then
     rm -f "$skill_win_log"
     set +e
     "$app" -batchmode -logFile "$skill_win_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom town -dnflevel 40 \
-      -dnfskillat 3 -dnftimescale 4 -dnfquitafter 25
+      -dnfskillat 3 -dnftimescale 4 -dnfquitaftersim 119 -dnfquitafter 100
     rc=$?
     set -e
     echo "播放器退出码(技能窗口): $rc"
     grep -E 'DNF_SKILL' "$skill_win_log" | cut -c1-260 || true
+    log_run_diag "$skill_win_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed|DNF_SKILL probe failed' "$skill_win_log"; then
       echo "技能窗口的日志里有异常或探针开不了窗口:$skill_win_log" >&2
@@ -807,11 +850,12 @@ if [ "$platform" = "macos" ]; then
     rm -f "$skill_learn_log"
     set +e
     "$app" -batchmode -logFile "$skill_learn_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" -dnflevel 40 -dnflearn \
-      -dnftimescale 4 -dnfquitafter 40
+      -dnftimescale 4 -dnfquitaftersim 177 -dnfquitafter 160
     rc=$?
     set -e
     echo "播放器退出码(自动机学技能): $rc"
     grep -E 'DNF_SKILL|DNF_FLOW' "$skill_learn_log" | cut -c1-200 || true
+    log_run_diag "$skill_learn_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$skill_learn_log"; then
       echo "自动机学技能的日志里有异常:$skill_learn_log" >&2
@@ -825,11 +869,12 @@ if [ "$platform" = "macos" ]; then
     rm -f "$potion_log"
     set +e
     "$app" -batchmode -logFile "$potion_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" -dnflevel 30 \
-      -dnfpotionat 3 -dnftimescale 4 -dnfquitafter 40
+      -dnfpotionat 3 -dnftimescale 4 -dnfquitaftersim 185 -dnfquitafter 160
     rc=$?
     set -e
     echo "播放器退出码(消耗品): $rc"
     grep -E 'DNF_POTION' "$potion_log" | cut -c1-260 || true
+    log_run_diag "$potion_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$potion_log"; then
       echo "消耗品的日志里有异常:$potion_log" >&2
@@ -859,11 +904,12 @@ if [ "$platform" = "macos" ]; then
       rm -f "$smash_log"
       set +e
       "$app" -batchmode -logFile "$smash_log" -dnfdir "$DNF_DIR" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfsmash -dnfnodamage -dnfdungeon "$smash_dungeon" \
-        -dnfflowchoices town -dnftimescale 4 -dnfquitafter 150
+        -dnfflowchoices town -dnftimescale 4 -dnfquitaftersim 157 -dnfquitafter 450
       rc=$?
       set -e
       echo "播放器退出码(打物件): $rc"
       grep -E 'DNF_OBJECT' "$smash_log" | tail -3 | cut -c1-200 || true
+      log_run_diag "$smash_log"
       [ "$rc" -eq 0 ] || exit "$rc"
       if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$smash_log"; then
         echo "打物件的日志里有异常:$smash_log" >&2
@@ -881,11 +927,12 @@ if [ "$platform" = "macos" ]; then
     rm -f "$save_log1" "$save_log2"
     set +e
     "$app" -batchmode -logFile "$save_log1" -dnfdir "$DNF_DIR" -dnfsave "$save_file" -dnfflow -dnfflowfrom dungeon -dnfbot -dnfdungeon "$dungeon" -dnflevel 30 \
-      -dnfbagat 3 -dnftimescale 4 -dnfquitafter 25
+      -dnfbagat 3 -dnftimescale 4 -dnfquitaftersim 119 -dnfquitafter 100
     rc=$?
     set -e
     echo "播放器退出码(存档第一趟): $rc"
     grep -E 'DNF_SAVE' "$save_log1" | cut -c1-260 || true
+    log_run_diag "$save_log1"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$save_log1"; then
       echo "存档第一趟的日志里有异常:$save_log1" >&2
@@ -903,11 +950,12 @@ if [ "$platform" = "macos" ]; then
       *) echo "第一趟最后存下的应穿着 1 件装备(DNF_SAVE saved … equipped=1),实际:$saved_fields" >&2; exit 1 ;;
     esac
     set +e
-    "$app" -batchmode -logFile "$save_log2" -dnfdir "$DNF_DIR" -dnfsave "$save_file" -dnfflow -dnfflowfrom town -dnftimescale 4 -dnfquitafter 6
+    "$app" -batchmode -logFile "$save_log2" -dnfdir "$DNF_DIR" -dnfsave "$save_file" -dnfflow -dnfflowfrom town -dnftimescale 4 -dnfquitaftersim 35 -dnfquitafter 24
     rc=$?
     set -e
     echo "播放器退出码(存档第二趟): $rc"
     grep -E 'DNF_SAVE' "$save_log2" | cut -c1-260 || true
+    log_run_diag "$save_log2"
     [ "$rc" -eq 0 ] || exit "$rc"
     if grep -q -E 'Exception|DNF_TOWN_DEMO failed' "$save_log2"; then
       echo "存档第二趟的日志里有异常:$save_log2" >&2
@@ -938,6 +986,7 @@ elif [ "$platform" = "macos-dev" ]; then
     set -e
     echo "开发版播放器退出码(无凭据联网外壳冒烟): $rc"
     grep -E 'DNF_TOWN_DEMO online|DNF_ONLINE' "$dev_log" || true
+    log_run_diag "$dev_log"
     [ "$rc" -eq 0 ] || exit "$rc"
     grep -q -F 'DNF_TOWN_DEMO online source=None configured=False dev=True serverui=True' "$dev_log" \
       || { echo "开发版未报 dev=True / source=None / configured=False / serverui=True:$dev_log" >&2; exit 1; }

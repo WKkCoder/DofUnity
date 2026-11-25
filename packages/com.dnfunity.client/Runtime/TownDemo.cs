@@ -124,6 +124,8 @@ namespace Dnf.Client
         private string _shotPath;
         private long _shotTimeMs = 545;
         private float _quitAfterSeconds = -1f;
+        private double _quitAfterSimSeconds = -1.0;
+        private double _simElapsedMs;
         private int _frames;
         private float _runningSince = -1f;
         private DnfAssets _assets;
@@ -516,6 +518,9 @@ namespace Dnf.Client
                         if (value != null && float.TryParse(value, System.Globalization.NumberStyles.Float,
                                 System.Globalization.CultureInfo.InvariantCulture, out float q)) { _quitAfterSeconds = q; i++; }
                         break;
+                    case "-dnfquitaftersim":
+                        if (value != null && TownDemoQuitPolicy.TryParseQuitAfterSim(value, out double qSim)) { _quitAfterSimSeconds = qSim; i++; }
+                        break;
                     case "-dnftouch":
                         _touchForced = true;
                         break;
@@ -660,11 +665,12 @@ namespace Dnf.Client
                 yield break;
             }
 
-            if (_quitAfterSeconds < 0f)
+            if (_quitAfterSeconds < 0f && _quitAfterSimSeconds <= 0.0)
             {
                 PlayerPrefs.SetString(PrefsKey, dir); // 无人值守的检查运行不改动用户的偏好
             }
             _clockMs = 0;
+            _simElapsedMs = 0.0;
             _paused = false;
             _originReal = Time.realtimeSinceStartupAsDouble;
             _state = State.Running;
@@ -1597,13 +1603,16 @@ namespace Dnf.Client
                 {
                     if (!_paused)
                     {
-                        StepFlow(Math.Min(Time.unscaledDeltaTime * 1000.0 * _timeScale, 100.0));
+                        double deltaMs = Math.Min(Time.unscaledDeltaTime * 1000.0 * _timeScale, 100.0);
+                        _simElapsedMs += deltaMs;
+                        StepFlow(deltaMs);
                     }
                 }
                 else if (_session != null && !_paused)
                 {
                     // 一帧最多推进 100 毫秒:窗口被拖动、打开数据等卡顿之后主角不会一步冲出去
                     double deltaMs = Math.Min(Time.unscaledDeltaTime * 1000.0 * _timeScale, 100.0);
+                    _simElapsedMs += deltaMs;
                     StepSession(deltaMs);
                     // 声音:取走这一步发出的提示、推进调度器、执行命令(不碰画面与游戏状态)
                     _audio?.Tick(deltaMs, _session as ISoundSource);
@@ -1617,23 +1626,28 @@ namespace Dnf.Client
                 Fail(e);
                 return;
             }
-            if (_flowBot != null && _flowBot.Done && _quitAfterSeconds >= 0f && !_flowDoneNoted)
+            float wallElapsed = Time.realtimeSinceStartup - _runningSince;
+            if (_flowBot != null && _flowBot.Done && (_quitAfterSeconds >= 0f || _quitAfterSimSeconds > 0.0) && !_flowDoneNoted)
             {
                 // 无人值守的流程走完了:再留一秒让最后的日志与声音计数落定,然后照常收尾退出(-dnfquitafter 只是上限)
                 _flowDoneNoted = true;
-                _quitAfterSeconds = Mathf.Min(_quitAfterSeconds, Time.realtimeSinceStartup - _runningSince + 1f);
+                float botSettleWall = wallElapsed + 1f;
+                _quitAfterSeconds = _quitAfterSeconds >= 0f ? Mathf.Min(_quitAfterSeconds, botSettleWall) : botSettleWall;
             }
-            if (_quitAfterSeconds >= 0f && Time.realtimeSinceStartup - _runningSince >= _quitAfterSeconds)
+            TownDemoQuitDecision quitDecision = TownDemoQuitPolicy.EvaluateQuit(
+                _flowBot != null && _flowBot.Done, _flowDoneNoted, _simElapsedMs, _quitAfterSimSeconds, wallElapsed, _quitAfterSeconds);
+            if (quitDecision.ShouldQuit)
             {
-                float seconds = Time.realtimeSinceStartup - _runningSince;
                 NoteNetBot(true);   // 联网房间自动机收尾时还在打(没生效或已写过就什么也不写)
-                Debug.Log("DNF_TOWN_DEMO ran frames=" + _frames + " seconds=" + seconds.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)
-                    + " clockMs=" + (long)_clockMs + " sprites=" + _spriteCount + HeroLog());
+                string baseRanLine = "DNF_TOWN_DEMO ran frames=" + _frames + " seconds=" + wallElapsed.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)
+                    + " clockMs=" + (long)_clockMs + " sprites=" + _spriteCount + HeroLog();
+                Debug.Log(TownDemoQuitPolicy.AppendQuitLogFields(baseRanLine, _simElapsedMs, quitDecision.Trigger));
                 if (_audio != null)
                 {
                     Debug.Log("DNF_AUDIO " + _audio.Summary());
                 }
                 _quitAfterSeconds = -1f;
+                _quitAfterSimSeconds = -1.0;
                 Application.Quit(0);
             }
         }

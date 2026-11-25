@@ -27,6 +27,7 @@
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <DisableTransitiveProjectReferences Condition="'$(DisableTransitiveProjectReferences)' == ''">true</DisableTransitiveProjectReferences>
     <ClientSourceDir Condition="'$(ClientSourceDir)' == ''">$(MSBuildThisFileDirectory)../../packages/com.dnfunity.client/Runtime</ClientSourceDir>
   </PropertyGroup>
 
