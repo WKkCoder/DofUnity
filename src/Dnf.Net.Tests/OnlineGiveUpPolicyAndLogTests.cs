@@ -230,6 +230,70 @@ public class OnlineGiveUpPolicyAndLogTests
         Assert.DoesNotContain("giveUp", OnlineFightLog.ResultFieldsWithAfterSettle(s, menu));
     }
 
+    // ======== 驱动级放弃:跑器自己收场时,收场原因怎样映射成放弃的结局 ========
+
+    public static TheoryData<OnlineDungeonCombatOutcome, bool, OnlineGiveUpOutcome> RunnerEndings()
+    {
+        // 跑器的 8 种收场 × "1/45 发出了没有":发出了才有超时与断线,没发出就收场只能是 Skipped
+        return new TheoryData<OnlineDungeonCombatOutcome, bool, OnlineGiveUpOutcome>
+        {
+            { OnlineDungeonCombatOutcome.GaveUp, true, OnlineGiveUpOutcome.Returned },
+            { OnlineDungeonCombatOutcome.GaveUp, false, OnlineGiveUpOutcome.Returned },
+            { OnlineDungeonCombatOutcome.Timeout, true, OnlineGiveUpOutcome.Timeout },
+            { OnlineDungeonCombatOutcome.Timeout, false, OnlineGiveUpOutcome.Skipped },
+            { OnlineDungeonCombatOutcome.ConnectionClosed, true, OnlineGiveUpOutcome.Closed },
+            { OnlineDungeonCombatOutcome.ConnectionClosed, false, OnlineGiveUpOutcome.Skipped },
+            { OnlineDungeonCombatOutcome.FramingFault, true, OnlineGiveUpOutcome.Closed },
+            { OnlineDungeonCombatOutcome.FramingFault, false, OnlineGiveUpOutcome.Skipped },
+            { OnlineDungeonCombatOutcome.SendFailed, true, OnlineGiveUpOutcome.SendFailed },
+            { OnlineDungeonCombatOutcome.SendFailed, false, OnlineGiveUpOutcome.SendFailed },
+            { OnlineDungeonCombatOutcome.Cancelled, true, OnlineGiveUpOutcome.Cancelled },
+            { OnlineDungeonCombatOutcome.Cancelled, false, OnlineGiveUpOutcome.Cancelled },
+            { OnlineDungeonCombatOutcome.Faulted, true, OnlineGiveUpOutcome.Faulted },
+            { OnlineDungeonCombatOutcome.Faulted, false, OnlineGiveUpOutcome.Faulted },
+            { OnlineDungeonCombatOutcome.ReturnReady, true, OnlineGiveUpOutcome.Skipped },
+            { OnlineDungeonCombatOutcome.ReturnReady, false, OnlineGiveUpOutcome.Skipped },
+        };
+    }
+
+    private static Task<OnlineDungeonCombatResult> RunnerResult(OnlineDungeonCombatOutcome outcome, string faultType)
+    {
+        var machine = new OnlineDungeonCombat(CombatKit.Map(CombatKit.Sequential(1)), new RecordingCombatPort());
+        return Task.FromResult(new OnlineDungeonCombatResult(outcome, machine, 0, 0, 0, 0, 0, faultType));
+    }
+
+    [Theory]
+    [MemberData(nameof(RunnerEndings))]
+    public void A_runner_that_ends_during_the_wait_maps_to_the_give_up_outcome_by_its_ending_and_whether_the_command_went_out(
+        OnlineDungeonCombatOutcome ending, bool sent, OnlineGiveUpOutcome expected)
+    {
+        Task<OnlineDungeonCombatResult> done = RunnerResult(ending, "SyntheticFault");
+
+        Assert.Equal(expected, OnlineFightDriver.GiveUpOutcomeOf(done, sent, out string faultType));
+        Assert.Equal("SyntheticFault", faultType);                 // 跑器的异常类型名原样带出
+    }
+
+    [Fact]
+    public void Every_runner_ending_has_a_row_in_the_mapping_table()
+    {
+        // 新增跑器收场原因时这里会红,逼着回来决定它在放弃里算什么
+        Assert.Equal(8, Enum.GetValues(typeof(OnlineDungeonCombatOutcome)).Length);
+        OnlineDungeonCombatOutcome[] covered = RunnerEndings().Select(row => (OnlineDungeonCombatOutcome)row[0]).Distinct().ToArray();
+        foreach (OnlineDungeonCombatOutcome ending in Enum.GetValues(typeof(OnlineDungeonCombatOutcome)))
+        {
+            Assert.Contains(ending, covered);
+        }
+    }
+
+    [Fact]
+    public void A_runner_task_that_did_not_complete_normally_maps_to_faulted_without_a_fault_type()
+    {
+        Assert.Equal(OnlineGiveUpOutcome.Faulted, OnlineFightDriver.GiveUpOutcomeOf(Task.FromException<OnlineDungeonCombatResult>(new InvalidOperationException("x")), true, out string faulted));
+        Assert.Null(faulted);
+        Assert.Equal(OnlineGiveUpOutcome.Faulted, OnlineFightDriver.GiveUpOutcomeOf(Task.FromCanceled<OnlineDungeonCombatResult>(new CancellationToken(true)), false, out string canceled));
+        Assert.Null(canceled);
+    }
+
     // ======== 缺省值与选项边界 ========
 
     [Fact]

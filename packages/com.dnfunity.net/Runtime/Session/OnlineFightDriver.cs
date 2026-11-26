@@ -116,8 +116,9 @@ namespace Dnf.Net.Session
         /// <summary>
         /// 驱动以被拒即停、没等到清图通知、结算不完整三种异常结局收场,而跑器还在跑(会话还活着)时,
         /// 在让跑器停下之前先请求它发一次放弃游戏命令(<see cref="OnlineDungeonCombatRunner.PostGiveUp"/>,类 1、包号 45)并有限地等回城信号(<see cref="GiveUpWait"/>)。
-        /// 缺省 false:驱动的每一步、每一行日志与汇总都与以前逐字相同。放弃的结果只记在 <see cref="OnlineFightSummary.GiveUp"/>,
-        /// 放弃命令真发出去之后,汇总里的结局与各计数停在放弃之前那一刻,不被放弃期间的迟到帧改写(命令没发出去时与没开一样,按最终状态读)。
+        /// 缺省 false:驱动的每一步、每一行日志与汇总都与以前逐字相同。放弃的结果只记在 <see cref="OnlineFightSummary.GiveUp"/>。
+        /// 放弃请求一旦被跑器接受,汇总里的结局与各计数就停在请求之前那一刻:不被放弃期间的迟到帧改写,
+        /// 也不被放弃自己的失败(命令发送出错、连接断开、等满超时)改写,所以退出码与没开开关时的同一次收场完全一致。
         /// </summary>
         public bool GiveUpOnFailure { get; set; }
 
@@ -539,9 +540,8 @@ namespace Dnf.Net.Session
                 // 收尾:让跑器停下(它从不抛,取消只当安静结束),再读它的最终计数。
                 linked.Cancel();
                 OnlineDungeonCombatResult result = await FinishRunnerAsync(runTask, state).ConfigureAwait(false);
-                // 放弃命令真的发出去了才用请求前冻结的那一份(没发出去,线上与以前一样,就按以前的判法读最终状态)。
-                bool giveUpSent = state.Frozen != null && state.GiveUp != null && state.GiveUp.Sent;
-                OnlineFightSummary summary = giveUpSent ? Freeze(state, result) : Summarize(state, result);
+                // 放弃请求被跑器接受过,就用请求前冻结的那一份(放弃的结果只挂在 GiveUp 上,不改结局、不改退出码);没请求过就按以前的判法读最终状态。
+                OnlineFightSummary summary = state.Frozen != null ? Freeze(state, result) : Summarize(state, result);
                 Say(log, OnlineFightLog.End(summary));
                 return summary;
             }
@@ -724,7 +724,7 @@ namespace Dnf.Net.Session
 
         // 收尾之前的放弃:跑器已经自己收场(或没起来)就不管,留给会话层的收尾(OnlineGiveUpOnFailure.FinishAsync);
         // 否则先按此刻的状态预判结局,只有三种异常收场才请求跑器放弃;请求被接受(跑器没有恰好收场、此前也没人请求过)之后,
-        // 把请求前那一刻的汇总冻结下来(结局与计数不被放弃期间的迟到帧改写,也不被放弃自己的失败改写),再等跑器给结果。
+        // 把请求前那一刻的汇总冻结下来(结局与计数不被放弃期间的迟到帧改写,也不被放弃自己的失败改写——不论命令最终发出去没有),再等跑器给结果。
         private async Task TryGiveUpAsync(Task<OnlineDungeonCombatResult> runTask, RunState state, Action<string> log, CancellationToken token)
         {
             if (runTask == null || runTask.IsCompleted)
@@ -794,8 +794,8 @@ namespace Dnf.Net.Session
         }
 
         // 跑器在放弃等待期间自己收场了:按它的收场原因与"1/45 发出了没有"定放弃的结局。
-        // 没发出就收场(超时、连接断、请求没来得及被处理)算 Skipped:什么都没发。
-        private static OnlineGiveUpOutcome GiveUpOutcomeOf(Task<OnlineDungeonCombatResult> runTask, bool sent, out string faultType)
+        // 没发出就收场(超时、连接断、请求没来得及被处理)算 Skipped:什么都没发。(internal 只为让测试逐行覆盖这张映射表)
+        internal static OnlineGiveUpOutcome GiveUpOutcomeOf(Task<OnlineDungeonCombatResult> runTask, bool sent, out string faultType)
         {
             faultType = null;
             if (runTask.Status != TaskStatus.RanToCompletion)
@@ -824,7 +824,7 @@ namespace Dnf.Net.Session
             }
         }
 
-        // 放弃之后的汇总:结局与各计数用请求放弃前冻结的那一份,只有跑器自己的结局与心跳数取最终结果;放弃的结果挂在 GiveUp 上。
+        // 放弃请求被接受之后的汇总:结局与各计数用请求放弃前冻结的那一份,只有跑器自己的结局与心跳数取最终结果;放弃的结果挂在 GiveUp 上。
         private static OnlineFightSummary Freeze(RunState state, OnlineDungeonCombatResult result)
         {
             OnlineFightSummary f = state.Frozen;

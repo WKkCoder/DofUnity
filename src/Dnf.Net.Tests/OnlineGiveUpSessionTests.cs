@@ -601,18 +601,20 @@ public class OnlineGiveUpSessionTests
     [Fact]
     public async Task The_cap_is_real_time_when_no_clock_is_injected()
     {
-        // 没注入时钟:用系统时钟,短上限真的等满然后超时(不会无限等,也不会一上来就超时)
+        // 没注入时钟:用系统时钟,短上限真的等满然后超时(不会无限等,也不会一上来就超时)。
+        // 机器很忙时真实的延时会被拖长,所以"上限之内"那一半用宽松的 5 秒上限(只证明没有一上来就超时),
+        // "等满上限"那一半的断言只依赖已用时间下界(拖得再长也只会更大),都不怕负载。
         var session = new CombatFakeSession();
         var driver = new OnlineAfterSettleDriver(session, new OnlineAfterSettleOptions
         {
-            GiveUpWaitTimeout = TimeSpan.FromMilliseconds(400),
+            GiveUpWaitTimeout = TimeSpan.FromSeconds(5),
             PollInterval = TimeSpan.FromMilliseconds(20),
         });
 
         Task<OnlineGiveUpSummary> run = Give(driver, OnlineFightOutcome.NoClearNotice);
         await CombatKit.WaitUntil(() => session.Commands(45) == 1, "命令发出");
         await Task.Delay(150);
-        Assert.False(run.IsCompleted, "400 毫秒的上限,150 毫秒时不能收场");
+        Assert.False(run.IsCompleted, "5 秒的上限,150 毫秒时不能收场");
         session.Push(GiveUpKit.Pair());                      // 上限之内到的信号照样算
         OnlineGiveUpSummary returned = await GatewayTestSupport.Bounded(run, 10);
         Assert.Equal(OnlineGiveUpOutcome.Returned, returned.Outcome);
@@ -786,6 +788,7 @@ public class OnlineGiveUpSessionTests
 
         Task<OnlineGiveUpSummary> run = Give(Direct(session, clock), OnlineFightOutcome.NoClearNotice, log.Add, cts.Token);
         await CombatKit.WaitUntil(() => clock.HasPending(), "停在等回城信号");
+        Assert.Equal(new[] { Line("sent", OnlineFightOutcome.NoClearNotice) }, log.Lines);      // 等待期间 sent 已经在日志里,不是收场时才补
 
         cts.Cancel();                                       // 不拨假时钟:取消必须自己把等待打断
         OnlineGiveUpSummary g = await GatewayTestSupport.Bounded(run, 10);

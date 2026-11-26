@@ -160,6 +160,36 @@ public class OnlineGiveUpCliTests
         Assert.DoesNotContain("give-up", line1 + line2);
     }
 
+    // ======== 离线核对:空目录当仓库根,第一步就失败,不可能联网 ========
+
+    [Theory]
+    [InlineData("--dungeon|901|0|--give-up-on-failure")]
+    [InlineData("--dungeon|901|0|--after-settle|--min-clear-seconds|10|--give-up-on-failure|--stay|3")]
+    [InlineData("--dungeon|901|0")]
+    public void With_an_empty_directory_as_the_repo_root_the_run_ends_at_the_settings_step_before_any_network(string joined)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "dnf-giveup-empty-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            Assert.Empty(Directory.GetFileSystemEntries(root));
+            OnlineFightArguments a = Parse(new[] { root }.Concat(joined.Split('|')).ToArray());
+            Assert.Equal(root, a.RepoRoot);
+            Assert.Equal(joined.Contains("--give-up-on-failure"), a.GiveUpOnFailure);
+
+            // 与探针 fight 命令的第一步是同一个调用:空目录里没有 local.env,读不到任何联网入参,开关开不开都一样
+            Assert.False(LocalDevEntrySettings.TryLoad(a.RepoRoot, out OnlineEntrySettings settings, out string problem));
+            Assert.Null(settings);
+            Assert.False(string.IsNullOrEmpty(problem));
+            Assert.Equal(2, OnlineFightExitCodes.SettingsFailed);
+            Assert.Empty(Directory.GetFileSystemEntries(root));         // 什么也没写进去
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
     [Fact]
     public void The_new_switch_adds_no_exit_code_and_no_new_problem_name()
     {

@@ -110,6 +110,86 @@ internal static class GiveUpKit
 }
 
 /// <summary>
+/// 第一次被问延时就抛异常、之后原样转给内层时钟的假时钟包装:用来让驱动自己在"跑器还活着"的时候出错(驱动的异常收场),
+/// 这是不依赖时序、确定的做法(真实的取消与断线都有竞态)。
+/// </summary>
+internal sealed class FaultOnceClock : IFightClock
+{
+    private readonly IFightClock _inner;
+    private int _armed = 1;
+
+    public FaultOnceClock(IFightClock inner)
+    {
+        _inner = inner;
+    }
+
+    public TimeSpan Now => _inner.Now;
+
+    public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        if (Interlocked.Exchange(ref _armed, 0) == 1)
+        {
+            throw new InvalidOperationException("synthetic clock fault");
+        }
+        return _inner.DelayAsync(delay, cancellationToken);
+    }
+}
+
+/// <summary>
+/// "收帧卡死门":包在会话接缝外面。<see cref="Stick"/> 之后的每一次收帧都停在门口——返回的任务不理会取消令牌、一直不完成,
+/// 直到测试 <see cref="Release"/>;跑器的循环因此卡在收帧上,驱动让它停(取消)也停不下来,只能靠驱动自己的收尾宽限放弃等它。
+/// 发送与各状态原样转调内层会话。
+/// </summary>
+internal sealed class StuckReceiveSession : IOnlineDungeonSession
+{
+    private readonly IOnlineDungeonSession _inner;
+    private readonly TaskCompletionSource<List<DecodedFrame>> _gate = new TaskCompletionSource<List<DecodedFrame>>(TaskCreationOptions.RunContinuationsAsynchronously);
+    private volatile bool _stuck;
+    private volatile bool _entered;
+
+    public StuckReceiveSession(IOnlineDungeonSession inner)
+    {
+        _inner = inner;
+    }
+
+    public bool IsReady => _inner.IsReady;
+
+    public bool PeerClosed => _inner.PeerClosed;
+
+    public FrameError LastFrameError => _inner.LastFrameError;
+
+    /// <summary>从现在起,下一次收帧起停在门口。</summary>
+    public void Stick()
+    {
+        _stuck = true;
+    }
+
+    /// <summary>有收帧已经走到门口(跑器此刻正卡在里面)。</summary>
+    public bool Entered => _entered;
+
+    /// <summary>放行:卡住的收帧返回一个空结果(收尾用,别让卡住的任务留在后台)。</summary>
+    public void Release()
+    {
+        _gate.TrySetResult(new List<DecodedFrame>());
+    }
+
+    public Task<FrameStatus> SendAsync(PacketClass packetClass, ushort packetId, byte[] payload, CancellationToken cancellationToken)
+    {
+        return _inner.SendAsync(packetClass, packetId, payload, cancellationToken);
+    }
+
+    public Task<List<DecodedFrame>> ReceiveAsync(TimeSpan window, int stopAfterFrames, CancellationToken cancellationToken)
+    {
+        if (_stuck)
+        {
+            _entered = true;
+            return _gate.Task;
+        }
+        return _inner.ReceiveAsync(window, stopAfterFrames, cancellationToken);
+    }
+}
+
+/// <summary>
 /// 放弃游戏的驱动级测试装置:合成起始地图(怪编号 9100 起)+ 照笔记建模的假服务端 + 线程安全的假会话 + 真的战斗跑器 + 手拨假时钟,
 /// 与 <see cref="FightRig"/> 同一套做法,另外:驱动选项里可以开放弃(<see cref="OnlineFightOptions.GiveUpOnFailure"/>)并设上限;
 /// 服务端对放弃命令(类 1、包号 45)的回应由测试通过 <see cref="OnGiveUp"/> 给(缺省一声不吭);跑器的放弃上限放得很宽(10 分钟),
@@ -126,6 +206,8 @@ internal sealed class GiveUpRig
     private readonly List<OnlineCombatEvent> _events = new List<OnlineCombatEvent>();
 
     /// <param name="giveUp">驱动选项里的 <c>GiveUpOnFailure</c>;null 表示压根不设这个属性(缺省路径)。</param>
+    /// <param name="wrapClock">把交给驱动的时钟再包一层(测试仍然拨 <see cref="Clock"/> 这个内层);null 为不包。</param>
+    /// <param name="wrapSession">把交给跑器的会话再包一层(测试仍然查 <see cref="Session"/> 这个内层的发送记录);null 为不包。</param>
     public GiveUpRig(
         int count = 3,
         bool? giveUp = true,
@@ -138,7 +220,9 @@ internal sealed class GiveUpRig
         double runnerOverallSeconds = 600,
         double runnerSettlementSeconds = 600,
         Func<byte[], byte[]> unwrap = null,
-        int paceMs = 400)
+        int paceMs = 400,
+        Func<IFightClock, IFightClock> wrapClock = null,
+        Func<IOnlineDungeonSession, IOnlineDungeonSession> wrapSession = null)
     {
         _dropReward = dropReward;
         _silentSettlement = silentSettlement;
@@ -150,7 +234,7 @@ internal sealed class GiveUpRig
         OnlineDungeonCombatOptions runnerOptions = CombatKit.Options(overallSeconds: runnerOverallSeconds, settlementSeconds: runnerSettlementSeconds);
         runnerOptions.GiveUpTimeout = TimeSpan.FromMinutes(10);
         runnerOptions.OnEvent = RecordEvent;
-        Runner = new OnlineDungeonCombatRunner(Session, unwrap, runnerOptions);
+        Runner = new OnlineDungeonCombatRunner(wrapSession != null ? wrapSession(Session) : Session, unwrap, runnerOptions);
         Clock = new ManualFightClock();
         Options = new OnlineFightOptions
         {
@@ -158,7 +242,7 @@ internal sealed class GiveUpRig
             ContinueOnRefuse = continueOnRefuse,
             ClearWait = Window,
             SettleWait = Window,
-            Clock = Clock,
+            Clock = wrapClock != null ? wrapClock(Clock) : Clock,
         };
         if (giveUp.HasValue)
         {
@@ -322,9 +406,10 @@ internal sealed class GiveUpRig
     }
 
     /// <summary>没等到清图通知:服务端扣下清图通知,窗口(25 秒假时钟)到点。</summary>
-    public static GiveUpRig ForNoClearNotice(bool? giveUp = true, TimeSpan? giveUpWait = null, Func<byte[], byte[]> unwrap = null)
+    public static GiveUpRig ForNoClearNotice(bool? giveUp = true, TimeSpan? giveUpWait = null, Func<byte[], byte[]> unwrap = null,
+        Func<IOnlineDungeonSession, IOnlineDungeonSession> wrapSession = null)
     {
-        return new GiveUpRig(3, giveUp, giveUpWait, withholdClear: true, unwrap: unwrap);
+        return new GiveUpRig(3, giveUp, giveUpWait, withholdClear: true, unwrap: unwrap, wrapSession: wrapSession);
     }
 
     /// <summary>结算不完整:服务端只回通关结果、不回通关奖励,结算窗口(25 秒假时钟)到点。</summary>

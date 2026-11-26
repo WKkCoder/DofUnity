@@ -176,6 +176,8 @@ public class OnlineGiveUpDriverTests
         rig.Clock.Advance(ShortWait - TimeSpan.FromMilliseconds(100));
         await rig.WaitParked();
         Assert.False(run.IsCompleted, "上限还差 100 毫秒,不能收场");
+        // 等待还没结束,命令发出这件事就已经在日志里(第一次醒来看见命令已发出就打,不是收场时才补)
+        Assert.Equal(new[] { Step("sent", outcome) }, GiveUpLines(rig));
 
         rig.Clock.Advance(TimeSpan.FromMilliseconds(100));      // 正好到点
         OnlineFightSummary s = await rig.Done(run);
@@ -229,6 +231,39 @@ public class OnlineGiveUpDriverTests
         Assert.Equal(OnlineGiveUpOutcome.Returned, s.GiveUp.Outcome);
         Assert.Equal(OnlineDungeonCombatOutcome.GaveUp, s.RunnerOutcome);
         Assert.Equal(1, rig.Session.Commands(45));
+    }
+
+    [Fact]
+    public async Task A_runner_that_cannot_be_stopped_after_the_wait_is_given_up_on_and_the_summary_still_comes_back_without_a_runner_outcome()
+    {
+        // 放弃的等待到点之后驱动让跑器停,可跑器卡在收帧里不理会取消:驱动只等满收尾宽限(假时钟的 5 秒)就放手,
+        // 汇总照常返回——结局与计数还是放弃之前那一刻的;跑器的结局没有、心跳数记 0。
+        StuckReceiveSession gate = null;
+        GiveUpRig rig = GiveUpRig.ForNoClearNotice(giveUpWait: ShortWait, wrapSession: inner => gate = new StuckReceiveSession(inner));
+        Task<OnlineFightSummary> run = await rig.DriveToGiveUpWait(OnlineFightOutcome.NoClearNotice);
+        try
+        {
+            gate.Stick();
+            await CombatKit.WaitUntil(() => gate.Entered, "跑器的收帧卡在门口");
+            await rig.WaitParked();
+            rig.Clock.Advance(ShortWait);                       // 放弃的上限到点:驱动让跑器停,然后等收尾宽限
+            await rig.WaitParked(delay => delay == OnlineFightDriver.FinishWait);
+            Assert.False(run.IsCompleted, "跑器还卡着,驱动要等满收尾宽限才放手");
+            rig.Clock.Advance(OnlineFightDriver.FinishWait);
+            OnlineFightSummary s = await rig.Done(run);
+
+            Assert.Null(s.RunnerOutcome);
+            Assert.Equal(0, s.HeartbeatsAnswered);
+            Assert.Equal(OnlineGiveUpOutcome.Timeout, s.GiveUp.Outcome);
+            Assert.True(s.GiveUp.Sent);
+            Assert.Equal(1, rig.Session.Commands(45));
+            AssertAsAtTheFailure(OnlineFightOutcome.NoClearNotice, s, rig);
+            Assert.Equal(new[] { Step("sent", OnlineFightOutcome.NoClearNotice), Step("timeout", OnlineFightOutcome.NoClearNotice) }, GiveUpLines(rig));
+        }
+        finally
+        {
+            gate.Release();                                     // 别把卡住的跑器留在后台
+        }
     }
 
     // ======== 开关关着(缺省):一条 1/45 也不发,没有任何放弃的痕迹 ========
@@ -342,6 +377,25 @@ public class OnlineGiveUpDriverTests
         Assert.Equal(0, rig.Session.Commands(45));
         Assert.Empty(GiveUpLines(rig));
         Assert.DoesNotContain("secret", string.Join("\n", rig.Log.Lines));
+    }
+
+    [Fact]
+    public async Task A_fault_inside_the_driver_itself_while_the_runner_is_still_alive_never_gives_up()
+    {
+        // 驱动自己的第一次延时就抛异常(与跑器无关,跑器此刻还活着、还在跑):这不是三种异常收场之一,不放弃,
+        // 让跑器停下就是了。这条不依赖任何时序:异常在驱动自己的线程里确定地抛出。
+        var rig = new GiveUpRig(3, wrapClock: clock => new FaultOnceClock(clock));
+        Task<OnlineFightSummary> run = await rig.Start();
+
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineFightOutcome.Faulted, s.Outcome);
+        Assert.Equal("InvalidOperationException", s.FaultType);
+        Assert.Equal(OnlineDungeonCombatOutcome.Cancelled, s.RunnerOutcome);      // 跑器确实还活着,是驱动收尾时让它停的
+        Assert.Null(s.GiveUp);
+        Assert.Equal(0, rig.Session.Commands(45));
+        Assert.Empty(GiveUpLines(rig));
+        Assert.Equal(14, OnlineFightExitCodes.ForOutcome(s.Outcome));
     }
 
     [Fact]
@@ -468,8 +522,39 @@ public class OnlineGiveUpDriverTests
         Assert.Equal(OnlineGiveUpOutcome.SendFailed, s.GiveUp.Outcome);
         Assert.False(s.GiveUp.Sent);
         Assert.Equal(1, rig.Session.Commands(45));              // 试了一次,没有再试
-        Assert.Equal(OnlineFightOutcome.NoClearNotice, s.Outcome);              // 没发出去:与没开时一样按最终状态读,仍是原结局
+        Assert.Equal(OnlineFightOutcome.NoClearNotice, s.Outcome);              // 没发出去也不改结局:放弃的失败只记在 GiveUp 上
         Assert.Equal(new[] { Step("sendfailed", OnlineFightOutcome.NoClearNotice) }, GiveUpLines(rig));
+    }
+
+    [Theory]
+    [MemberData(nameof(TriggerOutcomes))]
+    public async Task A_give_up_command_whose_send_throws_is_reported_as_faulted_and_leaves_the_outcome_and_the_exit_code_alone(OnlineFightOutcome outcome)
+    {
+        GiveUpRig rig = RigFor(outcome);
+        // 只有放弃命令的那一次发送抛异常(发送记录在抛之前已经记下这一次)
+        rig.Session.FailureOfSend = index =>
+        {
+            (PacketClass Class, ushort Id, byte[] Payload)[] sent = rig.Session.Sent;
+            return index < sent.Length && sent[index].Class == PacketClass.Cmd && sent[index].Id == GiveUpKit.GiveUpId
+                ? new InvalidOperationException("secret-detail-55012")
+                : null;
+        };
+        Task<OnlineFightSummary> run = await rig.Drive(outcome);
+
+        OnlineFightSummary s = await rig.Done(run);
+
+        Assert.Equal(OnlineGiveUpOutcome.Faulted, s.GiveUp.Outcome);
+        Assert.False(s.GiveUp.Sent);                            // 没发出去:状态机没有进放弃等待
+        Assert.Equal("InvalidOperationException", s.GiveUp.FaultType);
+        Assert.Equal(1, rig.Session.Commands(45));              // 试了一次,没有再试
+        // 放弃自己的失败不改驱动的结局与计数,退出码就是没开开关时同一次收场的那个
+        AssertAsAtTheFailure(outcome, s, rig);
+        Assert.Equal(outcome == OnlineFightOutcome.SettleIncomplete ? 12 : (outcome == OnlineFightOutcome.NoClearNotice ? 11 : 10), OnlineFightExitCodes.ForOutcome(s.Outcome));
+        Assert.Null(s.FaultType);
+        Assert.Equal(OnlineDungeonCombatOutcome.Faulted, s.RunnerOutcome);          // 跑器的真实结局照实记录
+        Assert.Equal(new[] { Step("faulted", outcome) }, GiveUpLines(rig));
+        Assert.DoesNotContain("secret", string.Join("\n", rig.Log.Lines));
+        Assert.Equal(OnlineFightLog.ResultFields(s) + " giveUp=faulted", OnlineFightLog.ResultFieldsFor(ParseWithSwitch(), s, null, s.GiveUp));
     }
 
     // ======== 只发一次:迟到帧、重复信号、心跳 ========
