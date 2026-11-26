@@ -1,14 +1,16 @@
 using System;
 using System.Linq;
+using Dnf.Render.Tests;
 using Xunit;
 
 namespace Dnf.Play.Tests;
 
 /// <summary>
-/// r20fix-e2e C-4:<see cref="HostedRoomBot.MinClearTimeMs"/> 压制判定三处细节的补测——
+/// r20fix-e2e C-4:<see cref="HostedRoomBot.MinClearTimeMs"/> 压制判定三处细节,外加机器人跳跃键的补测——
 /// ① 压制期间主角在 X 与 Y 两个方向都站着不动;
 /// ② 判"是否挤在近身范围里"要逐只看,第 0 只离得远(超过 160)也要解除压制;
-/// ③ 距离 160 的边界两侧(159、160、161,左右两边各一组)。
+/// ③ 距离 160 的边界两侧(159、160、161,左右两边各一组);
+/// ④ 机器人每一拍交给房间的跳跃键都是松开的(主角换成跳得起来的角色,压制与否每一帧都在地面上)。
 /// 合成房间:主角站在 (300, 100)(<see cref="RoomCombatTests.Arena"/> 的夹具,下面用 <see cref="HeroX"/> 对一遍),怪物原地不动(走速 0),
 /// 近怪放在 340(与主角差 40),边界怪放在 300 加减 159、160、161;逻辑时钟按 60 帧每秒推进,不碰墙钟、不连网。
 /// 期望值都是手算:压制的充要条件是"只剩 1 只活怪,或所有活怪与主角的横向距离都不超过 160";压制时一只都打不掉,不压制时近怪会在几秒内被打死。
@@ -194,5 +196,42 @@ public sealed class HostedRoomBotMinClearHoldGapTests
         Assert.Equal(new[] { 0 }, h.Posted.ToArray());
         Assert.Equal(1, h.Room.AliveCount);
         Assert.True(bot.ElapsedMs < 20_000.0, "近怪应在压制上限之前很久就被打死,实际 " + bot.ElapsedMs);
+    }
+
+    // ------------------------------------------------------------------ ④ 机器人每一拍交给房间的跳跃键都是松开的
+
+    [Theory]
+    [InlineData(false)]    // 没有压制:走过去打怪
+    [InlineData(true)]     // 压制:站着不动
+    public void The_bot_never_presses_jump_so_a_hero_who_can_jump_stays_on_the_ground_every_frame(bool holding)
+    {
+        // 主角换成带 [jump motion] 的角色(夹具里 ActionChrPath 才跳得起来;缺省的 ChrPath 跳不起来,那样怎么按跳跃键都看不出来)。
+        // 压制与否,机器人每一拍交给房间的跳跃键都是松开的:每一帧之后主角都不在空中、离地高度 Z 是 0(交出去的是 true 的话,第一拍就起跳)。
+        using var arena = new RoomCombatTests.Arena(new[] { holding ? (760, HeroY) : (HeroX + 40, HeroY) }, hp: 40, chr: AvatarFixture.ActionChrPath, monsterSpeed: 0);
+        Assert.True(arena.Hero.CanJump, "夹具自检:这个主角能跳");
+        Assert.Equal(HeroX, arena.Hero.X, 6);
+        Assert.Equal(HeroY, arena.Hero.Y, 6);
+        var posted = new System.Collections.Generic.List<int>();
+        var run = new HostedRoomRun(arena.Session, id => { posted.Add(id); return true; }, () => posted.Count >= 1);
+        HostedRoomBot bot = holding ? NewBot() : new HostedRoomBot(totalLimitMs: 180_000.0, noProgressLimitMs: 120_000.0);
+
+        int frames = 0;
+        while (frames < 1_800 && (holding ? frames < 120 : posted.Count < 1))
+        {
+            bot.Advance(run, FrameMs);
+            frames++;
+            Assert.False(arena.Hero.IsAirborne);
+            Assert.Equal(0.0, arena.Hero.Z);
+        }
+
+        if (holding)
+        {
+            Assert.Equal(120, frames);
+            Assert.Empty(posted);                           // 压制了整整两秒:一只都没打
+        }
+        else
+        {
+            Assert.Equal(new[] { 0 }, posted.ToArray());    // 这一架确实打了:近怪被打死并上报
+        }
     }
 }
