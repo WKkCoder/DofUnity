@@ -11,7 +11,7 @@ namespace Dnf.Client.Tests;
 /// 覆盖:不带 <c>-dnfonlineauto-dungeon</c> 时的默认难度、选角光标在重新进入选角页时归零、选频道页"读失败"与"没有频道"各自停手、
 /// 选角页不重复发 Enter、空名册与缺名册、选图页忙时只等待、结算失败三条判据各自单独成立、指定副本不在或不可进时停手而不是确认第 0 项,
 /// 外壳各阶段与进图加载画面里驱动对外报的阶段名、登录被取消即失败、频道连接被取消与退回选服务器页之后驱动不重试,
-/// 以及命令行参数解析的几处边界:副本参数的两个值恰好是最后两个参数、数字参数最长 9 位、数字末尾带 NUL。
+/// 以及命令行参数解析的几处边界:副本参数的两个值恰好是最后两个参数、最短清图时间值之后的参数仍要解析、数字参数最长 9 位、数字末尾带 NUL。
 /// 外壳那几条走真的 <see cref="OnlineShellFlow"/> 加假后端;选图与结算走真的 <see cref="GameFlow"/>、选图屏、联网进副本控制器与结算控制器。全部是合成数据。
 /// </summary>
 public sealed class OnlineAutoDriverGuardGapTests
@@ -241,6 +241,21 @@ public sealed class OnlineAutoDriverGuardGapTests
         Assert.NotNull(options);
         Assert.Equal(expectedDungeon, options.DungeonId);
         Assert.Equal(expectedMode, options.DungeonMode);
+    }
+
+    [Theory]
+    [InlineData(new[] { "-dnfonlineauto", "-dnfonlineauto-mincleartime", "7", "-dnfonlineauto-char", "4" }, 7, 4)]
+    [InlineData(new[] { "-dnfonlineauto-mincleartime", "7", "-dnfonlineauto" }, 7, 0)]
+    public void A_flag_right_after_the_min_clear_time_value_is_still_parsed(string[] args, int expectedSeconds, int expectedSlot)
+    {
+        // 最短清图时间只带一个值:值之后的下一个参数不能被一并跳过(第一条看后面的选角参数,第二条看后面的总开关)
+        Assert.True(OnlineAutoOptions.TryParse(args, true, out OnlineAutoOptions options, out string ignored, out string error));
+
+        Assert.Null(ignored);
+        Assert.Null(error);
+        Assert.NotNull(options);
+        Assert.Equal(expectedSeconds, options.MinClearTimeSeconds);
+        Assert.Equal(expectedSlot, options.CharacterSlot);
     }
 
     [Theory]
