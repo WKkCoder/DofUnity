@@ -1046,6 +1046,8 @@ def _selftest_comments(rec):
         ("注释里有单引号", _GOOD + " # don't", ([], 1)),
         ("注释里有双引号", _GOOD + ' # 说 "x', ([], 1)),
         ("注释里有分号与 &&", _GOOD + " # a; b && c", ([], 1)),
+        ("参数在前、后面是带 # 的双引号字符串", _GOOD + ' -dnfnote "a # b"', ([], 1)),
+        ("参数在前、后面是带 # 的单引号字符串", _GOOD + " -dnfnote 'a # b'", ([], 1)),
         # 词中间的 # 不是注释
         ("值后面紧贴 #x:值不是数", _CALL + " -dnfquitaftersim 5#x", (bad, 1)),
         ("值后面紧贴 #:值不是数", _CALL + " -dnfquitaftersim 5#", (bad, 1)),
