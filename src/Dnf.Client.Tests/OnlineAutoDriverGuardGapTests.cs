@@ -9,7 +9,8 @@ namespace Dnf.Client.Tests;
 /// <summary>
 /// r20fix-e2e C-1:无人值守驱动 <see cref="OnlineAutoDriver"/> 里"守卫条件"的补测——每个守卫的两侧各一条用例,期望值全是手写字面量。
 /// 覆盖:不带 <c>-dnfonlineauto-dungeon</c> 时的默认难度、选角光标在重新进入选角页时归零、选频道页"读失败"与"没有频道"各自停手、
-/// 选角页不重复发 Enter、空名册与缺名册、选图页忙时只等待、结算失败三条判据各自单独成立、指定副本不在或不可进时停手而不是确认第 0 项。
+/// 选角页不重复发 Enter、空名册与缺名册、选图页忙时只等待、结算失败三条判据各自单独成立、指定副本不在或不可进时停手而不是确认第 0 项,
+/// 以及命令行参数解析的几处边界:副本参数的两个值恰好是最后两个参数、数字参数最长 9 位、数字末尾带 NUL。
 /// 外壳那几条走真的 <see cref="OnlineShellFlow"/> 加假后端;选图与结算走真的 <see cref="GameFlow"/>、选图屏、联网进副本控制器与结算控制器。全部是合成数据。
 /// </summary>
 public sealed class OnlineAutoDriverGuardGapTests
@@ -191,6 +192,57 @@ public sealed class OnlineAutoDriverGuardGapTests
         Assert.Equal(0, bare.MinClearTimeSeconds);
         Assert.Equal(new[] { SettlementChoice.ReturnToTown }, bare.SettlementChoices);
         Assert.Equal("OnlineAutoOptions(char=0,dungeon=auto,mode=0,settleCount=1,minClearSec=0)", bare.ToString());
+    }
+
+    [Theory]
+    [InlineData(new[] { "-dnfonlineauto", "-dnfonlineauto-dungeon", "902", "3" }, 902, 3)]
+    [InlineData(new[] { "-dnfonlineauto-dungeon", "903", "1", "-dnfonlineauto" }, 903, 1)]
+    [InlineData(new[] { "-dnfonlineauto", "-dnfonlineauto-char", "5", "-dnfonlineauto-dungeon", "904", "0" }, 904, 0)]
+    public void The_dungeon_flag_is_accepted_whether_or_not_its_two_values_end_the_argument_list(string[] args, int expectedDungeon, int expectedMode)
+    {
+        // 子参数守卫"后面至少还剩两个值":两个值恰好是最后两个参数时(守卫的边界,第一、三条)要放行;值后面还跟着别的参数时(第二条)同样放行。
+        Assert.True(OnlineAutoOptions.TryParse(args, true, out OnlineAutoOptions options, out string ignored, out string error));
+
+        Assert.Null(ignored);
+        Assert.Null(error);
+        Assert.NotNull(options);
+        Assert.Equal(expectedDungeon, options.DungeonId);
+        Assert.Equal(expectedMode, options.DungeonMode);
+    }
+
+    [Theory]
+    [InlineData("0", 0)]
+    [InlineData("9", 9)]
+    [InlineData("000000009", 9)]
+    [InlineData("123456789", 123456789)]
+    public void A_character_slot_of_up_to_nine_digits_is_accepted_as_written(string slotText, int expectedSlot)
+    {
+        // 数字参数最长 9 位:9 位整数本身是合法的(最大的一个也要放行),首尾数字 0 与 9 同样放行。
+        Assert.True(OnlineAutoOptions.TryParse(new[] { "-dnfonlineauto", "-dnfonlineauto-char", slotText }, true, out OnlineAutoOptions options, out string ignored, out string error));
+
+        Assert.Null(ignored);
+        Assert.Null(error);
+        Assert.NotNull(options);
+        Assert.Equal(expectedSlot, options.CharacterSlot);
+    }
+
+    [Theory]
+    [InlineData(new[] { "-dnfonlineauto", "-dnfonlineauto-char", "1234567890" }, "BadCharSlot")]
+    [InlineData(new[] { "-dnfonlineauto", "-dnfonlineauto-char", "0000000009" }, "BadCharSlot")]
+    [InlineData(new[] { "-dnfonlineauto", "-dnfonlineauto-char", "5\0" }, "BadCharSlot")]
+    [InlineData(new[] { "-dnfonlineauto", "-dnfonlineauto-char", "5\0\0" }, "BadCharSlot")]
+    [InlineData(new[] { "-dnfonlineauto", "-dnfonlineauto-dungeon", "901\0", "1" }, "BadDungeon")]
+    [InlineData(new[] { "-dnfonlineauto", "-dnfonlineauto-dungeon", "901", "1\0" }, "BadDungeon")]
+    [InlineData(new[] { "-dnfonlineauto", "-dnfonlineauto-mincleartime", "5\0" }, "BadMinClearTime")]
+    public void A_number_that_is_ten_characters_long_or_ends_in_nul_is_rejected_even_though_the_runtime_parser_would_take_it(string[] args, string expectedError)
+    {
+        // 前两条:10 个字符(一条是 int 放得下的 10 位数,一条是带前导零的 10 个字符)超过 9 位上限就拒,不交给运行时的整数解析;
+        // 其余几条:末尾带 NUL 的数字运行时的整数解析会照单全收("5\0" 解析成 5),产品要自己逐字符检查把它拒掉。
+        Assert.False(OnlineAutoOptions.TryParse(args, true, out OnlineAutoOptions options, out string ignored, out string error));
+
+        Assert.Null(options);
+        Assert.Null(ignored);
+        Assert.Equal(expectedError, error);
     }
 
     // ------------------------------------------------------------------ 033:重新进入选角页时光标重新从第 0 格数起
