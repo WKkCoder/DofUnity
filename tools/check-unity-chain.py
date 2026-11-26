@@ -328,7 +328,7 @@ def join_logical_lines(lines):
 #            其余由 反斜杠转义 / 单引号串 / 双引号串(里面只有反斜杠转义) / 普通字符 连成一个词
 #   sep      命令分隔符 ; & | ( ) 和反引号(&& 与 || 是相邻的两个分隔符,中间夹一个空段)
 #   空白     只有空格与制表符(与 shell 一致:NBSP、全角空格是词的一部分),一个字符一个记号
-# 引号不成对、行尾孤立的反斜杠:没有任何记号吃得下它们,由 _shell_segments 报 ValueError。
+# 引号不成对、行尾孤立的反斜杠:没有任何记号吃得下它们,由 _shell_segments 报 _Unsplittable。
 _SHELL_TOKEN = re.compile(r'''
     (?:\#.*)
   | (?P<word>&>>?|[<>]+[&|]?|(?:\\.|'[^']*'|"(?:\\.|[^"\\])*"|[^ \t;&|()`<>'"\\])+)
@@ -337,19 +337,24 @@ _SHELL_TOKEN = re.compile(r'''
 ''', re.X)
 
 # -dnfquitaftersim 的值:ASCII 数字、至多一个小数点(点两侧都要有数字),且至少一位非零数字(即严格正数)。
-# 前瞻:跳过开头的 0 与小数点,下一位必须是 1-9。保守:.5、5.、1e3、+5、阿拉伯-印度数字一律不收(与上一版口径一致)。
-_POSITIVE_NUMBER = re.compile(r"(?=[0.]*[1-9])[0-9]+(?:\.[0-9]+)?")
+# 前瞻:跳过开头的 0 与小数点,后面还得有别的字符(整体已是数字格式,所以那就是 1-9)。
+# 保守:.5、5.、1e3、+5、阿拉伯-印度数字一律不收(与上一版口径一致)。
+_POSITIVE_NUMBER = re.compile(r"(?=[0.]*[^0.])[0-9]+(?:\.[0-9]+)?")
+
+
+class _Unsplittable(Exception):
+    """逻辑行无法按 shell 语法拆成词:引号不成对,或行尾有孤立的反斜杠。"""
 
 
 def _shell_segments(line):
     """按 shell 语法把一条逻辑行拆成命令段:返回 [[词, ...], ...],每个词已去掉引号与转义。
     注释截掉;引号外的 ; & | ( ) 与反引号切段,相邻的操作符之间留一个空段。
-    引号不成对或行尾有孤立的反斜杠:抛 ValueError。"""
+    引号不成对或行尾有孤立的反斜杠:抛 _Unsplittable(下面的 shlex 只处理已成对的词,不会抛 ValueError)。"""
     import shlex  # 放在函数里:文件头一行都不动,按"文件:行号"定位的既有变异不会错位(与 _cluster 里的 traceback 同一做法)
 
     tokens = list(_SHELL_TOKEN.finditer(line))
     if "".join(m.group() for m in tokens) != line:
-        raise ValueError  # 有字符没被任何记号吃掉
+        raise _Unsplittable  # 有字符没被任何记号吃掉
     segments = [[]]
     for m in tokens:
         if m.lastgroup == "word":
@@ -381,7 +386,7 @@ def check_text(text: str, label: str = "tools/unity-build-town.sh"):
             continue
         try:
             segments = _shell_segments(cmd)
-        except ValueError:
+        except _Unsplittable:
             errors.append(f"{label}:{start_ln}: 含 -dnftimescale 的逻辑行无法按 shell 语法拆分(引号不成对?)")
             continue
         for words in segments:
@@ -962,7 +967,7 @@ _LEX_CASES = (
     ("& 与 > 之间有空格:& 是操作符,> 是重定向", "a & >f", [["a"], [">", "f"]]),
     ("2>&1 紧贴 && 操作符", "a 2>&1&&b", [["a", "2", ">&", "1"], [], ["b"]]),
 )
-# _shell_segments 必须抛 ValueError 的行:引号不成对、行尾孤立的反斜杠
+# _shell_segments 必须抛 _Unsplittable 的行:引号不成对、行尾孤立的反斜杠
 _LEX_BROKEN = (
     ("双引号不成对", 'a "b'),
     ("单引号不成对", "a 'b"),
@@ -991,7 +996,7 @@ _LEX_FINE = (
 def _lex_broken(line):
     try:
         _shell_segments(line)
-    except ValueError:
+    except _Unsplittable:
         return True
     return False
 
