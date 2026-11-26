@@ -762,6 +762,29 @@ public class OnlineGiveUpSessionTests
         Assert.Equal(1, session.Commands(45));
     }
 
+    [Theory]
+    [InlineData(0)]     // IOException
+    [InlineData(1)]     // ObjectDisposedException
+    public async Task A_connection_that_breaks_while_answering_a_heartbeat_after_the_give_up_was_sent_is_closed_not_send_failed(int kind)
+    {
+        var session = new CombatFakeSession();
+        session.Respond = (c, id, p) => id == 45 ? new[] { CombatKit.Heartbeat() } : null;
+        // 第 0 次发送是放弃命令(成功发出),第 1 次是心跳回包:写它的时候连接已经没了
+        session.FailureOfSend = index => index == 1
+            ? (kind == 0 ? new IOException("secret-gone-1") : (Exception)new ObjectDisposedException("secret-gone-2"))
+            : null;
+        var log = new HostTestKit.LogSink();
+
+        OnlineGiveUpSummary g = await GatewayTestSupport.Bounded(Give(Direct(session), OnlineFightOutcome.NoClearNotice, log.Add), 10);
+
+        Assert.Equal(OnlineGiveUpOutcome.Closed, g.Outcome);       // 命令发出之后断的,不是"命令没发出去"
+        Assert.True(g.Sent);
+        Assert.Equal(1, session.Commands(45));
+        Assert.Equal(1, session.Commands((int)OnlineHeartbeat.ReplyPacketId));      // 心跳回包也只试了一次
+        Assert.Equal(new[] { Line("sent", OnlineFightOutcome.NoClearNotice), Line("closed", OnlineFightOutcome.NoClearNotice) }, log.Lines);
+        Assert.DoesNotContain("secret", string.Join("\n", log.Lines));
+    }
+
     [Fact]
     public async Task A_token_that_is_already_cancelled_sends_nothing_and_reports_cancelled()
     {
