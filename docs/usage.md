@@ -29,7 +29,9 @@ tools/verify-p1.sh
 全部对拍(P1、`.atk`、`.act`、怪物数值、伤害公式、Squirrel 加载链、整条流程)一条命令:`tools/verify-all.sh`(约 65 秒,结果写到 `out/verify-all.json`);再 `python3 tools/py/coverage.py --write-doc docs/coverage.md` 重写覆盖率表(M11,E-098)。
 
 5. 在 Unity 里跑测试(批处理模式,不需要登录):`tools/unity-test.sh`。结果在 `out/unity-EditMode-results.xml`。
-   只想快速确认宿主层还能不能编译(几秒、不启动编辑器、不占授权):`tools/typecheck-client.sh`(加 `--selftest` 做负对照;退出码 0 无错、1 有错、2 环境问题;不定义 UNITY_EDITOR,编辑器条件编译块不在检查范围;E-413)。
+   只想快速确认宿主层还能不能编译(几秒、不启动编辑器、不占授权):`tools/typecheck-client.sh`(默认启用 `DisableTransitiveProjectReferences=true` 严格传递引用检查,防止 Client 间接依赖 `Dnf.Game`;加 `--selftest` 同时做 `CS0029` 与严格模式专属 `CS0012` 负对照;退出码 0 无错、1 有错、2 环境问题;不定义 UNITY_EDITOR,编辑器条件编译块不在检查范围;E-413、E-457)。
+   静态校验 `tools/unity-build-town.sh` 的时间放大运行与 262 行通过判据:`python3 tools/check-unity-chain.py`(加 `--selftest` 跑 1 正 4 负对照,E-457)。
+   并发抢核压测单个测试工程(排查偶发失败):`tools/test-stress.sh --project src/Dnf.Net.Tests/Dnf.Net.Tests.csproj --parallel 4 --rounds 10 --timeout 240`(支持 `--filter`、`--exclude-list`、`--selftest`,E-460)。
    加 `UNITY_GRAPHICS=1` 会去掉 `-nographics`,让 GPU 与 CPU 合成器的对照真正运行(需要 GPU);`UNITY_GRAPHICS=1 tools/unity-build-smoke.sh macos` 在 macOS 播放器里再做一遍;`UNITY_TEST_TARGET=Android` 让编辑器按移动端精度编译着色器再做一遍(默认目标是 StandaloneOSX,E-031)。
 
 6. 对照原版画面(需要一张原版客户端的 800×600 截图,窗口内容 1:1,放在 `re/` 下;截图不入库):
@@ -64,7 +66,7 @@ open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf
 
    不带参数启动时窗口里有输入框,路径会记在 PlayerPrefs 里。按键:方向键 让赛丽亚房间里的鬼剑士走动(按住)、空格 暂停/继续(暂停时左右方向键按 50 毫秒步进动画时间)、H 隐藏文字、Esc 退出;画面按整数倍放大并居中。`windows`、`android` 也能构建(没有运行过);Android 把数据放在应用的持久数据目录下的 `DNF/` 文件夹。目前只有赛丽亚房间(`map/elvengard/(r)gate.map`)有主角,没有名牌与界面。
    触屏:`-dnftouch` 打开触屏操作层(鼠标左键模拟一根手指),`-dnftouchscript "0.5:stick=left+run,3:stick=none"` 按时间表替手指操作,详见 [docs/mobile.md](mobile.md)。
-   无人值守的开关:`-dnfautowalk 0.5:left,3:none`(按"秒:方向"的时间表替主角按键)、`-dnfhero x,y,left|right,rest|move,毫秒`(离屏渲染一帧时摆放主角)、`-dnfnohero`。
+   无人值守的开关:`-dnfautowalk 0.5:left,3:none`(按"秒:方向"的时间表替主角按键)、`-dnfhero x,y,left|right,rest|move,毫秒`(离屏渲染一帧时摆放主角)、`-dnfnohero`、`-dnfquitafter <墙钟秒>`、`-dnfquitaftersim <游戏秒>`(按模拟时钟退出,与墙钟兜底或自动机收尾先到者触发,并在 `DNF_TOWN_DEMO ran` 行尾输出 `simMs=... quitBy=<sim|wall|bot>`,E-457)。
    副本房间与整座副本(证据 E-067 到 E-074;奔跑与跳跃的数值来自客户端代码,E-073;进门的落点规则也来自客户端代码,E-074):`-dnfmap map/lorien/s2.map` 播单个房间(X 键普攻);`-dnfdungeon dungeon/act1/lorien.dgn` 玩整座洛兰(构建好之后直接运行 `tools/play-dungeon.sh [explore|bot]` 就行):方向键走(左或右连按两下 = 奔跑,奔跑中按 X = 奔跑攻击)、X 键普攻、C 键跳跃(空中按 X = 跳跃攻击),怪物清完出口门洞打开,朝打开的门洞顶进去(门体是实心的,关着的门和墙只挡路)换到相邻房间,画面先淡出变黑再淡入(新房间里主角落在进来那一侧出口的识别矩形里:按客户端的规则在矩形里取随机点,种子 = 主角对象编号 × 地图编号,所以同一个人进同一张图落点固定,站不下就挪到最近的可站点;主角对象编号的来源没有查明,用了一个拟合值,`dnf arrival-check` 能列出每个出口的落点),右上角是占位小地图,首领房清空后出 CLEAR。A、S、D 三个技能快捷键能放了(E-076;对应关系是把基线 HUD 的图标逐像素比对出来的,更正了 E-075 里把 S、D 当成刀魂之卡赞与上挑的错):A = 鬼斩(原地出剑,有自己的攻击框、击倒与伤害数字、两层斩击光影)、S = 上挑(连招第三段整段重打)、D = 后跳(向后一跳,不能打人),各有冷却,屏幕上有技能冷却的文字;命中停顿也做了(E-077,静态读码,没有运行时验证:一次命中里攻击方与被打的怪物各定住同样的毫秒数,毫秒数取 `.atk` 的 `[hit info]`、没写就取角色 `.chr` 里这件武器的 `[weapon hit info]`;受击方的硬直时长仍是占位);魔法值(放技能耗蓝、不够放不出来、按 `.chr` 的速度回蓝,E-087)与原版底栏(E-088,见 [docs/hud.md](hud.md))也做了;没做:音效与语音、↓+C 与 ↑+技能键 的组合键。Z 与空格在原版热键表里是技能槽、技能栏上却没有对应的格子,不确定绑什么,所以按了没反应(空格是暂停);鬼剑士的技能没有 Squirrel 脚本,行为在客户端内置代码里(E-075、E-076)。`-dnfexplore`(逛遍所有房间再打首领)或 `-dnfbot`(直奔首领)让自动机替你打,`-dnfseed <整数>` 与 `-dnfrandomlayout` 指定战斗种子与随机选房。时间表也能按键:`-dnfautowalk "0.2:left,0.3:none,0.4:left,0.9:left+attack,2:jump"`(`attack`、`jump` 各按一下)。伤害是占位值;怪物会还手(E-086:主角有生命条与魔法条、受击硬直与击退,血量归零显示 DEAD、没有复活;`tools/play-dungeon.sh nodamage` 可以关掉还手,关掉后也就没有魔法值与底栏),没有结算界面。
 
 10. 检查脚本引擎(需要 DNF_DIR;预编译的 macOS 与 Android 插件已在 `packages/com.dnfunity.squirrel/Plugins/`,别的平台或改了 `native/` 后用 `tools/build-squirrel.sh` 重建):
@@ -97,8 +99,8 @@ dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll game-check --sweep --only frozenl
 dotnet build src/Dnf.NetProbe -c Release
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe offline <首包文件>               # 不联网:把保存下来的频道首包喂给会话层,验证解码与频道信息解析
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe live [--register] [--seconds N]  # 网关健康检查 → 登录(或先注册测试号)→ 取游戏服地址 → 连频道 → 收首包 → 登录 → 收集 N 秒回包
-src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe orchestrated [仓库根] [--stay N] [--client-version V] [--server-group G]  # 与 Unity 宿主同一条编排:网关登录 → 取游戏服地址 → 连频道 → 游戏登录 → 逐槽选角 → 进城;--stay N 进城后再挂 N 秒(心跳保活);V 是登录请求里的客户端版本号(0 到 4294967295,缺省 0),G 是服务器组(0 到 17,0 = 由会话按频道目录解)
-src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe fight [仓库根] --dungeon <副本号 0–65535> <模式 0–4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S]  # 无头:进城 → 进副本 → 对起始地图的怪逐只发击杀 → 等清图通知 → 等两段结算;只打脱敏的 PROBE_FIGHT 行,退出码 0 才是收齐;认证失败退出码 5 且绝不重试(E-416)
+src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe orchestrated [仓库根] [--stay N] [--client-version V] [--server-group G]  # 与 Unity 宿主同一条编排:网关登录 → 取游戏服地址 → 连频道 → 游戏登录 → 逐槽选角 → 进城,进城成功后追加打印脱敏物品计数行 PROBE_ITEMS(E-454);--stay N 进城后再挂 N 秒(心跳保活);V 是登录请求里的客户端版本号(0 到 4294967295,缺省 0),G 是服务器组(0 到 17,0 = 由会话按频道目录解)
+src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe fight [仓库根] --dungeon <副本号 0–65535> <模式 0–4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] [--min-clear-seconds S] [--after-settle] [--menu-choice town]  # 无头:进城 → 进副本 → 对起始地图的怪逐只发击杀 → 等清图通知 → 等两段结算;只打脱敏的 PROBE_FIGHT 行,退出码 0 才是收齐;认证失败退出码 5 且绝不重试(E-416)。可选 --min-clear-seconds S(1..3600) 在 N>=2 怪时拉长首末击杀间隔避开通关过快计数;--after-settle [--menu-choice town] 在结算收齐后单次顺序发 1/72..1/75 并等回城信号(退出码 16..23,不带时与 E-416 逐字一致,E-455)
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe fight [仓库根] --permits-only  # 进城后只打副本许可表(副本号与档位,只给你自己的终端看、不落库)就退出,不进副本;用来挑单房间副本
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe channel [仓库根] [--channel-port N] [--version V]  # 只读:网关健康检查 → 登录 → 取目录服务地址 → 连选频道目录服务走四步 → 只打组数、频道总数、推荐规则数、有效端口数与各档位计数;每次运行是一次网关登录;这个子命令本身还没有联网跑过,但同一个目录读取已由下面的 `switch --list` 在真服上只读读通一次(E-450)
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe switch [仓库根] --to-index K [--client-version V] [--server-group G]  # 只读的换频道验证(E-448):一条会话、网关只登录一次 → 读频道目录 → 连第一个频道 → 换到目录里第 K 个候选频道(端口有效且不是第一个频道,按目录顺序从 0 起)→ 断开;不选角、不进城、不发命令包
@@ -115,7 +117,7 @@ src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe client-version <客户端程�
     再加 `-dnfnetdungeon <副本编号 0–65535> <模式 0–4>`(必须同时带 `-dnfnet`)时,进城后在同一条会话上接着走完进副本五步(开始游戏 → 装载通知 → 选副本 → 副本信息 → 起始地图),
     有了结局再接上心跳;不带时联网进城的行为一字不变,参数不合规只打一行说明并忽略。进图后宿主还会按起始地图的怪物记录在房间里摆出同数目、同顺序的本地怪,本地击杀经联网战斗状态机上报,两段结算通知收齐后自动回城(E-403,flow.md §110)。多房间副本现在会逐房间打通(E-428,flow.md §124):杀光本房间后走进出口门、排换房请求、按服务端的新起始地图造新房间,一直到最后一间的清图通知;迷宫对不上本地副本定义、起始房造不出或副本只有一间时退回只打起始地图一张图的单房间路径,任何一步走不通都写一行 `stage=room abort` 日志并回城;换房、装载握手与击杀、结算的真服回包都还没亲见(第一次真服核对建议先挑单房间副本、预注册后再做)。再加 `-dnfnetbot`(要同时带 `-dnfbot`、`-dnfnet`、`-dnfnetdungeon`,缺一项只打一行写明缺哪项的忽略日志)时,联网房间里由自动机替你打(清房后会自己走到出口门换房),带整段超时与无进展上限,停手时写一行状态日志(E-407,flow.md §114;多房间时日志行末多写房间序号、进过几间、换房次数与被拒次数);批量跑务必带 `-dnfquitafter <秒>` 且大于整段上限(缺省 600 秒),否则进程不会自行退出。
 
-    Unity 开发版宿主还有一套**联网外壳**(E-427,flow.md §123):带 `-dnfonline` 启动先进中文登录界面,登录成功后走 选服务器 → 选频道 → 选角 → 进游戏(选角画服务端给的真名册,E-429;选服务器与选频道默认仍是占位自动通过,再带 `-dnfserverui` 才换成真界面并读选频道目录服务,E-430(选频道页里 `[granfloris]` 频道第二行的固定文字取自 `-dnfdir` 目录里 `DNF.exe` 内嵌的文字表,E-445;目录里没有这个文件或读不出来时画数值区间);进游戏后的英雄带服务端角色的名字、职业与等级,装备、背包、金币与技能等级仍未同步,E-432);`-dnfonlineuser <账号>` 预填账号;独立播放器需要用 `tools/unity-build-town.sh macos-dev`(或设 `DNF_DEV_BUILD=1`)打出开发构建(`Debug.isDebugBuild == true`)并带 `-dnfnetroot <仓库根>` 才读本地凭据并预填口令,`-dnfnetport <端口>` 改频道端口;正式分发(`tools/unity-build-town.sh macos`)忽略 `-dnfnetroot`,只读持久数据目录下的 `dnf-online.conf`(每行 `键 = 值`,`server_url`、`aes_key`、`mouse_cipher` 必填,`data_version`、`channel_port`、`client_version` 可选;没有这个文件时登录界面提示「未配置连接」且不发任何请求)。不带 `-dnfonline` 时一切不变。离屏看登录界面版式:`dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll login-shot --png <输出.png>`(命令行没有汉字字体,出的是英文点阵占位版,版式与中文版相同)。离屏看选服务器与选频道界面:`dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll serverselect-shot --png <输出.png> [--screen server|channel] [--servers n] [--channels n] [--state ready|loading|empty|failed|connecting|refreshing]`(合成目录,不连网);离屏看联网选角界面:`dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll charselect-shot --png <输出.png> --online [--text] [--chars n] [--select i] [--first-row r]`(合成名册;`--text` 另外打印每个文字精灵的位置)。
+    Unity 开发版宿主还有一套**联网外壳**(E-427,flow.md §123):带 `-dnfonline` 启动先进中文登录界面,登录成功后走 选服务器 → 选频道 → 选角 → 进游戏(选角画服务端给的真名册,E-429;建角/删角面板默认关闭,仅开发构建额外传入 `-dnfallowcharwrite` 才开放 `1/5`/`1/6` 写操作,模态版式未对拍原版,E-459;选服务器与选频道默认仍是占位自动通过,再带 `-dnfserverui` 才换成真界面并读选频道目录服务,E-430(选频道页里 `[granfloris]` 频道第二行的固定文字取自 `-dnfdir` 目录里 `DNF.exe` 内嵌的文字表,E-445;目录里没有这个文件或读不出来时画数值区间);进游戏后的英雄带服务端角色的名字、职业与等级,并同步内存中的物品、装备与金币,零写存档,技能与装扮外观仍未同步,E-432、E-458);`-dnfonlineuser <账号>` 预填账号;独立播放器需要用 `tools/unity-build-town.sh macos-dev`(或设 `DNF_DEV_BUILD=1`)打出开发构建(`Debug.isDebugBuild == true`)并带 `-dnfnetroot <仓库根>` 才读本地凭据并预填口令,`-dnfnetport <端口>` 改频道端口,`-dnfdirport <端口>` 改目录服端口(仅开发构建生效,供回环假服务端使用,E-461);正式分发(`tools/unity-build-town.sh macos`)忽略 `-dnfnetroot`、`-dnfdirport` 与 `-dnfallowcharwrite`,只读持久数据目录下的 `dnf-online.conf`(每行 `键 = 值`,`server_url`、`aes_key`、`mouse_cipher` 必填,`data_version`、`channel_port`、`client_version` 可选;没有这个文件时登录界面提示「未配置连接」且不发任何请求)。不带 `-dnfonline` 时一切不变。离屏看登录界面版式:`dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll login-shot --png <输出.png>`(命令行没有汉字字体,出的是英文点阵占位版,版式与中文版相同)。离屏看选服务器与选频道界面:`dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll serverselect-shot --png <输出.png> [--screen server|channel] [--servers n] [--channels n] [--state ready|loading|empty|failed|connecting|refreshing]`(合成目录,不连网);离屏看联网选角界面:`dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll charselect-shot --png <输出.png> --online [--text] [--chars n] [--select i] [--first-row r]`(合成名册;`--text` 另外打印每个文字精灵的位置);离屏看建角/删角自设计模态面板:`dotnet src/Dnf.Cli/bin/Release/net10.0/dnf.dll charcreate-shot --png <输出.png> [--mode create|delete] [--no-art]`(E-459)。
 
 ```sh
 tools/unity-build-town.sh macos-dev
@@ -127,9 +129,36 @@ open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<含 Script.pvf
 open unity/DnfUnity/Builds/macos/DnfTownDemo.app --args -dnfdir "<同上>" -dnfnet -dnfnetdungeon <副本编号> <模式>
 ```
 
-    联网进城(E-432,flow.md §128):`-dnfonline` 选角成功后,主角带着服务端角色的名字、职业与等级进城,头顶名牌用服务端角色名;本地存档不读不写,装备、背包、金币与技能等级明标未同步,非鬼剑士暂按鬼剑士的成长与外观显示,左上角状态条会写明。城镇里走进非世界地图的出口时,客户端先把(城镇、区)映射成服务端的(村、区),发一条换区请求,等服务端的两条下行通知到齐才切图;被拒绝或 5 秒没有回应就退回出口前的位置,并在 400 毫秒内屏蔽弹跳。启动参数 `-dnfonlineareas off`(也认 `0`、`false`;`on`、`1`、`true` 是默认行为,其它取值被忽略)是应急开关:不发换区请求,走离线式的换区。踢线与连接断开回登录界面且不自动重连;系统菜单的“回选角”对当前频道重连并刷新角色列表,“退出游戏”只关闭频道的 TCP 连接。联网进城的日志只有以 `DNF_ONLINE stage=town` 开头的几行,不含角色名、编号、坐标与地址。世界地图出口、副本进出与结算还没有与服务端同步;换区的坐标语义、完成判定与拒绝码都没有在真服上验证过。
+    联网进城(E-432、E-458,flow.md §128、§149):`-dnfonline` 选角成功后,主角带着服务端角色的名字、职业与等级进城,头顶名牌用服务端角色名;本地存档不读不写,背包、快捷栏(`3..8`)、身上装备(`10..21`)与金币现已同步到内存中的联网主角,并在城镇期间通过主线程排空队列实时响应服务端 `NOTI/13` 与 `NOTI/14` 增量(E-458),技能等级与装扮外观仍标为未同步,非鬼剑士暂按鬼剑士的成长与外观显示,左上角状态条会动态列出剩余未同步项。城镇里走进非世界地图的出口时,客户端先把(城镇、区)映射成服务端的(村、区),发一条换区请求,等服务端的两条下行通知到齐才切图;被拒绝或 5 秒没有回应就退回出口前的位置,并在 400 毫秒内屏蔽弹跳。启动参数 `-dnfonlineareas off`(也认 `0`、`false`;`on`、`1`、`true` 是默认行为,其它取值被忽略)是应急开关:不发换区请求,走离线式的换区。踢线与连接断开回登录界面且不自动重连;系统菜单的“回选角”对当前频道重连并刷新角色列表,“退出游戏”只关闭频道的 TCP 连接。联网进城的日志只有以 `DNF_ONLINE stage=town` 开头的几行,不含角色名、编号、坐标与地址。换区与实时物品流的真服表现尚未验证。
 
-    联网进副本打通关之后,宿主接着画**联网结算界面**(E-449,flow.md §141;只在 `-dnfonline` 且已进联网城镇时生效,离线副本与 `-dnfnetdungeon` 脚本路径不变):两层压暗、营火、服务端给的战果明细(服务端数据优先,字段按把握程度取舍,不确定的不画)与本地算出的评分字母,右上角是结算后菜单。进入结算后宿主按序自动发 1/72、1/73、1/74 三条推进命令(选牌是占位:取第一个有权的槽位,没有就不发),随后菜单可用热键或点击选「再来一次」「选择其他副本」「返回城镇」(快速组队与神秘商店灰显禁用);50 秒倒计时(上限 59 秒,服务端回城定时器是 60 秒)到点默认返回城镇;选择发出后等服务端的回城信号(0/2,或 0/23 加 0/24 到齐),按服务端给的位置落点,没给就回进副本前所在的城镇区。每一步都有超时与降级(推进命令 5 秒没回包就直接开放菜单,选择命令 5 秒没回包就回城镇),同一条命令绝不自动重发;断线回登录界面。**已知限制**:结算画面出现后主角输入没有冻结;掉落物与金币不同步到背包与存档,只把服务端给的基础经验与评分加成经验加到内存里的英雄进度上一次;选牌是占位决定;真服对这几条命令的回包、结算页与原版画面的像素对拍都没验证。日志是脱敏的 `DNF_ONLINE stage=settle event=…` 单行,不含任何数值、地址与账号。
+    联网进副本打通关之后,宿主接着画**联网结算界面**(E-449、E-456,flow.md §141、§147;只在 `-dnfonline` 且已进联网城镇时生效,离线副本与 `-dnfnetdungeon` 脚本路径不变):两层压暗、营火、服务端给的战果明细(服务端数据优先,字段按把握程度取舍,不确定的不画)与本地算出的评分字母,右上角是结算后菜单。结算画面出现期间已冻结主角移动与技能输入(进入首帧释放触屏并清空按住的技能键,已出招自然收招,E-456)。进入结算后宿主按序自动发 1/72、1/73、1/74 三条推进命令(选牌是占位:取第一个有权的槽位,没有就不发),随后菜单可用热键或点击选「再来一次」「选择其他副本」「返回城镇」(快速组队与神秘商店灰显禁用);50 秒倒计时(上限 59 秒,服务端回城定时器是 60 秒)到点默认返回城镇;选择发出后等服务端的回城信号(0/2,或 0/23 加 0/24 到齐),按服务端给的位置落点,没给就回进副本前所在的城镇区。每一步都有超时与降级(推进命令 5 秒没回包就直接开放菜单,选择命令 5 秒没回包就回城镇),同一条命令绝不自动重发;断线回登录界面。**已知限制**:副本掉落物与结算金币不同步到背包与存档,只把服务端给的基础经验与评分加成经验加到内存里的英雄进度上一次;选牌是占位决定;真服对这几条命令的回包、结算页与原版画面的像素对拍都没验证。日志是脱敏的 `DNF_ONLINE stage=settle event=…` 单行,不含任何数值、地址与账号。
+
+    **联网全流程无人值守与回环验收(E-461,flow.md §152)**:播放器新增 `-dnfonlineauto` 开关族(不带时既有行为不变,凭据仍只走原有配置、不进命令行也不进日志,任一阶段出错立即非 0 退出绝不重试):
+
+| 开关 | 说明 |
+|---|---|
+| `-dnfonlineauto` | 开启联网全流程无人值守驱动(**必须同时带 `-dnfonline`**,否则记 `DNF_TOWN_DEMO online auto ignored reason=NeedsDnfonline` 并忽略):自动走完登录 → 选服 → 选频道 → 选角 → 进城 → 选副本 → 进图 → `HostedRoomBot` 清怪 → 结算菜单选择 → 回城退出,结束打印 `DNF_ONLINE result=<ok\|fail> stage=... elapsedMs=...`。 |
+| `-dnfonlineauto-char <序号>` | 选角槽位(非负整数,默认 `0`;不可进入时回退到第一个可进入角色)。 |
+| `-dnfonlineauto-dungeon <编号> <模式>` | 可选。指定世界地图副本编号(`0..65535`)与模式(`0..4`);缺省自动选首个可用副本模式 `0`。 |
+| `-dnfonlineauto-settle <序列>` | 结算后菜单逐局选择序列(逗号分隔 `retry`/`select`/`town`,默认 `town`;序列耗尽默认 `town`,如 `retry,town` 表示连打两局再回城)。 |
+| `-dnfonlineauto-mincleartime <秒>` | 末房最短清图时间(`0..3600`,默认 `0`):为正数时在最终房未满该秒数前压制致命出手并刷新无进展计时基线,避免触发真服通关过快计数(E-414)。 |
+| `-dnfdirport <端口>` | 仅开发构建生效(`1..65535`):覆盖频道目录服 TCP 端口(默认 `7001`),供本地回环假服务端使用。 |
+
+    本地回环假服务端(`src/Dnf.NetFake`,纯合成凭据与 127.0.0.1 零端口,真 AES-GCM 网关 + AES-ECB/zlib 目录服 + 14 槽密码与 561 信封频道服,支持 `--fault none|auth_fail|select_refused|mid_disconnect|settle_incomplete|malformed_reply`)与 macOS 一键端到端脚本(`tools/online-e2e-mac.sh`):
+
+```sh
+# 1. 离线自测日志断言器(1 正例 + 6 负对照,无需 Unity)
+tools/online-e2e-mac.sh --selftest
+
+# 2. 本地回环 --dry:自动构建 macos-dev(可用 DNF_SKIP_BUILD=1 复用),拉起 dnf-netfake 无窗口跑完 9 阶段 + 重试闭环
+tools/online-e2e-mac.sh --dry
+DNF_SKIP_BUILD=1 tools/online-e2e-mac.sh --dry --settle retry,town
+
+# 3. --live(仅由集成者按预注册执行;脚本强制要求存在的非空 --prereg 与 --mincleartime >= 60)
+DNF_SKIP_BUILD=1 tools/online-e2e-mac.sh --live --prereg <预注册文件> --mincleartime 65 --settle town
+```
+
+    `DNF_ONLINE` 脱敏日志词表速查:外壳 `stage=<login|server|channel|charselect|loading|ingame> event=<enter|ok|fail> reason=...`;城镇 `stage=town event=<enter|areachange|disconnect|exit>`;副本 `stage=dungeon event=<select|enter|room|leave|return|fail|perms>`;结算 `stage=settle event=<show|diff|advance|choose|retry|town|fail>`;无人值守结局 `DNF_ONLINE result=<ok|fail> stage=<阶段或 done> elapsedMs=<总毫秒>`。常见问题:忘带 `-dnfonline` 会打 `ignored reason=NeedsDnfonline`;参数非法立即退出码 `1` 并打 `result=fail stage=args`;Unity 离线授权过期退出码 `198`;`--live` 缺非空 `--prereg` 或 `--mincleartime < 60` 直接退出码 `2`;`--dry` 必须跑在 `macos-dev` 开发构建上(正式包会忽略 `-dnfnetroot` 与 `-dnfdirport`)。
 
 ## 测试策略
 

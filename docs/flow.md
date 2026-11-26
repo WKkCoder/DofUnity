@@ -2460,3 +2460,59 @@ dotnet test DnfUnity.slnx -c Release
 - 意义:以后在自己机器上带原版客户端会发的值登录,是"用小工具折出来 → 写进 `local.env`(开发版)或 `dnf-online.conf`(正式分发)"两步,取值始终只在使用者自己的机器上。
 - 局限:工具读第一个语言的叶子,是否总是客户端自己读到的那一份没有核对;工具打出的四段文件版本与选服务器页右下角标签一致(2026-11-25 集成者对用户给出的截图做了本机文字识别核对,取值不入文档;这个文件的版本资源只有一份,第一个语言叶子的假设在这里没有歧义;对别的客户端文件仍要使用者自己对一眼);别的非零版本号、非零服务器组、换频道登录的服务端反应仍未验证。
 - 还差:结算后的真服观察(要等探针的结算子命令落库,再另写预注册并经用户确认);登录体末两项的线上顺序与原版相反(E-451 第 5 点,真服三次接受,建议不动)。
+
+## 145 进城物品快照接入探针脱敏观测(`PROBE_ITEMS`,E-454)
+
+- 背景:E-425、E-426 落库了进城物品解析器 `ItemSyncParser`,但尚未挂到进城结果或探针上。本节作为 R20 物品同步前置,先把只读快照接到进城编排与探针脱敏计数输出,未连真服。
+- 落地:`OnlineEntryResult.ItemSync`、`OnlineSelectCharacterResult.ItemSync` 与 `OnlineClientSession.Detach` 挂接并拷贝同一批进城帧解析出的 `ItemSyncSnapshot`(保留原 11 参数构造器向后兼容);新增 `OnlineItemSyncLog.FormatProbeLine`,由 `dnf-netprobe orchestrated` 在进城成功后追加打印一行 `PROBE_ITEMS ...`(仅含各空间条数、畸形/未决帧数、尾字节与 0/1 标志,零物品号与金额)。
+- 验证:新增 `OnlineItemSyncProbeTests` 17 例,全解 16,736 全绿;自动变异 37/37 杀、手写变异 15/15 杀;标准与严格类型检查 0 错。
+- 局限与还差:尚缺在真服上跑一次 `orchestrated` 获取第二个账号的 `PROBE_ITEMS` 实测计数;物品快照已由 §149(E-458)进一步接入联网城镇主角。
+
+## 146 探针 `fight` 补齐无头结算后菜单驱动与最短清图时长(E-455)
+
+- 背景:§141(E-449)把 `1/72`..`1/75` 编排做在 Client 层,但无头探针 `fight`(E-416)仍停在 `ReturnReady` 且缺乏避开 E-414 通关过快计数的最短清图时长控制。
+- 落地:`OnlineFightCli` 新增可选参数 `--after-settle`、`--min-clear-seconds S`(1..3600)、`--menu-choice town`;保持既有 `OnlineFightExitCodes` 反射契约与不带新参数时的输出逐字不变,独立新增 `OnlineAfterSettleExitCodes`(16..23)。`OnlineFightDriver` 在 `N >= 2` 时按最短清图时长拉长击杀间隔并用可注入时钟兜底末击时间。新增 Net 层 `OnlineAfterSettleDriver`,单次顺序发 `1/72`→`1/73`→(`1/74`)→`1/75`(回城)并等待 `0/2` 或 `0/23+0/24` 回城信号,全程回心跳并处理 561 信封与内层副本,输出脱敏 `PROBE_FIGHT stage=settle-menu ...` 行。
+- 验证:新增 116 例 Net 测试(含真实 `GameClientSession` 内存管道带 561 与压缩 `0/2`),全解 16,835 全绿;自动变异 266 条有效杀 239(余 27 条逐条判等价),手写变异 10/10 杀;6 组非法参数离线冒烟全退 64。
+- 局限与还差:单怪房(`N == 1`)无法靠首末击间隔拉长清图;待集成者按预注册单选 `N >= 2` 单房间副本在真服上实测结算与回城时序。
+
+## 147 联网结算页期间冻结主角输入(E-456)
+
+- 背景:§141(E-449)已知局限之一是联网结算页出现后主角仍能走动与出招。
+- 落地:在 Client 层新增无 Unity 依赖的 `OnlineSettlementInputGate`,由 `TownDemo.cs` 在 `StepSession` 最小接线——结算页激活时跳过 `ReadHeroInput`、首帧释放触屏并清空 `_heldSkills`(同步修掉跳过读取输入时残留技能按住状态的缺口),已发动技能在零输入下自然收招,解冻即刻无残留恢复;离线副本、暂停与 Esc 菜单一字不动。
+- 验证:新增 19 例测试(Client 16 + Play 3),全解 16,738 全绿;自动变异 11/11 杀、手写变异 20/20 杀;严格类型检查 0 错。
+- 局限:真机窗口手动键盘/触屏手感未人工体验。
+
+## 148 宿主 `-dnfquitaftersim` 游戏时钟退出与严格版客户端类型检查默认化(E-457)
+
+- 背景:§141 指出 `tools/unity-build-town.sh macos` 中 15 趟 `-dnftimescale 4` 运行在机器高负载、帧率下跌时因单帧步长夹在 100ms 导致墙钟先到期而未跑完;同时普通 `dotnet build` 的传递引用会掩盖 Client 层意外接触 `Dnf.Game` 类型的 Unity 编译错误。
+- 落地:新增纯函数 `TownDemoQuitPolicy.cs`,宿主接入 `-dnfquitaftersim <游戏秒>`,在 `_flow` 与 `_session` 非暂停更新中累加 `_simElapsedMs`,任一限时或 `botDone` 先到即退出并在 `DNF_TOWN_DEMO ran` 行尾追加 `simMs=... quitBy=<sim|wall|bot>`。`tools/unity-build-town.sh` 的 15 趟 `timescale=4` 运行与独立副本探索均改为游戏时钟主导 + 3–4 倍墙钟兜底,全部 262 行通过判据一字未改;新增 `tools/check-unity-chain.py` 静态守卫(`--selftest` 1 正 4 负全过)。`tools/typecheck/Dnf.Client.TypeCheck.csproj` 默认启用 `DisableTransitiveProjectReferences=true`,`tools/typecheck-client.sh --selftest` 新增严格版专属 `CS0012` 负对照。
+- 验证:新增 23 例 Client 测试,算子变异 23/24 杀(1 等价),手工语义变异 14/14 杀;真实 Unity 6000.3.26f1 macOS 69 趟完整链路退出码 0。
+- 局限:未在人为压低到 10–15 FPS 的极端环境下实机复跑耗时。
+
+## 149 联网主角接入进城与城镇实时物品/装备/金币同步(E-458)
+
+- 背景:§128(E-432)联网进城后主角的背包、装备、金币仍是本地占位;E-425 与 §145(E-454)已把进城物品快照带到会话结果,本节完成进城落地与城镇实时增量同步。
+- 落地:`Dnf.Play` 新增无 `Dnf.Net` 依赖的中立模型 `OnlineItemSyncModel.cs`(含不暴露 `Dnf.Game` 类型的 `OnlineItemKindLookup.ResolveKindCode`)与 `HeroProgress.Online.cs`(`IsOnline` 门控 + `ApplyOnlineItems`,只改内存 `Gold`/`Bag`/`Quick`/`Worn`,**零读写 `HeroSave`**,不改 `GoldGained`/`ItemsGained`,快捷栏 `3..8` 同步落 `Quick` 与 `Bag`,槽 `10..21` 经 `Worn.Restore` 兼容 `IsJobFallback`,未知物号与满页溢出只计数不抛错)。`OnlineHeroProfile` / `OnlineTownOverlay` / `OnlineTownLog` 在三项全未同步时与 E-432 逐字节一致,同步后动态收窄未同步提示。`Dnf.Client` 新增 `OnlineItemSyncAdapter` 与 Stage 2 `OnlineItemLiveSync`:后台 `FrameReceived` 线程仅过滤 `NOTI/13` 与 `NOTI/14` 入 `ConcurrentQueue`,主线程在 `OnlineTownController.Poll` 排空并用类型回调重解析,按 `Operations` 线序维护权威影子槽表(`DeleteMarker` 删槽)并投影刷新主角与外观,`Dispose` 时严格退订。
+- 验证:新增 42 例测试(Play + Client),抽样自动变异首轮 63/80 杀、补测定向复测 13/13 全杀(余 6 等价),严格类型检查(32 `.cs`)0 错。
+- 局限与还差:技能同步、装扮栏外观、仓库/宠物栏界面与副本掉落/结算物品同步留待后续;未连真服实测在线增删改帧流。
+
+## 150 联网选角建角(`1/5`)与删角(`1/6`)全链路及默认关闭防护(E-459)
+
+- 背景:E-429 选角界面把"创立角色""删除角色"置灰,E-436 已在 Net 层写好 `1/5` 与 `1/6` 纯函数编解码,本节打通选角到会话的建角/删角全链路并加严防误写门控。
+- 落地:三层默认关闭防写门控——`OnlineClientSession.AllowCharacterManageWrites` 默认 `false`(关时抛错且写 0 字节)、`OnlineShellBackend.AllowCharacterWrite` 默认 `false`、宿主仅开发构建带 `-dnfallowcharwrite` 才开启并经 `OnlineShellHost` 双门控。`OnlineClientSession.CharacterManage.cs` 在 `Connected` 阶段单次发 `1/5` 或 `1/6`(不重试),收齐回包与 `0/2` 模式 2 名册后刷新 `CharacterList` 并清掉 `_earlyFrames` 旧模式 2 帧。Play 层新增 `OnlineCharacterNameRules`、`OnlineCharacterManage`、`CharacterManageModals`(**自设计布局,明确未对拍原版**,11 职业预览、UTF-8/CJK 输入、删除逐字确认)与 `OnlineShellFlow.CharacterManage.cs`(模态期间拦截背景点击与 `Space`/`Esc`,脱敏日志不打角色名);CLI 新增 `dnf charcreate-shot` 离线渲染预览。
+- 验证:新增 119 例测试(Net +52、Client +45、Play +22),抽样自动变异 27/34 杀(7 处非等价补测复测 7/7 全杀,余 3 等价与 4 样式常量),9 处手写安全与边界变异 9/9 杀;严格类型检查 0 错;`dnf charcreate-shot` 出图通过。
+- 局限与还差:真服敏感词/外部词表拒绝与实库读写未连真服验证;模态版式未对拍原版。
+
+## 151 并发压测工具 `tools/test-stress.sh` 与 Net/Client 偶发失败根因修复(E-460)
+
+- 背景:多工程并发跑 `dotnet test` 时 `Dnf.Net.Tests` 与 `Dnf.Client.Tests` 偶发失绿,缺少可复现的并发压测基线与根因清理。
+- 落地:新增 `tools/test-stress.sh`(单次构建 + 多进程并发抢核 + TRX 聚合失败名与次数 + 进程组超时清理 + `--selftest`)。以 4 并发×10 轮复现基线失败(`Dnf.Net.Tests` 37/40、`Dnf.Client.Tests` 38/40、`Dnf.Play.Tests` 40/40 未复现),并根因修复:(a) `GameClientSession.ReadSomeAsync` 与 `OnlineClientSession.OpenChannelAsync` 对被放弃的异步读/连任务显式观测异常,杜绝进程级 `UnobservedTaskException` 污染并行用例;(b) 隔离 `[Collection("UnobservedTaskException")]`,将固定 30ms 睡眠改为 `HasPendingRead` 条件轮询并放宽 64 帧选角/并发信号量窗口;(c) `HostRig`/`HostPump` 合成时钟对齐单调墙钟,消除 16 倍快进在高负载下误触 60 秒超时,恢复 `PumpControllerUntil` 默认轮次。
+- 验证:决定性复现修复前 100% 失败、修复后 100% 通过;新增 4 例回归测试,5 处产品侧变异 5/5 全杀;4×10 复测 `Dnf.Net.Tests` 40/40、`Dnf.Client.Tests` 40/40、`Dnf.Play.Tests` 40/40;全解 17,214 全绿。
+- 局限:其余硬件平台下是否存在更低频偶发需按需复跑 `tools/test-stress.sh`。
+
+## 152 联网全流程回环假服务端、无人值守驱动与 macOS 端到端实跑闭环(E-461)
+
+- 背景:此前联网外壳、进城、进副本、结算与自动机分别仅靠内存管道与合成夹具验证,缺少一条离线可跑、真实加密/真实 TCP/真实 Unity 播放器的端到端自动化验收闭环。
+- 落地:(1)新增 `src/Dnf.NetFake`(AES-256-GCM 网关 + AES-128-ECB/zlib 频道目录服 + 真实 14 槽密码与 561 信封的游戏频道服,覆盖选服/选频道/选角/进城 25B 货币/切区/进副本五步/击杀/多房间换房/清图/结算/1/72..1/75/回城及 5 种故障注入),宿主新增仅开发版 `-dnfdirport` 覆盖目录端口。(2)新增 `OnlineAutoOptions` / `OnlineAutoDriver`(`-dnfonlineauto*`,全走外壳与流程公开入口,失败即非 0 退出绝不重试,输出 `DNF_ONLINE result=<ok|fail> stage=... elapsedMs=...`),并补修主干重负载下 `Retry` 重进 `Entering` 过渡态被误判为异常返城的竞态(`00bf3fa`);`HostedRoomBot.MinClearTimeMs`(缺省 0 不变)在末房剩孤怪或单刀范围聚堆怪时压制出手直至满最短清图时间并刷新无进展基线。(3)新增 `tools/online-e2e-mac.sh`(`--selftest`、`--dry` 与强门控 `--live`)。
+- 验证:新增 54 例测试(含 7 条进程内真实 TCP 全链路/多房间/5 故障用例),27 处手写语义变异 27/27 全杀;`tools/online-e2e-mac.sh --selftest` 1 正 6 负全过;`OnlineAutoDriver` `Entering` 修复经 4×3 压测 12/12 全过。主干 `00bf3fa` 完整验收全绿:全解 17,268/17,268、严格类型检查 33 `.cs` 0 错、`verify-all.sh` 26 项全过、全库副本双扫描 303/346 与 302/346 零回退、Unity EditMode 72 过 0 失败 10 跳过、macOS 正式 69 趟退出 0、macOS 开发构建 + `--dry` 实机端到端通过(`DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=21594`,墙钟 23,011ms)。
+- 局限与还差:本轮严格未连真服、未执行 `--live`;真服单房间清图结算、多房间换房、`PROBE_ITEMS` 与实机 `--live` 留待集成者按预注册单独立验证。
