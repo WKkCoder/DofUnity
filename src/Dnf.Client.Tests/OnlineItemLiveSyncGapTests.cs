@@ -56,15 +56,34 @@ public sealed class OnlineItemLiveSyncGapTests
         }
     }
 
+    /// <summary>覆盖解析器:只认登记过的编号,没登记的一律是 Unknown。</summary>
+    private sealed class FixedKinds : IItemKindResolver
+    {
+        private readonly Dictionary<uint, ResolvedItemKind> _kinds = new Dictionary<uint, ResolvedItemKind>();
+
+        public FixedKinds With(long itemId, ResolvedItemKind kind)
+        {
+            _kinds[(uint)itemId] = kind;
+            return this;
+        }
+
+        public ResolvedItemKind Resolve(uint itemId)
+        {
+            return _kinds.TryGetValue(itemId, out ResolvedItemKind kind) ? kind : ResolvedItemKind.Unknown;
+        }
+    }
+
     /// <summary>同步器 + 假会话 + 合成资产 + 联网主角;<c>Full</c>/<c>Update</c> 推一个帧并在"主线程"(本线程)排空。</summary>
     private sealed class Rig : IDisposable
     {
         private readonly OnlineItemSyncAdapterTests.SyntheticBindAssets _assets = new OnlineItemSyncAdapterTests.SyntheticBindAssets();
 
-        public Rig(ItemSyncSnapshot snapshot, ushort? selfUid = null)
+        public Rig(ItemSyncSnapshot snapshot, ushort? selfUid = null, IItemKindResolver overrideResolver = null)
         {
             Session = SessionProbe.NewUnconnected();
-            Live = new OnlineItemLiveSync(Session, snapshot, selfUid, _assets.Assets);
+            Live = overrideResolver == null
+                ? new OnlineItemLiveSync(Session, snapshot, selfUid, _assets.Assets)
+                : new OnlineItemLiveSync(Session, snapshot, selfUid, _assets.Assets, overrideResolver);
             OnlineHeroProfile profile = OnlineHeroProfile.FromEntry(
                 new OnlineCharacterEntry(9401, System.Text.Encoding.ASCII.GetBytes("synth"), 0, 0, 0, 20, 0, 0, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
                 0);
@@ -403,6 +422,19 @@ public sealed class OnlineItemLiveSyncGapTests
     }
 
     [Fact]
+    public void Initial_equip_lists_holding_a_single_entry_keep_that_first_entry()
+    {
+        // 列表里只有一条、而且是下标 0 的那条:两个循环都必须从下标 0 开始,不能把它跳过
+        ItemSyncSnapshot selfView = Parse(SelfView(Spec(12, SelfViewPart12Code, 33, 4)));
+        using var fromSelfView = new OnlineItemLiveSync(null, selfView, null, null);
+        AssertWorn(Assert.Single(fromSelfView.ProjectData().WornEquips), slot: 12, code: SelfViewPart12Code, upgrade: 4, grade: 33);
+
+        ItemSyncSnapshot bodyEquip = Parse(Update(SynthItemWire.UpdatePacket((int)ItemSpace.BodyEquip, Spec(21, BodyPart21Code, 77, 12))));
+        using var fromBodyEquip = new OnlineItemLiveSync(null, bodyEquip, null, null);
+        AssertWorn(Assert.Single(fromBodyEquip.ProjectData().WornEquips), slot: 21, code: BodyPart21Code, upgrade: 12, grade: 77);
+    }
+
+    [Fact]
     public void Initial_body_equip_entry_overrides_the_self_view_entry_of_the_same_part()
     {
         ItemSyncSnapshot snapshot = Parse(
@@ -622,7 +654,83 @@ public sealed class OnlineItemLiveSyncGapTests
         Assert.Equal(0L, rig.Progress.Gold);
     }
 
+    /// <summary>快捷栏 6 格里只有 <paramref name="quickIndex"/> 那一格放着 <paramref name="code"/>,其余都空(<paramref name="quickIndex"/> 为 −1 表示 6 格全空)。</summary>
+    private static void AssertQuickBar(HeroProgress progress, int quickIndex, int code)
+    {
+        for (int i = 0; i < 6; i++)
+        {
+            Assert.Equal(i == quickIndex ? code : 0, progress.QuickCodeAt(i));
+        }
+        Assert.Equal(quickIndex >= 0 ? 1 : 0, progress.QuickFilled);
+    }
+
+    [Theory]
+    [InlineData(3, 0)]      // 快捷栏第一格
+    [InlineData(4, 1)]
+    [InlineData(7, 4)]
+    [InlineData(8, 5)]      // 快捷栏最后一格
+    [InlineData(9, -1)]     // 背包第一格
+    [InlineData(10, -1)]
+    [InlineData(311, -1)]   // 背包最后一格(容量 312)
+    public void Noti13_bag_packet_on_a_fresh_sync_places_each_slot_in_the_quick_bar_or_the_bag(int slot, int quickIndex)
+    {
+        using var rig = new Rig(null);   // 没有初始快照:背包、金币都还没同步过
+
+        OnlineItemSyncReport report = rig.Full(SynthItemWire.BagSpacePacket(312, 2500, 7, 9, Spec(slot, MaterialCode, 6)));
+
+        Assert.NotNull(report);
+        // 背包空间包本身就给出整份背包与金币:两个标志都成立,装备没有
+        Assert.True(report.InventorySynced);
+        Assert.True(report.GoldSynced);
+        Assert.False(report.EquipsSynced);
+        Assert.Equal(2500L, rig.Progress.Gold);
+        Assert.Equal(6, rig.Progress.Bag.CountOf(MaterialCode));
+        int quick = quickIndex >= 0 ? 1 : 0;
+        Assert.Equal(quick, report.QuickApplied);
+        Assert.Equal(1 - quick, report.BagApplied);
+        AssertQuickBar(rig.Progress, quickIndex, MaterialCode);
+        Assert.Equal(1, rig.Live.AppliedFrames);
+    }
+
     // ───────────────────────── 簇 C:NOTI/14 增量包 ─────────────────────────
+
+    [Theory]
+    [InlineData(3, 0)]
+    [InlineData(4, 1)]
+    [InlineData(7, 4)]
+    [InlineData(8, 5)]
+    [InlineData(9, -1)]
+    [InlineData(10, -1)]
+    [InlineData(311, -1)]
+    public void Noti14_single_bag_operation_on_a_fresh_sync_upserts_then_deletes_that_slot(int slot, int quickIndex)
+    {
+        using var rig = new Rig(null);   // 没有初始快照:背包还没同步过
+
+        // 恰好一条 upsert:有效变化,背包标记为已同步,金币不在这个包里
+        OnlineItemSyncReport put = rig.Update(SynthItemWire.UpdatePacket((int)ItemSpace.Bag, Spec(slot, MaterialCode, 6)));
+
+        Assert.NotNull(put);
+        Assert.True(put.InventorySynced);
+        Assert.False(put.GoldSynced);
+        Assert.False(put.EquipsSynced);
+        Assert.Equal(6, rig.Progress.Bag.CountOf(MaterialCode));
+        int quick = quickIndex >= 0 ? 1 : 0;
+        Assert.Equal(quick, put.QuickApplied);
+        Assert.Equal(1 - quick, put.BagApplied);
+        AssertQuickBar(rig.Progress, quickIndex, MaterialCode);
+
+        // 再恰好一条 delete 同一个槽:仍然是有效变化,条目消失
+        OnlineItemSyncReport removed = rig.Update(SynthItemWire.UpdatePacket((int)ItemSpace.Bag, Remove(ItemSpace.Bag, slot)));
+
+        Assert.NotNull(removed);
+        Assert.True(removed.InventorySynced);
+        Assert.Equal(0, removed.QuickApplied);
+        Assert.Equal(0, removed.BagApplied);
+        Assert.Equal(0, rig.Progress.Bag.CountOf(MaterialCode));
+        AssertQuickBar(rig.Progress, -1, MaterialCode);
+        Assert.Equal(2, rig.Live.AppliedFrames);
+        Assert.Equal(0, rig.Live.IgnoredFrames);
+    }
 
     [Fact]
     public void Empty_bag_increment_and_non_gold_currency_refresh_are_not_a_change()
@@ -742,6 +850,44 @@ public sealed class OnlineItemLiveSyncGapTests
         Assert.Equal(CoatCode, rig.Progress.Worn.Get(EquipmentParts.MagicStone)?.Code);
     }
 
+    [Fact]
+    public void Noti14_body_equip_operations_are_applied_one_by_one_starting_with_the_first()
+    {
+        using var rig = new Rig(null);
+
+        // 恰好一条 upsert,而且就是下标 0 的那条
+        Assert.NotNull(rig.Update(SynthItemWire.UpdatePacket((int)ItemSpace.BodyEquip, Spec(10, WeaponCode, 72, 2))));
+        AssertWorn(Assert.Single(rig.Live.ProjectData().WornEquips), slot: 10, code: WeaponCode, upgrade: 2, grade: 72);
+        Assert.Equal(1, rig.Progress.Worn.EquippedCount);
+
+        // 第一条就是合法部位的整包:放部位 12、放部位 21
+        Assert.NotNull(rig.Update(SynthItemWire.UpdatePacket((int)ItemSpace.BodyEquip,
+            Spec(12, CoatCode, 40, 1),
+            Spec(21, CoatCode, 83, 5))));
+        Assert.Collection(rig.Live.ProjectData().WornEquips,
+            e => AssertWorn(e, slot: 10, code: WeaponCode, upgrade: 2, grade: 72),
+            e => AssertWorn(e, slot: 12, code: CoatCode, upgrade: 1, grade: 40),
+            e => AssertWorn(e, slot: 21, code: CoatCode, upgrade: 5, grade: 83));
+        Assert.Equal(3, rig.Progress.Worn.EquippedCount);
+
+        // 恰好一条 delete,而且就是下标 0 的那条:只清部位 10
+        Assert.NotNull(rig.Update(SynthItemWire.UpdatePacket((int)ItemSpace.BodyEquip, Remove(ItemSpace.BodyEquip, 10))));
+        Assert.Collection(rig.Live.ProjectData().WornEquips,
+            e => AssertWorn(e, slot: 12, code: CoatCode, upgrade: 1, grade: 40),
+            e => AssertWorn(e, slot: 21, code: CoatCode, upgrade: 5, grade: 83));
+        Assert.Equal(2, rig.Progress.Worn.EquippedCount);
+        Assert.Null(rig.Progress.Worn.Get(EquipmentParts.Weapon));
+
+        // 两条 delete(各自都是合法部位):全清
+        Assert.NotNull(rig.Update(SynthItemWire.UpdatePacket((int)ItemSpace.BodyEquip,
+            Remove(ItemSpace.BodyEquip, 12),
+            Remove(ItemSpace.BodyEquip, 21))));
+        Assert.Empty(rig.Live.ProjectData().WornEquips);
+        Assert.Equal(0, rig.Progress.Worn.EquippedCount);
+        Assert.Equal(4, rig.Live.AppliedFrames);
+        Assert.Equal(0, rig.Live.IgnoredFrames);
+    }
+
     // ───────────────────────── 帧过滤、退订与整包拒绝 ─────────────────────────
 
     [Fact]
@@ -840,6 +986,39 @@ public sealed class OnlineItemLiveSyncGapTests
         AssertOnly(rig.Live.ProjectData(), ItemSpace.PetBag, 1);
         Assert.Equal(1, rig.Live.AppliedFrames);
         Assert.Equal(4, rig.Live.IgnoredFrames);
+    }
+
+    [Fact]
+    public void An_override_resolver_replaces_the_asset_catalog_for_lookups_and_for_parsing_pushed_packets()
+    {
+        // 覆盖解析器的答案与资产里的物品表故意相反:武器说成宠物、药水说成装扮、宠物编号说成不认识、不认识的编号说成普通物品
+        var kinds = new FixedKinds()
+            .With(WeaponCode, ResolvedItemKind.Pet)
+            .With(PotionCode, ResolvedItemKind.Avatar)
+            .With(CreatureCode, ResolvedItemKind.Unknown)
+            .With(UnknownCode, ResolvedItemKind.Other);
+        using var rig = new Rig(null, overrideResolver: kinds);
+
+        Assert.Equal(ResolvedItemKind.Pet, rig.Live.Resolve(WeaponCode));
+        Assert.Equal(ResolvedItemKind.Avatar, rig.Live.Resolve(PotionCode));
+        Assert.Equal(ResolvedItemKind.Unknown, rig.Live.Resolve(CreatureCode));
+        Assert.Equal(ResolvedItemKind.Other, rig.Live.Resolve(UnknownCode));
+        // 覆盖解析器没登记的编号不回落到资产(资产里它是普通物品)
+        Assert.Equal(ResolvedItemKind.Unknown, rig.Live.Resolve(MaterialCode));
+
+        // 推进来的包也按覆盖解析器解析:武器编号被当成宠物,宠物栏的线格式多一个剩余时长字段,整包被接受
+        OnlineItemSyncReport accepted = rig.Update(UpdatePacket(ItemSpace.PetBag,
+            new SynthItemWire.ItemSpec { Slot = 4, ItemId = WeaponCode, PetTime = 4321 }));
+        Assert.NotNull(accepted);
+        AssertOnly(accepted, ItemSpace.PetBag, 1);
+        Assert.Equal(1, rig.Live.AppliedFrames);
+        Assert.Equal(0, rig.Live.IgnoredFrames);
+
+        // 真正的宠物编号被覆盖解析器说成不认识:宠物栏增量整包被拒,计数不变
+        Assert.Null(rig.Update(UpdatePacket(ItemSpace.PetBag, Put(ItemSpace.PetBag, 5))));
+        Assert.Equal(1, rig.Live.IgnoredFrames);
+        Assert.Equal(1, rig.Live.AppliedFrames);
+        AssertOnly(rig.Live.ProjectData(), ItemSpace.PetBag, 1);
     }
 
     [Fact]
