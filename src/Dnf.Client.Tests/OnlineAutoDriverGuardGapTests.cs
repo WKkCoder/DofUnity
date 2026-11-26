@@ -10,7 +10,8 @@ namespace Dnf.Client.Tests;
 /// r20fix-e2e C-1:无人值守驱动 <see cref="OnlineAutoDriver"/> 里"守卫条件"的补测——每个守卫的两侧各一条用例,期望值全是手写字面量。
 /// 覆盖:不带 <c>-dnfonlineauto-dungeon</c> 时的默认难度、选角光标在重新进入选角页时归零、选频道页"读失败"与"没有频道"各自停手、
 /// 选角页不重复发 Enter、空名册与缺名册、选图页忙时只等待、结算失败三条判据各自单独成立、指定副本不在或不可进时停手而不是确认第 0 项,
-/// 外壳各阶段与进图加载画面里驱动对外报的阶段名,以及命令行参数解析的几处边界:副本参数的两个值恰好是最后两个参数、数字参数最长 9 位、数字末尾带 NUL。
+/// 外壳各阶段与进图加载画面里驱动对外报的阶段名、登录被取消即失败、频道连接被取消与退回选服务器页之后驱动不重试,
+/// 以及命令行参数解析的几处边界:副本参数的两个值恰好是最后两个参数、数字参数最长 9 位、数字末尾带 NUL。
 /// 外壳那几条走真的 <see cref="OnlineShellFlow"/> 加假后端;选图与结算走真的 <see cref="GameFlow"/>、选图屏、联网进副本控制器与结算控制器。全部是合成数据。
 /// </summary>
 public sealed class OnlineAutoDriverGuardGapTests
@@ -430,7 +431,7 @@ public sealed class OnlineAutoDriverGuardGapTests
         Assert.Equal(0, shell.Backend.ConnectCalls);
     }
 
-    // ------------------------------------------------------------------ 外壳各阶段里驱动对外报的阶段名
+    // ------------------------------------------------------------------ 阶段名;取消与退回之后驱动不重试
 
     [Fact]
     public void The_driver_names_the_shell_stage_it_is_working_on_as_soon_as_it_looks_at_it()
@@ -468,6 +469,116 @@ public sealed class OnlineAutoDriverGuardGapTests
         Assert.False(shell.Driver.Finished);
         Assert.Null(shell.Driver.ResultLine);
         selectGate.SetResult(OnlineSelectOutcome.Ok());
+    }
+
+    [Fact]
+    public void A_login_the_player_cancels_is_failed_by_the_driver_as_the_login_stage_and_never_submitted_again()
+    {
+        var loginGate = new TaskCompletionSource<OnlineAuthOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shell = new Shell(picker: false, manage: false, characterSlot: 0, "HeroA");
+        shell.Backend.OnLogin = (user, password, ct) => loginGate.Task;
+
+        // 驱动按下它的那一次 Enter,流程把登录请求发出去、挂在那里;忙的时候驱动只等
+        shell.RunUntil(() => shell.Backend.LoginCalls > 0);
+        Assert.Equal(1, shell.Backend.LoginCalls);
+        Assert.True(shell.Flow.Busy);
+        for (int i = 0; i < 5; i++)
+        {
+            shell.Tick();
+        }
+        Assert.False(shell.Driver.Finished);
+        Assert.Equal(1, shell.Backend.LoginCalls);
+
+        // 玩家按 Esc 取消:登录页回到空闲,提示是"已取消"(不算错误提示)
+        shell.Flow.Key(OnlineShellKey.Escape);
+        shell.PollOnly();
+        Assert.Equal(OnlineShellStage.Login, shell.Flow.Stage);
+        Assert.False(shell.Flow.Busy);
+        Assert.NotNull(shell.Flow.Notice);
+        Assert.Equal(OnlineNoticeKind.Cancelled, shell.Flow.Notice.Kind);
+        Assert.False(shell.Flow.Notice.IsError);
+        Assert.False(shell.Driver.Finished);
+
+        shell.Driver.StepShell(shell.Flow, 123);
+
+        Assert.True(shell.Driver.Finished);
+        Assert.False(shell.Driver.Succeeded);
+        Assert.Equal("login", shell.Driver.Stage);
+        Assert.Equal("DNF_ONLINE result=fail stage=login elapsedMs=123", shell.Driver.ResultLine);
+        Assert.Equal(new[] { "DNF_ONLINE result=fail stage=login elapsedMs=123" }, shell.ResultLines);
+        Assert.Equal(1, shell.Backend.LoginCalls);
+    }
+
+    [Fact]
+    public void A_channel_connect_the_player_cancels_is_never_retried_by_the_driver()
+    {
+        var connectGate = new TaskCompletionSource<OnlineConnectOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shell = new Shell(picker: true, manage: false, characterSlot: 0, "HeroA");
+        shell.Backend.OnConnect = (target, ct) => connectGate.Task;
+
+        // 驱动在频道页按下它的那一次 Enter,连接请求挂在那里
+        shell.RunUntil(() => shell.Backend.ConnectCalls > 0);
+        Assert.Equal(1, shell.Backend.ConnectCalls);
+        Assert.Equal(OnlineShellStage.ChannelSelect, shell.Flow.Stage);
+        Assert.True(shell.Flow.Busy);
+
+        // 玩家按 Esc 取消:频道页回到就绪、能开始,提示是"已取消"(不算错误提示)
+        shell.Flow.Key(OnlineShellKey.Escape);
+        shell.PollOnly();
+        Assert.Equal(OnlineShellStage.ChannelSelect, shell.Flow.Stage);
+        Assert.False(shell.Flow.Busy);
+        Assert.Equal(PickerPhase.Ready, shell.Flow.ChannelScreen.Phase);
+        Assert.True(shell.Flow.ChannelScreen.CanStart);
+        Assert.Equal(OnlineNoticeKind.Cancelled, shell.Flow.Notice.Kind);
+        Assert.False(shell.Flow.Notice.IsError);
+
+        // 之后的每一帧驱动都不再按 Enter:不重连、也不收尾(等人处理)
+        for (int i = 0; i < 8; i++)
+        {
+            shell.Tick();
+        }
+
+        Assert.Equal(1, shell.Backend.ConnectCalls);
+        Assert.Equal(OnlineShellStage.ChannelSelect, shell.Flow.Stage);
+        Assert.False(shell.Driver.Finished);
+        Assert.Null(shell.Driver.ResultLine);
+        connectGate.SetResult(OnlineConnectOutcome.Ok(ShellTestData.Roster(2)));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_server_page_the_player_backs_out_to_is_not_confirmed_a_second_time_by_the_driver(bool realPicker)
+    {
+        // realPicker 为真:选服务器是真界面;为假:没有目录、占位页也不自动放行(驱动调 ChooseServer 放行占位页)
+        var shell = realPicker
+            ? new Shell(picker: true, manage: false, characterSlot: 0, "HeroA")
+            : new Shell(picker: false, manage: false, autoPass: false, characterSlot: 0, "HeroA");
+
+        // 驱动在选服务器页确认了一次,流程来到选频道页(驱动还没看到它)
+        shell.RunUntilStage(OnlineShellStage.ChannelSelect);
+
+        // 玩家在频道页按 Esc 退回选服务器页
+        shell.Flow.Key(OnlineShellKey.Escape);
+        shell.PollOnly();
+        Assert.Equal(OnlineShellStage.ServerSelect, shell.Flow.Stage);
+        for (int i = 0; i < 300 && realPicker && (shell.Flow.Busy || shell.Flow.ServerScreen == null || shell.Flow.ServerScreen.Phase != PickerPhase.Ready); i++)
+        {
+            shell.PollOnly();
+        }
+        Assert.False(shell.Flow.Busy);
+
+        // 之后的每一帧驱动都不再确认:流程停在选服务器页,驱动不收尾(等人处理)
+        for (int i = 0; i < 8; i++)
+        {
+            shell.Tick();
+        }
+
+        Assert.Equal(OnlineShellStage.ServerSelect, shell.Flow.Stage);
+        Assert.Equal("server", shell.Driver.Stage);
+        Assert.False(shell.Driver.Finished);
+        Assert.Null(shell.Driver.ResultLine);
+        Assert.Equal(0, shell.Backend.ConnectCalls);
     }
 
     // ------------------------------------------------------------------ 038:选角页只按一次 Enter
