@@ -186,7 +186,7 @@ validate_live_guards() {
 
 # ===========================================================================
 # --selftest：离线自测（不需要 Unity、不联网、不读本地凭据）
-#   1) 日志校验器 validate_log：正例与负对照（本提交不改动）。
+#   1) 日志校验器 validate_log：正例 + 表驱动负对照，逐项断言退出码与 stderr 原因行（逐字，含行尾换行）。
 #   2) --live 护栏：只经 --check-guards 入口、在隔离沙箱副本上逐项断言
 #      （退出码恰为 2 且 stderr 逐字等于固定原因行）。自测本身不会走到真服运行。
 # ===========================================================================
@@ -214,6 +214,45 @@ st_check_file() {
   if ! cmp -s "$actual" "$expected_file"; then
     st_fail "$what 与期望不一致" "期望: [$want]" "实际: [$(cat "$actual")]"
   fi
+}
+
+# 校验器用例：st_log_case <名称> <期望退出码> <期望 stdout 整行，无为空串> <期望 stderr 整行，无为空串>
+#                         <max_ms> <期望重试数> <查异常 0|1|->（- 表示省略第 4 参数） <对正例日志的变换…>
+# 变换由 editlog.py 解释，可串联：none empty remove / drop <子串> / after <子串> <新行> / before <子串> <新行> /
+# append <新行> / replace <唯一旧串> <新串> / swap <子串> <子串> / dup <子串> / crlf / indent <n> / blank / badbytes
+st_log_case() {
+  local name="$1" want_rc="$2" want_out="$3" want_err="$4" max_ms="$5" retries="$6" check_exc="$7"
+  shift 7
+  local log="$_SELFTEST_TMP/case.log" out="$_SELFTEST_TMP/case.out" err="$_SELFTEST_TMP/case.err" rc=0
+  rm -f "$log"
+  python3 "$_SELFTEST_TMP/editlog.py" "$_ST_GOOD" "$log" "$@" \
+    || st_fail "[校验器 $name] 用例构造失败（变换与正例日志对不上）"
+  if [ "$check_exc" = "-" ]; then
+    validate_log "$log" "$max_ms" "$retries" >"$out" 2>"$err" || rc=$?
+  else
+    validate_log "$log" "$max_ms" "$retries" "$check_exc" >"$out" 2>"$err" || rc=$?
+  fi
+  _ST_LOG_CASES=$((_ST_LOG_CASES + 1))
+  echo "[selftest] 校验器 $name"
+  if [ "$rc" != "$want_rc" ]; then
+    st_fail "[校验器 $name] 退出码应为 $want_rc，实际 $rc" "stdout: [$(cat "$out")]" "stderr: [$(cat "$err")]"
+  fi
+  st_check_file "[校验器 $name] stdout" "$out" "$want_out"
+  st_check_file "[校验器 $name] stderr" "$err" "$want_err"
+}
+
+# 正例：退出 0、stdout 恰为给定一行、stderr 为空
+st_ok() {
+  local name="$1" want_out="$2"
+  shift 2
+  st_log_case "$name" 0 "$want_out" "" "$@"
+}
+
+# 负对照：退出 1、stdout 为空、stderr 恰为给定原因行
+st_bad() {
+  local name="$1" want_err="$2"
+  shift 2
+  st_log_case "$name" 1 "" "$want_err" "$@"
 }
 
 # 隔离沙箱：脚本副本 + 触发即记账的假后续步骤 + 空 HOME / 空 DNF_DIR；没有 local.env、local.secrets.env，
@@ -297,6 +336,7 @@ run_selftest() {
   _SELFTEST_TMP="$(mktemp -d)"
   trap 'rm -rf "${_SELFTEST_TMP:-}"' EXIT
   local tmp="$_SELFTEST_TMP"
+  _ST_LOG_CASES=0
   _ST_GUARD_CASES=0
 
   # 双保险（不是唯一依据：唯一依据是 --live 护栏入口 --check-guards 根本不会走到后续任何步骤）：
@@ -311,9 +351,9 @@ run_selftest() {
   export DNF_DIR="$tmp/dnfdir"
   echo "[selftest] 隔离: 已清除 DNF_* 与 SSHPASS，HOME 与 DNF_DIR 指向空目录"
 
-  # ======================= 一、日志校验器（本提交不改，沿用原有的正例与负对照）=======================
-  local good="$tmp/good.log"
-  cat >"$good" <<'EOF'
+  # ---- 正例日志（每条都是合成数据；第 0..23 条，下面的乱序用例按这些下标手算期望）----
+  _ST_GOOD="$tmp/good.log"
+  cat >"$_ST_GOOD" <<'EOF'
 DNF_ONLINE stage=login event=enter reason=start
 DNF_ONLINE stage=login event=ok reason=auth
 DNF_ONLINE stage=server event=enter reason=login_ok
@@ -340,45 +380,236 @@ DNF_ONLINE stage=settle event=town reason=confirmed area=server_area signal=area
 DNF_ONLINE result=ok stage=done elapsedMs=8420
 EOF
 
-  echo "[selftest] 正例: 完整日志 -> 期望退出 0"
-  validate_log "$good" 60000 1 1 >/dev/null
-
-  echo "[selftest] 负对照 1: 缺少 settle 阶段 -> 期望失败"
-  grep -v 'stage=settle' "$good" >"$tmp/missing_settle.log"
-  if validate_log "$tmp/missing_settle.log" 60000 0 1 >/dev/null 2>&1; then
-    echo "FAIL: 缺阶段负对照未被拦截" >&2; exit 1
-  fi
-
-  echo "[selftest] 负对照 2: 多出一条 event=fail -> 期望失败"
-  sed 's/stage=channel event=ok reason=connected/stage=channel event=ok reason=connected\nDNF_ONLINE stage=channel event=fail reason=network/' "$good" >"$tmp/extra_fail.log"
-  if validate_log "$tmp/extra_fail.log" 60000 1 1 >/dev/null 2>&1; then
-    echo "FAIL: 多 fail 负对照未被拦截" >&2; exit 1
-  fi
-
-  echo "[selftest] 负对照 3: 缺少结局行 -> 期望失败"
-  grep -v '^DNF_ONLINE result=' "$good" >"$tmp/no_result.log"
-  if validate_log "$tmp/no_result.log" 60000 1 1 >/dev/null 2>&1; then
-    echo "FAIL: 缺结局行负对照未被拦截" >&2; exit 1
-  fi
-
-  echo "[selftest] 负对照 4: 阶段顺序颠倒 (dungeon 早于 town) -> 期望失败"
-  python3 - "$good" "$tmp/bad_order.log" <<'PY'
+  # ---- 日志变换器：把正例日志改成各种坏日志 / 边界日志（只用于自测）----
+  cat >"$tmp/editlog.py" <<'PY'
 import sys
-lines = open(sys.argv[1]).read().splitlines()
-i_town = next(i for i, l in enumerate(lines) if "stage=town " in l)
-i_dung = next(i for i, l in enumerate(lines) if "stage=dungeon " in l)
-lines[i_town], lines[i_dung] = lines[i_dung], lines[i_town]
-open(sys.argv[2], "w").write("\n".join(lines) + "\n")
+
+src, dst = sys.argv[1], sys.argv[2]
+ops = sys.argv[3:]
+lines = open(src, encoding="utf-8").read().splitlines()
+tail = b""
+eol = "\n"
+pad = ""
+blank = False
+remove = False
+
+
+def first(pat):
+    for k, text in enumerate(lines):
+        if pat in text:
+            return k
+    raise SystemExit("editlog: 正例日志里找不到: " + pat)
+
+
+i = 0
+while i < len(ops):
+    op = ops[i]
+    i += 1
+    if op == "none":
+        pass
+    elif op == "empty":
+        lines = []
+    elif op == "remove":
+        remove = True
+    elif op == "drop":
+        pat = ops[i]
+        i += 1
+        lines = [text for text in lines if pat not in text]
+    elif op == "after":
+        pat, new = ops[i], ops[i + 1]
+        i += 2
+        lines.insert(first(pat) + 1, new)
+    elif op == "before":
+        pat, new = ops[i], ops[i + 1]
+        i += 2
+        lines.insert(first(pat), new)
+    elif op == "append":
+        lines.append(ops[i])
+        i += 1
+    elif op == "replace":
+        old, new = ops[i], ops[i + 1]
+        i += 2
+        joined = "\n".join(lines)
+        if joined.count(old) != 1:
+            raise SystemExit("editlog: replace 的旧串必须在日志里恰出现一次: " + old)
+        lines = joined.replace(old, new).split("\n")
+    elif op == "swap":
+        a, b = first(ops[i]), first(ops[i + 1])
+        i += 2
+        lines[a], lines[b] = lines[b], lines[a]
+    elif op == "dup":
+        k = first(ops[i])
+        i += 1
+        lines.insert(k + 1, lines[k])
+    elif op == "crlf":
+        eol = "\r\n"
+    elif op == "indent":
+        pad = " " * int(ops[i])
+        i += 1
+    elif op == "blank":
+        blank = True
+    elif op == "badbytes":
+        tail = b"noise \xff\xfe line\n"
+    else:
+        raise SystemExit("editlog: 未知变换: " + op)
+
+if not remove:
+    out = []
+    for text in lines:
+        out.append(pad + text + ("   " if blank else ""))
+        if blank:
+            out.append("")
+    body = eol.join(out) + (eol if out else "")
+    with open(dst, "wb") as fh:
+        fh.write(body.encode("utf-8") + tail)
 PY
-  if validate_log "$tmp/bad_order.log" 60000 1 1 >/dev/null 2>&1; then
-    echo "FAIL: 阶段乱序负对照未被拦截" >&2; exit 1
-  fi
 
-  echo "[selftest] 负对照 5: 耗时超上限 -> 期望失败"
-  if validate_log "$good" 5000 1 1 >/dev/null 2>&1; then
-    echo "FAIL: 超时负对照未被拦截" >&2; exit 1
-  fi
+  # ======================= 一、日志校验器 =======================
+  # 期望值都是手算的字面量：每条原因行逐字；耗时/重试数的边界（恰等于、差 1）与期望 0/1/2/3 各有对照。
 
+  # ---- 正例（stdout 整行逐字；stderr 必须为空）----
+  st_ok "P01 完整日志，期望 1 次重试且恰有 1 次" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=8420" 60000 1 1 none
+  st_ok "P02 期望 0 次重试（日志里有 1 次也不查）" "DNF_E2E_CHECK ok stages=9 retries=0 elapsedMs=8420" 60000 0 1 none
+  st_ok "P03 期望 0 次重试且日志里确实 0 次" "DNF_E2E_CHECK ok stages=9 retries=0 elapsedMs=8420" 60000 0 1 drop "event=retry"
+  st_ok "P04 期望 2 次重试且恰有 2 次" "DNF_E2E_CHECK ok stages=9 retries=2 elapsedMs=8420" 60000 2 1 \
+    after "event=retry status=reenter cycle=1" "DNF_ONLINE stage=settle event=retry status=reenter cycle=2"
+  st_ok "P05 期望 1 次重试而日志里有 2 次（多于期望放行）" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=8420" 60000 1 1 \
+    after "event=retry status=reenter cycle=1" "DNF_ONLINE stage=settle event=retry status=reenter cycle=2"
+  st_ok "P06 耗时 8420 恰等于上限 8420 放行" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=8420" 8420 1 1 none
+  st_ok "P07 耗时 8420 比上限 8421 小 1 放行" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=8420" 8421 1 1 none
+  st_ok "P08 另一组耗时 61234 恰等于上限 61234 放行" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=61234" 61234 1 1 \
+    replace "elapsedMs=8420" "elapsedMs=61234"
+  st_ok "P09 耗时 0 对上限 0 放行" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=0" 0 1 1 replace "elapsedMs=8420" "elapsedMs=0"
+  st_ok "P10 不查异常（第 4 参数为 0）时异常行放行" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=8420" 60000 1 0 \
+    append "System.InvalidOperationException: boom"
+  st_ok "P11 日志用 CRLF 行尾放行" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=8420" 60000 1 1 crlf
+  st_ok "P12 每行缩进 4 个空格并夹空行、行尾带空格放行" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=8420" 60000 1 1 indent 4 blank
+  st_ok "P13 夹带非 UTF-8 字节的噪声行放行" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=8420" 60000 1 1 badbytes
+  st_ok "P14 夹带无关噪声行放行" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=8420" 60000 1 1 \
+    after "stage=login event=enter" "[Unity] noise line"
+  st_ok "P15 出现 Exception 字样但没有冒号的行放行" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=8420" 60000 1 1 \
+    append "NullReferenceException at Foo.Bar"
+  st_ok "P16 没有类型名前缀的 Exception: 行放行" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=8420" 60000 1 1 \
+    append "Exception: plain"
+  st_ok "P17 类型名只有点号前缀（..Exception:）的行放行（\\b 要求类型名从字母数字起头）" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=8420" 60000 1 1 \
+    append "..Exception: dotted"
+  st_ok "P18 DNF_ONLINEX 开头（前缀后没有空格）的 event=fail 行不算 DNF_ONLINE 行，放行" "DNF_E2E_CHECK ok stages=9 retries=1 elapsedMs=8420" 60000 1 1 \
+    append "DNF_ONLINEX stage=login event=fail reason=stray"
+
+  # ---- 负对照：异常与失败标记（原因行恒为同一句）----
+  local m_exc="日志包含未处理异常或失败标记"
+  st_bad "E01 异常行 System.InvalidOperationException:" "$m_exc" 60000 1 1 append "System.InvalidOperationException: boom"
+  st_bad "E02 异常行 System.Exception:（类型名就叫 Exception）" "$m_exc" 60000 1 1 append "System.Exception: boom"
+  st_bad "E03 异常行 SomeException:" "$m_exc" 60000 1 1 append "SomeException: boom"
+  st_bad "E04 异常行 Type2Exception:（类型名带数字）" "$m_exc" 60000 1 1 append "Type2Exception: boom"
+  st_bad "E05 异常行 My_TypeException:（类型名带下划线）" "$m_exc" 60000 1 1 append "My_TypeException: boom"
+  st_bad "E06 含 DNF_TOWN_DEMO failed 的行" "$m_exc" 60000 1 1 append "DNF_TOWN_DEMO failed reason=x"
+  st_bad "E07 异常行出现在第一条 DNF_ONLINE 之前" "$m_exc" 60000 1 1 before "stage=login event=enter" "Foo.BarException: early"
+  st_bad "E08 省略第 4 参数时默认查异常" "$m_exc" 60000 1 - append "System.InvalidOperationException: boom"
+
+  # ---- 负对照：无 DNF_ONLINE 行 / 读不到日志 ----
+  st_bad "N01 空日志" "日志缺少任何 DNF_ONLINE 行" 60000 1 1 empty
+  st_bad "N02 只有噪声行没有 DNF_ONLINE 行" "日志缺少任何 DNF_ONLINE 行" 60000 1 1 drop "DNF_ONLINE" append "[Unity] player started"
+  st_bad "N03 日志文件不存在" "日志读取失败: [Errno 2] No such file or directory: '$tmp/case.log'" 60000 1 1 remove
+  st_bad "N04 只有 DNF_ONLINEX 开头（前缀后没有空格）的行不算 DNF_ONLINE 行" "日志缺少任何 DNF_ONLINE 行" 60000 1 1 \
+    drop "DNF_ONLINE" append "DNF_ONLINEX stage=login event=enter reason=start"
+
+  # ---- 负对照：缺必需阶段（每个必需阶段单独一条；原因行逐字）----
+  st_bad "M01 缺 login 阶段" "缺少必需阶段: login" 60000 1 1 drop "stage=login "
+  st_bad "M02 缺 server 阶段" "缺少必需阶段: server" 60000 1 1 drop "stage=server "
+  st_bad "M03 缺 channel 阶段" "缺少必需阶段: channel" 60000 1 1 drop "stage=channel "
+  st_bad "M04 缺 charselect 阶段" "缺少必需阶段: charselect" 60000 1 1 drop "stage=charselect "
+  st_bad "M05 缺 loading 阶段" "缺少必需阶段: loading" 60000 1 1 drop "stage=loading "
+  st_bad "M06 缺 ingame 阶段" "缺少必需阶段: ingame" 60000 1 1 drop "stage=ingame "
+  st_bad "M07 缺 town 阶段" "缺少必需阶段: town" 60000 1 1 drop "stage=town "
+  st_bad "M08 缺 dungeon 阶段" "缺少必需阶段: dungeon" 60000 1 1 drop "stage=dungeon "
+  st_bad "M09 缺 settle 阶段" "缺少必需阶段: settle" 60000 1 1 drop "stage=settle "
+  st_bad "M10 同时缺 server 与 dungeon（按必需阶段表顺序、逗号相连）" "缺少必需阶段: server,dungeon" 60000 1 1 \
+    drop "stage=server " drop "stage=dungeon "
+  st_bad "M11 九个阶段行全缺（只剩结局行）" "缺少必需阶段: login,server,channel,charselect,loading,ingame,town,dungeon,settle" 60000 1 1 \
+    drop "DNF_ONLINE stage="
+  st_bad "M12 没有 event= 的残缺 settle 行不算阶段" "缺少必需阶段: settle" 60000 0 1 \
+    drop "stage=settle " append "DNF_ONLINE stage=settle reason=partial"
+  st_bad "M13 事件名带数字后缀（event=ok2）不算阶段" "缺少必需阶段: settle" 60000 0 1 \
+    drop "stage=settle " append "DNF_ONLINE stage=settle event=ok2 reason=x"
+  st_bad "M14 事件名以数字开头（event=1）不算阶段" "缺少必需阶段: settle" 60000 0 1 \
+    drop "stage=settle " append "DNF_ONLINE stage=settle event=1"
+  st_bad "M15 阶段名大写（stage=Settle）不算阶段" "缺少必需阶段: settle" 60000 0 1 \
+    drop "stage=settle " append "DNF_ONLINE stage=Settle event=ok"
+  st_bad "M16 事件名大写（event=OK）不算阶段" "缺少必需阶段: settle" 60000 0 1 \
+    drop "stage=settle " append "DNF_ONLINE stage=settle event=OK"
+
+  # ---- 负对照：阶段乱序（后一阶段的首次出现早于前一阶段；括号里是手算的 0 起下标）----
+  st_bad "O01 server 首现早于 login" "阶段首次出现顺序错位: server (0) 早于 login (1)" 60000 1 1 \
+    before "stage=login " "DNF_ONLINE stage=server event=enter reason=stray"
+  st_bad "O02 channel 首现早于 server" "阶段首次出现顺序错位: channel (2) 早于 server (3)" 60000 1 1 \
+    before "stage=server " "DNF_ONLINE stage=channel event=enter reason=stray"
+  st_bad "O03 charselect 首现早于 channel" "阶段首次出现顺序错位: charselect (5) 早于 channel (6)" 60000 1 1 \
+    before "stage=channel " "DNF_ONLINE stage=charselect event=enter reason=stray"
+  st_bad "O04 loading 首现早于 charselect" "阶段首次出现顺序错位: loading (7) 早于 charselect (8)" 60000 1 1 \
+    before "stage=charselect " "DNF_ONLINE stage=loading event=enter reason=stray"
+  st_bad "O05 ingame 首现早于 loading" "阶段首次出现顺序错位: ingame (9) 早于 loading (10)" 60000 1 1 \
+    before "stage=loading " "DNF_ONLINE stage=ingame event=enter reason=stray"
+  st_bad "O06 town 首现早于 ingame" "阶段首次出现顺序错位: town (11) 早于 ingame (12)" 60000 1 1 \
+    before "stage=ingame " "DNF_ONLINE stage=town event=enter reason=stray"
+  st_bad "O07 dungeon 首现早于 town" "阶段首次出现顺序错位: dungeon (12) 早于 town (13)" 60000 1 1 \
+    before "stage=town " "DNF_ONLINE stage=dungeon event=enter reason=stray"
+  st_bad "O08 settle 首现早于 dungeon" "阶段首次出现顺序错位: settle (13) 早于 dungeon (14)" 60000 1 1 \
+    before "stage=dungeon " "DNF_ONLINE stage=settle event=enter reason=stray"
+  st_bad "O09 town 与 dungeon 两行对调（原负对照 4）" "阶段首次出现顺序错位: dungeon (12) 早于 town (13)" 60000 1 1 \
+    swap "stage=town " "stage=dungeon event=select"
+
+  # ---- 负对照：失败事件（计数与展示的是最先出现的一条）----
+  st_bad "F01 多出一条 event=fail" "日志出现失败事件 (1 条): DNF_ONLINE stage=channel event=fail reason=network" 60000 1 1 \
+    after "stage=channel event=ok reason=connected" "DNF_ONLINE stage=channel event=fail reason=network"
+  st_bad "F02 两条 event=fail（计数 2，展示更早出现的那条）" "日志出现失败事件 (2 条): DNF_ONLINE stage=server event=fail reason=refused" 60000 1 1 \
+    after "stage=channel event=ok reason=connected" "DNF_ONLINE stage=channel event=fail reason=network" \
+    after "stage=server event=ok reason=choose" "DNF_ONLINE stage=server event=fail reason=refused"
+  st_bad "F03 结局行本身是 result=fail" "日志出现失败事件 (1 条): DNF_ONLINE result=fail stage=town elapsedMs=8420" 60000 1 1 \
+    replace "result=ok stage=done" "result=fail stage=town"
+
+  # ---- 负对照：重试次数（期望 1、2、3 各一条；只有 stage=settle event=retry status=reenter cycle= 开头的行才计数）----
+  st_bad "R01 期望 1 次重试而日志里没有" "重试循环次数不足: 期望至少 1, 实际 0" 60000 1 1 drop "event=retry"
+  st_bad "R02 期望 2 次重试而日志里只有 1 次" "重试循环次数不足: 期望至少 2, 实际 1" 60000 2 1 none
+  st_bad "R03 期望 3 次重试而日志里只有 2 次" "重试循环次数不足: 期望至少 3, 实际 2" 60000 3 1 \
+    after "event=retry status=reenter cycle=1" "DNF_ONLINE stage=settle event=retry status=reenter cycle=2"
+  st_bad "R04 retry 行的 status 不是 reenter 不计入" "重试循环次数不足: 期望至少 1, 实际 0" 60000 1 1 \
+    replace "event=retry status=reenter cycle=1" "event=retry status=failed cycle=1"
+  st_bad "R05 reenter 行缺 cycle= 不计入" "重试循环次数不足: 期望至少 1, 实际 0" 60000 1 1 \
+    replace "status=reenter cycle=1" "status=reenter"
+  st_bad "R06 阶段不是 settle 的 retry 行不计入" "重试循环次数不足: 期望至少 1, 实际 0" 60000 1 1 \
+    replace "stage=settle event=retry" "stage=town event=retry"
+  st_bad "R07 retry 前缀只出现在行中间（不在行首）不计入" "重试循环次数不足: 期望至少 1, 实际 0" 60000 1 1 \
+    replace "DNF_ONLINE stage=settle event=retry status=reenter cycle=1" "DNF_ONLINE stage=settle event=note text=DNF_ONLINE stage=settle event=retry status=reenter cycle=1"
+
+  # ---- 负对照：结局行（数量、格式、内容）----
+  st_bad "Z01 缺结局行" "结局行数量异常: 期望恰 1 条 DNF_ONLINE result=..., 实际 0 条" 60000 1 1 drop "DNF_ONLINE result="
+  st_bad "Z02 两行结局" "结局行数量异常: 期望恰 1 条 DNF_ONLINE result=..., 实际 2 条" 60000 1 1 \
+    append "DNF_ONLINE result=ok stage=done elapsedMs=9000"
+  st_bad "Z03 三行结局" "结局行数量异常: 期望恰 1 条 DNF_ONLINE result=..., 实际 3 条" 60000 1 1 \
+    append "DNF_ONLINE result=ok stage=done elapsedMs=9000" append "DNF_ONLINE result=ok stage=done elapsedMs=9100"
+  st_bad "Z04 结局行行尾带多余字符不算结局行" "结局行数量异常: 期望恰 1 条 DNF_ONLINE result=..., 实际 0 条" 60000 1 1 \
+    replace "elapsedMs=8420" "elapsedMs=8420 extra=1"
+  st_bad "Z05 elapsedMs 不是数字不算结局行" "结局行数量异常: 期望恰 1 条 DNF_ONLINE result=..., 实际 0 条" 60000 1 1 \
+    replace "elapsedMs=8420" "elapsedMs=abc"
+  st_bad "Z06 elapsedMs 为空不算结局行" "结局行数量异常: 期望恰 1 条 DNF_ONLINE result=..., 实际 0 条" 60000 1 1 \
+    replace "elapsedMs=8420" "elapsedMs="
+  st_bad "Z07 缺 elapsedMs 字段不算结局行" "结局行数量异常: 期望恰 1 条 DNF_ONLINE result=..., 实际 0 条" 60000 1 1 \
+    replace " elapsedMs=8420" ""
+  st_bad "Z08 result 值大写（result=OK）不算结局行" "结局行数量异常: 期望恰 1 条 DNF_ONLINE result=..., 实际 0 条" 60000 1 1 \
+    replace "result=ok stage=done" "result=OK stage=done"
+  st_bad "Z09 结局阶段名大写（stage=Done）不算结局行" "结局行数量异常: 期望恰 1 条 DNF_ONLINE result=..., 实际 0 条" 60000 1 1 \
+    replace "result=ok stage=done" "result=ok stage=Done"
+  st_bad "J01 结局 result=ok 但 stage=town（不是 done）" "结局未成功: result=ok stage=town" 60000 1 1 \
+    replace "result=ok stage=done" "result=ok stage=town"
+  st_bad "J02 结局阶段名带数字与下划线（stage=town_2）仍按结局行判" "结局未成功: result=ok stage=town_2" 60000 1 1 \
+    replace "result=ok stage=done" "result=ok stage=town_2"
+
+  # ---- 负对照：耗时上限（差 1 即超；换一组不同数值再来一条）----
+  st_bad "T01 耗时 8420 超上限 5000" "总耗时超出上限: elapsedMs=8420 > 5000" 5000 1 1 none
+  st_bad "T02 耗时 8420 比上限 8419 大 1" "总耗时超出上限: elapsedMs=8420 > 8419" 8419 1 1 none
+  st_bad "T03 另一组耗时 61234 比上限 61233 大 1" "总耗时超出上限: elapsedMs=61234 > 61233" 61233 1 1 \
+    replace "elapsedMs=8420" "elapsedMs=61234"
 
   # ======================= 二、--live 护栏（只经 --check-guards 入口，隔离沙箱副本）=======================
   st_make_box
@@ -443,7 +674,7 @@ PY
   st_box_case "H04 --dry 放行后进入下一步，秒数缺省为 0" 97 "" "MODE=dry MIN_CLEAR_SECONDS=0" --dry
   st_box_case "H05 --dry 显式秒数 7 原样保留" 97 "" "MODE=dry MIN_CLEAR_SECONDS=7" --dry --mincleartime 7
 
-  echo "[selftest] 共 ${_ST_GUARD_CASES} 条护栏对照"
+  echo "[selftest] 共 ${_ST_LOG_CASES} 条校验器对照、${_ST_GUARD_CASES} 条护栏对照"
   echo "[selftest] ALL PASSED"
 }
 
