@@ -1069,6 +1069,71 @@ def _selftest_comments(rec):
         rec.eq(f"簇10 {name}:不算调用也不报无法拆分", (_only(errs, _CAT_SIM), _only(errs, _CAT_NOSPLIT), calls), ([], [], 1))
 
 
+_OPS = (";", "&&", "||", "|", "&")  # 命令段的五种分隔操作符
+
+
+def _selftest_segments(rec):
+    """簇 11:命令段(缺陷 D1b)——参数必须与 $app 在同一个命令段;; && || | & 都切段,两侧有无空白、用空格还是制表符都一样。"""
+    bad = [_msg_sim(1)]
+    for op in _OPS:
+        rec.eq(f"簇11 参数在 {op} 之后的别的命令里", _verdict(f"{_CALL} {op} echo -dnfquitaftersim 5"), (bad, 1))
+        rec.eq(f"簇11 参数在 {op} 之前的别的命令里", _verdict(f"echo -dnfquitaftersim 5 {op} {_CALL}"), (bad, 1))
+        rec.eq(f"簇11 {op} 紧贴(无空白)时参数在别的命令里", _verdict(f"{_CALL}{op}echo -dnfquitaftersim 5"), (bad, 1))
+        rec.eq(f"簇11 {op} 两侧是制表符时参数在别的命令里", _verdict(f"{_CALL}\t{op}\techo -dnfquitaftersim 5"), (bad, 1))
+        rec.eq(f"簇11 {op} 之后的别的命令不影响好的调用", _verdict(f"{_GOOD} {op} echo x"), ([], 1))
+        rec.eq(f"簇11 {op} 之前的别的命令不影响好的调用", _verdict(f"echo x {op} {_GOOD}"), ([], 1))
+        rec.eq(f"簇11 {op} 紧贴时好的调用", _verdict(f"echo x{op}{_GOOD}"), ([], 1))
+        rec.eq(f"簇11 {op} 把 -dnfquitaftersim 与它的值隔开:不是连续的词", _verdict(f"{_CALL} -dnfquitaftersim {op} echo 5"), (bad, 1))
+    # 带引号、被转义的操作符不是分隔符:同一段里的参数照常算
+    quoted = (
+        ('带引号的 ";" 是一个普通的词', _CALL + ' -dnfnote ";" -dnfquitaftersim 5', ([], 1)),
+        ('带引号的 "&&" 是一个普通的词', _CALL + ' -dnfnote "&&" -dnfquitaftersim 5', ([], 1)),
+        ("带引号的 | 是一个普通的词", _CALL + " -dnfnote '|' -dnfquitaftersim 5", ([], 1)),
+        ('带引号的 "&" 是一个普通的词', _CALL + ' -dnfnote "&" -dnfquitaftersim 5', ([], 1)),
+        ("转义的分号是一个普通的词", _CALL + r" -dnfnote \; -dnfquitaftersim 5", ([], 1)),
+        ('引号里带分号的字符串:"a;b"', _CALL + ' -dnfnote "a;b" -dnfquitaftersim 5', ([], 1)),
+        ('参数值本身是带引号的分号:"-dnfquitaftersim" ";"', _CALL + ' "-dnfquitaftersim" ";"', (bad, 1)),
+    )
+    for name, text, want in quoted:
+        rec.eq(f"簇11 {name}", _verdict(text), want)
+    # 括号与反引号也限定一个命令的范围
+    scoped = (
+        ("子 shell 里的好调用", f"({_GOOD})", ([], 1)),
+        ("子 shell 两侧有空格", f"( {_GOOD} )", ([], 1)),
+        ("子 shell 里缺参数", f"({_CALL})", (bad, 1)),
+        ("右括号之后的参数不属于调用", f"({_CALL}) -dnfquitaftersim 5", (bad, 1)),
+        ("右括号紧贴的调用参数在括号之后", f"echo ({_CALL})-dnfquitaftersim 5", (bad, 1)),
+        ("命令替换 $( 里的好调用", f"x=$({_GOOD})", ([], 1)),
+        ("命令替换 $( 里缺参数", f"x=$({_CALL})", (bad, 1)),
+        ("反引号里的好调用", f"x=`{_GOOD}`", ([], 1)),
+        ("反引号里缺参数", f"x=`{_CALL}`", (bad, 1)),
+        ("反引号之后的参数不属于调用", f"x=`{_CALL}` -dnfquitaftersim 5", (bad, 1)),
+    )
+    for name, text, want in scoped:
+        rec.eq(f"簇11 {name}", _verdict(text), want)
+    # 重定向不切段:重定向记号与文件名夹在中间,同一个命令的参数仍然算数
+    redirects = (
+        ("重定向到文件再 2>&1、参数在前", _GOOD + " > out.log 2>&1", ([], 1)),
+        ("2>&1 在 $app 之后、参数之前", '"$app" 2>&1 -dnftimescale 4 -dnfquitaftersim 5', ([], 1)),
+        ("2>&1 在两个参数之间", '"$app" -dnftimescale 4 2>&1 -dnfquitaftersim 5', ([], 1)),
+        ("2>&1 紧贴在参数之后", _GOOD + " 2>&1", ([], 1)),
+        ("2>&1 之后缺参数:仍是调用", '"$app" 2>&1 -dnftimescale 4', (bad, 1)),
+        ("&> 不切段", '"$app" &>/dev/null -dnftimescale 4 -dnfquitaftersim 5', ([], 1)),
+        ("&>> 不切段", '"$app" &>>out -dnftimescale 4 -dnfquitaftersim 5', ([], 1)),
+        (">| 不切段", '"$app" >|out -dnftimescale 4 -dnfquitaftersim 5', ([], 1)),
+        ("<& 不切段", '"$app" <&3 -dnftimescale 4 -dnfquitaftersim 5', ([], 1)),
+        (">& 不切段", '"$app" >&2 -dnftimescale 4 -dnfquitaftersim 5', ([], 1)),
+        ("> 紧贴 $app 之后", '"$app">out -dnftimescale 4 -dnfquitaftersim 5', ([], 1)),
+        ("< 紧贴 $app 之后", '"$app"<in -dnftimescale 4 -dnfquitaftersim 5', ([], 1)),
+        ("后台运行:行尾的 &", _GOOD + " &", ([], 1)),
+        ("重定向夹在参数名与值之间:不连续(宁可误报)", '"$app" -dnftimescale 4 -dnfquitaftersim >out 5', (bad, 1)),
+        ("重定向之后的 & 是操作符:其后的命令不属于调用", f"{_CALL} >out & echo -dnfquitaftersim 5", (bad, 1)),
+        ("& 与 > 之间有空格:& 是操作符", f"{_CALL} & >out -dnfquitaftersim 5", (bad, 1)),
+    )
+    for name, text, want in redirects:
+        rec.eq(f"簇11 {name}", _verdict(text), want)
+
+
 def run_selftest() -> int:
     with open(DEFAULT_SCRIPT, encoding="utf-8") as f:
         valid_text = f.read()
@@ -1132,6 +1197,7 @@ def run_selftest() -> int:
     _cluster(rec, "簇8", _selftest_verify_section, valid_text)
     _cluster(rec, "簇9", _selftest_lexer)
     _cluster(rec, "簇10", _selftest_comments)
+    _cluster(rec, "簇11", _selftest_segments)
     if rec.failures:
         print(f"自测失败(细粒度对照 {rec.checks} 条中有 {len(rec.failures)} 条不符):", file=sys.stderr)
         for name, expected, actual in rec.failures:
