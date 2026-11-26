@@ -23,7 +23,8 @@ namespace Dnf.Client.Tests;
 /// </para>
 /// <para>
 /// 用例 3 起用同一套接线补几处只有接上真控制器才走得到的驱动行为:流程离开副本阶段后不留旧局房间自动机、结算选"选择副本"后在选图页重新确认、
-/// 城镇里进副本控制器带着提示时的判法、房间自动机拿到的最短清图时间与整段上限、同一局里一直推进同一个房间自动机。
+/// 城镇里进副本控制器带着提示时的判法、房间自动机拿到的最短清图时间与整段上限、同一局里一直推进同一个房间自动机、
+/// 选图页被外部退回城镇之后驱动的静待。
 /// </para>
 /// </summary>
 public sealed class OnlineAutoDriverEnteringGapTests
@@ -590,5 +591,45 @@ public sealed class OnlineAutoDriverEnteringGapTests
             Assert.Equal(20.0 + 20.0 * i, bot.ElapsedMs);           // 每帧恰好多 20 毫秒:被推进的是同一个自动机
             Assert.False(bot.Stopped);
         }
+    }
+
+    // ------------------------------------------------------------------ 用例 8:选图页被外部退回城镇之后
+
+    [Fact]
+    public void The_driver_asks_for_the_select_page_once_per_stay_in_town_and_idles_after_an_outside_back_out()
+    {
+        // 城镇里驱动只请求一次选图页:请求之后流程立刻换成选图阶段,驱动下一帧已不在城镇分支。
+        // 选图页若被外部退回城镇(驱动自己从不调用 Back,这里代表玩家按了返回),驱动不会再请求一次,而是停在城镇静待;
+        // "请求过"这面旗要等进过一次副本才清。这里把现状记下来:退回之后既不判失败、也不重开选图页。
+        using var rig = new EnteringRig(new OnlineAutoOptions());
+        rig.Flow.EnterTown("boot");
+        int serialInTown = rig.Flow.StageSerial;
+
+        rig.Frame();
+
+        Assert.Equal(GameStage.DungeonSelect, rig.Flow.Stage);          // 第一次进城镇:驱动请求了选图页
+        Assert.Equal(serialInTown + 1, rig.Flow.StageSerial);
+        Assert.Equal("town", rig.Driver.Stage);
+        Assert.False(rig.Driver.Finished);
+
+        rig.Flow.Select.Back();
+        Assert.True(rig.Flow.Poll());                                   // 外部退回:流程把选图页的"返回"结果落成城镇
+        Assert.Equal(GameStage.Town, rig.Flow.Stage);
+        int serialBackInTown = rig.Flow.StageSerial;
+        Assert.Equal(serialInTown + 2, serialBackInTown);
+
+        for (int i = 0; i < 5; i++)
+        {
+            rig.Frame();
+
+            Assert.Equal(GameStage.Town, rig.Flow.Stage);
+            Assert.Equal(serialBackInTown, rig.Flow.StageSerial);       // 没有再请求选图页
+            Assert.Null(rig.Flow.Select);
+            Assert.Equal("town", rig.Driver.Stage);
+            Assert.False(rig.Driver.Finished);
+            Assert.Null(rig.Driver.ResultLine);
+        }
+        Assert.Equal(0, rig.Flow.Runs);
+        Assert.Empty(rig.Runs);
     }
 }
