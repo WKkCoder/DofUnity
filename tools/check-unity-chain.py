@@ -561,9 +561,10 @@ def _cluster(rec, name, fn, *args):
 
 
 def _cluster_gaps(ran, expected):
-    """expected 里的每个簇函数名都必须在 ran([(函数名, 对照条数)])里出现、且条数 > 0;返回没满足的名字(已排序)。"""
+    """应跑的簇函数(expected)与实际跑过的(ran:[(函数名, 对照条数)])必须恰是同一批,且每个都至少有一条对照;返回对不上的名字(已排序):
+    没被调用的、跑了却一条对照都没有的,以及跑了却不在 expected 里的(发现 expected 的表达式失灵、变空或变少时,会整批冒出来)。"""
     done = {name for name, count in ran if count > 0}
-    return sorted(set(expected) - done)
+    return sorted((set(expected) - done) | ({name for name, _ in ran} - set(expected)))
 
 
 def _only(errors, category):
@@ -1460,9 +1461,12 @@ def _selftest_harness(rec):
     _cluster(probe, "簇丙", idle)
     rec.eq("簇16 _cluster 正常跑完:转交额外参数、记下函数名与各自的条数", (probe.checks, probe.failures, probe.clusters), (3, [], [("quiet", 2), ("idle", 0)]))
 
+    def inner():
+        raise ValueError("坏了")
+
     def boom(r):
         r.eq("先通过", 1, 1)
-        raise ValueError("坏了")
+        inner()  # 异常从更里层的函数抛出:记下的应是最里层的那个函数
 
     probe = _Recorder()
     _cluster(probe, "簇乙", boom)
@@ -1470,12 +1474,18 @@ def _selftest_harness(rec):
     name, expected, actual = probe.failures[0]
     rec.eq("簇16 异常失败的名字带簇名与上一条已完成的对照", name, "簇乙 运行中抛出异常(上一条已完成的对照:先通过)")
     rec.eq("簇16 异常失败的期望是不抛异常", expected, "不抛异常")
-    rec.eq("簇16 异常失败的实际带异常类型、信息与抛出处的函数名", (actual.startswith("ValueError: 坏了 @ "), actual.endswith(" boom")), (True, True))
+    rec.eq(
+        "簇16 异常失败的实际带异常类型、信息与抛出处(文件名:行号 最里层的函数名)",
+        re.fullmatch(r"ValueError: 坏了 @ [^:\s]+\.py:\d+ inner", actual) is not None,
+        True,
+    )
     # _cluster_gaps:每个应跑的簇都要出现过、且至少一条对照
     rec.eq("簇16 簇都跑了:没有缺口", _cluster_gaps([("a", 2), ("b", 1)], ["a", "b"]), [])
     rec.eq("簇16 有簇没被调用:报它", _cluster_gaps([("a", 2)], ["a", "b"]), ["b"])
     rec.eq("簇16 有簇跑了但一条对照都没有:报它", _cluster_gaps([("a", 2), ("b", 0)], ["a", "b"]), ["b"])
     rec.eq("簇16 缺口按名字排序", _cluster_gaps([("b", 1), ("a", 1)], ["b", "d", "a", "c"]), ["c", "d"])
+    rec.eq("簇16 跑了却不在应跑列表里:报它", _cluster_gaps([("a", 2), ("x", 1)], ["a"]), ["x"])
+    rec.eq("簇16 应跑列表是空的、而实际跑了簇:都报出来(发现表达式失灵时就是这样)", _cluster_gaps([("a", 1), ("b", 1)], []), ["a", "b"])
 
 
 def _selftest_cli(rec):
@@ -1617,10 +1627,11 @@ def run_selftest() -> int:
         for name, expected, actual in rec.failures:
             print(f"  - {name}\n      期望: {expected!r}\n      实际: {actual!r}", file=sys.stderr)
         return 1
-    # 每个 _selftest_ 开头的簇函数都必须被调用过、且至少跑了一条对照:少调用一个簇、或簇什么都没检查,都不能悄悄通过
+    # 每个 _selftest_ 开头的簇函数都必须被调用过、且至少跑了一条对照;反过来跑过的也都得在发现表里(发现表空了就不能悄悄通过):
+    # 少调用一个簇、簇什么都没检查、或发现簇的表达式失灵,都不能悄悄通过
     gaps = _cluster_gaps(rec.clusters, [n for n, v in globals().items() if n.startswith("_selftest_") and callable(v)])
     if gaps:
-        print(f"自测失败(这些簇没有被调用、或一条对照都没跑:{gaps})", file=sys.stderr)
+        print(f"自测失败(簇函数与簇调用对不上:没被调用、一条对照都没跑、或不在 _selftest_ 发现表里:{gaps})", file=sys.stderr)
         return 1
 
     print(
