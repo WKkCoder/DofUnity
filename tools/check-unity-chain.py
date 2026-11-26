@@ -586,6 +586,16 @@ def _join_rows(rows):
     return "\n".join(rows) + "\n"
 
 
+_CALL = '"$app" -dnftimescale 4'  # 带 -dnftimescale、没有 -dnfquitaftersim 的调用(坏的)
+_GOOD = _CALL + " -dnfquitaftersim 5"  # 带正数 -dnfquitaftersim 的调用(好的)
+
+
+def _verdict(text):
+    """合成文本的 (缺少正数的错误, 调用数);别的类别(判据行不一致等)不看。"""
+    errs, calls, _ = check_text(text, _LABEL)
+    return _only(errs, _CAT_SIM), calls
+
+
 def _marker_row(rows):
     """验证段起点(echo "已构建: 行)的物理下标;自测里自己找,不借用被测代码。"""
     return next(i for i, row in enumerate(rows) if row.strip().startswith('echo "已构建:'))
@@ -996,6 +1006,69 @@ def _selftest_lexer(rec):
         rec.eq(f"簇9 {name}:拆得开", _lex_broken(line), False)
 
 
+def _selftest_comments(rec):
+    """簇 10:注释(缺陷 D1)——引号外、词首的 # 起到行尾不是命令的参数;词中间、引号里、转义的 # 不是注释;多行调用里注释之后的续行也一样。"""
+    bad = [_msg_sim(1)]
+    cases = (
+        # 参数写在注释里:不算数
+        ("参数在行尾注释里", _CALL + " # -dnfquitaftersim 5", (bad, 1)),
+        ("参数紧贴 # 写在注释里", _CALL + " #-dnfquitaftersim 5", (bad, 1)),
+        ("制表符之后的 # 起注释", _CALL + "\t# -dnfquitaftersim 5", (bad, 1)),
+        ("分号之后紧贴的 # 起注释", _CALL + ";# -dnfquitaftersim 5", (bad, 1)),
+        ("其它参数之后才是注释", '"$app" -batchmode -dnftimescale 4 -dnfquitafter 9 # -dnfquitaftersim 5', (bad, 1)),
+        ("注释里是参数名、值在更后面", _CALL + " # -dnfquitaftersim # 5", (bad, 1)),
+        # 参数在注释之前:注释只是说明,不影响判断
+        ("参数在前、行尾带说明", _GOOD + " # 说明", ([], 1)),
+        ("参数在前、行尾只有一个 #", _GOOD + " #", ([], 1)),
+        ("参数在前、# 紧贴说明", _GOOD + " #说明", ([], 1)),
+        ("参数在前、制表符之后是注释", _GOOD + "\t# 说明", ([], 1)),
+        ("参数在 -dnftimescale 之前、行尾带说明", '"$app" -dnfquitaftersim 5 -dnftimescale 4 # 说明', ([], 1)),
+        ("注释里有单引号", _GOOD + " # don't", ([], 1)),
+        ("注释里有双引号", _GOOD + ' # 说 "x', ([], 1)),
+        ("注释里有分号与 &&", _GOOD + " # a; b && c", ([], 1)),
+        # 词中间的 # 不是注释
+        ("值后面紧贴 #x:值不是数", _CALL + " -dnfquitaftersim 5#x", (bad, 1)),
+        ("值后面紧贴 #:值不是数", _CALL + " -dnfquitaftersim 5#", (bad, 1)),
+        ("参数名后面紧贴 #:不是这个参数名", _CALL + " -dnfquitaftersim# 5", (bad, 1)),
+        ("词中间的 # 不吃掉后面的参数", '"$app" -dnftimescale 4 -dnfnote a#b -dnfquitaftersim 5', ([], 1)),
+        ("$# 里的 # 不吃掉后面的参数", '"$app" -dnftimescale 4 -dnfnote $# -dnfquitaftersim 5', ([], 1)),
+        # 引号里的 # 不是注释;引号里的参数名不是独立的词
+        ("双引号里有 #、后面还有参数", _CALL + ' -dnfnote "a # b" -dnfquitaftersim 5', ([], 1)),
+        ("单引号里有 #、后面还有参数", _CALL + " -dnfnote 'a # b' -dnfquitaftersim 5", ([], 1)),
+        ("# 开头的带引号的词不是注释", _CALL + ' -dnfnote "#x" -dnfquitaftersim 5', ([], 1)),
+        ("参数名在双引号字符串里:不是独立的词", _CALL + ' -dnfnote "# -dnfquitaftersim 5"', (bad, 1)),
+        ("参数名在单引号字符串里:不是独立的词", _CALL + " -dnfnote '# -dnfquitaftersim 5'", (bad, 1)),
+        ("双引号字符串里只有参数名与值", _CALL + ' -dnfnote "-dnfquitaftersim 5"', (bad, 1)),
+        # 转义的 # 是普通字符
+        ("转义的 # 是普通参数", _GOOD + r" \#x", ([], 1)),
+        ("转义的 # 不吃掉后面的参数", _CALL + r" \#x -dnfquitaftersim 5", ([], 1)),
+        ("转义的空格后的 # 不是注释", _CALL + r" a\ #b -dnfquitaftersim 5", ([], 1)),
+    )
+    for name, text, want in cases:
+        rec.eq(f"簇10 {name}", _verdict(text), want)
+    # 多行调用:行号是调用的第一个物理行;注释吃掉它之后的续行内容
+    multi = (
+        ("续行之后才有注释、参数在注释之前", ['"$app" -batchmode \\', "  -dnftimescale 4 -dnfquitaftersim 5 # 说明"], ([], 1)),
+        ("参数在注释之后的续行里:不算数", ['"$app" -batchmode -dnftimescale 4 # 说明 \\', "  -dnfquitaftersim 5"], (bad, 1)),
+        ("注释夹在续行中间、参数在它后面:不算数", ['"$app" -dnftimescale 4 \\', "  # 说明 \\", "  -dnfquitaftersim 5"], (bad, 1)),
+        ("注释在续行末尾、参数在它前面", ['"$app" -dnftimescale 4 \\', "  -dnfquitaftersim 5 \\", "  # 说明"], ([], 1)),
+        ("注释及其后的续行内容不算词、参数在注释之前", ['"$app" -batchmode \\', "  -dnftimescale 4 -dnfquitaftersim 5 # 说明 \\", "  -dnfquitafter 100", "echo 尾"], ([], 1)),
+        ("错误行号是调用的第一个物理行", ["echo 头", '"$app" -batchmode -dnftimescale 4 # 说明 \\', "  -dnfquitaftersim 5"], ([_msg_sim(2)], 1)),
+        ("参数在第三个物理行的注释里:行号仍是第一个物理行", ["echo 头", '"$app" -dnftimescale 4 \\', "  -batchmode # -dnfquitaftersim 5"], ([_msg_sim(2)], 1)),
+    )
+    for name, rows, want in multi:
+        rec.eq(f"簇10 多行:{name}", _verdict(_join_rows(rows)), want)
+    # 注释行里的任何东西(包括不成对的引号)都不算调用、不报无法拆分
+    ok = _sim_text("5")
+    comment_lines = (
+        ("整行注释里有 -dnftimescale 与不成对的单引号", "# 别忘了 -dnftimescale 4 要配 -dnfquitaftersim,it's\n"),
+        ("缩进的整行注释里有不成对的双引号", '    # "$app" -dnftimescale 4 "x\n'),
+    )
+    for name, text in comment_lines:
+        errs, calls, _ = check_text(text + ok, _LABEL)
+        rec.eq(f"簇10 {name}:不算调用也不报无法拆分", (_only(errs, _CAT_SIM), _only(errs, _CAT_NOSPLIT), calls), ([], [], 1))
+
+
 def run_selftest() -> int:
     with open(DEFAULT_SCRIPT, encoding="utf-8") as f:
         valid_text = f.read()
@@ -1058,6 +1131,7 @@ def run_selftest() -> int:
     _cluster(rec, "簇7", _selftest_result_contents, valid_text)
     _cluster(rec, "簇8", _selftest_verify_section, valid_text)
     _cluster(rec, "簇9", _selftest_lexer)
+    _cluster(rec, "簇10", _selftest_comments)
     if rec.failures:
         print(f"自测失败(细粒度对照 {rec.checks} 条中有 {len(rec.failures)} 条不符):", file=sys.stderr)
         for name, expected, actual in rec.failures:
