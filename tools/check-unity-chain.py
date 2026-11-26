@@ -494,8 +494,9 @@ _ARE_CRITERIA = (
     "grep -n -E 'BuildFailedExceptio' \"$log\" | grep -c Build",
 )
 # is_criteria_line 末尾那张关键字表,逐个钉住:含其中任何一个的行就是判据行。
-# 其中 case "$cli_hero" 与 case "$saved_fields" 是冗余项(含它们的行必然也含更短的 cli_hero / saved_fields),
-# 删掉或改动这两项在任何输入下输出都相同;其余每一项都有各自独立的对照。
+# 其中 case "$cli_hero" 与 case "$saved_fields" 是冗余项(含它们的行必然也含更短的 cli_hero / saved_fields):
+# 删掉这两项、或改成仍含那个短关键字的串,在任何输入下输出都相同;但把里面的短关键字拼坏(少一个字符、换一个字符、换大小写)
+# 就成了另一个独立的关键字,含它的行会从"不是判据行"变成"是",所以簇 5 用拼坏了的近似行钉住它们的拼写;其余每一项都有各自独立的对照。
 _CRITERIA_KEYWORDS = (
     "png_diff.py", "check_clear_log.py", "grep -q", "grep -c", '"$rc" -eq 0',
     "cli_hero", "saved_fields", "loaded_fields", "music_lines", "first_music",
@@ -755,6 +756,15 @@ def _selftest_criteria_rules(rec, valid_text):
         # 近似行:只含关键字的一部分(少首字符 / 末字符被换掉),不是判据行
         rec.eq(f"簇5 少了首字符的 {key!r} 不算", is_criteria_line("foo " + key[1:] + "bar"), False)
         rec.eq(f"簇5 末字符不对的 {key!r} 不算", is_criteria_line("foo " + key[:-1] + "Xbar"), False)
+    # 冗余项的近似行仍含着更短的关键字,所以上面跳过;但把里面那个短关键字拼坏(删掉其中任一个字符、换成 X、整体换大小写)之后,
+    # 近似行不含任何关键字,不是判据行——钉住这两项的拼写
+    for key, short in (('case "$cli_hero"', "cli_hero"), ('case "$saved_fields"', "saved_fields")):
+        start = key.index(short)
+        for i in range(start, start + len(short)):
+            n = i - start + 1
+            rec.eq(f"簇5 {key!r} 里短关键字少第 {n} 个字符的近似行不算", is_criteria_line("foo " + key[:i] + key[i + 1:] + "bar"), False)
+            rec.eq(f"簇5 {key!r} 里短关键字第 {n} 个字符换成 X 的近似行不算", is_criteria_line("foo " + key[:i] + "X" + key[i + 1:] + "bar"), False)
+        rec.eq(f"簇5 {key!r} 整体换大小写的近似行不算", is_criteria_line("foo " + key.swapcase() + "bar"), False)
     # 经 check_text:往验证段插一行说明性/信息性的行,判据行数仍是基线的数,不报错
     rows = valid_text.splitlines()
     at = _marker_row(rows) + 1
