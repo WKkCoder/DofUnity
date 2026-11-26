@@ -1285,6 +1285,16 @@ def _selftest_spellings(rec):
         rec.eq(f"簇13 {name}", _verdict(text), (want, 1))
 
 
+def _check_rows(rows, edits):
+    """把真实脚本的若干物理行改掉后整体检查:edits 是 [(行下标, 旧串, 新串)];旧串必须真的在那一行里,
+    否则这条变体是空操作(会悄悄通过),抛 AssertionError 让该簇报失败。"""
+    changed = list(rows)
+    for index, old, new in edits:
+        assert old in changed[index], (index, old)
+        changed[index] = changed[index].replace(old, new, 1)
+    return check_text(_join_rows(changed), _LABEL)
+
+
 def _selftest_fail_loud(rec):
     """簇 14:失败要响——含 -dnftimescale 却无法按 shell 语法拆分的逻辑行必须报错(不悄悄跳过),其余行照常检查;
     不含 -dnftimescale 的行不拆词、不报错。合成文本总会多出一条"通过判据行与基线不一致",所以整个返回值逐条比对。"""
@@ -1341,6 +1351,54 @@ def _selftest_fail_loud(rec):
         check_text(_join_rows([_GOOD + " # it's"]), _LABEL),
         ([no_criteria], 1, 0),
     )
+
+
+def _selftest_real_variants(rec, valid_text):
+    """簇 15:真实脚本里的每一个调用都被绕过或换写法——逐个做,整个返回值逐条比对,行号是该调用的起始物理行(1 起算)。
+    绕过:在 -dnfquitaftersim 之前加 # 与五种命令分隔,或去掉参数再换 -dnftimescale、$app 的写法,都恰有一条缺少正数;
+    换写法:${app}、无引号 $app、带引号的 -dnftimescale、制表符、行尾注释与重定向,仍然通过;行尾多一个引号则整行报无法拆分。"""
+    rows = valid_text.splitlines()
+    spans = _call_spans(rows)
+    rec.eq("簇15 真实脚本里的调用数", len(spans), _PIN_CALLS)
+    for n, (first, last) in enumerate(spans, start=1):
+        sim_rows = [r for r in range(first, last + 1) if "-dnfquitaftersim" in rows[r]]
+        app_rows = [r for r in range(first, last + 1) if '"$app"' in rows[r]]
+        scale_rows = [r for r in range(first, last + 1) if "-dnftimescale" in rows[r]]
+        shape = (len(sim_rows), len(app_rows), len(scale_rows))
+        rec.eq(f"簇15 第 {n} 个调用的三个记号各只在一个物理行上", shape, (1, 1, 1))
+        if shape != (1, 1, 1):
+            continue
+        sim_r, app_r, scale_r = sim_rows[0], app_rows[0], scale_rows[0]
+        sim = re.search(r"-dnfquitaftersim\s+\S+", rows[sim_r]).group()
+        drop = (sim_r, " " + sim, "")
+        missing = ([_msg_sim(first + 1)], _PIN_CALLS, _PIN_CRITERIA)
+        passing = ([], _PIN_CALLS, _PIN_CRITERIA)
+        bypasses = (
+            ("在 -dnfquitaftersim 之前加 # ", [(sim_r, "-dnfquitaftersim", "# -dnfquitaftersim")]),
+            ("在 -dnfquitaftersim 之前加 ; ", [(sim_r, "-dnfquitaftersim", "; -dnfquitaftersim")]),
+            ("在 -dnfquitaftersim 之前加 && echo ", [(sim_r, "-dnfquitaftersim", "&& echo -dnfquitaftersim")]),
+            ("在 -dnfquitaftersim 之前加 || echo ", [(sim_r, "-dnfquitaftersim", "|| echo -dnfquitaftersim")]),
+            ("在 -dnfquitaftersim 之前加 | echo ", [(sim_r, "-dnfquitaftersim", "| echo -dnfquitaftersim")]),
+            ("在 -dnfquitaftersim 之前加 & echo ", [(sim_r, "-dnfquitaftersim", "& echo -dnfquitaftersim")]),
+            ("去掉参数、-dnftimescale 加双引号", [drop, (scale_r, "-dnftimescale", '"-dnftimescale"')]),
+            ("去掉参数、$app 写成 ${app}", [drop, (app_r, '"$app"', '"${app}"')]),
+            ("去掉参数、$app 去掉引号", [drop, (app_r, '"$app"', "$app")]),
+            ("去掉参数、-dnftimescale 与值之间是制表符", [drop, (scale_r, "-dnftimescale ", "-dnftimescale\t")]),
+        )
+        for name, edits in bypasses:
+            rec.eq(f"簇15 第 {n} 个调用 {name}", _check_rows(rows, edits), missing)
+        variants = (
+            ('"$app" 写成 "${app}"', [(app_r, '"$app"', '"${app}"')]),
+            ("$app 去掉引号", [(app_r, '"$app"', "$app")]),
+            ("-dnftimescale 加双引号", [(scale_r, "-dnftimescale", '"-dnftimescale"')]),
+            ("-dnfquitaftersim 与值之间是制表符", [(sim_r, "-dnfquitaftersim ", "-dnfquitaftersim\t")]),
+            ("行尾加注释", [(last, rows[last], rows[last] + " # 说明")]),
+            ("行尾加重定向", [(last, rows[last], rows[last] + " 2>&1")]),
+        )
+        for name, edits in variants:
+            rec.eq(f"簇15 第 {n} 个调用 {name}:仍通过", _check_rows(rows, edits), passing)
+        broken = ([_msg_nosplit(first + 1)], _PIN_CALLS - 1, _PIN_CRITERIA)
+        rec.eq(f"簇15 第 {n} 个调用行尾多一个引号:整行报无法拆分", _check_rows(rows, [(last, rows[last], rows[last] + ' "')]), broken)
 
 
 def run_selftest() -> int:
@@ -1410,6 +1468,7 @@ def run_selftest() -> int:
     _cluster(rec, "簇12", _selftest_multi_call)
     _cluster(rec, "簇13", _selftest_spellings)
     _cluster(rec, "簇14", _selftest_fail_loud)
+    _cluster(rec, "簇15", _selftest_real_variants, valid_text)
     if rec.failures:
         print(f"自测失败(细粒度对照 {rec.checks} 条中有 {len(rec.failures)} 条不符):", file=sys.stderr)
         for name, expected, actual in rec.failures:
