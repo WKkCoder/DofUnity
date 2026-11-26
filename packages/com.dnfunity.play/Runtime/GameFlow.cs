@@ -94,6 +94,10 @@ namespace Dnf.Play
         private readonly List<FlowEvent> _history = new List<FlowEvent>();
         private Action _afterSplash;
 
+        // 联网开局已交给 OnlineStartDungeon、握手还没有终结点:流程这时仍停在副本阶段、Run 仍是旧局(没有过渡图时 BeginOnlineDungeonLoading 不切阶段),
+        // 旧局的选择已经是(或握手期间会变成)回城,PollDungeon 不能读它。只在 Switch 里清(握手的各个终结点与任何别的阶段切换都经过它)。
+        private bool _onlineStartPending;
+
         /// <summary>
         /// 老式构造:<paramref name="town"/> 造城镇会话(每次回城造一个新的),没有出口与加载画面。其余参数同新式构造。
         /// </summary>
@@ -808,7 +812,7 @@ namespace Dnf.Play
                     if (OnlineStartDungeon != null)
                     {
                         DungeonEntry entry = FindEntryByPath(DungeonPath) ?? new DungeonEntry(DungeonPath, null);
-                        OnlineStartDungeon(entry, Difficulty);
+                        HandOverOnlineStart(entry, Difficulty);
                         return;
                     }
                     StartDungeon(DungeonPath, reason, Difficulty);
@@ -967,7 +971,7 @@ namespace Dnf.Play
         private bool PollDungeon()
         {
             IRunSession run = Run;
-            if (run == null || OnlineHoldDungeonExit)
+            if (run == null || OnlineHoldDungeonExit || _onlineStartPending)
             {
                 return false;
             }
@@ -996,7 +1000,7 @@ namespace Dnf.Play
                     if (OnlineStartDungeon != null)
                     {
                         DungeonEntry retryEntry = FindEntryByPath(DungeonPath) ?? new DungeonEntry(DungeonPath, null);
-                        OnlineStartDungeon(retryEntry, Difficulty);
+                        HandOverOnlineStart(retryEntry, Difficulty);
                         return true;
                     }
                     StartDungeon(DungeonPath, "choice " + choice, Difficulty);
@@ -1012,6 +1016,20 @@ namespace Dnf.Play
                 default:
                     return false; // 没选;快速组队在这里没有对应的流程
             }
+        }
+
+        /// <summary>
+        /// 副本里的再次挑战(结算交接与 <see cref="PollDungeon"/> 里旧局报 Retry 两处)把联网开局交给 <see cref="OnlineStartDungeon"/>。
+        /// 钩子返回之后流程还停在原阶段(序号没变:没有过渡图时没切到加载画面、也没被同步收尾),就记下"开局在途":握手出结果(
+        /// <see cref="CompleteOnlineDungeonStart"/>、<see cref="FailOnlineDungeonStart"/>、<see cref="CompleteOnlineGiveUp"/>、<see cref="CompleteOnlineDungeonAbort"/>)
+        /// 或别的阶段切换之前,<see cref="PollDungeon"/> 不读旧局的选择——否则旧局残留或握手期间变成的回城会让流程闪回城镇、同一次选择被记两次。
+        /// 钩子抛异常时不记(异常照旧传给调用方,没有握手在途)。
+        /// </summary>
+        private void HandOverOnlineStart(DungeonEntry entry, int difficulty)
+        {
+            int serial = StageSerial;
+            OnlineStartDungeon(entry, difficulty);
+            _onlineStartPending = serial == StageSerial;
         }
 
         /// <summary>问 <see cref="EntryGate"/> 这座副本能不能进;不设门槛就放行。挡下时记数并返回 false。</summary>
@@ -1082,6 +1100,7 @@ namespace Dnf.Play
             Shop.Close();                        // 商店窗口也关上
             Quests.Close();                      // 任务窗口也关上
             Skills.Close();                      // 技能窗口也关上
+            _onlineStartPending = false;         // 任何阶段切换都结束"联网开局在途"(握手的终结点也都经过这里)
             Stage = to;
             Session = session;
             Select = select;
