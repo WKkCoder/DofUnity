@@ -1179,6 +1179,112 @@ def _selftest_multi_call(rec):
         rec.eq(f"簇12 {name}", _verdict(text), want)
 
 
+def _selftest_spellings(rec):
+    """簇 13:各种写法——带引号的参数名(B1)、"${app}" 与无引号的 $app(B2)、制表符分隔(B3)都是调用;
+    $app2、${app}x、$apple 之类不是调用;-dnfquitaftersim 的值与参数名的边界;重复与不连续。"""
+    one = [_msg_sim(1)]
+    # B1:参数名带引号,去引号之后就是同一个词
+    quoted_flags = (
+        ('B1 双引号 "-dnftimescale"、缺参数', '"$app" "-dnftimescale" 4', (one, 1)),
+        ("B1 单引号 '-dnftimescale'、缺参数", "\"$app\" '-dnftimescale' 4", (one, 1)),
+        ('B1 双引号 "-dnftimescale"、带参数', '"$app" "-dnftimescale" 4 -dnfquitaftersim 5', ([], 1)),
+        ("B1 单引号 '-dnftimescale'、带参数", "\"$app\" '-dnftimescale' 4 -dnfquitaftersim 5", ([], 1)),
+        ('B1 双引号 "-dnfquitaftersim"', '"$app" -dnftimescale 4 "-dnfquitaftersim" 5', ([], 1)),
+        ("B1 单引号 '-dnfquitaftersim'", "\"$app\" -dnftimescale 4 '-dnfquitaftersim' 5", ([], 1)),
+        ('B1 参数名与值都带双引号', '"$app" -dnftimescale 4 "-dnfquitaftersim" "5"', ([], 1)),
+        ("B1 参数名与值都带单引号", "\"$app\" -dnftimescale 4 '-dnfquitaftersim' '5'", ([], 1)),
+        ('B1 参数名被引号切成两半', '"$app" -dnftimescale 4 -dnfquit"aftersim" 5', ([], 1)),
+        ('B1 值被引号切成两半:50', '"$app" -dnftimescale 4 -dnfquitaftersim 5"0"', ([], 1)),
+        ('B1 带引号的值 "0" 不是正数', '"$app" -dnftimescale 4 -dnfquitaftersim "0"', (one, 1)),
+        ('B1 空值 ""', '"$app" -dnftimescale 4 -dnfquitaftersim ""', (one, 1)),
+        ('B1 值带前导空格 " 5":不是数', '"$app" -dnftimescale 4 -dnfquitaftersim " 5"', (one, 1)),
+        ('B1 值带尾随空格 "5 ":不是数', '"$app" -dnftimescale 4 -dnfquitaftersim "5 "', (one, 1)),
+        ('B1 -dnftimescale 的值与 $app 之间还有别的参数', '"$app" -batchmode "-dnftimescale" 4 -dnfquitafter 5', (one, 1)),
+    )
+    for name, text, want in quoted_flags:
+        rec.eq(f"簇13 {name}", _verdict(text), want)
+    # B2:$app 的写法;去引号之后恰好是 $app 或 ${app} 的词才是调用
+    app_forms = (
+        ('B2 "${app}"、缺参数', '"${app}" -dnftimescale 4', (one, 1)),
+        ('B2 "${app}"、带参数', '"${app}" -dnftimescale 4 -dnfquitaftersim 5', ([], 1)),
+        ("B2 无引号 $app、缺参数", "$app -dnftimescale 4", (one, 1)),
+        ("B2 无引号 $app、带参数", "$app -dnftimescale 4 -dnfquitaftersim 5", ([], 1)),
+        ("B2 无引号 ${app}、缺参数", "${app} -dnftimescale 4", (one, 1)),
+        ("B2 无引号 ${app}、带参数", "${app} -dnftimescale 4 -dnfquitaftersim 5", ([], 1)),
+        ("B2 单引号 '$app'(保守:算调用)、缺参数", "'$app' -dnftimescale 4", (one, 1)),
+        ("B2 前面有环境变量赋值与 env", 'env X=1 "$app" -dnftimescale 4', (one, 1)),
+        ("B2 前面有 exec", 'exec "$app" -dnftimescale 4', (one, 1)),
+        ("B2 前面有变量赋值、带参数", 'X=1 "$app" -dnftimescale 4 -dnfquitaftersim 5', ([], 1)),
+    )
+    for name, text, want in app_forms:
+        rec.eq(f"簇13 {name}", _verdict(text), want)
+    # 不是调用:这些行里 -dnftimescale 缺参数,若误当成调用就会多出一条错;调用数必须是 0
+    not_calls = (
+        ('"$app2"', '"$app2" -dnftimescale 4'),
+        ('"${app}x"', '"${app}x" -dnftimescale 4'),
+        ("$apple", "$apple -dnftimescale 4"),
+        ('"$APP"', '"$APP" -dnftimescale 4'),
+        ('"${app2}"', '"${app2}" -dnftimescale 4'),
+        ('"${app:-x}"', '"${app:-x}" -dnftimescale 4'),
+        ('"$app"x(与后面的字符连成一个词)', '"$app"x -dnftimescale 4'),
+        ('x"$app"(与前面的字符连成一个词)', 'x"$app" -dnftimescale 4'),
+        ('"\\$app"(反斜杠转义了 $)', r'"\$app" -dnftimescale 4'),
+        ("单引号里的双引号 '\"$app\"'", "'\"$app\"' -dnftimescale 4"),
+        ("$ 与 app 之间有空格", "$ app -dnftimescale 4"),
+        ("没有 $ 的 app", "app -dnftimescale 4"),
+        ('"$@"', '"$@" -dnftimescale 4'),
+        ('"$app -dnftimescale" 在同一个带引号的词里', '"$app -dnftimescale" 4'),
+        ("-dnftimescale=4 不是 -dnftimescale 这个词", '"$app" -dnftimescale=4'),
+        ("--dnftimescale 不是 -dnftimescale 这个词", '"$app" --dnftimescale 4'),
+        ("-dnftimescale 之后紧贴别的字符", '"$app" -dnftimescale4'),
+    )
+    for name, text in not_calls:
+        rec.eq(f"簇13 不是调用:{name}", _verdict(text), ([], 0))
+    # B3:制表符分隔,与空格一样;NBSP、全角空格不是分隔符
+    tabs = (
+        ("B3 制表符分隔的缺参数调用", '"$app"\t-dnftimescale\t4', (one, 1)),
+        ("B3 制表符分隔的带参数调用", '"$app"\t-dnftimescale\t4\t-dnfquitaftersim\t5', ([], 1)),
+        ("B3 只有参数名与值之间是制表符", '"$app" -dnftimescale 4 -dnfquitaftersim\t5', ([], 1)),
+        ("B3 参数名与值之间是空格加制表符加空格", '"$app" -dnftimescale 4 -dnfquitaftersim \t 5', ([], 1)),
+        ("B3 只有 -dnftimescale 之前是制表符", '"$app"\t-dnftimescale 4 -dnfquitaftersim 5', ([], 1)),
+        ("B3 只有 -dnfquitaftersim 之前是制表符", '"$app" -dnftimescale 4\t-dnfquitaftersim 5', ([], 1)),
+        ("B3 -dnftimescale 与它的值之间是制表符、值非正", '"$app" -dnftimescale\t4 -dnfquitaftersim 0', (one, 1)),
+        ("B3 行首行尾的制表符", '\t"$app"\t-dnftimescale\t4\t', (one, 1)),
+        ("B3 NBSP 在参数名与值之间:粘成一个词", '"$app" -dnftimescale 4 -dnfquitaftersim\u00a05', (one, 1)),
+        ("B3 全角空格在参数名与值之间:粘成一个词", '"$app" -dnftimescale 4 -dnfquitaftersim\u30005', (one, 1)),
+        ("B3 NBSP 在 $app 与 -dnftimescale 之间:粘成一个词,不是调用", '"$app"\u00a0-dnftimescale 4 -dnfquitaftersim 5', ([], 0)),
+    )
+    for name, text, want in tabs:
+        rec.eq(f"簇13 {name}", _verdict(text), want)
+    # -dnfquitaftersim 的值:数字边界(ASCII 数字、至多一个小数点两侧都有数字、至少一位非零)
+    for value in ("9", "0.9", "90", "19.91", "10", "100.0", "0.10", "01", "000.5", "0.000001", "1.0", "0.01", "99999", "3.14159"):
+        rec.eq(f"簇13 值 {value} 是正数", _verdict(_sim_text(value)), ([], 1))
+    for value in ("+5", "5e1", "0x5", "5,5", "--5", "5-", "5.0.", ".", "..", "0.", "0..5", "1..5", "\u0663", "\uff15", "5_0", "0e0"):
+        rec.eq(f"簇13 值 {value} 不是正数", _verdict(_sim_text(value)), (one, 1))
+    # 重复出现:有一对合格(参数名之后紧跟严格正数)就行,与宿主"非正数的值被忽略、较晚的合格值生效"一致
+    dup = (
+        ("先不合格后合格", '"$app" -dnftimescale 4 -dnfquitaftersim 0 -dnfquitaftersim 5', ([], 1)),
+        ("先合格后不合格", '"$app" -dnftimescale 4 -dnfquitaftersim 5 -dnfquitaftersim 0', ([], 1)),
+        ("两个都不合格", '"$app" -dnftimescale 4 -dnfquitaftersim 0 -dnfquitaftersim 0', (one, 1)),
+        ("第一个的值是第二个参数名", '"$app" -dnftimescale 4 -dnfquitaftersim -dnfquitaftersim 5', ([], 1)),
+        ("两个都合格", '"$app" -dnftimescale 4 -dnfquitaftersim 5 -dnfquitaftersim 6', ([], 1)),
+    )
+    for name, text, want in dup:
+        rec.eq(f"簇13 重复:{name}", _verdict(text), want)
+    # 参数名与值必须是连续的两个词;参数名必须逐字相同(区分大小写)
+    adjacent = (
+        ("中间隔着别的参数", '"$app" -dnftimescale 4 -dnfquitaftersim -batchmode 5', one),
+        ("值在参数名之前", '"$app" -dnftimescale 4 5 -dnfquitaftersim', one),
+        ("参数名与值用等号连接", '"$app" -dnftimescale 4 -dnfquitaftersim=5', one),
+        ("参数名多一个短横", '"$app" -dnftimescale 4 --dnfquitaftersim 5', one),
+        ("参数名大写", '"$app" -dnftimescale 4 -DNFQUITAFTERSIM 5', one),
+        ("参数名少一个字母", '"$app" -dnftimescale 4 -dnfquitaftersi 5', one),
+        ("-dnfquitaftersim 是最后一个词、后面没有值", '"$app" -dnftimescale 4 -dnfquitaftersim', one),
+    )
+    for name, text, want in adjacent:
+        rec.eq(f"簇13 {name}", _verdict(text), (want, 1))
+
+
 def run_selftest() -> int:
     with open(DEFAULT_SCRIPT, encoding="utf-8") as f:
         valid_text = f.read()
@@ -1244,6 +1350,7 @@ def run_selftest() -> int:
     _cluster(rec, "簇10", _selftest_comments)
     _cluster(rec, "簇11", _selftest_segments)
     _cluster(rec, "簇12", _selftest_multi_call)
+    _cluster(rec, "簇13", _selftest_spellings)
     if rec.failures:
         print(f"自测失败(细粒度对照 {rec.checks} 条中有 {len(rec.failures)} 条不符):", file=sys.stderr)
         for name, expected, actual in rec.failures:
