@@ -322,21 +322,73 @@ def join_logical_lines(lines):
     return logical
 
 
+# 规则 (a) 的词法:一条正则一次扫描逻辑行,四类记号按下面的顺序试,先中先得(都与 bash 实测一致):
+#   comment  词首(行首、空白或分隔符之后)的 # 起到行尾;单词中间的 # 已被下面的"词"整个吃掉,轮不到这里
+#   word     重定向记号(> >> < << >& <& &> &>> >|)自成一个词、不切段,所以 2>&1 里的 & 不会把调用切开;
+#            其余由 反斜杠转义 / 单引号串 / 双引号串(里面只有反斜杠转义) / 普通字符 连成一个词
+#   sep      命令分隔符 ; & | ( ) 和反引号(&& 与 || 是相邻的两个分隔符,中间夹一个空段)
+#   空白     只有空格与制表符(与 shell 一致:NBSP、全角空格是词的一部分)
+# 引号不成对、行尾孤立的反斜杠:没有任何记号吃得下它们,由 _shell_segments 报 ValueError。
+_SHELL_TOKEN = re.compile(r'''
+    (?P<comment>\#.*)
+  | (?P<word>&>>?|[<>]+[&|]?|(?:\\.|'[^']*'|"(?:\\.|[^"\\])*"|[^ \t;&|()`<>'"\\])+)
+  | (?P<sep>[;&|()`])
+  | [ \t]+
+''', re.X)
+
+# -dnfquitaftersim 的值:ASCII 数字、至多一个小数点(点两侧都要有数字),且至少一位非零数字(即严格正数)。
+# 保守:.5、5.、1e3、+5、阿拉伯-印度数字一律不收(与上一版口径一致)。
+_POSITIVE_NUMBER = re.compile(r"(?=[0-9.]*[1-9])[0-9]+(?:\.[0-9]+)?")
+
+
+def _shell_segments(line):
+    """按 shell 语法把一条逻辑行拆成命令段:返回 [[词, ...], ...],每个词已去掉引号与转义。
+    注释截掉;引号外的 ; & | ( ) 与反引号切段,相邻的操作符之间留一个空段。
+    引号不成对或行尾有孤立的反斜杠:抛 ValueError。"""
+    import shlex  # 放在函数里:文件头一行都不动,按"文件:行号"定位的既有变异不会错位(与 _cluster 里的 traceback 同一做法)
+
+    tokens = list(_SHELL_TOKEN.finditer(line))
+    if "".join(m.group() for m in tokens) != line:
+        raise ValueError  # 有字符没被任何记号吃掉
+    segments = [[]]
+    for m in tokens:
+        if m.lastgroup == "word":
+            (word,) = shlex.split(m.group())  # 一个词里引号成对、没有引号外的空白:恰好得到一个词
+            segments[-1].append(word)
+        elif m.lastgroup == "sep":
+            segments.append([])
+    return segments
+
+
+def _has_positive_quitaftersim(words):
+    """同一命令段里是否有连续的两个词:-dnfquitaftersim、严格正数。
+    出现多次时只要有一对合格就行:宿主逐个解析,值不是正数的会被忽略,较晚的合格值生效。"""
+    return any(
+        flag == "-dnfquitaftersim" and _POSITIVE_NUMBER.fullmatch(value) is not None
+        for flag, value in zip(words, words[1:])
+    )
+
+
 def check_text(text: str, label: str = "tools/unity-build-town.sh"):
     errors = []
     lines = text.splitlines()
 
-    # (a) Every $app invocation with -dnftimescale must also have -dnfquitaftersim <positive>
+    # (a) 每一个 $app 调用(同一命令段里有词 $app 或 ${app})只要带 -dnftimescale,
+    #     同一段里就必须有连续的两个词 -dnfquitaftersim、严格正数。按 shell 语法拆词:注释与别的命令段里的参数不算数
     timescale_count = 0
     for start_ln, cmd in join_logical_lines(lines):
-        if cmd.startswith("#") or '"$app"' not in cmd:
+        if "-dnftimescale" not in cmd:  # 不含该子串的行一律不拆词:别的行里的任意引号写法不会误伤
             continue
-        tokens = cmd.split()
-        if "-dnftimescale" in tokens:
-            timescale_count += 1
-            m = re.search(r"(?:^|\s)-dnfquitaftersim\s+([0-9]+(?:\.[0-9]+)?)(?:\s|$)", cmd)
-            if not m or float(m.group(1)) <= 0.0:
-                errors.append(f"{label}:{start_ln}: 带 -dnftimescale 的 $app 调用缺少正数 -dnfquitaftersim 参数")
+        try:
+            segments = _shell_segments(cmd)
+        except ValueError:
+            errors.append(f"{label}:{start_ln}: 含 -dnftimescale 的逻辑行无法按 shell 语法拆分(引号不成对?)")
+            continue
+        for words in segments:
+            if ("$app" in words or "${app}" in words) and "-dnftimescale" in words:
+                timescale_count += 1
+                if not _has_positive_quitaftersim(words):
+                    errors.append(f"{label}:{start_ln}: 带 -dnftimescale 的 $app 调用缺少正数 -dnfquitaftersim 参数")
 
     if timescale_count == 0:
         errors.append(f"{label}: 未找到任何带 -dnftimescale 的 $app 调用")
@@ -379,6 +431,7 @@ _PIN_CRITERIA = 262
 _LABEL = "<t>"
 _CAT_SIM = "缺少正数"
 _CAT_NO_CALL = "未找到任何"
+_CAT_NOSPLIT = "无法按 shell 语法拆分"  # 信息是"…逻辑行无法按 shell 语法拆分(引号不成对?)",并不含连续的"无法拆分",所以按这段连续的片段筛选
 _FIRST_CRITERION = '[ "$rc" -eq 0 ] || exit "$rc"'  # 基线第 0 条:验证段一条判据都没有时,"期望:"一行就是它
 
 # is_criteria_line:不该计入判据的行(注释、空行、说明性 echo、信息性 grep)
@@ -511,6 +564,10 @@ def _msg_no_call():
     return f"{_LABEL}: 未找到任何带 -dnftimescale 的 $app 调用"
 
 
+def _msg_nosplit(line_no):
+    return f"{_LABEL}:{line_no}: 含 -dnftimescale 的逻辑行无法按 shell 语法拆分(引号不成对?)"
+
+
 def _msg_crit(actual_n, diff_idx, expected_line, actual_line):
     return (
         f"{_LABEL}: 通过判据行与基线不一致 (基线 {_PIN_CRITERIA} 行, 实际 {actual_n} 行, 首个差异下标 {diff_idx}):\n"
@@ -610,12 +667,20 @@ def _selftest_not_a_call(rec):
         ("echo 文字里的记号与注释里的记号", "echo 用法 -dnftimescale 5\n# -dnftimescale 5\n" + ok),
         ("不是 $app 的命令里的记号", "dotnet run -dnftimescale 5\n" + ok),
         ("记号只是更长参数名的前缀", '"$app" -dnftimescalefoo 5\n' + ok),
-        ("$app 只有右引号", 'run $app" -dnftimescale 5\n' + ok),
-        ("$app 只有左引号", 'run "$app -dnftimescale 5\n' + ok),
     )
     for name, text in cases:
         errs, calls, _ = check_text(text, _LABEL)
         rec.eq(f"簇3 {name}不算调用", (_only(errs, _CAT_SIM), calls), ([], 1))
+    # 有意的改动:引号不成对、又含 -dnftimescale 的行,以前"不算调用"悄悄放过,现在整行报"无法拆分"(失败要响,详见簇14);
+    # 其余行照常检查,调用数仍是后面那条合法行的 1,也不会多出缺少正数的错
+    broken = (
+        ("$app 只有右引号", 'run $app" -dnftimescale 5\n' + ok),
+        ("$app 只有左引号", 'run "$app -dnftimescale 5\n' + ok),
+    )
+    for name, text in broken:
+        errs, calls, _ = check_text(text, _LABEL)
+        want = ([], [_msg_nosplit(1)], 1)
+        rec.eq(f"簇3 {name}:不算调用,整行报无法拆分", (_only(errs, _CAT_SIM), _only(errs, _CAT_NOSPLIT), calls), want)
     only_fake = (
         ("唯一的调用被注释掉", '# "$app" -dnftimescale 5 -dnfquitaftersim 5\n'),
         ("唯一的记号在 echo 文字里", "echo 用法 -dnftimescale 5\n"),
