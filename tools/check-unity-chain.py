@@ -1552,6 +1552,59 @@ def _selftest_cli(rec):
     rec.eq("簇17 读被检文件时指定 UTF-8 编码(与当前区域设置无关)", opened, ["utf-8"])
 
 
+# 簇 18 的探测字符:可打印 ASCII(0x21 到 0x7e),再加 DEL、几个控制字符与非 ASCII 的空白类字符(VT、FF、US、NEL、NBSP、LS、全角空格)与一个汉字;
+# 这些在 bash 里全都只是词里的普通字符(只有空格与制表符分词)。空格与制表符不在内:引号里与数值里另外加上
+_PROBE_CHARS = tuple(chr(i) for i in range(0x21, 0x7F)) + ("\x7f", "\x0b", "\x0c", "\x1f", "\x85", "\xa0", "\u2028", "\u3000", "头")
+_DIGITS = "0123456789"
+
+
+def _selftest_charset(rec):
+    """簇 18:字符类逐个字符地钉住——词法与数值的两条正则里,每个字符类对每一个探测字符的取舍。
+    某个字符类里被多放进(或漏掉)一个字符时,总有某个探测字符的行为变掉,前面各簇挑的字面例子不一定碰得到它。
+    每条对照的规则写在名字里,实际值是"违反规则的字符"的列表,期望空列表:失败时一眼看出是哪些字符。"""
+    special = "\"'\\;&|()`<>"  # 引号外有特殊含义的字符:各有专门的对照(簇 9、簇 13 与下面的表),这里不重复
+    plain = [c for c in _PROBE_CHARS if c not in special]
+    quoted = list(_PROBE_CHARS) + [" ", "\t"]
+
+    def positive(value):
+        return _has_positive_quitaftersim(["-dnfquitaftersim", value])
+
+    # 引号外的普通字符:词首、词中、词尾都只是词的一部分(# 在词首起注释,另有对照)
+    rec.eq("簇18 引号外的普通字符在词中间:是词的一部分", [c for c in plain if _shell_segments("a" + c + "b") != [["a" + c + "b"]]], [])
+    rec.eq("簇18 引号外的普通字符在词尾:是词的一部分", [c for c in plain if _shell_segments("a" + c) != [["a" + c]]], [])
+    rec.eq("簇18 引号外的普通字符(# 除外)在词首:是词的一部分", [c for c in plain if c != "#" and _shell_segments(c + "b") != [[c + "b"]]], [])
+    # 重定向记号只吃 < > 与紧随其后的 & 或 |;再后面的字符属于下一个词(# 起注释,分隔符照常切段,引号与反斜杠照常成词)
+    rec.eq("簇18 重定向记号 > 之后紧贴普通字符(# 除外):字符属于下一个词", [c for c in plain if c != "#" and _shell_segments("a >" + c + "b") != [["a", ">", c + "b"]]], [])
+    after_redirect = (
+        ("#", "a >#b", [["a", ">"]]),
+        (";", "a >;b", [["a", ">"], ["b"]]),
+        ("(", "a >(b", [["a", ">"], ["b"]]),
+        (")", "a >)b", [["a", ">"], ["b"]]),
+        ("反引号", "a >`b", [["a", ">"], ["b"]]),
+        ("单引号", "a >'b'", [["a", ">", "b"]]),
+        ("双引号", 'a >"b"', [["a", ">", "b"]]),
+        ("反斜杠", "a >\\b", [["a", ">", "b"]]),
+    )
+    for name, line, want in after_redirect:
+        rec.eq(f"簇18 重定向记号 > 之后紧贴{name}", _shell_segments(line), want)
+    # 双引号里除了引号与反斜杠、单引号里除了单引号,什么字符都是字面字符(含空白、分隔符、重定向符、另一种引号)
+    rec.eq("簇18 双引号里的字符(引号与反斜杠除外)都是字面字符", [c for c in quoted if c not in '"\\' and _shell_segments('"a' + c + 'b"') != [["a" + c + "b"]]], [])
+    rec.eq("簇18 单引号里的字符(单引号除外)都是字面字符", [c for c in quoted if c != "'" and _shell_segments("'a" + c + "b'") != [["a" + c + "b"]]], [])
+    # 数值:只收 ASCII 数字、至多一个夹在两段数字之间的小数点、至少一位非零
+    non_digit = [c for c in _PROBE_CHARS if c not in _DIGITS] + [" ", "\t"]  # 带引号的值里可以有空白
+    rec.eq("簇18 值 5 之后紧贴任一非数字字符:不是正数", [c for c in non_digit if positive("5" + c)], [])
+    rec.eq("簇18 值 5 之前紧贴任一非数字字符:不是正数", [c for c in non_digit if positive(c + "5")], [])
+    rec.eq("簇18 值 5. 之后紧贴任一非数字字符:不是正数", [c for c in non_digit if positive("5." + c)], [])
+    rec.eq("簇18 值 5.5 之后紧贴任一非数字字符:不是正数", [c for c in non_digit if positive("5.5" + c)], [])
+    rec.eq("簇18 单个数字:只有 0 不是正数", [d for d in _DIGITS if positive(d) != (d != "0")], [])
+    rec.eq("簇18 数字之后接 0:只有 00 不是正数", [d for d in _DIGITS if positive(d + "0") != (d != "0")], [])
+    rec.eq("簇18 0 之后接数字(前导零):只有 00 不是正数", [d for d in _DIGITS if positive("0" + d) != (d != "0")], [])
+    rec.eq("簇18 0. 之后接数字:只有 0.0 不是正数", [d for d in _DIGITS if positive("0." + d) != (d != "0")], [])
+    rec.eq("簇18 数字之后接 .0:只有 0.0 不是正数", [d for d in _DIGITS if positive(d + ".0") != (d != "0")], [])
+    rec.eq("簇18 5 之后接任一数字:都是正数", [d for d in _DIGITS if not positive("5" + d)], [])
+    rec.eq("簇18 5. 之后接任一数字:都是正数", [d for d in _DIGITS if not positive("5." + d)], [])
+
+
 def run_selftest() -> int:
     with open(DEFAULT_SCRIPT, encoding="utf-8") as f:
         valid_text = f.read()
@@ -1622,6 +1675,7 @@ def run_selftest() -> int:
     _cluster(rec, "簇15", _selftest_real_variants, valid_text)
     _cluster(rec, "簇16", _selftest_harness)
     _cluster(rec, "簇17", _selftest_cli)
+    _cluster(rec, "簇18", _selftest_charset)
     if rec.failures:
         print(f"自测失败(细粒度对照 {rec.checks} 条中有 {len(rec.failures)} 条不符):", file=sys.stderr)
         for name, expected, actual in rec.failures:
