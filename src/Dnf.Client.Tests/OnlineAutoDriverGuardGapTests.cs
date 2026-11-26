@@ -10,7 +10,7 @@ namespace Dnf.Client.Tests;
 /// r20fix-e2e C-1:无人值守驱动 <see cref="OnlineAutoDriver"/> 里"守卫条件"的补测——每个守卫的两侧各一条用例,期望值全是手写字面量。
 /// 覆盖:不带 <c>-dnfonlineauto-dungeon</c> 时的默认难度、选角光标在重新进入选角页时归零、选频道页"读失败"与"没有频道"各自停手、
 /// 选角页不重复发 Enter、空名册与缺名册、选图页忙时只等待、结算失败三条判据各自单独成立、指定副本不在或不可进时停手而不是确认第 0 项,
-/// 以及命令行参数解析的几处边界:副本参数的两个值恰好是最后两个参数、数字参数最长 9 位、数字末尾带 NUL。
+/// 外壳各阶段与进图加载画面里驱动对外报的阶段名,以及命令行参数解析的几处边界:副本参数的两个值恰好是最后两个参数、数字参数最长 9 位、数字末尾带 NUL。
 /// 外壳那几条走真的 <see cref="OnlineShellFlow"/> 加假后端;选图与结算走真的 <see cref="GameFlow"/>、选图屏、联网进副本控制器与结算控制器。全部是合成数据。
 /// </summary>
 public sealed class OnlineAutoDriverGuardGapTests
@@ -178,6 +178,38 @@ public sealed class OnlineAutoDriverGuardGapTests
         Assert.False(driver.Finished);
         Assert.Equal(GameStage.Dungeon, flow.Stage);
         Assert.Equal(0, flow.Difficulty);
+    }
+
+    [Fact]
+    public void The_driver_only_waits_on_the_loading_screen_and_names_that_stage()
+    {
+        Assert.True(OnlineAutoOptions.TryParse(new[] { "-dnfonlineauto" }, true, out OnlineAutoOptions options, out _, out _));
+        var world = new OnlineSettlementGapAKit.RecordingTownWorld(new TownPlace(1, 0), new TownPlace(1, 0));
+        var flow = new GameFlow(world, (p, _) => new OnlineSettlementGapAKit.OtherRun(), new[] { Entry("d1", 9101, 100) },
+            dungeonSplash: path => new SplashScene(path, null, null, null, 0, 0, 1000.0));
+        flow.EnterTown("boot");
+        flow.EnterSelect("test");
+        var driver = new OnlineAutoDriver(options);
+
+        // 驱动在选图页确认之后,流程先停在进图加载画面
+        for (int i = 0; i < 12 && flow.Stage == GameStage.DungeonSelect; i++)
+        {
+            driver.StepGame(flow, null, null, 16.0, 100 + i * 16);
+            flow.Poll();
+        }
+        Assert.Equal(GameStage.Loading, flow.Stage);
+        Assert.Equal("select", driver.Stage);
+
+        // 加载画面里驱动只改名字、什么都不做
+        for (int i = 0; i < 5; i++)
+        {
+            driver.StepGame(flow, null, null, 16.0, 400 + i * 16);
+        }
+
+        Assert.Equal(GameStage.Loading, flow.Stage);
+        Assert.Equal("loading", driver.Stage);
+        Assert.False(driver.Finished);
+        Assert.Null(driver.ResultLine);
     }
 
     [Fact]
@@ -396,6 +428,46 @@ public sealed class OnlineAutoDriverGuardGapTests
         Assert.Equal("server", shell.Driver.Stage);
         Assert.Equal("DNF_ONLINE result=fail stage=server elapsedMs=88", shell.Driver.ResultLine);
         Assert.Equal(0, shell.Backend.ConnectCalls);
+    }
+
+    // ------------------------------------------------------------------ 外壳各阶段里驱动对外报的阶段名
+
+    [Fact]
+    public void The_driver_names_the_shell_stage_it_is_working_on_as_soon_as_it_looks_at_it()
+    {
+        var selectGate = new TaskCompletionSource<OnlineSelectOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shell = new Shell(picker: true, manage: false, characterSlot: 0, "HeroA");
+        shell.Backend.OnSelect = (slot, ct) => selectGate.Task;
+        Assert.Equal("init", shell.Driver.Stage);
+
+        // 每一段都是:流程先走到那个阶段(驱动还没看见,名字还是上一段的),驱动看一眼,名字换成这一段的
+        shell.Driver.StepShell(shell.Flow, shell.Now);
+        Assert.Equal(OnlineShellStage.Login, shell.Flow.Stage);
+        Assert.Equal("login", shell.Driver.Stage);
+
+        shell.RunUntilStage(OnlineShellStage.ServerSelect);
+        Assert.Equal("login", shell.Driver.Stage);
+        shell.Driver.StepShell(shell.Flow, shell.Now);
+        Assert.Equal("server", shell.Driver.Stage);
+
+        shell.RunUntilStage(OnlineShellStage.ChannelSelect);
+        Assert.Equal("server", shell.Driver.Stage);
+        shell.Driver.StepShell(shell.Flow, shell.Now);
+        Assert.Equal("channel", shell.Driver.Stage);
+
+        shell.RunUntilStage(OnlineShellStage.CharacterSelect);
+        Assert.Equal("channel", shell.Driver.Stage);
+        shell.Driver.StepShell(shell.Flow, shell.Now);
+        Assert.Equal("charselect", shell.Driver.Stage);
+
+        // 选角请求挂在那里:流程停在加载页
+        shell.RunUntilStage(OnlineShellStage.Loading);
+        Assert.Equal("charselect", shell.Driver.Stage);
+        shell.Driver.StepShell(shell.Flow, shell.Now);
+        Assert.Equal("loading", shell.Driver.Stage);
+        Assert.False(shell.Driver.Finished);
+        Assert.Null(shell.Driver.ResultLine);
+        selectGate.SetResult(OnlineSelectOutcome.Ok());
     }
 
     // ------------------------------------------------------------------ 038:选角页只按一次 Enter
