@@ -571,6 +571,53 @@ public sealed class OnlineAutoDriverGuardGapTests
         Assert.Equal(1, shell.Backend.LastSlot);
     }
 
+    /// <summary>驱动最后一次走完之后,只推进流程(驱动不再动),等"选角"结果落地;有界。</summary>
+    private static void PollUntilSelected(Shell shell)
+    {
+        for (int i = 0; i < 40 && shell.Backend.SelectCalls == 0; i++)
+        {
+            shell.PollOnly();
+        }
+    }
+
+    [Fact]
+    public void Walking_back_left_and_up_takes_exactly_one_driver_tick_per_cell_and_one_more_for_enter()
+    {
+        // 与"目标落到光标后面"同一个局面:停在槽位 8(第 2 列第 1 行),目标退回槽位 0。驱动每个 tick 走一格:向左、向左、向上,第四个 tick 才按 Enter。
+        // 只看"最后选中谁"会漏掉驱动对光标位置的记账错误——界面里的光标走到头会夹住,多按几下 Left 也停在原地、照样选中槽位 0——所以这里数 tick。
+        Shell shell = NineCharacterShellWalkedTo(characterSlot: 8, steps: 3);
+        BlockRosterEntries(shell, 8);
+
+        for (int i = 0; i < 3; i++)
+        {
+            shell.Tick();
+            Assert.Equal(0, shell.Backend.SelectCalls);
+        }
+        shell.Tick();                                       // 第四个 tick:驱动认为光标已在 (0,0),按 Enter
+        PollUntilSelected(shell);
+
+        Assert.False(shell.Driver.Finished);
+        Assert.Equal(1, shell.Backend.SelectCalls);
+        Assert.Equal(0, shell.Backend.LastSlot);
+    }
+
+    [Fact]
+    public void Walking_up_takes_exactly_one_driver_tick_for_the_row_and_one_more_for_enter()
+    {
+        // 停在槽位 7(第 1 列第 1 行),目标退回槽位 1(同一列、上一行):一个 tick 向上,第二个 tick 按 Enter。
+        Shell shell = NineCharacterShellWalkedTo(characterSlot: 7, steps: 2);
+        BlockRosterEntries(shell, 0, 7);
+
+        shell.Tick();
+        Assert.Equal(0, shell.Backend.SelectCalls);
+        shell.Tick();
+        PollUntilSelected(shell);
+
+        Assert.False(shell.Driver.Finished);
+        Assert.Equal(1, shell.Backend.SelectCalls);
+        Assert.Equal(1, shell.Backend.LastSlot);
+    }
+
     // ------------------------------------------------------------------ 045:选图屏忙时驱动只等待
 
     private static GameFlow ThreeDungeonSelect(out DungeonEntry[] entries)
