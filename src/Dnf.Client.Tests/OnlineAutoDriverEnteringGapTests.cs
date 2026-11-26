@@ -427,4 +427,41 @@ public sealed class OnlineAutoDriverEnteringGapTests
         Assert.Equal("dungeon", rig.Driver.Stage);
         Assert.False(rig.Driver.Finished);
     }
+
+    // ------------------------------------------------------------------ 用例 3:流程离开副本阶段之后,驱动不留着旧局的房间自动机
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Once_the_flow_has_left_the_dungeon_for_select_or_town_the_driver_holds_no_room_bot(bool toTown)
+    {
+        // 选图页与城镇两个分支各自都要把旧局的房间自动机丢掉(只靠 Entering 那一段不够:流程可以不经握手直接切走)。
+        using var rig = new EnteringRig(new OnlineAutoOptions());
+        rig.StartAtDungeonSelect();
+        rig.PumpUntil(() => rig.Flow.Stage == GameStage.Dungeon && rig.Driver.ActiveRoomBot != null, "第一局开始,驱动造了房间自动机");
+        Assert.Equal("dungeon", rig.Driver.Stage);
+
+        if (toTown)
+        {
+            rig.Flow.EnterTown("synthetic leave");
+        }
+        else
+        {
+            rig.Flow.EnterSelect("synthetic leave");
+        }
+        rig.Frame();
+
+        Assert.Null(rig.Driver.ActiveRoomBot);
+        if (!toTown)
+        {
+            // 城镇分支随后会因为"没选回城却回了城镇"判 fail,阶段名随之变成 dungeon;选图分支则停在 select
+            Assert.Equal("select", rig.Driver.Stage);
+            Assert.False(rig.Driver.Finished);
+        }
+        else
+        {
+            Assert.True(rig.Driver.Finished);
+            Assert.Equal("DNF_ONLINE result=fail stage=dungeon elapsedMs=" + rig.NowMs, rig.Driver.ResultLine);
+        }
+    }
 }

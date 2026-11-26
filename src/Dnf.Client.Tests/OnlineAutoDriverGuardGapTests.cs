@@ -49,6 +49,12 @@ public sealed class OnlineAutoDriverGuardGapTests
         public long Now = 1000;
 
         public Shell(bool picker, bool manage, int characterSlot, params string[] roster)
+            : this(picker, manage, !picker, characterSlot, roster)
+        {
+        }
+
+        /// <summary><paramref name="autoPass"/> 为假且没有真界面(<paramref name="picker"/> 为假)时,选服务器与选频道是停下来等人的占位页。</summary>
+        public Shell(bool picker, bool manage, bool autoPass, int characterSlot, params string[] roster)
         {
             Backend.AllowCharacterWrite = manage;
             var seeded = new (string Name, byte Job, byte Level)[roster.Length];
@@ -60,7 +66,7 @@ public sealed class OnlineAutoDriverGuardGapTests
             var options = new OnlineShellOptions
             {
                 Configured = true,
-                AutoPassPlaceholders = !picker,
+                AutoPassPlaceholders = autoPass,
                 ChannelDirectory = picker ? new PickerDirectory() : null,
                 CharacterSelect = new OnlineCharacterSelectOptions(),
                 CharacterManage = manage ? Backend : null,
@@ -173,6 +179,20 @@ public sealed class OnlineAutoDriverGuardGapTests
         Assert.Equal(0, flow.Difficulty);
     }
 
+    [Fact]
+    public void Options_parsed_from_the_bare_flag_carry_every_default_value()
+    {
+        Assert.True(OnlineAutoOptions.TryParse(new[] { "-dnfonlineauto" }, true, out OnlineAutoOptions bare, out string ignored, out string error));
+        Assert.Null(ignored);
+        Assert.Null(error);
+        Assert.Equal(0, bare.CharacterSlot);
+        Assert.Null(bare.DungeonId);
+        Assert.Equal(0, bare.DungeonMode);
+        Assert.Equal(0, bare.MinClearTimeSeconds);
+        Assert.Equal(new[] { SettlementChoice.ReturnToTown }, bare.SettlementChoices);
+        Assert.Equal("OnlineAutoOptions(char=0,dungeon=auto,mode=0,settleCount=1,minClearSec=0)", bare.ToString());
+    }
+
     // ------------------------------------------------------------------ 033:重新进入选角页时光标重新从第 0 格数起
 
     [Fact]
@@ -246,6 +266,83 @@ public sealed class OnlineAutoDriverGuardGapTests
         Assert.Equal("channel", shell.Driver.Stage);
         Assert.Equal("DNF_ONLINE result=fail stage=channel elapsedMs=77", shell.Driver.ResultLine);
         Assert.Equal(new[] { "DNF_ONLINE result=fail stage=channel elapsedMs=77" }, shell.ResultLines);
+        Assert.Equal(0, shell.Backend.ConnectCalls);
+    }
+
+    [Fact]
+    public void Channel_page_that_shows_itself_busy_while_the_flow_is_idle_makes_the_driver_only_wait()
+    {
+        var shell = new Shell(picker: true, manage: false, characterSlot: 0, "HeroA");
+        shell.RunUntilStage(OnlineShellStage.ChannelSelect);
+        Assert.Equal(PickerPhase.Ready, shell.Flow.ChannelScreen.Phase);
+        shell.Flow.ChannelScreen.SetBusy(ChannelBusy.Connecting);
+        Assert.False(shell.Flow.ChannelScreen.CanStart);
+        Assert.False(shell.Flow.Busy);
+
+        // 只推进驱动、不轮询流程:画面的忙状态保持原样(流程自己每帧会把它同步回去)
+        for (int i = 0; i < 6; i++)
+        {
+            shell.Driver.StepShell(shell.Flow, 500 + i);
+        }
+
+        Assert.False(shell.Driver.Finished);
+        Assert.Null(shell.Driver.ResultLine);
+        Assert.Equal("channel", shell.Driver.Stage);
+        Assert.Equal(0, shell.Backend.ConnectCalls);
+        Assert.False(shell.Flow.Busy);
+
+        // 画面不忙了:驱动这才按下它的那一次 Enter,流程起连接
+        shell.Flow.ChannelScreen.SetBusy(ChannelBusy.None);
+        shell.RunUntil(() => shell.Backend.ConnectCalls > 0, maxTicks: 60);
+
+        Assert.False(shell.Driver.Finished);
+        Assert.Equal(1, shell.Backend.ConnectCalls);
+    }
+
+    [Fact]
+    public void Channel_placeholder_without_a_directory_is_waited_on_and_never_failed_by_the_driver()
+    {
+        // 没注入目录界面、占位页也不自动放行:选服务器占位页由驱动放行,选频道占位页停在那里等人;驱动自己不判失败
+        var shell = new Shell(picker: false, manage: false, autoPass: false, characterSlot: 0, "HeroA");
+        shell.RunUntilStage(OnlineShellStage.ChannelSelect);
+        Assert.Null(shell.Flow.ChannelScreen);
+        Assert.False(shell.Flow.Busy);
+
+        for (int i = 0; i < 8; i++)
+        {
+            shell.Tick();
+        }
+
+        Assert.False(shell.Driver.Finished);
+        Assert.Null(shell.Driver.ResultLine);
+        Assert.Equal("channel", shell.Driver.Stage);
+        Assert.Equal(OnlineShellStage.ChannelSelect, shell.Flow.Stage);
+        Assert.Equal(0, shell.Backend.ConnectCalls);
+    }
+
+    [Fact]
+    public void Server_page_with_a_failed_directory_and_no_notice_fails_the_server_stage()
+    {
+        var shell = new Shell(picker: true, manage: false, characterSlot: 0, "HeroA");
+        shell.RunUntilStage(OnlineShellStage.ServerSelect);
+        // 只轮询流程、驱动先不动手:等目录读完、画面就绪
+        for (int i = 0; i < 300 && (shell.Flow.Busy || shell.Flow.ServerScreen.Phase != PickerPhase.Ready); i++)
+        {
+            shell.PollOnly();
+        }
+        Assert.Equal(PickerPhase.Ready, shell.Flow.ServerScreen.Phase);
+        shell.Flow.ServerScreen.SetFailed();
+        Assert.Equal(PickerPhase.Failed, shell.Flow.ServerScreen.Phase);
+        Assert.Null(shell.Flow.ServerScreen.Notice);
+        Assert.Null(shell.Flow.Notice);
+        Assert.False(shell.Flow.Busy);
+
+        shell.Driver.StepShell(shell.Flow, 88);
+
+        Assert.True(shell.Driver.Finished);
+        Assert.False(shell.Driver.Succeeded);
+        Assert.Equal("server", shell.Driver.Stage);
+        Assert.Equal("DNF_ONLINE result=fail stage=server elapsedMs=88", shell.Driver.ResultLine);
         Assert.Equal(0, shell.Backend.ConnectCalls);
     }
 
@@ -470,6 +567,25 @@ public sealed class OnlineAutoDriverGuardGapTests
         Assert.Equal(GameStage.DungeonSelect, flow.Stage);
     }
 
+    [Fact]
+    public void Select_screen_with_every_entry_disabled_fails_at_once_wherever_the_cursor_stands()
+    {
+        GameFlow flow = ThreeDungeonSelect(out _);
+        flow.Select.EntryStatus = _ => new DungeonEntryStatus(DungeonEntryBlockKind.ServerRejected, 5);
+        flow.Select.Move(1);
+        Assert.Equal(1, flow.Select.Index);
+        var driver = new OnlineAutoDriver(new OnlineAutoOptions());
+
+        driver.StepGame(flow, null, null, 16.0, 654);
+
+        Assert.True(driver.Finished);
+        Assert.False(driver.Succeeded);
+        Assert.Equal("select", driver.Stage);
+        Assert.Equal("DNF_ONLINE result=fail stage=select elapsedMs=654", driver.ResultLine);
+        Assert.Equal(1, flow.Select.Index);                           // 没有朝第 0 项走
+        Assert.Equal(SelectOutcome.None, flow.Select.Outcome);
+    }
+
     // ------------------------------------------------------------------ 051:结算失败的三条判据各自单独成立
 
     private static OnlineSettlementGapAKit.DirectRig NewSettlementInDungeon()
@@ -606,6 +722,45 @@ public sealed class OnlineAutoDriverGuardGapTests
         Assert.Single(direct.Transport.Sent, s => s.PacketId == 75);
     }
 
+    [Theory]
+    [InlineData(SettlementChoice.Retry)]
+    [InlineData(SettlementChoice.SelectDungeon)]
+    public void A_return_to_town_after_a_retry_or_select_choice_is_unexpected_and_fails_the_dungeon_stage(SettlementChoice choice)
+    {
+        using OnlineSettlementGapAKit.DirectRig direct = NewSettlementInDungeon();
+        ReachMenuReady(direct);
+        var driver = new OnlineAutoDriver(new OnlineAutoOptions(settlementChoices: new[] { choice, SettlementChoice.ReturnToTown }));
+
+        driver.StepGame(direct.Flow, null, direct.Ctrl, 16.0, 450);        // 驱动选了 choice(此前它没走过任何副本非结算帧)
+        Assert.False(driver.Finished);
+        Assert.Equal(1, driver.CompletedSettlements);
+
+        direct.Flow.EnterTown("forced");                                    // 没有任何进图握手在途,流程却回了城镇
+        driver.StepGame(direct.Flow, null, direct.Ctrl, 16.0, 460);
+
+        Assert.True(driver.Finished);
+        Assert.False(driver.Succeeded);
+        Assert.Equal(1, driver.ExitCode);
+        Assert.Equal("dungeon", driver.Stage);
+        Assert.Equal("DNF_ONLINE result=fail stage=dungeon elapsedMs=460", driver.ResultLine);
+        Assert.Equal(GameStage.Town, direct.Flow.Stage);
+    }
+
+    [Fact]
+    public void A_settlement_choice_the_controller_refuses_fails_the_settle_stage_and_sends_nothing()
+    {
+        using OnlineSettlementGapAKit.DirectRig direct = NewSettlementInDungeon();
+        ReachMenuReady(direct);
+        SetPrivate(direct.Ctrl, "_rejectedChoicesMask", 1 << (int)SettlementChoice.Retry);
+        Assert.False(direct.Ctrl.IsChoiceEnabled(SettlementChoice.Retry));
+        Assert.Equal(OnlineSettlementPhase.MenuReady, direct.Ctrl.Phase);
+        var driver = new OnlineAutoDriver(new OnlineAutoOptions(settlementChoices: new[] { SettlementChoice.Retry, SettlementChoice.ReturnToTown }));
+
+        driver.StepGame(direct.Flow, null, direct.Ctrl, 16.0, 470);
+
+        AssertFailedAtSettle(driver, 470, direct);
+    }
+
     // ------------------------------------------------------------------ 057:指定副本不在或不可进时停手,绝不确认第 0 项
 
     private static OnlineDungeonFlowGapKit.Rig SelectRig()
@@ -681,5 +836,23 @@ public sealed class OnlineAutoDriverGuardGapTests
         Assert.Equal(OnlineDungeonFlowPhase.Entering, rig.Ctrl.Phase);
         Assert.Equal("dungeon/test/b.dgn", rig.Flow.DungeonPath);
         Assert.Equal(1, rig.Flow.Select.Index);
+    }
+
+    [Fact]
+    public void A_requested_dungeon_without_a_select_policy_falls_back_to_the_first_enabled_entry_without_throwing()
+    {
+        // 没有联网进副本控制器(也就没有选图策略)就没法把副本编号解析到条目上:退回"第一个可进的条目",不抛空引用
+        GameFlow flow = ThreeDungeonSelect(out DungeonEntry[] entries);
+        var driver = new OnlineAutoDriver(new OnlineAutoOptions(dungeonId: 9102));
+
+        for (int i = 0; i < 8 && flow.Stage == GameStage.DungeonSelect; i++)
+        {
+            driver.StepGame(flow, null, null, 16.0, 700 + i * 16);
+            flow.Poll();
+        }
+
+        Assert.False(driver.Finished);
+        Assert.Equal(GameStage.Dungeon, flow.Stage);
+        Assert.Equal(entries[0].Path, flow.DungeonPath);
     }
 }
