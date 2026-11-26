@@ -1,3 +1,4 @@
+using System.Reflection;
 using Dnf.Data;
 using Dnf.Game;
 using Dnf.Net.Frame;
@@ -19,6 +20,10 @@ namespace Dnf.Client.Tests;
 /// 这里不用真网络也不用墙钟闸门:真 <see cref="GameFlow"/>(不装转场图)、真 <see cref="OnlineDungeonFlowController"/>(假端口,进入独占收包那一步停在一把
 /// 任务完成源上,握手被"按住"在 Entering)、真 <see cref="OnlineSettlementController"/>(假传输)、真 <see cref="HostedRoomBot"/> 驱动的联网房间局,
 /// 每帧的调用顺序与宿主(<c>TownDemo.StepFlow</c>)一致:进副本控制器 → 结算控制器 → 驱动 → 流程。全部是合成数据。
+/// </para>
+/// <para>
+/// 用例 3 起用同一套接线补几处只有接上真控制器才走得到的驱动行为:流程离开副本阶段后不留旧局房间自动机、结算选"选择副本"后在选图页重新确认、
+/// 城镇里进副本控制器带着提示时的判法、房间自动机拿到的最短清图时间与整段上限。
 /// </para>
 /// </summary>
 public sealed class OnlineAutoDriverEnteringGapTests
@@ -463,5 +468,104 @@ public sealed class OnlineAutoDriverEnteringGapTests
             Assert.True(rig.Driver.Finished);
             Assert.Equal("DNF_ONLINE result=fail stage=dungeon elapsedMs=" + rig.NowMs, rig.Driver.ResultLine);
         }
+    }
+
+    // ------------------------------------------------------------------ 用例 4:结算选"选择副本"之后流程直接回到选图页
+
+    [Fact]
+    public void A_select_dungeon_choice_sends_the_flow_straight_back_to_the_select_page_and_the_driver_confirms_a_second_run()
+    {
+        // 选"选择副本"之后流程不经城镇、直接回选图页:驱动在副本分支里清过的"本轮已确认"标志必须仍是假,否则它在选图页永远不会再确认。
+        using var rig = new EnteringRig(new OnlineAutoOptions(settlementChoices: new[] { SettlementChoice.SelectDungeon }));
+        rig.StartAtDungeonSelect();
+        rig.PumpUntil(() => rig.Flow.Stage == GameStage.Dungeon && rig.DungeonCtrl.Phase == OnlineDungeonFlowPhase.InDungeon, "第一局开始");
+
+        rig.PumpUntil(() => rig.Driver.CompletedSettlements == 1, "第一次结算选了选择副本");
+        Assert.Equal(0, rig.Driver.RetryCycles);
+        Assert.False(rig.Driver.Finished);
+
+        rig.PumpUntil(() => rig.Runs.Count == 2, "驱动在选图页重新确认,第二局建房");
+        rig.PumpUntil(() => rig.Driver.Finished, "第二局打完");
+
+        Assert.True(rig.Driver.Succeeded);
+        Assert.Equal(0, rig.Driver.ExitCode);
+        Assert.Equal("done", rig.Driver.Stage);
+        string expected = "DNF_ONLINE result=ok stage=done elapsedMs=" + rig.NowMs;
+        Assert.Equal(expected, rig.Driver.ResultLine);
+        Assert.Equal(new[] { expected }, rig.DriverLines);
+        Assert.Equal(2, rig.Driver.CompletedSettlements);
+        Assert.Equal(0, rig.Driver.RetryCycles);
+        Assert.Equal(2, rig.Flow.Runs);
+        Assert.Equal(2, rig.Flow.Settlements);
+        Assert.Equal(2, rig.Runs.Count);
+        Assert.NotSame(rig.Runs[0], rig.Runs[1]);
+        Assert.Equal(GameStage.Town, rig.Flow.Stage);
+    }
+
+    // ------------------------------------------------------------------ 用例 5:城镇里进副本控制器带着提示
+
+    private static void SetPrivate(object target, string name, object value)
+    {
+        FieldInfo field = target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field.SetValue(target, value);
+    }
+
+    [Theory]
+    [InlineData(DungeonSelectNoticeKind.Timeout, ShellTone.Error, true)]
+    [InlineData(DungeonSelectNoticeKind.Aborted, ShellTone.Error, true)]
+    [InlineData(DungeonSelectNoticeKind.Entering, ShellTone.Wait, false)]
+    [InlineData(DungeonSelectNoticeKind.GivingUp, ShellTone.Wait, false)]
+    [InlineData(DungeonSelectNoticeKind.Info, ShellTone.Info, false)]
+    public void Only_an_error_toned_notice_on_the_dungeon_controller_fails_the_town_stage(DungeonSelectNoticeKind kind, ShellTone tone, bool fails)
+    {
+        // 进副本控制器的瞬时提示(返城后短暂提示)由控制器自己的私有字段持有;这里直接放一条不到期的,代表"回城时带着这样一条提示"。
+        using var rig = new EnteringRig(new OnlineAutoOptions());
+        rig.Flow.EnterTown("boot");
+        SetPrivate(rig.DungeonCtrl, "_transientNotice", new DungeonSelectNotice(kind));
+        Assert.Equal(kind, rig.DungeonCtrl.ActiveNotice?.Kind);
+        Assert.Equal(tone, rig.DungeonCtrl.ActiveNotice.Tone);
+        Assert.Equal(OnlineDungeonFlowPhase.Idle, rig.DungeonCtrl.Phase);
+
+        rig.Driver.StepGame(rig.Flow, rig.DungeonCtrl, rig.SettleCtrl, 16.0, 321);
+
+        if (fails)
+        {
+            Assert.True(rig.Driver.Finished);
+            Assert.False(rig.Driver.Succeeded);
+            Assert.Equal(1, rig.Driver.ExitCode);
+            Assert.Equal("town", rig.Driver.Stage);
+            Assert.Equal("DNF_ONLINE result=fail stage=town elapsedMs=321", rig.Driver.ResultLine);
+            Assert.Equal(GameStage.Town, rig.Flow.Stage);               // 没有去选图
+        }
+        else
+        {
+            Assert.False(rig.Driver.Finished);
+            Assert.Null(rig.Driver.ResultLine);
+            Assert.Equal("town", rig.Driver.Stage);
+            Assert.Equal(GameStage.DungeonSelect, rig.Flow.Stage);      // 照常发起选图
+        }
+    }
+
+    // ------------------------------------------------------------------ 用例 6:房间自动机拿到最短清图时间,整段上限随之放宽
+
+    [Theory]
+    [InlineData(0, 0.0, 600000.0)]
+    [InlineData(60, 60000.0, 600000.0)]
+    [InlineData(480, 480000.0, 600000.0)]
+    [InlineData(481, 481000.0, 601000.0)]
+    [InlineData(900, 900000.0, 1020000.0)]
+    public void The_room_bot_gets_the_min_clear_time_and_a_total_limit_two_minutes_above_it(int minClearSeconds, double minClearMs, double totalLimitMs)
+    {
+        using var rig = new EnteringRig(new OnlineAutoOptions(minClearTimeSeconds: minClearSeconds));
+        rig.StartAtDungeonSelect();
+        rig.PumpUntil(() => rig.Driver.ActiveRoomBot != null, "第一局开始,驱动造了房间自动机");
+
+        HostedRoomBot bot = rig.Driver.ActiveRoomBot;
+
+        Assert.Equal(minClearMs, bot.MinClearTimeMs);
+        Assert.Equal(totalLimitMs, bot.TotalLimitMs);
+        Assert.Equal(HostedRoomBot.DefaultNoProgressLimitMs, bot.NoProgressLimitMs);
+        Assert.False(bot.Stopped);
     }
 }

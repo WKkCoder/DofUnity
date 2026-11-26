@@ -455,6 +455,122 @@ public sealed class OnlineAutoDriverGuardGapTests
         Assert.Equal(0, shell.Backend.SelectCalls);
     }
 
+    // ------------------------------------------------------------------ 选哪个角色:指定的槽位在名册里就用它,否则退回第一个能进的
+
+    /// <summary>同一个角色的"状态字节被拦住"版本(客户端对它拦住"开始游戏")。</summary>
+    private static OnlineCharacterEntry Blocked(OnlineCharacterEntry e)
+    {
+        return new OnlineCharacterEntry(e.Uid, e.NameBytes.ToArray(), e.X1, e.Job, e.GrowTypeByte, e.Level, e.D, OnlineCharacterRoster.BlockedStatus,
+            e.Equips, e.G, e.H, e.I, e.J, e.Premium, e.K, e.A2, e.B2, e.C2, e.D2);
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(1, 1)]
+    [InlineData(2, 2)]
+    [InlineData(3, 0)]
+    [InlineData(7, 0)]
+    public void The_configured_character_slot_is_used_when_the_roster_has_it_and_otherwise_the_first_entry(int configured, int expectedSlot)
+    {
+        // 三个角色:槽位 0..2 存在,等于人数的 3 与更远的 7 都不存在(不得越界读名册,退回第一个能进的)
+        var shell = new Shell(picker: false, manage: false, characterSlot: configured, "HeroA", "HeroB", "HeroC");
+
+        shell.RunUntil(() => shell.Backend.SelectCalls > 0, maxTicks: 200);
+
+        Assert.False(shell.Driver.Finished);
+        Assert.Equal(1, shell.Backend.SelectCalls);
+        Assert.Equal(expectedSlot, shell.Backend.LastSlot);
+    }
+
+    [Fact]
+    public void A_blocked_configured_slot_falls_back_to_the_first_enterable_entry_even_when_that_is_slot_zero()
+    {
+        var shell = new Shell(picker: false, manage: false, characterSlot: 2, "HeroA", "HeroB", "HeroC");
+        shell.Backend.ManagedRoster[1] = Blocked(shell.Backend.ManagedRoster[1]);
+        shell.Backend.ManagedRoster[2] = Blocked(shell.Backend.ManagedRoster[2]);
+
+        shell.RunUntil(() => shell.Backend.SelectCalls > 0, maxTicks: 200);
+
+        Assert.False(shell.Driver.Finished);
+        Assert.Equal(1, shell.Backend.SelectCalls);
+        Assert.Equal(0, shell.Backend.LastSlot);
+    }
+
+    [Fact]
+    public void The_fallback_takes_the_first_enterable_entry_and_not_a_later_one()
+    {
+        var shell = new Shell(picker: false, manage: false, characterSlot: 1, "HeroA", "HeroB", "HeroC", "HeroD");
+        shell.Backend.ManagedRoster[0] = Blocked(shell.Backend.ManagedRoster[0]);
+        shell.Backend.ManagedRoster[1] = Blocked(shell.Backend.ManagedRoster[1]);
+
+        shell.RunUntil(() => shell.Backend.SelectCalls > 0, maxTicks: 200);
+
+        Assert.False(shell.Driver.Finished);
+        Assert.Equal(1, shell.Backend.SelectCalls);
+        Assert.Equal(2, shell.Backend.LastSlot);
+    }
+
+    // ------------------------------------------------------------------ 选角光标:目标落到光标后面时往回走
+
+    /// <summary>
+    /// 把外壳当前的角色名册换成"指定槽位被拦住"的版本(界面里的名册不变,只是驱动下一帧读到的名册变了——
+    /// 与 <see cref="Missing_character_list_fails_the_charselect_stage_without_throwing"/> 同一个手法)。
+    /// </summary>
+    private static void BlockRosterEntries(Shell shell, params int[] slots)
+    {
+        var entries = new List<OnlineCharacterEntry>(shell.Flow.Characters.Entries);
+        foreach (int slot in slots)
+        {
+            entries[slot] = Blocked(entries[slot]);
+        }
+        MethodInfo setter = typeof(OnlineShellFlow).GetProperty(nameof(OnlineShellFlow.Characters)).GetSetMethod(true);
+        Assert.NotNull(setter);
+        setter.Invoke(shell.Flow, new object[] { new OnlineCharacterList(36, 0, 0, 0u, entries, 0) });
+    }
+
+    private static Shell NineCharacterShellWalkedTo(int characterSlot, int steps)
+    {
+        // 九个角色排在 6 列的网格里:槽位 0..5 是第 0 行,6..8 是第 1 行。驱动只走 steps 步(都是向右、向下),还没按 Enter
+        var shell = new Shell(picker: false, manage: false, characterSlot: characterSlot, "HeroA", "HeroB", "HeroC", "HeroD", "HeroE", "HeroF", "HeroG", "HeroH", "HeroI");
+        shell.RunUntilStage(OnlineShellStage.CharacterSelect);
+        for (int i = 0; i < steps; i++)
+        {
+            shell.Tick();
+        }
+        Assert.Equal(0, shell.Backend.SelectCalls);
+        Assert.False(shell.Driver.Finished);
+        return shell;
+    }
+
+    [Fact]
+    public void When_the_target_moves_behind_the_cursor_the_driver_walks_back_left_and_up_and_selects_it()
+    {
+        // 目标是槽位 8(第 2 列第 1 行):向右、向右、向下三步走到那里,还没按 Enter。
+        Shell shell = NineCharacterShellWalkedTo(characterSlot: 8, steps: 3);
+        BlockRosterEntries(shell, 8);                       // 槽位 8 现在进不去,目标退回第一个能进的:槽位 0
+
+        shell.RunUntil(() => shell.Backend.SelectCalls > 0, maxTicks: 40);
+
+        // 向左、向左、向上三步回到 (0,0),再按 Enter:选中的是槽位 0
+        Assert.False(shell.Driver.Finished);
+        Assert.Equal(1, shell.Backend.SelectCalls);
+        Assert.Equal(0, shell.Backend.LastSlot);
+    }
+
+    [Fact]
+    public void When_only_the_row_is_ahead_of_the_target_the_driver_walks_up_and_selects_it()
+    {
+        // 目标是槽位 7(第 1 列第 1 行):向右、向下两步走到那里,还没按 Enter。
+        Shell shell = NineCharacterShellWalkedTo(characterSlot: 7, steps: 2);
+        BlockRosterEntries(shell, 0, 7);                    // 槽位 7 与 0 进不去,目标退回第一个能进的:槽位 1(同一列、上一行)
+
+        shell.RunUntil(() => shell.Backend.SelectCalls > 0, maxTicks: 40);
+
+        Assert.False(shell.Driver.Finished);
+        Assert.Equal(1, shell.Backend.SelectCalls);
+        Assert.Equal(1, shell.Backend.LastSlot);
+    }
+
     // ------------------------------------------------------------------ 045:选图屏忙时驱动只等待
 
     private static GameFlow ThreeDungeonSelect(out DungeonEntry[] entries)
