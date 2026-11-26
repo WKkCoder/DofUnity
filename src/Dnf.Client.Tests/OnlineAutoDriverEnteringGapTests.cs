@@ -24,7 +24,7 @@ namespace Dnf.Client.Tests;
 /// <para>
 /// 用例 3 起用同一套接线补几处只有接上真控制器才走得到的驱动行为:流程离开副本阶段后不留旧局房间自动机、结算选"选择副本"后在选图页重新确认、
 /// 城镇里进副本控制器带着提示时的判法、房间自动机拿到的最短清图时间与整段上限、同一局里一直推进同一个房间自动机、
-/// 选图页被外部退回城镇之后驱动的静待。
+/// 选图页被外部退回城镇之后驱动的静待、序列里不是最后一项的"回城"每次都走一遍城镇与选图页。
 /// </para>
 /// </summary>
 public sealed class OnlineAutoDriverEnteringGapTests
@@ -631,5 +631,38 @@ public sealed class OnlineAutoDriverEnteringGapTests
         }
         Assert.Equal(0, rig.Flow.Runs);
         Assert.Empty(rig.Runs);
+    }
+
+    // ------------------------------------------------------------------ 用例 9:不是最后一项的"回城"
+
+    [Fact]
+    public void Town_returns_that_are_not_the_last_choice_send_the_driver_through_town_and_the_select_page_every_time()
+    {
+        // 序列 [回城, 回城, 回城]:前两次回城之后都不是收场,驱动要在城镇里重新请求选图页、确认、再打下一局;
+        // 第三次回城才是收场。第二次回到城镇时,"这次城镇停留已请求过选图页"那面旗必须已经被中间那一局清掉,否则驱动会卡在城镇里。
+        var choices = new[] { SettlementChoice.ReturnToTown, SettlementChoice.ReturnToTown, SettlementChoice.ReturnToTown };
+        using var rig = new EnteringRig(new OnlineAutoOptions(settlementChoices: choices));
+        rig.StartAtDungeonSelect();
+
+        rig.PumpUntil(() => rig.Driver.CompletedSettlements == 1, "第一次结算选了回城");
+        Assert.False(rig.Driver.Finished);
+        rig.PumpUntil(() => rig.Runs.Count == 2, "第一次回城之后驱动重新进副本,第二局建房");
+        rig.PumpUntil(() => rig.Driver.CompletedSettlements == 2, "第二次结算选了回城");
+        Assert.False(rig.Driver.Finished);
+        rig.PumpUntil(() => rig.Runs.Count == 3, "第二次回城之后驱动重新进副本,第三局建房");
+        rig.PumpUntil(() => rig.Driver.Finished, "第三局打完收场");
+
+        Assert.True(rig.Driver.Succeeded);
+        Assert.Equal(0, rig.Driver.ExitCode);
+        Assert.Equal("done", rig.Driver.Stage);
+        string expected = "DNF_ONLINE result=ok stage=done elapsedMs=" + rig.NowMs;
+        Assert.Equal(expected, rig.Driver.ResultLine);
+        Assert.Equal(new[] { expected }, rig.DriverLines);
+        Assert.Equal(3, rig.Driver.CompletedSettlements);
+        Assert.Equal(0, rig.Driver.RetryCycles);
+        Assert.Equal(3, rig.Flow.Runs);
+        Assert.Equal(3, rig.Flow.Settlements);
+        Assert.Equal(3, rig.Runs.Count);
+        Assert.Equal(GameStage.Town, rig.Flow.Stage);
     }
 }
