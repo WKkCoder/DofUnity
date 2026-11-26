@@ -434,7 +434,7 @@ _PIN_CALLS = 15
 _PIN_CRITERIA = 262
 # 细粒度对照的总条数(手写钉住):簇里的用例表、循环里的取值表被悄悄缩短(或某个簇被漏跑、少跑)时,条数对不上、自测失败。
 # 刻意增删对照时,同步改这个数;失败信息里列着各簇的条数,看是哪个簇变了。
-_PIN_CHECKS = 1098
+_PIN_CHECKS = 1102
 
 _LABEL = "<t>"
 _CAT_SIM = "缺少正数"
@@ -780,6 +780,15 @@ def _selftest_criteria_rules(rec, valid_text):
             rec.eq(f"簇5 {key!r} 里短关键字少第 {n} 个字符的近似行不算", is_criteria_line("foo " + key[:i] + key[i + 1:] + "bar"), False)
             rec.eq(f"簇5 {key!r} 里短关键字第 {n} 个字符换成 X 的近似行不算", is_criteria_line("foo " + key[:i] + "X" + key[i + 1:] + "bar"), False)
         rec.eq(f"簇5 {key!r} 整体换大小写的近似行不算", is_criteria_line("foo " + key.swapcase() + "bar"), False)
+        # 上面用 X 与删除各举了例子;这里把"换成什么字符"穷举:短关键字里的任一字符换成任一探测字符、或在它内部任一位置插入任一探测字符,
+        # 近似行都不含任何关键字、不是判据行(实际值是"被误当成判据行的近似行"的列表,期望空)。
+        # 插入的字符与相邻字符相同时(如 cli_hero 里在 c 后再插一个 c),短关键字作为子串仍在,那样的行本来就是判据行,不算近似行
+        probes = _PROBE_CHARS + (" ", "\t")
+        swapped = ["foo " + key[:i] + c + key[i + 1:] + "bar" for i in range(start, start + len(short)) for c in probes if c != key[i]]
+        inserted = ["foo " + key[:i] + c + key[i:] + "bar" for i in range(start + 1, start + len(short)) for c in probes]
+        inserted = [t for t in inserted if short not in t]
+        rec.eq(f"簇5 {key!r} 里短关键字的任一字符换成任一探测字符:近似行都不算", [t for t in swapped if is_criteria_line(t)], [])
+        rec.eq(f"簇5 {key!r} 里短关键字内部插入任一探测字符:近似行都不算", [t for t in inserted if is_criteria_line(t)], [])
     # 经 check_text:往验证段插一行说明性/信息性的行,判据行数仍是基线的数,不报错
     rows = valid_text.splitlines()
     at = _marker_row(rows) + 1
