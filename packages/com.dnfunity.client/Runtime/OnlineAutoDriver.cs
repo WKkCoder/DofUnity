@@ -437,6 +437,14 @@ namespace Dnf.Client
             {
                 return;
             }
+            if (dungeonController != null && dungeonController.Phase == OnlineDungeonFlowPhase.Entering)
+            {
+                // 进图五步(含 Retry 自动再进同一副本)在途期间静待进入新副本,避免把旧局收尾或过渡态误判为异常返城
+                Stage = "loading";
+                ResetRoomBot();
+                _settlementChosenForCurrentActive = false;
+                return;
+            }
 
             switch (flow.Stage)
             {
