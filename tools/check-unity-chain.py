@@ -533,6 +533,7 @@ class _Recorder:
         self.checks = 0
         self.failures = []
         self.last = "(尚无)"  # 最近一条已完成的对照名:某簇中途抛异常时,用它大致定位
+        self.clusters = []  # [(簇函数名, 这一簇跑了几条对照)]:run_selftest 末尾据此发现"有簇没被调用、或一条对照都没跑"
 
     def eq(self, name, actual, expected):
         self.checks += 1
@@ -545,6 +546,7 @@ def _cluster(rec, name, fn, *args):
     """运行一簇对照;被测函数抛异常(缺陷或变异)时记为该簇的一条失败,不让回溯盖住其余对照。"""
     import traceback  # 只在失败路径用;放在这里,不让文件头多出一行而顺移被测函数的行号
 
+    before = rec.checks
     try:
         fn(rec, *args)
     except Exception as exc:
@@ -555,6 +557,13 @@ def _cluster(rec, name, fn, *args):
             "不抛异常",
             f"{type(exc).__name__}: {exc} @ {os.path.basename(where.filename)}:{where.lineno} {where.name}",
         ))
+    rec.clusters.append((fn.__name__, rec.checks - before))
+
+
+def _cluster_gaps(ran, expected):
+    """expected 里的每个簇函数名都必须在 ran([(函数名, 对照条数)])里出现、且条数 > 0;返回没满足的名字(已排序)。"""
+    done = {name for name, count in ran if count > 0}
+    return sorted(set(expected) - done)
 
 
 def _only(errors, category):
@@ -1424,6 +1433,51 @@ def _selftest_real_variants(rec, valid_text):
         rec.eq(f"簇15 第 {n} 个调用行尾多一个引号:整行报无法拆分", _check_rows(rows, [(last, rows[last], rows[last] + ' "')]), broken)
 
 
+def _selftest_harness(rec):
+    """簇 16:自测基础设施本身——_Recorder 记条数与失败、_cluster 把异常记成失败、_cluster_gaps 发现没跑的簇。
+    这几处失灵时别的簇会悄悄全部通过,所以单独钉住。"""
+    # _Recorder.eq 不能用 rec.eq 来检查(它若不记失败,检查结果也被一起吞掉):这里直接抛异常,交给 _cluster 记成失败
+    probe = _Recorder()
+    fresh = (probe.checks, probe.failures, probe.last, probe.clusters)
+    if fresh != (0, [], "(尚无)", []):
+        raise AssertionError(f"新建的记录器不是空的:{fresh!r}")
+    probe.eq("甲", 1, 1)
+    probe.eq("乙", 1, 2)
+    state = (probe.checks, probe.failures, probe.last)
+    if state != (2, [("乙", 2, 1)], "乙"):
+        raise AssertionError(f"_Recorder.eq 的记录不对(应为 2 条、失败只记 乙 的名字/期望/实际、最近一条是 乙):{state!r}")
+
+    def quiet(r, extra):
+        r.eq("丙", extra, extra)
+        r.eq("丁", extra, extra)
+
+    def idle(r):
+        pass
+
+    probe = _Recorder()
+    probe.eq("先有一条", 1, 1)  # 簇的条数是这一簇自己跑的,不含之前已有的
+    _cluster(probe, "簇甲", quiet, 7)
+    _cluster(probe, "簇丙", idle)
+    rec.eq("簇16 _cluster 正常跑完:转交额外参数、记下函数名与各自的条数", (probe.checks, probe.failures, probe.clusters), (3, [], [("quiet", 2), ("idle", 0)]))
+
+    def boom(r):
+        r.eq("先通过", 1, 1)
+        raise ValueError("坏了")
+
+    probe = _Recorder()
+    _cluster(probe, "簇乙", boom)
+    rec.eq("簇16 _cluster 把异常记成一条失败,并记下函数名与条数", (probe.checks, len(probe.failures), probe.clusters), (2, 1, [("boom", 2)]))
+    name, expected, actual = probe.failures[0]
+    rec.eq("簇16 异常失败的名字带簇名与上一条已完成的对照", name, "簇乙 运行中抛出异常(上一条已完成的对照:先通过)")
+    rec.eq("簇16 异常失败的期望是不抛异常", expected, "不抛异常")
+    rec.eq("簇16 异常失败的实际带异常类型、信息与抛出处的函数名", (actual.startswith("ValueError: 坏了 @ "), actual.endswith(" boom")), (True, True))
+    # _cluster_gaps:每个应跑的簇都要出现过、且至少一条对照
+    rec.eq("簇16 簇都跑了:没有缺口", _cluster_gaps([("a", 2), ("b", 1)], ["a", "b"]), [])
+    rec.eq("簇16 有簇没被调用:报它", _cluster_gaps([("a", 2)], ["a", "b"]), ["b"])
+    rec.eq("簇16 有簇跑了但一条对照都没有:报它", _cluster_gaps([("a", 2), ("b", 0)], ["a", "b"]), ["b"])
+    rec.eq("簇16 缺口按名字排序", _cluster_gaps([("b", 1), ("a", 1)], ["b", "d", "a", "c"]), ["c", "d"])
+
+
 def run_selftest() -> int:
     with open(DEFAULT_SCRIPT, encoding="utf-8") as f:
         valid_text = f.read()
@@ -1492,10 +1546,16 @@ def run_selftest() -> int:
     _cluster(rec, "簇13", _selftest_spellings)
     _cluster(rec, "簇14", _selftest_fail_loud)
     _cluster(rec, "簇15", _selftest_real_variants, valid_text)
+    _cluster(rec, "簇16", _selftest_harness)
     if rec.failures:
         print(f"自测失败(细粒度对照 {rec.checks} 条中有 {len(rec.failures)} 条不符):", file=sys.stderr)
         for name, expected, actual in rec.failures:
             print(f"  - {name}\n      期望: {expected!r}\n      实际: {actual!r}", file=sys.stderr)
+        return 1
+    # 每个 _selftest_ 开头的簇函数都必须被调用过、且至少跑了一条对照:少调用一个簇、或簇什么都没检查,都不能悄悄通过
+    gaps = _cluster_gaps(rec.clusters, [n for n, v in globals().items() if n.startswith("_selftest_") and callable(v)])
+    if gaps:
+        print(f"自测失败(这些簇没有被调用、或一条对照都没跑:{gaps})", file=sys.stderr)
         return 1
 
     print(
