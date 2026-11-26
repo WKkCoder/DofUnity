@@ -434,7 +434,7 @@ _PIN_CALLS = 15
 _PIN_CRITERIA = 262
 # 细粒度对照的总条数(手写钉住):簇里的用例表、循环里的取值表被悄悄缩短(或某个簇被漏跑、少跑)时,条数对不上、自测失败。
 # 刻意增删对照时,同步改这个数;失败信息里列着各簇的条数,看是哪个簇变了。
-_PIN_CHECKS = 1061
+_PIN_CHECKS = 1098
 
 _LABEL = "<t>"
 _CAT_SIM = "缺少正数"
@@ -537,6 +537,7 @@ class _Recorder:
         self.failures = []
         self.last = "(尚无)"  # 最近一条已完成的对照名:某簇中途抛异常时,用它大致定位
         self.clusters = []  # [(簇函数名, 这一簇跑了几条对照)]:run_selftest 末尾据此发现"有簇没被调用、或一条对照都没跑"
+        self.labels = []  # [_cluster 的簇标签],按调用顺序:汇总时核对它们是从 簇1 起依次连号的
 
     def eq(self, name, actual, expected):
         self.checks += 1
@@ -550,6 +551,7 @@ def _cluster(rec, name, fn, *args):
     import traceback  # 只在失败路径用;放在这里,不让文件头多出一行而顺移被测函数的行号
 
     before = rec.checks
+    rec.labels.append(name)
     try:
         fn(rec, *args)
     except Exception as exc:
@@ -1452,8 +1454,8 @@ def _selftest_harness(rec):
     这几处失灵时别的簇会悄悄全部通过,所以单独钉住。"""
     # _Recorder.eq 不能用 rec.eq 来检查(它若不记失败,检查结果也被一起吞掉):这里直接抛异常,交给 _cluster 记成失败
     probe = _Recorder()
-    fresh = (probe.checks, probe.failures, probe.last, probe.clusters)
-    if fresh != (0, [], "(尚无)", []):
+    fresh = (probe.checks, probe.failures, probe.last, probe.clusters, probe.labels)
+    if fresh != (0, [], "(尚无)", [], []):
         raise AssertionError(f"新建的记录器不是空的:{fresh!r}")
     probe.eq("甲", 1, 1)
     probe.eq("乙", 1, 2)
@@ -1473,6 +1475,7 @@ def _selftest_harness(rec):
     _cluster(probe, "簇甲", quiet, 7)
     _cluster(probe, "簇丙", idle)
     rec.eq("簇16 _cluster 正常跑完:转交额外参数、记下函数名与各自的条数", (probe.checks, probe.failures, probe.clusters), (3, [], [("quiet", 2), ("idle", 0)]))
+    rec.eq("簇16 _cluster 按调用顺序记下簇标签", probe.labels, ["簇甲", "簇丙"])
 
     def inner():
         raise ValueError("坏了")
@@ -1484,6 +1487,7 @@ def _selftest_harness(rec):
     probe = _Recorder()
     _cluster(probe, "簇乙", boom)
     rec.eq("簇16 _cluster 把异常记成一条失败,并记下函数名与条数", (probe.checks, len(probe.failures), probe.clusters), (2, 1, [("boom", 2)]))
+    rec.eq("簇16 _cluster 抛异常的簇也记下簇标签", probe.labels, ["簇乙"])
     name, expected, actual = probe.failures[0]
     rec.eq("簇16 异常失败的名字带簇名与上一条已完成的对照", name, "簇乙 运行中抛出异常(上一条已完成的对照:先通过)")
     rec.eq("簇16 异常失败的期望是不抛异常", expected, "不抛异常")
@@ -1499,6 +1503,68 @@ def _selftest_harness(rec):
     rec.eq("簇16 缺口按名字排序", _cluster_gaps([("b", 1), ("a", 1)], ["b", "d", "a", "c"]), ["c", "d"])
     rec.eq("簇16 跑了却不在应跑列表里:报它", _cluster_gaps([("a", 2), ("x", 1)], ["a"]), ["x"])
     rec.eq("簇16 应跑列表是空的、而实际跑了簇:都报出来(发现表达式失灵时就是这样)", _cluster_gaps([("a", 1), ("b", 1)], []), ["a", "b"])
+
+    # 合成文本的几个辅助函数:各簇拿它们造输入、挑错误,它们悄悄变样时输入就不是原来想测的那一条了
+    rec.eq("簇16 _sim_text 带值:调用之后跟 -dnfquitaftersim 与值、再跟 -batchmode", _sim_text("5"), '"$app" -dnftimescale 4 -dnfquitaftersim 5 -batchmode')
+    rec.eq("簇16 _sim_text 省略:整个参数不出现", _sim_text(None), '"$app" -dnftimescale 4 -batchmode')
+    rec.eq("簇16 _join_rows:逐行以换行拼接、末尾再补一个换行", _join_rows(["a", "b"]), "a\nb\n")
+    rec.eq("簇16 _join_rows 空表:只剩一个换行", _join_rows([]), "\n")
+    rec.eq("簇16 _only 按类别关键词筛错误、保持原次序", _only(["甲 缺少 乙", "丙", "缺少 丁"], "缺少"), ["甲 缺少 乙", "缺少 丁"])
+    spans_rows = [
+        '"$app" -dnftimescale 4 -dnfquitaftersim 5',  # 0:单行调用在最前面
+        "echo x",  # 1
+        '"$app" -dnftimescale 4 \\',  # 2:续到 4
+        "  -batchmode \\  ",  # 3:反斜杠之后的行尾空白仍算续行(与被测的 join_logical_lines 一致)
+        "  -dnfquitaftersim 5",  # 4
+        '# "$app" -dnftimescale 4 \\',  # 5:注释行末尾的反斜杠不续行,注释也不是调用
+        '"$app" -batchmode',  # 6:没有 -dnftimescale
+        "echo -dnftimescale 4",  # 7:没有 "$app"
+        '"$app" -dnftimescalex 4',  # 8:-dnftimescale 只是别的词的前缀
+        '    # "$app" -dnftimescale 4',  # 9:缩进的注释里写着调用
+        "   # 缩进注释 \\",  # 10:缩进的注释行末尾的反斜杠也不续行
+        '"$app" -dnftimescale 4',  # 11:单行调用
+        '"$app2" -dnftimescale 4',  # 12:变量名只是以 app 开头
+        'run $app" -dnftimescale 4',  # 13:$app 只有右引号
+        '"$app" \\',  # 14:续到 16,-dnftimescale 在续行的行首
+        "  -dnftimescale 4 \\",  # 15
+        "  -dnfquitaftersim 5",  # 16
+        '"$app" -dnftimescale 4 \\',  # 17:续到最后一行 18,而最后一行自己也以反斜杠结尾
+        "  -dnfquitaftersim 5 \\",  # 18
+    ]
+    rec.eq(
+        "簇16 _call_spans:只数带 -dnftimescale 的 $app 调用,续行、注释、近似词各有归属",
+        _call_spans(spans_rows),
+        [(0, 0), (2, 4), (11, 11), (14, 16), (17, 18)],
+    )
+    rec.eq("簇16 _call_spans 空表:没有调用", _call_spans([]), [])
+    rec.eq("簇16 _marker_row:找以 echo \"已构建: 开头的行(缩进不碍事),缺冒号的近似行不算", _marker_row(["a", 'echo "已构建', '   echo "已构建: x', "b"]), 2)
+    rec.eq("簇16 _CALL 与 _GOOD 的字面值", (_CALL, _GOOD), ('"$app" -dnftimescale 4', '"$app" -dnftimescale 4 -dnfquitaftersim 5'))
+    # _check_rows:每条编辑改对应的那一行、只换第一处、旧串不在那一行时抛 AssertionError、不改入参
+    two = [_GOOD, _GOOD]
+    no_criteria = _msg_crit(0, 0, _FIRST_CRITERION, "<EOF>")
+    rec.eq(
+        "簇16 _check_rows 两条编辑各改各的行",
+        _check_rows(two, [(0, "5", "0"), (1, "5", "0")]),
+        ([_msg_sim(1), _msg_sim(2), no_criteria], 2, 0),
+    )
+    rec.eq("簇16 _check_rows 不改入参", two, [_GOOD, _GOOD])
+    doubled = [_CALL + " -dnfquitaftersim 5 -dnfquitaftersim 5"]
+    rec.eq(
+        "簇16 _check_rows 只换第一处:第二处的正数仍在,所以不报缺少正数",
+        _check_rows(doubled, [(0, "-dnfquitaftersim 5", "-dnfquitaftersim 0")]),
+        ([no_criteria], 1, 0),
+    )
+    rec.eq(
+        "簇16 _check_rows 同一行上的两条编辑按给定的次序依次做(后一条的旧串是前一条的结果)",
+        _check_rows([_GOOD], [(0, "5", "50"), (0, "50", "0")]),
+        ([_msg_sim(1), no_criteria], 1, 0),
+    )
+    try:
+        _check_rows(two, [(0, "不存在的旧串", "x")])
+        refused = False
+    except AssertionError:
+        refused = True
+    rec.eq("簇16 _check_rows 旧串不在那一行里:抛 AssertionError(空操作的变体不能悄悄通过)", refused, True)
 
 
 def _selftest_cli(rec):
@@ -1517,9 +1583,27 @@ def _selftest_cli(rec):
             sys.argv = saved
         return code, out.getvalue(), err.getvalue()
 
+    script_path = os.path.abspath(__file__)  # 下面会切换当前目录,先取绝对路径
+
+    def run_as_script(argv):
+        """把本文件当脚本(__name__ == "__main__")再执行一遍(不跑自测):返回 (SystemExit 的退出码, stdout, stderr);没有退出则退出码是 None。"""
+        import runpy
+
+        out, err, saved, code = io.StringIO(), io.StringIO(), sys.argv, None
+        sys.argv = ["check-unity-chain.py"] + argv
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                runpy.run_path(script_path, run_name="__main__")
+        except SystemExit as exc:
+            code = exc.code
+        finally:
+            sys.argv = saved
+        return code, out.getvalue(), err.getvalue()
+
     passed = f"PASS: timescale={_PIN_CALLS} 处均带 -dnfquitaftersim, 通过判据 {_PIN_CRITERIA} 行与基线逐行一致\n"
     rec.eq("簇17 不带参数:检查默认脚本,通过", run([]), (0, passed, ""))
     rec.eq("簇17 指定真实脚本的路径:通过", run([DEFAULT_SCRIPT]), (0, passed, ""))
+    rec.eq("簇17 作为脚本运行(__main__):通过时退出码 0、输出同上(退出码是 main() 的返回值)", run_as_script([]), (0, passed, ""))
     usage = __doc__ + "\n"
     rec.eq("簇17 -h:打印用法、退出码 0", run(["-h"]), (0, usage, ""))
     rec.eq("簇17 --help:打印用法、退出码 0", run(["--help"]), (0, usage, ""))
@@ -1552,6 +1636,7 @@ def _selftest_cli(rec):
     builtins.open = fake_open
     try:
         got = run([fake])
+        got_script = run_as_script([fake])
     finally:
         builtins.open = real_open
         os.chdir(saved_cwd)
@@ -1562,7 +1647,8 @@ def _selftest_cli(rec):
         "  实际: <EOF>\n"
     )
     rec.eq("簇17 指定有问题的文件:stdout 空、stderr 逐条 FAIL:(文件名相对仓库根)、退出码 1", got, (1, "", want_err))
-    rec.eq("簇17 读被检文件时指定 UTF-8 编码(与当前区域设置无关)", opened, ["utf-8"])
+    rec.eq("簇17 作为脚本运行(__main__)、指定有问题的文件:退出码 1、输出同上", got_script, (1, "", want_err))
+    rec.eq("簇17 读被检文件时指定 UTF-8 编码(与当前区域设置无关;上面两次运行各读一次)", opened, ["utf-8", "utf-8"])
 
 
 # 簇 18 的探测字符:可打印 ASCII(0x21 到 0x7e),再加 DEL、几个控制字符与非 ASCII 的空白类字符(VT、FF、US、NEL、NBSP、LS、全角空格)与一个汉字;
@@ -1627,6 +1713,142 @@ def _selftest_charset(rec):
     rec.eq("簇18 数字之后接 .0:只有 0.0 不是正数", [d for d in _DIGITS if positive(d + ".0") != (d != "0")], [])
     rec.eq("簇18 5 之后接任一数字:都是正数", [d for d in _DIGITS if not positive("5" + d)], [])
     rec.eq("簇18 5. 之后接任一数字:都是正数", [d for d in _DIGITS if not positive("5." + d)], [])
+
+
+def _selftest_runner(rec):
+    """簇 19:自测的汇总判定(_finish_selftest)——失败要响:有对照失败、簇标签不连号、簇对不上、总条数对不上,各自都要报错并返回 1;
+    全对时只在 stdout 打一行通过。用手工拼的记录器把每个分支都走一遍,并逐字比对输出(真跑的自测里这些失败分支一条都走不到)。"""
+    import io
+
+    def finish(r, discovered, ts=7, crit=9):
+        out, err = io.StringIO(), io.StringIO()
+        code = _finish_selftest(r, ts, crit, discovered, out=out, err=err)
+        return code, out.getvalue(), err.getvalue()
+
+    def sound(labels=("簇1", "簇2")):  # 一个全对的记录器:条数恰是钉住的数、标签连号、两个簇都有对照
+        r = _Recorder()
+        r.checks = _PIN_CHECKS
+        r.labels = list(labels)
+        r.clusters = [("f", 3), ("g", 4)]
+        return r
+
+    passed = f"自测通过: 正对照通过(timescale=7, criteria=9), 4 项整脚本负对照均正确拦截, 另有 {_PIN_CHECKS} 条细粒度对照全部符合预期\n"
+    rec.eq("簇19 全对:stdout 一行通过(带正对照里数到的两个数)、stderr 空、退出码 0", finish(sound(), ["f", "g"]), (0, passed, ""))
+    rec.eq("簇19 全对、标签只有一个:也通过", finish(sound(("簇1",)), ["f", "g"])[0], 0)
+    # 不指定输出流时:通过信息写 stdout、失败信息写 stderr(调用时才取 sys.stdout、sys.stderr,所以能被重定向)
+    import contextlib
+
+    def finish_default(r):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = _finish_selftest(r, 7, 9, ["f", "g"])
+        return code, out.getvalue(), err.getvalue()
+
+    rec.eq("簇19 不指定输出流:通过信息写到 stdout、stderr 空", finish_default(sound()), (0, passed, ""))
+
+    # 有对照失败:逐条列出名字、期望与实际(用 !r),退出码 1,stdout 空
+    failing = sound()
+    failing.failures = [("甲", 2, 1), ("乙", "x", "y")]
+    failed = (
+        f"自测失败(细粒度对照 {_PIN_CHECKS} 条中有 2 条不符):\n"
+        "  - 甲\n      期望: 2\n      实际: 1\n"
+        "  - 乙\n      期望: 'x'\n      实际: 'y'\n"
+    )
+    rec.eq("簇19 有对照失败:逐条报名字、期望与实际,退出码 1,stdout 空", finish(failing, ["f", "g"]), (1, "", failed))
+    rec.eq("簇19 不指定输出流:失败信息写到 stderr、stdout 空", finish_default(failing), (1, "", failed))
+    # 其余几项也都不对时,仍只报"有对照失败"这一项
+    worst = _Recorder()
+    worst.checks = 1
+    worst.failures = [("甲", 2, 1)]
+    worst.labels = ["簇9"]
+    rec.eq(
+        "簇19 对照失败、标签、簇、条数都不对:只报对照失败",
+        finish(worst, ["f"]),
+        (1, "", "自测失败(细粒度对照 1 条中有 1 条不符):\n  - 甲\n      期望: 2\n      实际: 1\n"),
+    )
+
+    # 簇标签必须是从 簇1 起依次连号的
+    for name, labels in (("跳号", ("簇1", "簇3")), ("不从 簇1 起", ("簇2", "簇3")), ("次序颠倒", ("簇2", "簇1")), ("重复", ("簇1", "簇1"))):
+        want = f"自测失败(簇标签不是从 簇1 起依次连号:{list(labels)})\n"
+        rec.eq(f"簇19 簇标签{name}:报错、退出码 1、stdout 空", finish(sound(labels), ["f", "g"]), (1, "", want))
+    unlabeled = _Recorder()
+    unlabeled.checks = 5
+    unlabeled.labels = ["簇2"]
+    rec.eq(
+        "簇19 标签、簇、条数都不对:只报标签",
+        finish(unlabeled, ["f"]),
+        (1, "", "自测失败(簇标签不是从 簇1 起依次连号:['簇2'])\n"),
+    )
+
+    # 发现簇函数:只认以 _selftest_ 开头、且可调用的名字(按定义次序)
+    rec.eq(
+        "簇19 _discover_clusters:前缀要完整、要可调用、前缀得在开头",
+        _discover_clusters({"_selftest_a": len, "_selftest_b": 5, "_selftest": len, "selftest_c": len, "x_selftest_d": len, "_selftest_e": len}),
+        ["_selftest_a", "_selftest_e"],
+    )
+    rec.eq("簇19 _discover_clusters 空命名空间:没有簇", _discover_clusters({}), [])
+    # 簇函数与簇调用对不上:没被调用的、一条对照都没跑的、不在发现表里的,都列出来
+    gap_msg = "自测失败(簇函数与簇调用对不上:没被调用、一条对照都没跑、或不在 _selftest_ 发现表里:{})\n"
+    rec.eq("簇19 有簇没被调用:报它、退出码 1", finish(sound(), ["f", "g", "h"]), (1, "", gap_msg.format(["h"])))
+    rec.eq("簇19 跑了的簇不在发现表里:报它", finish(sound(), ["f"]), (1, "", gap_msg.format(["g"])))
+    empty = sound()
+    empty.clusters = [("f", 3), ("g", 0)]
+    rec.eq("簇19 有簇一条对照都没跑:报它", finish(empty, ["f", "g"]), (1, "", gap_msg.format(["g"])))
+    skewed = sound()
+    skewed.checks = _PIN_CHECKS + 3
+    rec.eq("簇19 簇对不上、条数也不对:只报簇", finish(skewed, ["f", "g", "h"]), (1, "", gap_msg.format(["h"])))
+
+    # 总条数必须恰是钉住的数:多了少了都报,信息里带着各簇的条数
+    for name, delta in (("多了", 1), ("少了", -1)):
+        off = sound()
+        off.checks = _PIN_CHECKS + delta
+        want = (
+            f"自测失败(细粒度对照共 {_PIN_CHECKS + delta} 条,与钉住的 {_PIN_CHECKS} 条不一致:有对照被删或漏跑,或增删对照后没同步改 _PIN_CHECKS;"
+            "各簇的条数:[('f', 3), ('g', 4)])\n"
+        )
+        rec.eq(f"簇19 总条数{name}:报错并带各簇的条数、退出码 1、stdout 空", finish(off, ["f", "g"]), (1, "", want))
+
+
+def _discover_clusters(namespace):
+    """命名空间里所有以 _selftest_ 开头的可调用对象的名字(按定义次序):它们每一个都必须被 run_selftest 调用过。"""
+    return [n for n, v in namespace.items() if n.startswith("_selftest_") and callable(v)]
+
+
+def _print_failures(rec, err):
+    """把记录器里的对照失败逐条写到 err:名字、期望与实际(用 !r)。"""
+    print(f"自测失败(细粒度对照 {rec.checks} 条中有 {len(rec.failures)} 条不符):", file=err)
+    for name, expected, actual in rec.failures:
+        print(f"  - {name}\n      期望: {expected!r}\n      实际: {actual!r}", file=err)
+
+
+def _finish_selftest(rec, ts_cnt, crit_cnt, discovered, out=None, err=None):
+    """细粒度对照跑完之后的汇总判定:返回退出码(0 通过、1 失败),失败信息写 err(默认 stderr)、通过信息写 out(默认 stdout)。
+    判定的顺序即优先级:有对照失败、簇标签不连号、簇对不上、总条数对不上;前一条成立就只报它。
+    单列成函数,是为了簇 19 能用手工拼的记录器把每个失败分支都走一遍(真跑的自测里它们一条都走不到)。"""
+    err = sys.stderr if err is None else err
+    if rec.failures:
+        _print_failures(rec, err)
+        return 1
+    if rec.labels != [f"簇{i}" for i in range(1, len(rec.labels) + 1)]:
+        print(f"自测失败(簇标签不是从 簇1 起依次连号:{rec.labels})", file=err)
+        return 1
+    gaps = _cluster_gaps(rec.clusters, discovered)
+    if gaps:
+        print(f"自测失败(簇函数与簇调用对不上:没被调用、一条对照都没跑、或不在 _selftest_ 发现表里:{gaps})", file=err)
+        return 1
+    if rec.checks != _PIN_CHECKS:
+        print(
+            f"自测失败(细粒度对照共 {rec.checks} 条,与钉住的 {_PIN_CHECKS} 条不一致:有对照被删或漏跑,或增删对照后没同步改 _PIN_CHECKS;"
+            f"各簇的条数:{rec.clusters})",
+            file=err,
+        )
+        return 1
+    print(
+        f"自测通过: 正对照通过(timescale={ts_cnt}, criteria={crit_cnt}), 4 项整脚本负对照均正确拦截, "
+        f"另有 {rec.checks} 条细粒度对照全部符合预期",
+        file=out,
+    )
+    return 0
 
 
 def run_selftest() -> int:
@@ -1700,30 +1922,15 @@ def run_selftest() -> int:
     _cluster(rec, "簇16", _selftest_harness)
     _cluster(rec, "簇17", _selftest_cli)
     _cluster(rec, "簇18", _selftest_charset)
-    if rec.failures:
-        print(f"自测失败(细粒度对照 {rec.checks} 条中有 {len(rec.failures)} 条不符):", file=sys.stderr)
-        for name, expected, actual in rec.failures:
-            print(f"  - {name}\n      期望: {expected!r}\n      实际: {actual!r}", file=sys.stderr)
-        return 1
+    _cluster(rec, "簇19", _selftest_runner)
     # 每个 _selftest_ 开头的簇函数都必须被调用过、且至少跑了一条对照;反过来跑过的也都得在发现表里(发现表空了就不能悄悄通过):
-    # 少调用一个簇、簇什么都没检查、或发现簇的表达式失灵,都不能悄悄通过
-    gaps = _cluster_gaps(rec.clusters, [n for n, v in globals().items() if n.startswith("_selftest_") and callable(v)])
-    if gaps:
-        print(f"自测失败(簇函数与簇调用对不上:没被调用、一条对照都没跑、或不在 _selftest_ 发现表里:{gaps})", file=sys.stderr)
+    # 少调用一个簇、簇什么都没检查、或发现簇的函数失灵,都不能悄悄通过
+    code = _finish_selftest(rec, ts_cnt, crit_cnt, _discover_clusters(globals()))
+    # 兜底:汇总函数自己被改坏、把对照失败吞掉(或没返回 1)时,簇 19 对它的对照会失败并记进 rec.failures;这里不依赖它的判定,照样逐条报出来并失败
+    if rec.failures and code != 1:
+        _print_failures(rec, sys.stderr)
         return 1
-    if rec.checks != _PIN_CHECKS:
-        print(
-            f"自测失败(细粒度对照共 {rec.checks} 条,与钉住的 {_PIN_CHECKS} 条不一致:有对照被删或漏跑,或增删对照后没同步改 _PIN_CHECKS;"
-            f"各簇的条数:{rec.clusters})",
-            file=sys.stderr,
-        )
-        return 1
-
-    print(
-        f"自测通过: 正对照通过(timescale={ts_cnt}, criteria={crit_cnt}), 4 项整脚本负对照均正确拦截, "
-        f"另有 {rec.checks} 条细粒度对照全部符合预期"
-    )
-    return 0
+    return code
 
 
 def main() -> int:
