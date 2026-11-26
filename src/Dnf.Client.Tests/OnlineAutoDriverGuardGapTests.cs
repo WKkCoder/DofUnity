@@ -10,7 +10,7 @@ namespace Dnf.Client.Tests;
 /// r20fix-e2e C-1:无人值守驱动 <see cref="OnlineAutoDriver"/> 里"守卫条件"的补测——每个守卫的两侧各一条用例,期望值全是手写字面量。
 /// 覆盖:不带 <c>-dnfonlineauto-dungeon</c> 时的默认难度、选角光标在重新进入选角页时归零、选频道页"读失败"与"没有频道"各自停手、
 /// 选角页不重复发 Enter、空名册与缺名册、选图页忙时只等待、结算失败三条判据各自单独成立、指定副本不在或不可进时停手而不是确认第 0 项,
-/// 外壳各阶段与进图加载画面里驱动对外报的阶段名、登录被取消即失败、频道连接被取消与退回选服务器页之后驱动不重试,
+/// 外壳各阶段与进图加载画面里驱动对外报的阶段名、登录被取消即失败、频道连接被取消与退回选服务器页之后驱动不重试、进过城镇之后"已确认"旗已清,
 /// 以及命令行参数解析的几处边界:副本参数的两个值恰好是最后两个参数、最短清图时间值之后的参数仍要解析、数字参数最长 9 位、数字末尾带 NUL。
 /// 外壳那几条走真的 <see cref="OnlineShellFlow"/> 加假后端;选图与结算走真的 <see cref="GameFlow"/>、选图屏、联网进副本控制器与结算控制器。全部是合成数据。
 /// </summary>
@@ -961,6 +961,39 @@ public sealed class OnlineAutoDriverGuardGapTests
         Assert.Equal(SelectOutcome.None, flow.Select.Outcome);
         Assert.False(driver.Finished);
         Assert.Equal("select", driver.Stage);
+    }
+
+    [Fact]
+    public void A_visit_to_town_clears_the_confirmed_mark_so_the_select_page_opened_there_is_confirmed_again()
+    {
+        // 门槛挡下确认之后,"已确认"这面旗一直挂着(上一个用例);玩家从那张新选图屏退回城镇:驱动在城镇里把旗清掉并重新请求选图页,
+        // 新的选图页上驱动照常确认第二次(门槛仍然挡,所以这一步只看"确认被发出",不再往下走)
+        GameFlow flow = ThreeDungeonSelect(out _);
+        flow.EntryGate = _ => EntryVerdict.FatigueShort;
+        var driver = new OnlineAutoDriver(new OnlineAutoOptions());
+
+        driver.StepGame(flow, null, null, 16.0, 100);
+        Assert.Equal(SelectOutcome.Enter, flow.Select.Outcome);
+        flow.Poll();
+        Assert.Equal(1, flow.EntryBlocks);
+        Assert.Equal(GameStage.DungeonSelect, flow.Stage);
+        Assert.Equal(SelectOutcome.None, flow.Select.Outcome);
+
+        flow.Select.Back();
+        Assert.True(flow.Poll());
+        Assert.Equal(GameStage.Town, flow.Stage);
+
+        driver.StepGame(flow, null, null, 16.0, 200);       // 城镇:清旗、请求选图页
+        Assert.Equal(GameStage.DungeonSelect, flow.Stage);
+        Assert.Equal(SelectOutcome.None, flow.Select.Outcome);
+        Assert.Equal("town", driver.Stage);
+
+        driver.StepGame(flow, null, null, 16.0, 216);       // 新的选图页:旗已清,驱动确认
+        Assert.Equal(SelectOutcome.Enter, flow.Select.Outcome);
+        Assert.Equal("select", driver.Stage);
+        Assert.Equal(1, flow.EntryBlocks);
+        Assert.False(driver.Finished);
+        Assert.Null(driver.ResultLine);
     }
 
     [Fact]
