@@ -159,7 +159,7 @@ namespace Dnf.Client
             }
         }
 
-        private void QuitOnlineAware()
+        private void QuitOnlineAware(int exitCode = 0)
         {
             if (_onlineTown != null)
             {
@@ -188,7 +188,7 @@ namespace Dnf.Client
                 {
                 }
             }
-            Quit();
+            Quit(exitCode);
         }
 
         private void DisposeOnlineTown()

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    联网全流程(r20-e2e)的本地回环假服务端:
+    只使用公开协议规格与合成数据(账号、口令、密钥、编号 900+ 均合成),不含真实抓包字节与任何真实凭据。
+    同时作为进程内测试(被 Dnf.Client.Tests 引用)与独立可执行工具(被 tools/online-e2e-mac.sh 干跑模式启动)。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>dnf-netfake</AssemblyName>
+    <RootNamespace>Dnf.NetFake</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Dnf.Net\Dnf.Net.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 复用测试目录里无 xUnit 依赖的纯合成辅助类(internal,与 Dnf.Client.Tests 不冲突) -->
+    <Compile Include="..\Dnf.Net.Tests\GatewayFakeServer.cs" Link="Shared\GatewayFakeServer.cs" />
+    <Compile Include="..\Dnf.Net.Tests\GatewayLoopbackServer.cs" Link="Shared\GatewayLoopbackServer.cs" />
+    <Compile Include="..\Dnf.Net.Tests\NoticePayloadBuilder.cs" Link="Shared\NoticePayloadBuilder.cs" />
+  </ItemGroup>
+
+</Project>

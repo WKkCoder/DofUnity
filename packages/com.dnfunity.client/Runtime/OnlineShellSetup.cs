@@ -90,15 +90,21 @@ namespace Dnf.Client
         /// <param name="rememberedUser">上次登录成功记下的账号;没有为 null。</param>
         public static OnlineShellSetup Load(bool devBuild, string devRepoRoot, int devChannelPort, string persistentDataPath, string userArgument, string rememberedUser)
         {
+            return Load(devBuild, devRepoRoot, devChannelPort, persistentDataPath, userArgument, rememberedUser, 0);
+        }
+
+        /// <summary>同 <see cref="Load(bool, string, int, string, string, string)"/>,另可在开发构建下覆盖频道目录端口(<c>-dnfdirport</c>,合法 1..65535;缺省 0 表示维持默认 7001)。</summary>
+        public static OnlineShellSetup Load(bool devBuild, string devRepoRoot, int devChannelPort, string persistentDataPath, string userArgument, string rememberedUser, int devDirectoryPort)
+        {
             string user = string.IsNullOrEmpty(userArgument) ? null : userArgument;
             if (devBuild && !string.IsNullOrEmpty(devRepoRoot))
             {
-                return LoadLocalDev(devRepoRoot, devChannelPort, user, rememberedUser);
+                return LoadLocalDev(devRepoRoot, devChannelPort, user, rememberedUser, devDirectoryPort);
             }
             return LoadConfigFile(persistentDataPath, user ?? NullIfEmpty(rememberedUser));
         }
 
-        private static OnlineShellSetup LoadLocalDev(string repoRoot, int devChannelPort, string user, string rememberedUser)
+        private static OnlineShellSetup LoadLocalDev(string repoRoot, int devChannelPort, string user, string rememberedUser, int devDirectoryPort)
         {
             if (!LocalDevEntrySettings.TryLoad(repoRoot, out OnlineEntrySettings settings, out string problem))
             {
@@ -115,6 +121,10 @@ namespace Dnf.Client
             settings.Account = string.Empty;
             settings.Password = string.Empty;
             settings.ChannelPort = port;
+            if (devDirectoryPort >= 1 && devDirectoryPort <= 65535)
+            {
+                settings.ChannelDirectoryPort = devDirectoryPort;
+            }
             return new OnlineShellSetup(settings, OnlineShellConfigSource.LocalDev, null, port, prefillUser, prefillPassword);
         }
 

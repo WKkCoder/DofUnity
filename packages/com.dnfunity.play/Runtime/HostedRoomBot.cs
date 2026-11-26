@@ -102,6 +102,7 @@ namespace Dnf.Play
         private int _refused;
         private string _exit = "none";
         private HostedAbort _abort;
+        private double _minClearTimeMs;
 
         /// <param name="totalLimitMs">整段上限(毫秒):自动机从第一次推进起累计这么久结算还没来就停手。</param>
         /// <param name="noProgressLimitMs">无进展上限(毫秒):连续这么久没有任何进展(命中、击杀、上报、打翻物件)就停手。</param>
@@ -131,6 +132,25 @@ namespace Dnf.Play
         {
             get { return _bot.SmashObjects; }
             set { _bot.SmashObjects = value; }
+        }
+
+        /// <summary>
+        /// 最短清图时间(毫秒,缺省 0 = 关闭,缺省时行为与日志逐字不变;r20-e2e):
+        /// 设为正数时,在最后一间(没有下一间出口)且只剩最后 1 只活怪时,若 <see cref="ElapsedMs"/> 尚未达到该阈值则压制攻击并刷新无进展基线,
+        /// 防止清图过快触发服务端反作弊计数(E-414)。
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">负数、NaN 或无穷大。</exception>
+        public double MinClearTimeMs
+        {
+            get { return _minClearTimeMs; }
+            set
+            {
+                if (value < 0.0 || double.IsNaN(value) || double.IsInfinity(value))
+                {
+                    throw new ArgumentOutOfRangeException(nameof(value), value, "最短清图时间必须是有限的非负数");
+                }
+                _minClearTimeMs = value;
+            }
         }
 
         /// <summary>停手的原因;<see cref="HostedBotStop.None"/> 是还在打。停手之后不再变。</summary>
@@ -194,8 +214,18 @@ namespace Dnf.Play
             while (beats < DungeonBot.MaxBeatsPerFrame && _debtMs >= CombatScript.StepMs && Reason == HostedBotStop.None)
             {
                 bool attack = _bot.NextInRoom(run.Room, out int dirX, out int dirY);
+                bool holdingForMinClear = _minClearTimeMs > 0.0
+                    && ElapsedMs < _minClearTimeMs
+                    && ShouldHoldForMinClear(run);
+                if (holdingForMinClear)
+                {
+                    attack = false;
+                    dirX = 0;
+                    dirY = 0;
+                    _progressAtMs = ElapsedMs;
+                }
                 bool noExit = false;
-                if (!attack && WantsExit(run) && !_walker.Next(run.Room, run.ExitSide.Value, out dirX, out dirY))
+                if (!attack && !holdingForMinClear && WantsExit(run) && !_walker.Next(run.Room, run.ExitSide.Value, out dirX, out dirY))
                 {
                     noExit = true;      // 房间地图没有这一侧出口的位置:没法走过去,这一步站着,走完这一步就停手
                 }
@@ -209,6 +239,39 @@ namespace Dnf.Play
                 }
             }
             return beats;
+        }
+
+        /// <summary>
+        /// 是否应为最短清图时间压制出手：仅在最后一间（无下一间出口）且仍有活怪时生效；
+        /// 只剩 1 只活怪、或所有活怪都挤在主角单次攻击可同时清场的范围内时压制，避免一刀同时收掉最后多只怪提前清图；
+        /// 活怪数为 0 时绝不压制（避免掩盖 <see cref="HostedBotStop.NoSettlement"/>）。
+        /// </summary>
+        private static bool ShouldHoldForMinClear(HostedRoomRun run)
+        {
+            if (run.ExitSide.HasValue)
+            {
+                return false;
+            }
+            RoomCombatSession room = run.Room;
+            if (room.AliveCount <= 0)
+            {
+                return false;
+            }
+            if (room.AliveCount == 1)
+            {
+                return true;
+            }
+            double hx = room.Hero.X;
+            var monsters = room.Monsters;
+            for (int i = 0; i < monsters.Count; i++)
+            {
+                MonsterActor m = monsters[i];
+                if (m.IsAlive && Math.Abs(m.X - hx) > 160.0)
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         /// <summary>

@@ -36,6 +36,7 @@
     <Compile Include="..\..\packages\com.dnfunity.client\Runtime\TownDemoQuitPolicy.cs" Link="Runtime\TownDemoQuitPolicy.cs" />
     <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineItemSyncAdapter.cs" Link="Runtime\OnlineItemSyncAdapter.cs" />
     <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineItemLiveSync.cs" Link="Runtime\OnlineItemLiveSync.cs" />
+    <Compile Include="..\..\packages\com.dnfunity.client\Runtime\OnlineAutoDriver.cs" Link="Runtime\OnlineAutoDriver.cs" />
   </ItemGroup>
 
   <ItemGroup>

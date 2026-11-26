@@ -24,6 +24,7 @@
     <ProjectReference Include="..\Dnf.Render\Dnf.Render.csproj" />
     <ProjectReference Include="..\Dnf.Play\Dnf.Play.csproj" />
     <ProjectReference Include="..\Dnf.Net\Dnf.Net.csproj" />
+    <ProjectReference Include="..\Dnf.NetFake\Dnf.NetFake.csproj" />
     <ProjectReference Include="..\Dnf.Client\Dnf.Client.csproj" />
   </ItemGroup>
 

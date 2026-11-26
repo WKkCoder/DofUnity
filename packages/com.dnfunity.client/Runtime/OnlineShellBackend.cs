@@ -180,6 +180,7 @@ namespace Dnf.Client
     {
         private readonly OnlineClientSession _session;
         private readonly ChannelScriptData _fallbackScript;
+        private readonly int _directoryPort;
         private readonly object _stateLock = new object();
         private bool _channelEstablished;
         private int _connectInFlight;
@@ -189,6 +190,9 @@ namespace Dnf.Client
         {
             _session = new OnlineClientSession(settings);
             _fallbackScript = fallbackScript;
+            _directoryPort = settings != null && settings.ChannelDirectoryPort >= 1 && settings.ChannelDirectoryPort <= 65535
+                ? settings.ChannelDirectoryPort
+                : ChannelServiceConstants.DefaultPort;
             _session.Disconnected += OnDisconnected;
         }
 
@@ -225,7 +229,7 @@ namespace Dnf.Client
         public async Task<OnlineDirectoryReport> LoadDirectoryAsync(CancellationToken cancellationToken)
         {
             ChannelDirectoryLoadResult result = await _session.LoadChannelDirectoryAsync(
-                ChannelServiceConstants.DefaultPort, _fallbackScript, cancellationToken).ConfigureAwait(false);
+                _directoryPort, _fallbackScript, cancellationToken).ConfigureAwait(false);
             return new OnlineDirectoryReport(result.Outcome, result.Snapshot);
         }
 

@@ -27,6 +27,10 @@ namespace Dnf.Client
         private string _onlineUser;          // -dnfonlineuser <账号>:预填登录界面的账号(口令不走命令行)
         private bool _serverUi;              // -dnfserverui:选服务器、选频道用真界面(不带时这两个阶段是占位、自动放行)
         private bool _onlineAllowCharWrite;  // -dnfallowcharwrite:仅开发构建生效，允许联网选角创角/删角写操作(默认 false)
+        private int _netDirPort;             // -dnfdirport <1..65535>:仅开发构建覆盖频道目录端口(缺省 0 = 默认 7001)
+        private OnlineAutoOptions _onlineAutoOptions;
+        private OnlineAutoDriver _onlineAutoDriver;
+        private long _onlineAutoStartMs;
         private OnlineShellHost _shell;      // 联网外壳;进游戏之后它继续拥有联网会话
         private string _shellDir;            // 数据目录(第一次进游戏时开声音要用)
         private GameFlow _frozenFlow;        // 掉线或换角色时外壳拿回屏幕:被冻住的游戏流程
@@ -81,7 +85,7 @@ namespace Dnf.Client
                 bool dev = Application.isEditor || Debug.isDebugBuild;
                 bool allowCharWrite = OnlineShellSetupLoader.ResolveAllowCharWrite(dev, _onlineAllowCharWrite);
                 string remembered = PlayerPrefs.HasKey(OnlineUserPrefsKey) ? PlayerPrefs.GetString(OnlineUserPrefsKey) : null;
-                OnlineShellSetup setup = OnlineShellSetupLoader.Load(dev, _netRoot, _netPort, Application.persistentDataPath, _onlineUser, remembered);
+                OnlineShellSetup setup = OnlineShellSetupLoader.Load(dev, _netRoot, _netPort, Application.persistentDataPath, _onlineUser, remembered, _netDirPort);
                 CharacterSelectScene shellArt = CharacterSelectScene.ForOnline(_assets);
                 _onlineSelectOptions = OnlineCharacterSelectSetup.Create(_assets, _fonts != null);
                 _shell = OnlineShellHost.Create(setup, shellArt, line => Debug.Log(line), _serverUi,
@@ -90,6 +94,8 @@ namespace Dnf.Client
                     _serverUi ? ChannelDirectoryCatalog.Create(_assets, _fonts != null) : null,
                     _fonts,
                     allowCharWrite);
+                _onlineAutoDriver = _onlineAutoOptions != null ? new OnlineAutoDriver(_onlineAutoOptions, line => Debug.Log(line)) : null;
+                _onlineAutoStartMs = (long)(Time.realtimeSinceStartupAsDouble * 1000.0);
                 _shellDir = dir;
                 _shell.TakeViewChange();         // 第一个视图就是下面造的这一个
                 _view = new TownView(_assets, _shell.Flow.Scene, StageBackground);
@@ -133,6 +139,15 @@ namespace Dnf.Client
                 // 游戏占着屏幕时键盘鼠标归游戏(外壳只每帧轮询、发现断线),不把输入给外壳
                 OnlineShellFrameInput input = _shell.InGame ? default(OnlineShellFrameInput) : ReadShellInput();
                 _shell.Tick(input, Math.Min(Time.unscaledDeltaTime * 1000.0, 100.0), (long)(Time.realtimeSinceStartupAsDouble * 1000.0));
+                if (_onlineAutoDriver != null)
+                {
+                    _onlineAutoDriver.StepShell(_shell.Flow, OnlineAutoElapsedMs());
+                    if (_onlineAutoDriver.Finished)
+                    {
+                        FinishOnlineAuto();
+                        return false;
+                    }
+                }
                 string user = _shell.TakeLoggedInUsername();
                 if (user != null && _quitAfterSeconds < 0f)
                 {
@@ -271,6 +286,7 @@ namespace Dnf.Client
         private void DisposeOnlineShell()
         {
             DisposeOnlineTown();
+            _onlineAutoDriver = null;
             _onlineAtlas = null;
             _onlineSelectOptions = null;
             if (_shell != null)
@@ -281,6 +297,65 @@ namespace Dnf.Client
             _frozenFlow = null;
             _frozenBot = null;
             _frozenPaused = false;
+        }
+
+        private bool IsOnlineAutoDrivingRoom =>
+            _onlineAutoDriver != null
+            && _flow != null
+            && _flow.Stage == GameStage.Dungeon
+            && !IsOnlineSettlementActive
+            && _flow.Run is HostedRoomRun;
+
+        private void ParseOnlineAutoArguments(string[] args)
+        {
+            bool ok = OnlineAutoOptions.TryParse(args, _onlineMode, out OnlineAutoOptions parsed, out string ignoredReason, out string error);
+            if (!ok)
+            {
+                Debug.Log("DNF_TOWN_DEMO online auto error=" + error);
+                Debug.Log("DNF_ONLINE result=fail stage=args elapsedMs=0");
+                Quit(1);
+                return;
+            }
+            if (!string.IsNullOrEmpty(ignoredReason))
+            {
+                Debug.Log("DNF_TOWN_DEMO online auto ignored reason=" + ignoredReason);
+                _onlineAutoOptions = null;
+                return;
+            }
+            _onlineAutoOptions = parsed;
+        }
+
+        private long OnlineAutoElapsedMs()
+        {
+            long now = (long)(Time.realtimeSinceStartupAsDouble * 1000.0);
+            return now > _onlineAutoStartMs ? now - _onlineAutoStartMs : 0;
+        }
+
+        private bool StepOnlineAutoInGame(double deltaMs)
+        {
+            if (_onlineAutoDriver == null || _flow == null)
+            {
+                return false;
+            }
+            _onlineAutoDriver.StepGame(_flow, _onlineDungeon, _onlineSettlement, deltaMs, OnlineAutoElapsedMs());
+            if (_onlineAutoDriver.Finished)
+            {
+                FinishOnlineAuto();
+                return true;
+            }
+            return false;
+        }
+
+        private void FinishOnlineAuto()
+        {
+            if (_onlineAutoDriver == null)
+            {
+                return;
+            }
+            int exitCode = _onlineAutoDriver.ExitCode;
+            _onlineAutoDriver = null;
+            PrepareOnlineDungeonForQuit();
+            QuitOnlineAware(exitCode);
         }
     }
 }
