@@ -1,6 +1,10 @@
 using System.Text;
+using Dnf.Data;
+using Dnf.Data.Tests;
 using Dnf.Game;
 using Dnf.Game.Tests;
+using Dnf.Render;
+using Dnf.Script;
 
 namespace Dnf.Play.Tests;
 
@@ -9,7 +13,9 @@ namespace Dnf.Play.Tests;
 /// ① <see cref="HeroProgress.ApplyOnlineItems"/> 里装备个体实例的判定(<c>WithOnlineEquipInstance</c>):每个字段单独非默认、各自的钳制边界;
 /// ② <see cref="OnlineItemSlotEntry"/> 的构造缺省值(数量缺省 1、其余缺省"没有个体状态")与每个参数落到自己的属性;
 /// ③ 背包、快捷栏里的装备同样带个体实例;已穿着的装备原样重发不算变化、任何差异都要换掉;
-/// ④ 金币钳制与 <see cref="OnlineItemSyncData"/> 的拷贝语义
+/// ④ 溢出计数的精确值(快捷栏条目、背包条目各自与合计)、快捷栏 3..8 的落位与越界条目、物品编号的 int 边界(含线上无符号编号回绕);
+/// ⑤ 报告与数据包里各计数(已应用、无效部位、未知物品、四个未建模空间与备用装备组)各落到自己的属性;
+/// ⑥ 金币钳制与 <see cref="OnlineItemSyncData"/> 的拷贝语义
 /// 逐条钉住。全用合成编号(900001+/901001+),预期值全是手算字面量,不碰存档与网络。
 /// </summary>
 public sealed class OnlineHeroItemSyncGapTests
@@ -19,6 +25,10 @@ public sealed class OnlineHeroItemSyncGapTests
     private const int CoatCode = 900003;
     private const int PotionCode = 901001;
     private const int MaterialCode = 901002;
+
+    // 物品编号的 int 边界:目录里登记了 int 最大值与 -1 两件材料,用来区分"正常查"与"线上无符号编号回绕后误查"
+    private const int MaxIdMaterialCode = int.MaxValue;
+    private const int NegativeIdMaterialCode = -1;
 
     private static GameData BuildGameData()
     {
@@ -54,14 +64,90 @@ public sealed class OnlineHeroItemSyncGapTests
             .Tag("[usable job]").Str("[all]"));
         fx.List(ItemCatalog.StackableListPath,
             (PotionCode, "test/potion.stk"),
-            (MaterialCode, "test/material.stk"));
+            (MaterialCode, "test/material.stk"),
+            (MaxIdMaterialCode, "test/max_id_material.stk"),
+            (NegativeIdMaterialCode, "test/negative_id_material.stk"));
         fx.Tokens("stackable/test/potion.stk", w => w
             .Tag("[stackable type]").Str("[waste]").Int(0)
             .Tag("[stack limit]").Int(100));
         fx.Tokens("stackable/test/material.stk", w => w
             .Tag("[stackable type]").Str("[material]").Int(0)
             .Tag("[stack limit]").Int(1000));
+        fx.Tokens("stackable/test/max_id_material.stk", w => w
+            .Tag("[stackable type]").Str("[material]").Int(0)
+            .Tag("[stack limit]").Int(1000));
+        fx.Tokens("stackable/test/negative_id_material.stk", w => w
+            .Tag("[stackable type]").Str("[material]").Int(0)
+            .Tag("[stack limit]").Int(1000));
         return new GameData(fx.Build());
+    }
+
+    /// <summary>只登记了物品目录的最小合成 PVF(磁盘上的临时目录),专给 <see cref="OnlineItemKindLookup.ResolveKindCode"/> 的 int 边界用。</summary>
+    private sealed class LookupAssets : IDisposable
+    {
+        private readonly string _root;
+        private readonly List<string> _strings = new List<string>();
+        private readonly Dictionary<string, int> _stringIndex = new Dictionary<string, int>(StringComparer.Ordinal);
+        private readonly List<TestData.PvfFileSpec> _files = new List<TestData.PvfFileSpec>();
+
+        public LookupAssets()
+        {
+            _root = Path.Combine(Path.GetTempPath(), "dnf-onlineitems-gap-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Path.Combine(_root, "ImagePacks2"));
+
+            AddTokens(ItemCatalog.EquipmentListPath,
+                ((byte)TokenType.Int, WeaponCode), ((byte)TokenType.String, Intern("test/weapon.equ")));
+            AddTokens("equipment/test/weapon.equ",
+                ((byte)TokenType.Tag, Intern("[equipment type]")), ((byte)TokenType.String, Intern("[weapon]")), ((byte)TokenType.Int, 0));
+            AddTokens(ItemCatalog.StackableListPath,
+                ((byte)TokenType.Int, MaxIdMaterialCode), ((byte)TokenType.String, Intern("test/max_id_material.stk")),
+                ((byte)TokenType.Int, NegativeIdMaterialCode), ((byte)TokenType.String, Intern("test/negative_id_material.stk")));
+            AddTokens("stackable/test/max_id_material.stk",
+                ((byte)TokenType.Tag, Intern("[stackable type]")), ((byte)TokenType.String, Intern("[material]")), ((byte)TokenType.Int, 0),
+                ((byte)TokenType.Tag, Intern("[stack limit]")), ((byte)TokenType.Int, 1000));
+            AddTokens("stackable/test/negative_id_material.stk",
+                ((byte)TokenType.Tag, Intern("[stackable type]")), ((byte)TokenType.String, Intern("[material]")), ((byte)TokenType.Int, 0),
+                ((byte)TokenType.Tag, Intern("[stack limit]")), ((byte)TokenType.Int, 1000));
+
+            byte[][] rawStrings = _strings.Select(s => Encoding.Latin1.GetBytes(s)).ToArray();
+            _files.Add(new TestData.PvfFileSpec(GameData.StringTablePath, TestData.BuildStringTable(rawStrings), 0));
+            (byte[] pvf, int _) = TestData.BuildPvf(_files, validChecksums: true);
+            File.WriteAllBytes(Path.Combine(_root, "Script.pvf"), pvf);
+            Assets = DnfAssets.Open(_root);
+        }
+
+        public DnfAssets Assets { get; }
+
+        private int Intern(string text)
+        {
+            if (!_stringIndex.TryGetValue(text, out int idx))
+            {
+                idx = _strings.Count;
+                _strings.Add(text);
+                _stringIndex[text] = idx;
+            }
+            return idx;
+        }
+
+        private void AddTokens(string path, params (byte Type, int Value)[] tokens)
+        {
+            _files.Add(new TestData.PvfFileSpec(path, TestData.BuildTokenScript(tokens), 0));
+        }
+
+        public void Dispose()
+        {
+            Assets.Dispose();
+            try
+            {
+                Directory.Delete(_root, true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
     }
 
     private static HeroProgress OnlineHero()
@@ -380,6 +466,268 @@ public sealed class OnlineHeroItemSyncGapTests
         Assert.Equal(0, report.EquipsApplied);
         Assert.Equal(WeaponCode, SoleWorn(hero).Code);
         Assert.Equal(version, hero.Worn.Version);
+    }
+
+    // ───────────────────────── 背包溢出计数 ─────────────────────────
+
+    [Fact]
+    public void Overflow_count_in_the_report_is_exact_below_int_max_and_saturates_at_int_max_beyond_it()
+    {
+        // 材料页 56 格、每格上限 1000,共 56000 件;一条 int 最大值件的条目放进 56000 件,溢出 2147483647 − 56000 = 2147427647
+        HeroProgress single = OnlineHero();
+        OnlineItemSyncReport exact = single.ApplyOnlineItems(BagOnly(new OnlineItemSlotEntry(9, MaterialCode, int.MaxValue)));
+        Assert.Equal(56000, single.Bag.CountOf(MaterialCode));
+        Assert.Equal(1, exact.BagApplied);
+        Assert.Equal(2147427647, exact.OverflowItemCount);
+
+        // 再来一条同样的:材料页已满,整条 2147483647 件溢出,累计 4294911294 超出 int 范围 → 报告里封顶在 int 最大值,不回绕成负数
+        HeroProgress twice = OnlineHero();
+        OnlineItemSyncReport saturated = twice.ApplyOnlineItems(BagOnly(
+            new OnlineItemSlotEntry(9, MaterialCode, int.MaxValue),
+            new OnlineItemSlotEntry(10, MaterialCode, int.MaxValue)));
+        Assert.Equal(56000, twice.Bag.CountOf(MaterialCode));
+        Assert.Equal(1, saturated.BagApplied);   // 第二条一件也没放进去,不算已应用
+        Assert.Equal(int.MaxValue, saturated.OverflowItemCount);
+    }
+
+    [Theory]
+    [InlineData(5599, 0)]      // 消耗品页 56 格 × 每格上限 100 = 5600 件
+    [InlineData(5600, 0)]      // 刚好放满
+    [InlineData(5601, 1)]      // 多一件
+    [InlineData(10000, 4400)]
+    public void Quick_entry_overflow_is_the_exact_number_of_items_that_did_not_fit(int count, int expectedOverflow)
+    {
+        HeroProgress hero = OnlineHero();
+        var data = new OnlineItemSyncData(false, 0L, null, new[] { new OnlineItemSlotEntry(3, PotionCode, count) }, null, hasBagData: true, hasEquipData: false);
+
+        OnlineItemSyncReport report = hero.ApplyOnlineItems(data);
+
+        Assert.Equal(count - expectedOverflow, hero.Bag.CountOf(PotionCode));
+        Assert.Equal(expectedOverflow, report.OverflowItemCount);
+        Assert.Equal(1, report.QuickApplied);           // 放进去一部分就算已应用,快捷格照样指向这件物品
+        Assert.Equal(0, report.BagApplied);
+        Assert.Equal(PotionCode, hero.QuickCodeAt(0));
+    }
+
+    [Theory]
+    [InlineData(55999, 0)]     // 材料页 56 格 × 每格上限 1000 = 56000 件
+    [InlineData(56000, 0)]
+    [InlineData(56001, 1)]
+    [InlineData(57000, 1000)]
+    public void Bag_entry_overflow_is_the_exact_number_of_items_that_did_not_fit(int count, int expectedOverflow)
+    {
+        HeroProgress hero = OnlineHero();
+
+        OnlineItemSyncReport report = hero.ApplyOnlineItems(BagOnly(new OnlineItemSlotEntry(9, MaterialCode, count)));
+
+        Assert.Equal(count - expectedOverflow, hero.Bag.CountOf(MaterialCode));
+        Assert.Equal(expectedOverflow, report.OverflowItemCount);
+        Assert.Equal(1, report.BagApplied);
+        Assert.Equal(0, report.QuickApplied);
+    }
+
+    [Fact]
+    public void Overflow_from_quick_entries_and_bag_entries_accumulates_into_one_count()
+    {
+        // 药水 10000 件溢出 4400(快捷栏条目),材料 57000 件溢出 1000(背包条目),合计 5400
+        HeroProgress hero = OnlineHero();
+        var data = new OnlineItemSyncData(
+            false, 0L,
+            new[] { new OnlineItemSlotEntry(9, MaterialCode, 57000) },
+            new[] { new OnlineItemSlotEntry(3, PotionCode, 10000) },
+            null, hasBagData: true, hasEquipData: false);
+
+        OnlineItemSyncReport report = hero.ApplyOnlineItems(data);
+
+        Assert.Equal(5600, hero.Bag.CountOf(PotionCode));
+        Assert.Equal(56000, hero.Bag.CountOf(MaterialCode));
+        Assert.Equal(5400, report.OverflowItemCount);
+        Assert.Equal(1, report.QuickApplied);
+        Assert.Equal(1, report.BagApplied);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    [InlineData(9)]
+    [InlineData(65535)]
+    public void Quick_entries_outside_the_six_quick_slots_still_enter_the_bag_but_fill_no_quick_slot(int slot)
+    {
+        HeroProgress hero = OnlineHero();
+        var data = new OnlineItemSyncData(false, 0L, null, new[] { new OnlineItemSlotEntry((ushort)slot, PotionCode, 4) }, null, hasBagData: true, hasEquipData: false);
+
+        OnlineItemSyncReport report = hero.ApplyOnlineItems(data);
+
+        Assert.Equal(4, hero.Bag.CountOf(PotionCode));
+        Assert.Equal(0, report.QuickApplied);
+        Assert.Equal(0, hero.QuickFilled);
+        Assert.Equal(0, report.OverflowItemCount);
+    }
+
+    [Theory]
+    [InlineData(3, 0)]
+    [InlineData(4, 1)]
+    [InlineData(7, 4)]
+    [InlineData(8, 5)]
+    public void Quick_entries_in_slots_three_through_eight_fill_the_matching_quick_slot(int slot, int quickIndex)
+    {
+        HeroProgress hero = OnlineHero();
+        var data = new OnlineItemSyncData(false, 0L, null, new[] { new OnlineItemSlotEntry((ushort)slot, PotionCode, 4) }, null, hasBagData: true, hasEquipData: false);
+
+        OnlineItemSyncReport report = hero.ApplyOnlineItems(data);
+
+        Assert.Equal(1, report.QuickApplied);
+        Assert.Equal(1, hero.QuickFilled);
+        for (int i = 0; i < 6; i++)
+        {
+            Assert.Equal(i == quickIndex ? PotionCode : 0, hero.QuickCodeAt(i));
+        }
+        Assert.Equal(4, hero.QuickCountAt(quickIndex));
+    }
+
+    // ───────────────────────── 物品编号的 int 边界 ─────────────────────────
+
+    [Fact]
+    public void Item_code_int_max_is_looked_up_but_larger_wire_codes_never_wrap_into_the_catalog()
+    {
+        HeroProgress hero = OnlineHero();
+
+        OnlineItemSyncReport report = hero.ApplyOnlineItems(BagOnly(
+            new OnlineItemSlotEntry(9, MaxIdMaterialCode, 7),    // int 最大值:目录里登记了它,正常放进背包
+            new OnlineItemSlotEntry(10, uint.MaxValue, 5),       // 线上编号 4294967295 回绕成 -1:目录里登记了 -1,但这个线上编号不是它
+            new OnlineItemSlotEntry(11, 2147483648u, 3)));       // 回绕成 int 最小值:目录里没有
+
+        Assert.Equal(7, hero.Bag.CountOf(MaxIdMaterialCode));
+        Assert.Equal(0, hero.Bag.CountOf(NegativeIdMaterialCode));
+        Assert.Equal(1, report.BagApplied);
+        Assert.Equal(2, report.UnknownItemCount);
+    }
+
+    [Fact]
+    public void Kind_lookup_resolves_int_max_but_treats_codes_beyond_int_range_as_unknown()
+    {
+        using var assets = new LookupAssets();
+
+        Assert.Equal(1, OnlineItemKindLookup.ResolveKindCode(assets.Assets, (uint)int.MaxValue));   // 登记过的 int 最大值:普通物品
+        Assert.Equal(0, OnlineItemKindLookup.ResolveKindCode(assets.Assets, 2147483648u));          // 回绕成 int 最小值:没有
+        Assert.Equal(0, OnlineItemKindLookup.ResolveKindCode(assets.Assets, uint.MaxValue));        // 回绕成 -1:目录里登记了 -1,但线上编号不是它
+        Assert.Equal(1, OnlineItemKindLookup.ResolveKindCode(assets.Assets, WeaponCode));           // 对照:普通装备
+        Assert.Equal(0, OnlineItemKindLookup.ResolveKindCode(null, (uint)int.MaxValue));            // 没有资产:一律未知
+    }
+
+    // ───────────────────────── 报告与数据包里各计数的落位 ─────────────────────────
+
+    [Fact]
+    public void Worn_equipment_report_counts_applied_invalid_slot_and_unknown_entries_separately()
+    {
+        // 部位 9 与 22 越界(各算一次无效部位);部位 14 的物品号不认识、部位 16 放的是药水(不是装备):各算一次未知;部位 10 与 12 有效
+        HeroProgress hero = OnlineHero();
+
+        OnlineItemSyncReport report = hero.ApplyOnlineItems(WornOnly(
+            new OnlineItemSlotEntry(9, WeaponCode, 1),
+            new OnlineItemSlotEntry(10, WeaponCode, 1),
+            new OnlineItemSlotEntry(12, CoatCode, 1),
+            new OnlineItemSlotEntry(14, 909999, 1),
+            new OnlineItemSlotEntry(16, PotionCode, 1),
+            new OnlineItemSlotEntry(22, WeaponCode, 1)));
+
+        Assert.True(report.EquipsSynced);
+        Assert.Equal(2, report.EquipsApplied);
+        Assert.Equal(2, report.InvalidEquipSlotCount);
+        Assert.Equal(2, report.UnknownItemCount);
+        Assert.Equal(2, hero.Worn.EquippedCount);
+        Assert.Equal(WeaponCode, hero.Worn.Get(10)?.Code);
+        Assert.Equal(CoatCode, hero.Worn.Get(12)?.Code);
+        Assert.Null(hero.Worn.Get(14));
+        Assert.Null(hero.Worn.Get(16));
+        // 没有背包数据:背包类计数全是 0
+        Assert.False(report.InventorySynced);
+        Assert.Equal(0, report.BagApplied);
+        Assert.Equal(0, report.QuickApplied);
+        Assert.Equal(0, report.OverflowItemCount);
+    }
+
+    [Fact]
+    public void Bag_report_counts_unknown_entries_and_leaves_the_worn_counters_at_zero()
+    {
+        HeroProgress hero = OnlineHero();
+
+        OnlineItemSyncReport report = hero.ApplyOnlineItems(new OnlineItemSyncData(
+            false, 0L,
+            new[] { new OnlineItemSlotEntry(9, MaterialCode, 2), new OnlineItemSlotEntry(10, 909999, 1), new OnlineItemSlotEntry(11, 909998, 1) },
+            new[] { new OnlineItemSlotEntry(3, 909997, 1), new OnlineItemSlotEntry(4, PotionCode, 3) },
+            null, hasBagData: true, hasEquipData: false));
+
+        Assert.True(report.InventorySynced);
+        Assert.False(report.EquipsSynced);
+        Assert.Equal(3, report.UnknownItemCount);     // 背包条目 2 个、快捷栏条目 1 个
+        Assert.Equal(1, report.BagApplied);
+        Assert.Equal(1, report.QuickApplied);
+        Assert.Equal(0, report.EquipsApplied);
+        Assert.Equal(0, report.InvalidEquipSlotCount);
+        Assert.Equal(2, hero.Bag.CountOf(MaterialCode));
+        Assert.Equal(3, hero.Bag.CountOf(PotionCode));
+    }
+
+    [Fact]
+    public void Sync_data_built_without_unmodeled_counts_carries_zero_for_each_of_them()
+    {
+        var data = new OnlineItemSyncData(false, 0L, null, null, null, false, false);
+
+        Assert.Equal(0, data.UnmodeledAvatarBagCount);
+        Assert.Equal(0, data.UnmodeledCargoCount);
+        Assert.Equal(0, data.UnmodeledPetBagCount);
+        Assert.Equal(0, data.UnmodeledAccountCargoCount);
+        Assert.Equal(0, data.UnmodeledExpandEquipCount);
+
+        OnlineItemSyncReport report = OnlineHero().ApplyOnlineItems(data);
+
+        Assert.Equal(0, report.UnmodeledAvatarBagCount);
+        Assert.Equal(0, report.UnmodeledCargoCount);
+        Assert.Equal(0, report.UnmodeledPetBagCount);
+        Assert.Equal(0, report.UnmodeledAccountCargoCount);
+        Assert.Equal(0, report.UnmodeledExpandEquipCount);
+    }
+
+    [Fact]
+    public void Each_unmodeled_count_keeps_its_own_value_in_the_data_and_in_the_report()
+    {
+        var data = new OnlineItemSyncData(false, 0L, null, null, null, false, false, 11, 22, 33, 44, 55);
+
+        Assert.Equal(11, data.UnmodeledAvatarBagCount);
+        Assert.Equal(22, data.UnmodeledCargoCount);
+        Assert.Equal(33, data.UnmodeledPetBagCount);
+        Assert.Equal(44, data.UnmodeledAccountCargoCount);
+        Assert.Equal(55, data.UnmodeledExpandEquipCount);
+
+        OnlineItemSyncReport report = OnlineHero().ApplyOnlineItems(data);
+
+        Assert.Equal(11, report.UnmodeledAvatarBagCount);
+        Assert.Equal(22, report.UnmodeledCargoCount);
+        Assert.Equal(33, report.UnmodeledPetBagCount);
+        Assert.Equal(44, report.UnmodeledAccountCargoCount);
+        Assert.Equal(55, report.UnmodeledExpandEquipCount);
+    }
+
+    [Fact]
+    public void Sync_report_keeps_every_constructor_argument_in_its_own_property()
+    {
+        var report = new OnlineItemSyncReport(true, false, true, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21);
+
+        Assert.True(report.GoldSynced);
+        Assert.False(report.InventorySynced);
+        Assert.True(report.EquipsSynced);
+        Assert.Equal(11, report.BagApplied);
+        Assert.Equal(12, report.QuickApplied);
+        Assert.Equal(13, report.EquipsApplied);
+        Assert.Equal(14, report.UnknownItemCount);
+        Assert.Equal(15, report.OverflowItemCount);
+        Assert.Equal(16, report.InvalidEquipSlotCount);
+        Assert.Equal(17, report.UnmodeledAvatarBagCount);
+        Assert.Equal(18, report.UnmodeledCargoCount);
+        Assert.Equal(19, report.UnmodeledPetBagCount);
+        Assert.Equal(20, report.UnmodeledAccountCargoCount);
+        Assert.Equal(21, report.UnmodeledExpandEquipCount);
     }
 
     // ───────────────────────── 金币与数据包的拷贝语义 ─────────────────────────
