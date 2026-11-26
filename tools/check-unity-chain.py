@@ -1285,6 +1285,64 @@ def _selftest_spellings(rec):
         rec.eq(f"簇13 {name}", _verdict(text), (want, 1))
 
 
+def _selftest_fail_loud(rec):
+    """簇 14:失败要响——含 -dnftimescale 却无法按 shell 语法拆分的逻辑行必须报错(不悄悄跳过),其余行照常检查;
+    不含 -dnftimescale 的行不拆词、不报错。合成文本总会多出一条"通过判据行与基线不一致",所以整个返回值逐条比对。"""
+    ok = _sim_text("5")
+    no_criteria = _msg_crit(0, 0, _FIRST_CRITERION, "<EOF>")
+    broken = (
+        ("双引号不成对", '"$app" -dnftimescale 4 -dnfquitaftersim 5 "'),
+        ("单引号不成对", "\"$app\" -dnftimescale 4 -dnfquitaftersim 5 '"),
+        ("被转义的结束引号", r'"$app" -dnftimescale 4 -dnfquitaftersim 5 "a\"'),
+        ("-dnftimescale 在不成对的引号里", '"$app" "-dnftimescale 4 -dnfquitaftersim 5'),
+        ("-dnftimescale 自己带着不成对的引号", '"$app" -dnftimescale" 4 -dnfquitaftersim 5'),
+        ("引号里的 # 不是注释,引号仍不成对", '"$app" -dnftimescale 4 "x # -dnfquitaftersim 5'),
+        ("更长的参数名也含该子串", '"$app" -dnftimescalefoo "x'),
+        ("echo 里的记号也要响", 'echo -dnftimescale "x'),
+        ("子串出现在词中间", 'x-dnftimescale "x'),
+    )
+    for name, line in broken:
+        want = ([_msg_nosplit(2), no_criteria], 2, 0)
+        rec.eq(f"簇14 {name}:整行报一条无法拆分、前后的调用照常数", check_text(_join_rows([ok, line, ok]), _LABEL), want)
+    bad_line = broken[0][1]
+    rec.eq("簇14 坏行排在最前面", check_text(_join_rows([bad_line, ok]), _LABEL), ([_msg_nosplit(1), no_criteria], 1, 0))
+    rec.eq(
+        "簇14 只有坏行:不算调用,先报无法拆分再报未找到任何",
+        check_text(_join_rows([bad_line]), _LABEL),
+        ([_msg_nosplit(1), _msg_no_call(), no_criteria], 0, 0),
+    )
+    rec.eq(
+        "簇14 两条坏行各报一条",
+        check_text(_join_rows([bad_line, ok, broken[1][1]]), _LABEL),
+        ([_msg_nosplit(1), _msg_nosplit(3), no_criteria], 1, 0),
+    )
+    rows = ["echo 头", '"$app" -dnftimescale 4 \\', '  -dnfquitaftersim 5 "', ok]
+    rec.eq("簇14 连续行拼成的坏行:行号是第一个物理行", check_text(_join_rows(rows), _LABEL), ([_msg_nosplit(2), no_criteria], 1, 0))
+    rows = [bad_line, _sim_text("0"), ok]
+    rec.eq(
+        "簇14 坏行之后缺参数的调用仍被检查",
+        check_text(_join_rows(rows), _LABEL),
+        ([_msg_nosplit(1), _msg_sim(2), no_criteria], 2, 0),
+    )
+    silent = (
+        ("不含 -dnftimescale 的双引号不成对", 'echo "x'),
+        ("不含 -dnftimescale 的单引号不成对", "echo 'x"),
+        ("近似子串 -dnftimescal(少一个字母)", '"$app" -dnftimescal "x'),
+        ("近似子串 dnftimescale(没有短横)", '"$app" dnftimescale "x'),
+        ("近似子串 -DNFTIMESCALE(大写)", '"$app" -DNFTIMESCALE "x'),
+        ("近似子串 -dnf timescale(被空格隔开)", '"$app" -dnf timescale "x'),
+        ("整行注释里的不成对引号", "# -dnftimescale it's"),
+        ("缩进的整行注释里的不成对引号", '    # "$app" -dnftimescale 4 "x'),
+    )
+    for name, line in silent:
+        rec.eq(f"簇14 {name}:不报错", check_text(_join_rows([line, ok]), _LABEL), ([no_criteria], 1, 0))
+    rec.eq(
+        "簇14 好调用的行尾注释里有不成对引号:仍是调用、不报错",
+        check_text(_join_rows([_GOOD + " # it's"]), _LABEL),
+        ([no_criteria], 1, 0),
+    )
+
+
 def run_selftest() -> int:
     with open(DEFAULT_SCRIPT, encoding="utf-8") as f:
         valid_text = f.read()
@@ -1351,6 +1409,7 @@ def run_selftest() -> int:
     _cluster(rec, "簇11", _selftest_segments)
     _cluster(rec, "簇12", _selftest_multi_call)
     _cluster(rec, "簇13", _selftest_spellings)
+    _cluster(rec, "簇14", _selftest_fail_loud)
     if rec.failures:
         print(f"自测失败(细粒度对照 {rec.checks} 条中有 {len(rec.failures)} 条不符):", file=sys.stderr)
         for name, expected, actual in rec.failures:
