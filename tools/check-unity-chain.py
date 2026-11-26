@@ -1478,6 +1478,46 @@ def _selftest_harness(rec):
     rec.eq("簇16 缺口按名字排序", _cluster_gaps([("b", 1), ("a", 1)], ["b", "d", "a", "c"]), ["c", "d"])
 
 
+def _selftest_cli(rec):
+    """簇 17:命令行入口 main()——退出码与输出流:通过时 stdout 一行 PASS;有问题时 stderr 逐条 FAIL:、退出码 1;帮助;参数个数不对。"""
+    import contextlib  # 放在函数里:文件头一行都不动
+    import io
+    import tempfile
+
+    def run(argv):
+        out, err, saved = io.StringIO(), io.StringIO(), sys.argv
+        sys.argv = ["check-unity-chain.py"] + argv
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = main()
+        finally:
+            sys.argv = saved
+        return code, out.getvalue(), err.getvalue()
+
+    passed = f"PASS: timescale={_PIN_CALLS} 处均带 -dnfquitaftersim, 通过判据 {_PIN_CRITERIA} 行与基线逐行一致\n"
+    rec.eq("簇17 不带参数:检查默认脚本,通过", run([]), (0, passed, ""))
+    rec.eq("簇17 指定真实脚本的路径:通过", run([DEFAULT_SCRIPT]), (0, passed, ""))
+    usage = __doc__ + "\n"
+    rec.eq("簇17 -h:打印用法、退出码 0", run(["-h"]), (0, usage, ""))
+    rec.eq("簇17 --help:打印用法、退出码 0", run(["--help"]), (0, usage, ""))
+    rec.eq("簇17 两个参数:打印用法、退出码 2", run(["a", "b"]), (2, usage, ""))
+    rec.eq("簇17 三个参数:打印用法、退出码 2", run(["a", "b", "c"]), (2, usage, ""))
+    fd, path = tempfile.mkstemp(suffix=".sh")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(_CALL + "\n")  # 缺 -dnfquitaftersim,而且没有任何判据行
+        label = os.path.relpath(path, ROOT)
+        want_err = (
+            f"FAIL: {label}:1: 带 -dnftimescale 的 $app 调用缺少正数 -dnfquitaftersim 参数\n"
+            f"FAIL: {label}: 通过判据行与基线不一致 (基线 {_PIN_CRITERIA} 行, 实际 0 行, 首个差异下标 0):\n"
+            f"  期望: {_FIRST_CRITERION}\n"
+            "  实际: <EOF>\n"
+        )
+        rec.eq("簇17 指定有问题的文件:stdout 空、stderr 逐条 FAIL:、退出码 1", run([path]), (1, "", want_err))
+    finally:
+        os.remove(path)
+
+
 def run_selftest() -> int:
     with open(DEFAULT_SCRIPT, encoding="utf-8") as f:
         valid_text = f.read()
@@ -1547,6 +1587,7 @@ def run_selftest() -> int:
     _cluster(rec, "簇14", _selftest_fail_loud)
     _cluster(rec, "簇15", _selftest_real_variants, valid_text)
     _cluster(rec, "簇16", _selftest_harness)
+    _cluster(rec, "簇17", _selftest_cli)
     if rec.failures:
         print(f"自测失败(细粒度对照 {rec.checks} 条中有 {len(rec.failures)} 条不符):", file=sys.stderr)
         for name, expected, actual in rec.failures:
