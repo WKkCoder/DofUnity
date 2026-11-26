@@ -1479,10 +1479,10 @@ def _selftest_harness(rec):
 
 
 def _selftest_cli(rec):
-    """簇 17:命令行入口 main()——退出码与输出流:通过时 stdout 一行 PASS;有问题时 stderr 逐条 FAIL:、退出码 1;帮助;参数个数不对。"""
-    import contextlib  # 放在函数里:文件头一行都不动
+    """簇 17:命令行入口 main()——退出码与输出流:通过时 stdout 一行 PASS;有问题时 stderr 逐条 FAIL:、退出码 1;帮助;参数个数不对;--selftest 的分派。"""
+    import builtins  # 放在函数里:文件头一行都不动
+    import contextlib
     import io
-    import tempfile
 
     def run(argv):
         out, err, saved = io.StringIO(), io.StringIO(), sys.argv
@@ -1502,20 +1502,44 @@ def _selftest_cli(rec):
     rec.eq("簇17 --help:打印用法、退出码 0", run(["--help"]), (0, usage, ""))
     rec.eq("簇17 两个参数:打印用法、退出码 2", run(["a", "b"]), (2, usage, ""))
     rec.eq("簇17 三个参数:打印用法、退出码 2", run(["a", "b", "c"]), (2, usage, ""))
-    fd, path = tempfile.mkstemp(suffix=".sh")
+    rec.eq("簇17 -h 后面还跟了参数:是参数个数不对,退出码 2", run(["-h", "x"]), (2, usage, ""))
+    # --selftest 的分派:换掉 run_selftest(不然会递归地把整套自测再跑一遍),只认恰好一个参数 --selftest
+    real_selftest = globals()["run_selftest"]
+    globals()["run_selftest"] = lambda: 99
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(_CALL + "\n")  # 缺 -dnfquitaftersim,而且没有任何判据行
-        label = os.path.relpath(path, ROOT)
-        want_err = (
-            f"FAIL: {label}:1: 带 -dnftimescale 的 $app 调用缺少正数 -dnfquitaftersim 参数\n"
-            f"FAIL: {label}: 通过判据行与基线不一致 (基线 {_PIN_CRITERIA} 行, 实际 0 行, 首个差异下标 0):\n"
-            f"  期望: {_FIRST_CRITERION}\n"
-            "  实际: <EOF>\n"
-        )
-        rec.eq("簇17 指定有问题的文件:stdout 空、stderr 逐条 FAIL:、退出码 1", run([path]), (1, "", want_err))
+        dispatched = run(["--selftest"])
+        not_dispatched = run(["--selftest", "x"])
     finally:
-        os.remove(path)
+        globals()["run_selftest"] = real_selftest
+    rec.eq("簇17 --selftest:交给 run_selftest、自己不另外输出", dispatched, (99, "", ""))
+    rec.eq("簇17 --selftest 后面还跟了参数:不分派,是参数个数不对、退出码 2", not_dispatched, (2, usage, ""))
+    # 指定一个磁盘上不存在的路径,内容由补丁式的 open 供给:不碰文件系统(不依赖临时目录可写,超时被杀也不留残渣)
+    fake = os.path.join(ROOT, "tools", "synthetic-selftest.sh")
+    real_open = builtins.open
+    opened = []
+
+    def fake_open(path, *args, **kwargs):
+        if path == fake:
+            opened.append(kwargs.get("encoding"))
+            return io.StringIO(_CALL + "\n")  # 缺 -dnfquitaftersim,而且没有任何判据行
+        return real_open(path, *args, **kwargs)
+
+    saved_cwd = os.getcwd()
+    os.chdir(os.path.join(ROOT, "tools"))  # 信息里的文件名要相对仓库根,不能随当前目录变
+    builtins.open = fake_open
+    try:
+        got = run([fake])
+    finally:
+        builtins.open = real_open
+        os.chdir(saved_cwd)
+    want_err = (
+        "FAIL: tools/synthetic-selftest.sh:1: 带 -dnftimescale 的 $app 调用缺少正数 -dnfquitaftersim 参数\n"
+        f"FAIL: tools/synthetic-selftest.sh: 通过判据行与基线不一致 (基线 {_PIN_CRITERIA} 行, 实际 0 行, 首个差异下标 0):\n"
+        f"  期望: {_FIRST_CRITERION}\n"
+        "  实际: <EOF>\n"
+    )
+    rec.eq("簇17 指定有问题的文件:stdout 空、stderr 逐条 FAIL:(文件名相对仓库根)、退出码 1", got, (1, "", want_err))
+    rec.eq("簇17 读被检文件时指定 UTF-8 编码(与当前区域设置无关)", opened, ["utf-8"])
 
 
 def run_selftest() -> int:
