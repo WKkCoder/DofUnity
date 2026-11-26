@@ -95,6 +95,9 @@ namespace Dnf.Net.Session
         /// <summary>游戏频道端口。</summary>
         public int ChannelPort { get; set; } = 30011;
 
+        /// <summary>选频道目录服务端口(缺省 7001,即 <see cref="Dnf.Net.ChannelDirectory.ChannelServiceConstants.DefaultPort"/>)。</summary>
+        public int ChannelDirectoryPort { get; set; } = Dnf.Net.ChannelDirectory.ChannelServiceConstants.DefaultPort;
+
         /// <summary>逐槽选角最多试多少个槽(从 0 起)。</summary>
         public int MaxSlots { get; set; } = 6;
 
@@ -120,6 +123,7 @@ namespace Dnf.Net.Session
                 MouseCipher = MouseCipher == null ? null : (byte[])MouseCipher.Clone(),
                 DataVersion = DataVersion,
                 ChannelPort = ChannelPort,
+                ChannelDirectoryPort = ChannelDirectoryPort,
                 MaxSlots = MaxSlots,
                 ServerGroup = ServerGroup,
                 ClientVersion = ClientVersion,

@@ -477,6 +477,10 @@ namespace Dnf.Client
                         if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
                                 System.Globalization.CultureInfo.InvariantCulture, out int nport) && nport > 0 && nport < 65536) { _netPort = nport; i++; }
                         break;
+                    case "-dnfdirport":
+                        if (value != null && int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                                System.Globalization.CultureInfo.InvariantCulture, out int dport) && dport > 0 && dport < 65536) { _netDirPort = dport; i++; }
+                        break;
                     case "-dnfnetbot":
                         _netBot = true;      // 要不要生效、缺什么,进流程之前由 ResolveNetBot 定
                         break;
@@ -548,6 +552,7 @@ namespace Dnf.Client
                         break;
                 }
             }
+            ParseOnlineAutoArguments(args);
         }
 
         private static bool IsDataDirectory(string dir)
@@ -2427,7 +2432,7 @@ namespace Dnf.Client
             }
             else
             {
-                if (_session != null)
+                if (_session != null && !IsOnlineAutoDrivingRoom)
                 {
                     StepSession(deltaMs);
                 }
@@ -2437,6 +2442,10 @@ namespace Dnf.Client
                 PollOnlineTown();
                 PollOnlineDungeon();
                 PollOnlineSettlement(deltaMs);
+                if (StepOnlineAutoInGame(deltaMs))
+                {
+                    return;
+                }
                 _flow.Poll();
             }
             if (_flow.StageSerial != _shownSerial)
@@ -2697,7 +2706,7 @@ namespace Dnf.Client
                     _flow.EnterTown("start");
                     break;
             }
-            if (_useBot)
+            if (_useBot && _onlineAutoDriver == null)
             {
                 _flowBot = new FlowBot(_botExplore, ParseSettlementChoices(_flowChoices)) { RaiseDifficulty = _raiseDifficulty, SmashObjects = _smash, HostedRooms = _netBotOn };
             }
@@ -3975,10 +3984,15 @@ namespace Dnf.Client
 
         private static void Quit()
         {
+            Quit(0);
+        }
+
+        private static void Quit(int exitCode)
+        {
 #if UNITY_EDITOR
             UnityEditor.EditorApplication.isPlaying = false;
 #else
-            Application.Quit();
+            Application.Quit(exitCode);
 #endif
         }
 
