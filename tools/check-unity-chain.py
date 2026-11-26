@@ -366,6 +366,399 @@ def check_text(text: str, label: str = "tools/unity-build-town.sh"):
     return errors, timescale_count, len(actual_criteria)
 
 
+# ---------------------------------------------------------------------------
+# 细粒度自测对照:钉住 check_text / is_criteria_line / join_logical_lines 的边界与分支。
+# 约定:期望值一律手写字面量,不拿被测函数"算期望";错误信息逐字断言整行;
+#      合成文本总会多一条"通过判据行与基线不一致",所以按错误类别筛选,不用"错误列表为空"判断。
+# ---------------------------------------------------------------------------
+
+# 真实脚本的规模(手写钉住):刻意增删带 -dnftimescale 的调用、或更新 BASELINE_CRITERIA_LINES 时,同步改这两个数。
+_PIN_CALLS = 15
+_PIN_CRITERIA = 262
+
+_LABEL = "<t>"
+_CAT_SIM = "缺少正数"
+_CAT_NO_CALL = "未找到任何"
+_FIRST_CRITERION = '[ "$rc" -eq 0 ] || exit "$rc"'  # 基线第 0 条:验证段一条判据都没有时,"期望:"一行就是它
+
+# is_criteria_line:不该计入判据的行(注释、空行、说明性 echo、信息性 grep)
+_NOT_CRITERIA = (
+    "",
+    "   ",
+    "# grep -q 说明 || exit 1",
+    "    # exit 1",
+    'echo "说明 exit 1"',
+    '  echo "说明 exit 1"  ',
+    "grep -E 'DNF_SAVE saved' \"$log\" || true",
+    "grep -n 'DNF_SAVE saved' \"$log\" || true",
+    "grep -n -E 'DNF_SAVE saved' \"$log\" || true",
+    "  grep -E 'DNF_SAVE saved' \"$log\" || true  ",
+    "grep -n 'DNF_BUILD ok' \"$log\" | grep -c ok",
+    "  grep -n 'DNF_BUILD ok' \"$log\" | grep -c ok  ",
+    "grep -n -E 'BuildFailedException' \"$log\" | grep -c Build",
+    "x for pat in a b",
+    "for pat inx a b",
+    'echo "rep exit 1"',
+    'echo "gre exit 1"',
+    'echo "说明 | exit 1"',
+    "foo bar",
+)
+# is_criteria_line:必须计入判据的行——含关键字、却长得像上面某条排除规则的行(排除规则不能过宽)
+_ARE_CRITERIA = (
+    "for pat in a b; do",
+    "  for pat in x y",
+    "grep -q 'x' \"$log\" || exit 1",
+    "grep -q 'a#b' \"$log\" || exit 1",
+    "grep -q 'x' \"$log\" || exit 1 #",
+    "grep -q 'DNF_BUILD ok' \"$log\" || exit 1",
+    "grep -q 'BuildFailedException' \"$log\" || exit 1",
+    "grep -q 'x' \"$log\" || true",
+    "grep -E 'DNF_SAVE saved' \"$log\"",
+    "grep -n 'DNF_SAVE saved' \"$log\"",
+    "grep -n -E 'DNF_SAVE saved' \"$log\"",
+    "grep -E 'DNF_SAVE saved' \"$log\" || true; exit 1",
+    "xgrep -E 'DNF_SAVE saved' \"$log\" || true",
+    "xgrep -n 'DNF_SAVE saved' \"$log\" || true",
+    "xgrep -n 'DNF_BUILD ok' \"$log\" || exit 1",
+    "xgrep -n -E 'BuildFailedException' \"$log\" || exit 1",
+    'echo "x" || exit 1',
+    'echo "grep -c ok"',
+    'x echo "说明 exit 1"',
+    "echoed exit 1",
+    "grep -E 'DNF_SAVE saved' \"$log\" | true",
+    "grep -Ex 'DNF_SAVE saved' \"$log\" || true",
+    "grep -nx 'DNF_SAVE saved' \"$log\" || true",
+    "grep -nE 'DNF_BUILD ok' \"$log\" | grep -c ok",
+    "grep -n 'NF_BUILD ok' \"$log\" | grep -c ok",
+    "grep -n 'DNF_BUILX ok' \"$log\" | grep -c ok",
+    "grep -n -Ex 'BuildFailedException' \"$log\" | grep -c Build",
+    "grep -n -E 'uildFailedException' \"$log\" | grep -c Build",
+    "grep -n -E 'BuildFailedExceptio' \"$log\" | grep -c Build",
+)
+# is_criteria_line 末尾那张关键字表,逐个钉住:含其中任何一个的行就是判据行。
+# 其中 case "$cli_hero" 与 case "$saved_fields" 是冗余项(含它们的行必然也含更短的 cli_hero / saved_fields),
+# 删掉或改动这两项在任何输入下输出都相同;其余每一项都有各自独立的对照。
+_CRITERIA_KEYWORDS = (
+    "png_diff.py", "check_clear_log.py", "grep -q", "grep -c", '"$rc" -eq 0',
+    "cli_hero", "saved_fields", "loaded_fields", "music_lines", "first_music",
+    "flow_audio", "audio_line", '[ -s "$save_file" ]', 'case "$cli_hero"', 'case "$saved_fields"',
+    "DNF_TOWN_DEMO failed", "DNF_QUEST problem", "DNF_SKILL probe failed",
+    'reason="dungeon fail"', "DNF_SAVE saved", "|| { echo ", "exit 1",
+)
+# join_logical_lines:(名字, 输入物理行, 期望的 [(起始物理行号, 逻辑行)])
+_JOIN_CASES = (
+    ("续行拼成一条,起始行号是第一个物理行", ["a \\", "b \\", "c", "d"], [(1, "a b c"), (4, "d")]),
+    ("反斜杠紧贴字符,各段用一个空格拼", ["a\\", "b"], [(1, "a b")]),
+    ("无续行的行各自成一条", ["x", "y"], [(1, "x"), (2, "y")]),
+    ("注释行末尾的反斜杠不续行", ["# 注释 \\", "x"], [(1, "# 注释 \\"), (2, "x")]),
+    ("缩进的注释行末尾的反斜杠也不续行", ["  # 缩进注释 \\", "x"], [(1, "# 缩进注释 \\"), (2, "x")]),
+    ("末行以反斜杠结尾:仍返回已拼的一条", ["a \\", "b \\"], [(1, "a b")]),
+    ("只有一行且以反斜杠结尾", ["a \\"], [(1, "a")]),
+    ("末行只有反斜杠:空段不留多余空格", ["a \\", " \\"], [(1, "a")]),
+    ("空输入", [], []),
+    ("空行结束续行,空段不留多余空格", ["a \\", "", "c"], [(1, "a"), (3, "c")]),
+    ("只有反斜杠的续行行不留多余空格", ["a \\", " \\", "b"], [(1, "a b")]),
+    ("空行各自成一条", ["", "x", ""], [(1, ""), (2, "x"), (3, "")]),
+    ("反斜杠后的行尾空白仍算续行", ["a \\  ", "b"], [(1, "a b")]),
+    ("每段首尾空白去掉", ["  a \\", "    b  "], [(1, "a b")]),
+    ("行中间的反斜杠不是续行", ["a \\ b", "c"], [(1, "a \\ b"), (2, "c")]),
+    ("引号里的 # 不是注释,行尾反斜杠照常续行", ["grep -q 'a#b' \"$log\" \\", "|| exit 1"], [(1, "grep -q 'a#b' \"$log\" || exit 1")]),
+    ("多组逻辑行的起始行号", ["p", "a \\", "b", "q \\", "r \\", "s"], [(1, "p"), (2, "a b"), (4, "q r s")]),
+)
+
+
+class _Recorder:
+    """收集细粒度对照的结果:每条对照有名字;失败时记下名字、期望与实际,最后统一报告。"""
+
+    def __init__(self):
+        self.checks = 0
+        self.failures = []
+        self.last = "(尚无)"  # 最近一条已完成的对照名:某簇中途抛异常时,用它大致定位
+
+    def eq(self, name, actual, expected):
+        self.checks += 1
+        self.last = name
+        if actual != expected:
+            self.failures.append((name, expected, actual))
+
+
+def _cluster(rec, name, fn, *args):
+    """运行一簇对照;被测函数抛异常(缺陷或变异)时记为该簇的一条失败,不让回溯盖住其余对照。"""
+    import traceback  # 只在失败路径用;放在这里,不让文件头多出一行而顺移被测函数的行号
+
+    try:
+        fn(rec, *args)
+    except Exception as exc:
+        where = traceback.extract_tb(exc.__traceback__)[-1]
+        rec.checks += 1
+        rec.failures.append((
+            f"{name} 运行中抛出异常(上一条已完成的对照:{rec.last})",
+            "不抛异常",
+            f"{type(exc).__name__}: {exc} @ {os.path.basename(where.filename)}:{where.lineno} {where.name}",
+        ))
+
+
+def _only(errors, category):
+    """按错误类别(信息里的关键词)筛选。"""
+    return [e for e in errors if category in e]
+
+
+def _msg_sim(line_no):
+    return f"{_LABEL}:{line_no}: 带 -dnftimescale 的 $app 调用缺少正数 -dnfquitaftersim 参数"
+
+
+def _msg_no_call():
+    return f"{_LABEL}: 未找到任何带 -dnftimescale 的 $app 调用"
+
+
+def _msg_crit(actual_n, diff_idx, expected_line, actual_line):
+    return (
+        f"{_LABEL}: 通过判据行与基线不一致 (基线 {_PIN_CRITERIA} 行, 实际 {actual_n} 行, 首个差异下标 {diff_idx}):\n"
+        f"  期望: {expected_line}\n"
+        f"  实际: {actual_line}"
+    )
+
+
+def _sim_text(value):
+    """最小合成文本:一个带 -dnftimescale 的 "$app" 调用;value 是 -dnfquitaftersim 后的值,None 表示整个参数省略。"""
+    tail = "" if value is None else " -dnfquitaftersim " + value
+    return '"$app" -dnftimescale 4' + tail + " -batchmode"
+
+
+def _join_rows(rows):
+    return "\n".join(rows) + "\n"
+
+
+def _marker_row(rows):
+    """验证段起点(echo "已构建: 行)的物理下标;自测里自己找,不借用被测代码。"""
+    return next(i for i, row in enumerate(rows) if row.strip().startswith('echo "已构建:'))
+
+
+def _call_spans(rows):
+    """真实脚本里带 -dnftimescale 的 "$app" 调用各占的物理行区间 [(首行下标, 末行下标)](0 起算)。
+    自己按"行尾反斜杠 = 续行(注释行除外)"最朴素地扫一遍,不借用被测的 join_logical_lines。"""
+    spans = []
+    i = 0
+    while i < len(rows):
+        j = i
+        while j + 1 < len(rows) and rows[j].rstrip().endswith("\\") and not rows[j].lstrip().startswith("#"):
+            j += 1
+        joined = " ".join(row.strip() for row in rows[i:j + 1])
+        if not joined.startswith("#") and '"$app"' in joined and "-dnftimescale" in joined.split():
+            spans.append((i, j))
+        i = j + 1
+    return spans
+
+
+def _selftest_positive_sim(rec):
+    """簇 1:-dnfquitaftersim 的值必须是正数——0、0.0、00、负数、非数字、省略都要报错,正数一律放行。"""
+    one = [_msg_sim(1)]
+    for value in ("0", "0.0", "00", "0.00", "abc", "-1", "-0.5", "5x", "5x3", ".5", "5.", "5.5.5", "1e3", "\u0665"):
+        rec.eq(f"簇1 值 {value} 必须报缺少正数", _only(check_text(_sim_text(value), _LABEL)[0], _CAT_SIM), one)
+    rec.eq("簇1 省略必须报缺少正数", _only(check_text(_sim_text(None), _LABEL)[0], _CAT_SIM), one)
+    for value in ("0.05", "0.1", "0.5", "1", "8", "120.5"):
+        rec.eq(f"簇1 值 {value} 不报缺少正数", _only(check_text(_sim_text(value), _LABEL)[0], _CAT_SIM), [])
+    layouts = (
+        ("值在逻辑行末尾", '"$app" -batchmode -dnftimescale 4 -dnfquitaftersim 8', []),
+        ("参数名与值之间多个空格", '"$app" -dnftimescale 4 -dnfquitaftersim    8 -batchmode', []),
+        ("参数名与值之间是制表符", '"$app" -dnftimescale 4 -dnfquitaftersim\t8 -batchmode', []),
+        ("参数在逻辑行行首", '-dnfquitaftersim 8 "$app" -dnftimescale 4', []),
+        ("只有墙钟 -dnfquitafter 不算", '"$app" -dnftimescale 4 -dnfquitafter 8 -batchmode', one),
+        ("参数名与前一个记号粘连", '"$app" -dnftimescale 4 x-dnfquitaftersim 8 -batchmode', one),
+        ("参数名与值粘连", '"$app" -dnftimescale 4 -dnfquitaftersim8 -batchmode', one),
+        ("参数名后没有值(行尾)", '"$app" -batchmode -dnftimescale 4 -dnfquitaftersim', one),
+        ("参数名后紧跟另一个参数", '"$app" -dnftimescale 4 -dnfquitaftersim -batchmode', one),
+        ("参数名只是更长参数名的前缀", '"$app" -dnftimescale 4 -dnfquitaftersimx 8 -batchmode', one),
+    )
+    for name, text, want in layouts:
+        rec.eq("簇1 " + name, _only(check_text(text, _LABEL)[0], _CAT_SIM), want)
+    rows = ["# 头部注释", _sim_text("7"), "echo 中间", _sim_text("0"), _sim_text("6"), _sim_text(None)]
+    errs, calls, _ = check_text(_join_rows(rows), _LABEL)
+    rec.eq("簇1 多个调用:坏的逐个报、行号对得上、调用数照数", (_only(errs, _CAT_SIM), calls), ([_msg_sim(4), _msg_sim(6)], 4))
+
+
+def _selftest_no_call(rec, valid_text):
+    """簇 2:一个带 -dnftimescale 的调用都没有时必须报错;恰好 1、2、15 个合法调用时没有这条错。"""
+    stripped, replaced = re.subn(r"\s-dnftimescale\s+\S+", "", valid_text)
+    rec.eq("簇2 前置:真实脚本里删掉的 -dnftimescale 处数", replaced, _PIN_CALLS)
+    rec.eq("簇2 真实脚本删光 -dnftimescale", check_text(stripped, _LABEL), ([_msg_no_call()], 0, _PIN_CRITERIA))
+    no_criteria = _msg_crit(0, 0, _FIRST_CRITERION, "<EOF>")
+    rec.eq("簇2 空文本", check_text("", _LABEL), ([_msg_no_call(), no_criteria], 0, 0))
+    rec.eq(
+        "簇2 只有注释的文本",
+        check_text('# "$app" -dnftimescale 4 -dnfquitaftersim 5\n# 另一行注释\n', _LABEL),
+        ([_msg_no_call(), no_criteria], 0, 0),
+    )
+    rec.eq(
+        "簇2 默认标签是脚本路径",
+        check_text("")[0][0],
+        "tools/unity-build-town.sh: 未找到任何带 -dnftimescale 的 $app 调用",
+    )
+    for n in (1, 2, 15):
+        text = _join_rows([_sim_text(str(i)) for i in range(1, n + 1)])
+        errs, calls, _ = check_text(text, _LABEL)
+        rec.eq(f"簇2 恰有 {n} 个合法调用", (_only(errs, _CAT_NO_CALL), _only(errs, _CAT_SIM), calls), ([], [], n))
+
+
+def _selftest_not_a_call(rec):
+    """簇 3:注释行与不含 "$app" 的行里的 -dnftimescale 不算调用——既不报缺少正数,也不计入调用数。"""
+    ok = _sim_text("5")
+    cases = (
+        ("被注释掉的 $app 调用", '# "$app" -dnftimescale 5\n' + ok),
+        ("缩进的注释", '    # "$app" -dnftimescale 5\n' + ok),
+        ("被注释掉的多行调用", '# "$app" -dnftimescale 5 \\\n#   -batchmode\n' + ok),
+        ("echo 文字里的记号与注释里的记号", "echo 用法 -dnftimescale 5\n# -dnftimescale 5\n" + ok),
+        ("不是 $app 的命令里的记号", "dotnet run -dnftimescale 5\n" + ok),
+        ("记号只是更长参数名的前缀", '"$app" -dnftimescalefoo 5\n' + ok),
+        ("$app 只有右引号", 'run $app" -dnftimescale 5\n' + ok),
+        ("$app 只有左引号", 'run "$app -dnftimescale 5\n' + ok),
+    )
+    for name, text in cases:
+        errs, calls, _ = check_text(text, _LABEL)
+        rec.eq(f"簇3 {name}不算调用", (_only(errs, _CAT_SIM), calls), ([], 1))
+    only_fake = (
+        ("唯一的调用被注释掉", '# "$app" -dnftimescale 5 -dnfquitaftersim 5\n'),
+        ("唯一的记号在 echo 文字里", "echo 用法 -dnftimescale 5\n"),
+    )
+    for name, text in only_fake:
+        errs, calls, _ = check_text(text, _LABEL)
+        rec.eq(f"簇3 {name}:调用数 0 且报未找到任何", (_only(errs, _CAT_NO_CALL), _only(errs, _CAT_SIM), calls), ([_msg_no_call()], [], 0))
+    # 反过来:调用行末尾带一段注释,它仍是调用——带正数参数不报错,缺参数照报(注释不是豁免)
+    trailing = (
+        ("带正数参数", '"$app" -batchmode -dnftimescale 4 -dnfquitaftersim 5 # 说明\n', ([], 1)),
+        ("缺参数", '"$app" -batchmode -dnftimescale 4 # 说明\n', ([_msg_sim(1)], 1)),
+    )
+    for name, text, want in trailing:
+        errs, calls, _ = check_text(text, _LABEL)
+        rec.eq(f"簇3 行末带注释的调用仍是调用:{name}", (_only(errs, _CAT_SIM), calls), want)
+
+
+def _selftest_every_call(rec, valid_text):
+    """簇 4:真实脚本里的每一个调用都被检查——逐个删掉 / 改成 0,恰有一条错,行号是该调用的起始物理行(1 起算)。"""
+    rows = valid_text.splitlines()
+    spans = _call_spans(rows)
+    rec.eq("簇4 真实脚本里的调用数", len(spans), _PIN_CALLS)
+    all_dropped = list(rows)
+    expected_all = []
+    for n, (first, last) in enumerate(spans, start=1):
+        sim_rows = [r for r in range(first, last + 1) if "-dnfquitaftersim" in rows[r]]
+        rec.eq(f"簇4 第 {n} 个调用恰有一处 -dnfquitaftersim", len(sim_rows), 1)
+        if len(sim_rows) != 1:
+            continue
+        r = sim_rows[0]
+        dropped = list(rows)
+        dropped[r] = re.sub(r"\s*-dnfquitaftersim\s+\S+", "", rows[r], count=1)
+        zeroed = list(rows)
+        zeroed[r] = re.sub(r"(-dnfquitaftersim\s+)\S+", r"\g<1>0", rows[r], count=1)
+        want = ([_msg_sim(first + 1)], _PIN_CALLS, _PIN_CRITERIA)
+        rec.eq(f"簇4 只删第 {n} 个调用的 -dnfquitaftersim", check_text(_join_rows(dropped), _LABEL), want)
+        rec.eq(f"簇4 把第 {n} 个调用的值改成 0", check_text(_join_rows(zeroed), _LABEL), want)
+        all_dropped[r] = dropped[r]
+        expected_all.append(_msg_sim(first + 1))
+    rec.eq(
+        "簇4 全部调用同时缺失:逐个报错、顺序与出现顺序一致",
+        check_text(_join_rows(all_dropped), _LABEL),
+        (expected_all, _PIN_CALLS, _PIN_CRITERIA),
+    )
+
+
+def _selftest_criteria_rules(rec, valid_text):
+    """簇 5:判据行的抽取规则(is_criteria_line)——排除规则不漏,也不过宽。"""
+    for line in _NOT_CRITERIA:
+        rec.eq(f"簇5 不是判据行 {line!r}", is_criteria_line(line), False)
+    for line in _ARE_CRITERIA:
+        rec.eq(f"簇5 是判据行 {line!r}", is_criteria_line(line), True)
+    for key in _CRITERIA_KEYWORDS:
+        rec.eq(f"簇5 关键字 {key!r}", is_criteria_line("foo " + key + "bar"), True)
+        if key in ('case "$cli_hero"', 'case "$saved_fields"'):
+            continue  # 冗余项:它的近似行必然还含着更短的那个关键字
+        # 近似行:只含关键字的一部分(少首字符 / 末字符被换掉),不是判据行
+        rec.eq(f"簇5 少了首字符的 {key!r} 不算", is_criteria_line("foo " + key[1:] + "bar"), False)
+        rec.eq(f"簇5 末字符不对的 {key!r} 不算", is_criteria_line("foo " + key[:-1] + "Xbar"), False)
+    # 经 check_text:往验证段插一行说明性/信息性的行,判据行数仍是基线的数,不报错
+    rows = valid_text.splitlines()
+    at = _marker_row(rows) + 1
+    for line in ("# grep -q 说明 || exit 1", "grep -E 'DNF_SAVE saved' \"$log\" || true",
+                 "grep -n 'DNF_SAVE saved' \"$log\" || true", "grep -n 'DNF_BUILD ok' \"$log\" | grep -c ok",
+                 "grep -n -E 'BuildFailedException' \"$log\" | grep -c Build", 'echo "说明 exit 1"', ""):
+        rec.eq(f"簇5 验证段插入 {line!r} 不影响结果", check_text(_join_rows(rows[:at] + [line] + rows[at:]), _LABEL), ([], _PIN_CALLS, _PIN_CRITERIA))
+    # 反向:真正的新判据(含 DNF_BUILD / BuildFailedException 但不是被排除的写法)必须被当成判据行而报不一致
+    for line in ("grep -q 'x' \"$log\" || exit 1", "grep -q 'DNF_BUILD ok' \"$log\" || exit 1",
+                 "grep -q 'BuildFailedException' \"$log\" || exit 1"):
+        rec.eq(
+            f"簇5 末尾追加真判据 {line!r} 必须报不一致",
+            check_text(valid_text + line + "\n", _LABEL),
+            ([_msg_crit(_PIN_CRITERIA + 1, _PIN_CRITERIA, "<EOF>", line)], _PIN_CALLS, _PIN_CRITERIA + 1),
+        )
+
+
+def _selftest_join_lines(rec):
+    """簇 6:逻辑行拼接(join_logical_lines)——续行、注释、行号、空段、空输入。"""
+    for name, rows, want in _JOIN_CASES:
+        rec.eq(f"簇6 {name}", join_logical_lines(rows), want)
+    text = _join_rows(["echo 头", '"$app" -batchmode \\', "  -dnfdir x \\", "  -dnftimescale 4 -dnfquitafter 9", "echo 尾"])
+    errs, calls, _ = check_text(text, _LABEL)
+    rec.eq("簇6 多行调用缺少参数:错误行号是调用的第一个物理行", (_only(errs, _CAT_SIM), calls), ([_msg_sim(2)], 1))
+
+
+def _selftest_result_contents(rec, valid_text):
+    """簇 7:返回值与错误信息的内容——调用数、判据行数、首个差异下标、期望与实际两行逐字。"""
+    rec.eq("簇7 未篡改文本的返回值", check_text(valid_text, _LABEL), ([], _PIN_CALLS, _PIN_CRITERIA))
+    rows = valid_text.splitlines()
+    crit_rows = [i for i in range(_marker_row(rows) + 1, len(rows)) if is_criteria_line(rows[i])]
+    rec.eq("簇7 验证段判据行数", len(crit_rows), _PIN_CRITERIA)
+    for k in (0, _PIN_CRITERIA // 2, _PIN_CRITERIA - 1):
+        original = rows[crit_rows[k]].strip()
+        altered = original + " # 篡改"
+        edited = list(rows)
+        edited[crit_rows[k]] = altered
+        rec.eq(
+            f"簇7 篡改第 {k} 条判据",
+            check_text(_join_rows(edited), _LABEL),
+            ([_msg_crit(_PIN_CRITERIA, k, original, altered)], _PIN_CALLS, _PIN_CRITERIA),
+        )
+    # 删掉最后一条:差异出现在基线末尾,"实际:"是 <EOF>
+    last = rows[crit_rows[-1]].strip()
+    edited = list(rows)
+    edited[crit_rows[-1]] = ""
+    rec.eq(
+        "簇7 删除最后一条判据",
+        check_text(_join_rows(edited), _LABEL),
+        ([_msg_crit(_PIN_CRITERIA - 1, _PIN_CRITERIA - 1, last, "<EOF>")], _PIN_CALLS, _PIN_CRITERIA - 1),
+    )
+    # 删掉第一条:后面的整体前移,差异在下标 0,"期望:"与"实际:"是相邻两条真实判据
+    first = rows[crit_rows[0]].strip()
+    second = rows[crit_rows[1]].strip()
+    edited = list(rows)
+    edited[crit_rows[0]] = ""
+    rec.eq(
+        "簇7 删除第一条判据",
+        check_text(_join_rows(edited), _LABEL),
+        ([_msg_crit(_PIN_CRITERIA - 1, 0, first, second)], _PIN_CALLS, _PIN_CRITERIA - 1),
+    )
+
+
+def _selftest_verify_section(rec, valid_text):
+    """簇 8:验证段的起点(echo "已构建: 行)与逐行比对的宽容度。"""
+    crit_a = "grep -q 'a' \"$log\" || exit 1"
+    crit_b = "grep -q 'b' \"$log\" || exit 1"
+    marker = '  echo "已构建: x"'
+    cases = (
+        ("起点之前的判据行不计", [crit_a, marker, crit_b], 1),
+        ("没有起点就一行也不计", [crit_a, crit_b], 0),
+        ("被注释掉的起点不算起点", ['# echo "已构建: 旧"', crit_a, marker, crit_b], 1),
+        ("没有冒号的不是起点", ['  echo "已构建 x"', crit_b], 0),
+        ("起点行自己不计(哪怕带 || exit 1)", ['  echo "已构建: x" || exit 1', crit_b], 1),
+        ("第二个起点不重置", [marker, crit_a, '  echo "已构建: y"', crit_b], 2),
+    )
+    for name, rows, want in cases:
+        rec.eq(f"簇8 {name}", check_text(_join_rows(rows), _LABEL)[2], want)
+    rows = valid_text.splitlines()
+    padded = ["    " + row + "  \t" if row.strip() else row for row in rows]
+    rec.eq("簇8 每行加缩进与行尾空白仍通过", check_text(_join_rows(padded), _LABEL), ([], _PIN_CALLS, _PIN_CRITERIA))
+    rec.eq("簇8 CRLF 换行仍通过", check_text(valid_text.replace("\n", "\r\n"), _LABEL), ([], _PIN_CALLS, _PIN_CRITERIA))
+
+
 def run_selftest() -> int:
     with open(DEFAULT_SCRIPT, encoding="utf-8") as f:
         valid_text = f.read()
@@ -417,7 +810,26 @@ def run_selftest() -> int:
         print("自测失败(负对照 D: 删除 check_clear_log.py 判据却通过了)", file=sys.stderr)
         return 1
 
-    print(f"自测通过: 正对照通过(timescale={ts_cnt}, criteria={crit_cnt}), 4 项负对照均正确拦截")
+    # 6. 细粒度对照(簇 1 至 8):边界与分支逐条钉住;失败时逐条列出名字、期望与实际
+    rec = _Recorder()
+    _cluster(rec, "簇1", _selftest_positive_sim)
+    _cluster(rec, "簇2", _selftest_no_call, valid_text)
+    _cluster(rec, "簇3", _selftest_not_a_call)
+    _cluster(rec, "簇4", _selftest_every_call, valid_text)
+    _cluster(rec, "簇5", _selftest_criteria_rules, valid_text)
+    _cluster(rec, "簇6", _selftest_join_lines)
+    _cluster(rec, "簇7", _selftest_result_contents, valid_text)
+    _cluster(rec, "簇8", _selftest_verify_section, valid_text)
+    if rec.failures:
+        print(f"自测失败(细粒度对照 {rec.checks} 条中有 {len(rec.failures)} 条不符):", file=sys.stderr)
+        for name, expected, actual in rec.failures:
+            print(f"  - {name}\n      期望: {expected!r}\n      实际: {actual!r}", file=sys.stderr)
+        return 1
+
+    print(
+        f"自测通过: 正对照通过(timescale={ts_cnt}, criteria={crit_cnt}), 4 项整脚本负对照均正确拦截, "
+        f"另有 {rec.checks} 条细粒度对照全部符合预期"
+    )
     return 0
 
 
