@@ -432,6 +432,9 @@ def check_text(text: str, label: str = "tools/unity-build-town.sh"):
 # 真实脚本的规模(手写钉住):刻意增删带 -dnftimescale 的调用、或更新 BASELINE_CRITERIA_LINES 时,同步改这两个数。
 _PIN_CALLS = 15
 _PIN_CRITERIA = 262
+# 细粒度对照的总条数(手写钉住):簇里的用例表、循环里的取值表被悄悄缩短(或某个簇被漏跑、少跑)时,条数对不上、自测失败。
+# 刻意增删对照时,同步改这个数;失败信息里列着各簇的条数,看是哪个簇变了。
+_PIN_CHECKS = 1061
 
 _LABEL = "<t>"
 _CAT_SIM = "缺少正数"
@@ -1486,7 +1489,7 @@ def _selftest_harness(rec):
     rec.eq("簇16 异常失败的期望是不抛异常", expected, "不抛异常")
     rec.eq(
         "簇16 异常失败的实际带异常类型、信息与抛出处(文件名:行号 最里层的函数名)",
-        re.fullmatch(r"ValueError: 坏了 @ [^:\s]+\.py:\d+ inner", actual) is not None,
+        re.fullmatch(r"ValueError: 坏了 @ " + re.escape(os.path.basename(__file__)) + r":\d+ inner", actual) is not None,
         True,
     )
     # _cluster_gaps:每个应跑的簇都要出现过、且至少一条对照
@@ -1579,6 +1582,16 @@ def _selftest_charset(rec):
     def positive(value):
         return _has_positive_quitaftersim(["-dnfquitaftersim", value])
 
+    # 探测用的字符表自身也钉住:表被悄悄缩短时,下面各条"违反规则的字符"的列表照样为空、对照照样通过
+    printable = '!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~'
+    extras = ["\x7f", "\x0b", "\x0c", "\x1f", "\x85", "\xa0", "\u2028", "\u3000", "头"]
+    rec.eq("簇18 探测字符表的前 94 个:全部可打印 ASCII", "".join(_PROBE_CHARS[:94]), printable)
+    rec.eq("簇18 探测字符表的其余部分:DEL、VT、FF、US、NEL、NBSP、LS、全角空格与一个汉字", list(_PROBE_CHARS[94:]), extras)
+    rec.eq("簇18 引号外有特殊含义的字符:单双引号、反斜杠、; & | ( ) 反引号 < >", sorted(special), sorted(list("\"'\\;&|()`<>")))
+    rec.eq("簇18 引号外的普通字符:探测字符表去掉上面 11 个", len(plain), 92)
+    rec.eq("簇18 引号里的探测字符:探测字符表再加空格与制表符", (len(quoted), quoted[-2:]), (105, [" ", "\t"]))
+    rec.eq("簇18 十个数字", _DIGITS, "0123456789")
+
     # 引号外的普通字符:词首、词中、词尾都只是词的一部分(# 在词首起注释,另有对照)
     rec.eq("簇18 引号外的普通字符在词中间:是词的一部分", [c for c in plain if _shell_segments("a" + c + "b") != [["a" + c + "b"]]], [])
     rec.eq("簇18 引号外的普通字符在词尾:是词的一部分", [c for c in plain if _shell_segments("a" + c) != [["a" + c]]], [])
@@ -1602,6 +1615,7 @@ def _selftest_charset(rec):
     rec.eq("簇18 单引号里的字符(单引号除外)都是字面字符", [c for c in quoted if c != "'" and _shell_segments("'a" + c + "b'") != [["a" + c + "b"]]], [])
     # 数值:只收 ASCII 数字、至多一个夹在两段数字之间的小数点、至少一位非零
     non_digit = [c for c in _PROBE_CHARS if c not in _DIGITS] + [" ", "\t"]  # 带引号的值里可以有空白
+    rec.eq("簇18 数值的探测字符:探测字符表去掉十个数字、再加空格与制表符", (len(non_digit), non_digit[-2:]), (95, [" ", "\t"]))
     rec.eq("簇18 值 5 之后紧贴任一非数字字符:不是正数", [c for c in non_digit if positive("5" + c)], [])
     rec.eq("簇18 值 5 之前紧贴任一非数字字符:不是正数", [c for c in non_digit if positive(c + "5")], [])
     rec.eq("簇18 值 5. 之后紧贴任一非数字字符:不是正数", [c for c in non_digit if positive("5." + c)], [])
@@ -1696,6 +1710,13 @@ def run_selftest() -> int:
     gaps = _cluster_gaps(rec.clusters, [n for n, v in globals().items() if n.startswith("_selftest_") and callable(v)])
     if gaps:
         print(f"自测失败(簇函数与簇调用对不上:没被调用、一条对照都没跑、或不在 _selftest_ 发现表里:{gaps})", file=sys.stderr)
+        return 1
+    if rec.checks != _PIN_CHECKS:
+        print(
+            f"自测失败(细粒度对照共 {rec.checks} 条,与钉住的 {_PIN_CHECKS} 条不一致:有对照被删或漏跑,或增删对照后没同步改 _PIN_CHECKS;"
+            f"各簇的条数:{rec.clusters})",
+            file=sys.stderr,
+        )
         return 1
 
     print(
