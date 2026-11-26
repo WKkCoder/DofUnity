@@ -32,7 +32,7 @@ namespace Dnf.Net.Session
         UnknownArgument,
 
         /// <summary>
-        /// <c>--permits-only</c>(只看副本许可表、不进副本)与 <c>--dungeon</c>(进这个副本)或结算后选项同时出现:二选一,不分先后。
+        /// <c>--permits-only</c>(只看副本许可表、不进副本)与 <c>--dungeon</c>(进这个副本)、结算后选项或 <c>--give-up-on-failure</c> 同时出现:二选一,不分先后。
         /// 和别的问题一样只给问题名,不回显用户输入。
         /// </summary>
         Conflict,
@@ -49,7 +49,7 @@ namespace Dnf.Net.Session
         /// <summary>给了 <c>--menu-choice</c> 却没有同时给 <c>--after-settle</c>。</summary>
         MenuChoiceWithoutAfterSettle,
 
-        /// <summary>新增选项(<c>--after-settle</c>、<c>--min-clear-seconds</c>、<c>--menu-choice</c>)重复出现。</summary>
+        /// <summary>新增选项(<c>--after-settle</c>、<c>--min-clear-seconds</c>、<c>--menu-choice</c>、<c>--give-up-on-failure</c>)重复出现。</summary>
         DuplicateOption,
     }
 
@@ -59,6 +59,10 @@ namespace Dnf.Net.Session
     /// <para>
     /// 默认关闭的诊断选项 <c>--permits-only</c>:登录进城后只打印副本许可表就退出,不进副本,所以<b>不需要</b> <c>--dungeon</c>(见 <see cref="PermitsOnly"/>);
     /// 与 <c>--dungeon</c> 同时给是 <see cref="OnlineFightArgumentProblem.Conflict"/>。不带它时一切与以前完全一样。
+    /// </para>
+    /// <para>
+    /// 默认关闭的选项 <c>--give-up-on-failure</c>(见 <see cref="GiveUpOnFailure"/>):异常收场而会话还活着时,断开前先发一次放弃游戏命令并有限地等回城信号;
+    /// 与 <c>--permits-only</c> 互斥(<see cref="OnlineFightArgumentProblem.Conflict"/>),可与 <c>--after-settle</c>、<c>--min-clear-seconds</c>、<c>--stay</c> 同用,重复出现判 <see cref="OnlineFightArgumentProblem.DuplicateOption"/>。
     /// </para>
     /// </summary>
     public sealed class OnlineFightArguments
@@ -119,6 +123,12 @@ namespace Dnf.Net.Session
         public EplpCommand? EffectiveMenuChoice => AfterSettle ? EplpCommand.ReturnToTown : (EplpCommand?)null;
 
         /// <summary>
+        /// 异常收场而会话还活着时,断开前先发一次放弃游戏命令(类 1、包号 45)并在有上限的时间内等回城信号(<c>--give-up-on-failure</c>)。缺省 false:
+        /// 默认的 <c>fight</c> 输出与退出码一字不变。放弃的结果只写进日志与结果行的 <c>giveUp</c> 字段,不改任何退出码。
+        /// </summary>
+        public bool GiveUpOnFailure { get; private set; }
+
+        /// <summary>
         /// 解析 <c>fight</c> 之后的那些参数。仓库根只能出现在第一个位置(不以 <c>--</c> 开头的那个);旧选项重复以最后一次为准,新增选项重复判错。
         /// </summary>
         public static bool TryParse(IReadOnlyList<string> args, out OnlineFightArguments parsed, out OnlineFightArgumentProblem problem)
@@ -129,6 +139,7 @@ namespace Dnf.Net.Session
             bool seenAfterSettle = false;
             bool seenMinClearSeconds = false;
             bool seenMenuChoice = false;
+            bool seenGiveUpOnFailure = false;
             int count = args == null ? 0 : args.Count;
             for (int i = 0; i < count; i++)
             {
@@ -265,6 +276,15 @@ namespace Dnf.Net.Session
                         i++;
                         break;
                     }
+                    case "--give-up-on-failure":
+                        if (seenGiveUpOnFailure)
+                        {
+                            problem = OnlineFightArgumentProblem.DuplicateOption;
+                            return false;
+                        }
+                        seenGiveUpOnFailure = true;
+                        result.GiveUpOnFailure = true;
+                        break;
                     default:
                         problem = OnlineFightArgumentProblem.UnknownArgument;
                         return false;
@@ -272,7 +292,7 @@ namespace Dnf.Net.Session
             }
 
             // 只看许可表与进副本/结算后选项二选一:每个参数都读得通之后才判(不分先后);只看许可表时不要求 --dungeon,否则一如既往必须给
-            if (result.PermitsOnly && (haveDungeon || result.AfterSettle || result.MinClearSeconds.HasValue || seenMenuChoice))
+            if (result.PermitsOnly && (haveDungeon || result.AfterSettle || result.MinClearSeconds.HasValue || seenMenuChoice || result.GiveUpOnFailure))
             {
                 problem = OnlineFightArgumentProblem.Conflict;
                 return false;

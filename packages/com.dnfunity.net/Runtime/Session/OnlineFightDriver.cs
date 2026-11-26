@@ -80,6 +80,9 @@ namespace Dnf.Net.Session
         /// <summary>两段等待里回头看一次跑器状态的缺省步长。</summary>
         public static readonly TimeSpan DefaultPollInterval = TimeSpan.FromMilliseconds(50);
 
+        /// <summary>放弃游戏之后等回城信号的缺省上限(15 秒,与 <see cref="OnlineDungeonCombatOptions.GiveUpTimeout"/> 的缺省一致)。</summary>
+        public static readonly TimeSpan DefaultGiveUpWait = TimeSpan.FromSeconds(15);
+
         /// <summary>
         /// 相邻两次排击杀之间等多久(毫秒,取驱动的时钟):第 0 只立刻排,之后每只与前一只隔这么久;0 表示不等。缺省 <see cref="DefaultPaceMs"/>。
         /// </summary>
@@ -109,6 +112,186 @@ namespace Dnf.Net.Session
         /// 怪数为 1 时没有"第一只到最后一只"的间隔,立即发出。
         /// </summary>
         public TimeSpan? MinClearDuration { get; set; }
+
+        /// <summary>
+        /// 驱动以被拒即停、没等到清图通知、结算不完整三种异常结局收场,而跑器还在跑(会话还活着)时,
+        /// 在让跑器停下之前先请求它发一次放弃游戏命令(<see cref="OnlineDungeonCombatRunner.PostGiveUp"/>,类 1、包号 45)并有限地等回城信号(<see cref="GiveUpWait"/>)。
+        /// 缺省 false:驱动的每一步、每一行日志与汇总都与以前逐字相同。放弃的结果只记在 <see cref="OnlineFightSummary.GiveUp"/>,
+        /// 放弃命令真发出去之后,汇总里的结局与各计数停在放弃之前那一刻,不被放弃期间的迟到帧改写(命令没发出去时与没开一样,按最终状态读)。
+        /// </summary>
+        public bool GiveUpOnFailure { get; set; }
+
+        /// <summary>放弃游戏之后等回城信号的上限(取驱动的时钟,从请求放弃起算);只在 <see cref="GiveUpOnFailure"/> 开启时用。缺省 <see cref="DefaultGiveUpWait"/>。</summary>
+        public TimeSpan GiveUpWait { get; set; } = DefaultGiveUpWait;
+    }
+
+    /// <summary>放弃游戏(类 1、包号 45)之后的结局,只描述走到哪一步停下,不含任何载荷内容。</summary>
+    public enum OnlineGiveUpOutcome
+    {
+        /// <summary>等到了回城信号:跑器路径是 <c>0/23</c> 加 <c>0/24</c>;会话层路径还认 <c>0/2</c> 单帧。</summary>
+        Returned = 0,
+
+        /// <summary>命令发出后等满上限仍没有回城信号。</summary>
+        Timeout,
+
+        /// <summary>命令发出后连接被关闭,或切帧出错。</summary>
+        Closed,
+
+        /// <summary>放弃命令本身没能发出(帧层没编码出来,或写失败),没有再试。</summary>
+        SendFailed,
+
+        /// <summary>什么都没发:会话已经不可用,或跑器收场得太早、没来得及处理放弃请求,或跑器没交出会话。</summary>
+        Skipped,
+
+        /// <summary>取消令牌触发(用户中止:立刻停,不再等)。</summary>
+        Cancelled,
+
+        /// <summary>其余异常(类型名在 <see cref="OnlineGiveUpSummary.FaultType"/>)。</summary>
+        Faulted,
+    }
+
+    /// <summary>一次放弃游戏的汇总:触发它的结局名、结局、命令是否真发出了,不含任何载荷内容。</summary>
+    public sealed class OnlineGiveUpSummary
+    {
+        internal OnlineGiveUpSummary(string reason, OnlineGiveUpOutcome outcome, bool sent, TimeSpan elapsed, string faultType)
+        {
+            Reason = reason;
+            Outcome = outcome;
+            Sent = sent;
+            Elapsed = elapsed;
+            FaultType = faultType;
+        }
+
+        /// <summary>触发放弃的结局的枚举名(<see cref="OnlineFightOutcome"/> 或 <see cref="OnlineAfterSettleOutcome"/> 的名字)。</summary>
+        public string Reason { get; }
+
+        /// <summary>放弃的结局。</summary>
+        public OnlineGiveUpOutcome Outcome { get; }
+
+        /// <summary>放弃命令(1/45)是否确实发出去了(最多一次,绝不重发)。</summary>
+        public bool Sent { get; }
+
+        /// <summary>从请求放弃到结束的时间(取注入的时钟)。</summary>
+        public TimeSpan Elapsed { get; }
+
+        /// <summary>异常的类型名(没有为 null;不含异常消息)。</summary>
+        public string FaultType { get; }
+
+        /// <summary>是否等到了回城信号。</summary>
+        public bool ReturnedToTown => Outcome == OnlineGiveUpOutcome.Returned;
+    }
+
+    /// <summary>
+    /// <c>--give-up-on-failure</c> 的放弃策略与收尾编排(默认关闭;探针 <c>fight</c> 子命令只管调用,决定都在这里,所以有测试守着)。
+    /// <para>
+    /// 触发的结局(只在会话还活着、角色多半还在副本里时):战斗驱动的 <see cref="OnlineFightOutcome.RefusedStop"/>、<see cref="OnlineFightOutcome.NoClearNotice"/>、
+    /// <see cref="OnlineFightOutcome.SettleIncomplete"/>;开了 <c>--after-settle</c> 时,结算后菜单的推进超时、选牌发送失败、菜单命令超时、等回城超时、回包带失败标志、回包畸形。
+    /// 不触发:成功(<see cref="OnlineFightOutcome.AllDone"/> / <see cref="OnlineAfterSettleOutcome.ReturnedToTown"/>)、会话已关、抛了异常、取消(用户中止要立刻停)。
+    /// </para>
+    /// <para>
+    /// 放弃只发一次:战斗驱动级的失败由驱动在收尾处请求跑器发(见 <see cref="OnlineFightOptions.GiveUpOnFailure"/>,汇总里有 <see cref="OnlineFightSummary.GiveUp"/>),
+    /// 那种情况下本类绝不再发第二次;跑器已自己收场,或失败出在结算后菜单阶段时,改由会话层直接发(<see cref="OnlineAfterSettleDriver.GiveUpAsync(OnlineFightOutcome, Action{string}, CancellationToken)"/>)。
+    /// 放弃的结果只写进日志与结果行,不改任何既有退出码。
+    /// </para>
+    /// </summary>
+    public static class OnlineGiveUpOnFailure
+    {
+        /// <summary>战斗驱动的这个结局要不要触发放弃。</summary>
+        public static bool ShouldGiveUp(OnlineFightOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case OnlineFightOutcome.RefusedStop:
+                case OnlineFightOutcome.NoClearNotice:
+                case OnlineFightOutcome.SettleIncomplete:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>结算后菜单的这个结局要不要触发放弃。</summary>
+        public static bool ShouldGiveUp(OnlineAfterSettleOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case OnlineAfterSettleOutcome.ScoreScrollTimeout:
+                case OnlineAfterSettleOutcome.CardRightTimeout:
+                case OnlineAfterSettleOutcome.SelectCardSendFailed:
+                case OnlineAfterSettleOutcome.EplpTimeout:
+                case OnlineAfterSettleOutcome.ReturnTimeout:
+                case OnlineAfterSettleOutcome.ReplyFailed:
+                case OnlineAfterSettleOutcome.ReplyMalformed:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// 战斗与结算后菜单都收场之后的放弃收尾(探针调用):<paramref name="enabled"/> 为 false(没开 <c>--give-up-on-failure</c>)什么都不做、返回 null。
+        /// 汇总里已经有驱动级的放弃结果就原样返回、绝不再发;否则按策略决定:有结算后菜单结局时看菜单结局,没有时看战斗结局,
+        /// 触发则用 <paramref name="sessionDriver"/> 在会话层发一次放弃命令并有限地等回城信号;不触发返回 null。
+        /// 跑器没在收尾宽限内返回(<see cref="OnlineFightSummary.RunnerOutcome"/> 为 null)时它可能还占着会话收帧,这里不再插一个读者,记一条 skipped 了事。
+        /// </summary>
+        /// <param name="enabled">命令行是否开了 <c>--give-up-on-failure</c>。</param>
+        /// <param name="sessionDriver">会话层放弃用的驱动(要给它一个还没放弃过的实例,放弃窗口取它的选项)。</param>
+        /// <param name="fight">战斗驱动的汇总。</param>
+        /// <param name="afterSettle">结算后菜单的汇总;没跑菜单传 null。</param>
+        /// <param name="log">日志回调(脱敏的 <c>DNF_NET stage=giveup …</c> 行);null 不打。</param>
+        /// <param name="cancellationToken">取消令牌:触发后立刻停,结局记为 <see cref="OnlineGiveUpOutcome.Cancelled"/>。</param>
+        public static async Task<OnlineGiveUpSummary> FinishAsync(
+            bool enabled,
+            OnlineAfterSettleDriver sessionDriver,
+            OnlineFightSummary fight,
+            OnlineAfterSettleSummary afterSettle,
+            Action<string> log,
+            CancellationToken cancellationToken)
+        {
+            if (!enabled)
+            {
+                return null;
+            }
+            if (sessionDriver == null)
+            {
+                throw new ArgumentNullException(nameof(sessionDriver));
+            }
+            if (fight == null)
+            {
+                throw new ArgumentNullException(nameof(fight));
+            }
+            if (fight.GiveUp != null)
+            {
+                return fight.GiveUp;
+            }
+            if (afterSettle != null)
+            {
+                return await sessionDriver.GiveUpAsync(afterSettle.Outcome, log, cancellationToken).ConfigureAwait(false);
+            }
+            if (fight.RunnerOutcome == null && ShouldGiveUp(fight.Outcome))
+            {
+                string reason = fight.Outcome.ToString();
+                Say(log, OnlineFightLog.GiveUpStep(OnlineFightLog.GiveUpToken(OnlineGiveUpOutcome.Skipped), reason));
+                return new OnlineGiveUpSummary(reason, OnlineGiveUpOutcome.Skipped, false, TimeSpan.Zero, null);
+            }
+            return await sessionDriver.GiveUpAsync(fight.Outcome, log, cancellationToken).ConfigureAwait(false);
+        }
+
+        private static void Say(Action<string> log, string line)
+        {
+            if (log == null)
+            {
+                return;
+            }
+            try
+            {
+                log(line);
+            }
+            catch (Exception)
+            {
+                // 日志回调自己出错不能影响放弃
+            }
+        }
     }
 
     /// <summary>
@@ -121,7 +304,7 @@ namespace Dnf.Net.Session
         internal OnlineFightSummary(OnlineFightOutcome outcome, int monsters, int posted, int sent, int confirmed, int refused, int blocked,
             bool clearNoticeSeen, OnlineFightSettlement settlement, bool returnReady, OnlineCombatPhase phase,
             OnlineDungeonCombatOutcome? runnerOutcome, string faultType, int firstRefusedLocal, int heartbeatsAnswered,
-            TimeSpan elapsed, IReadOnlyList<TimeSpan> postTimes, TimeSpan? clearDuration = null)
+            TimeSpan elapsed, IReadOnlyList<TimeSpan> postTimes, TimeSpan? clearDuration = null, OnlineGiveUpSummary giveUp = null)
         {
             Outcome = outcome;
             Monsters = monsters;
@@ -141,6 +324,7 @@ namespace Dnf.Net.Session
             Elapsed = elapsed;
             PostTimes = postTimes;
             ClearDuration = clearDuration ?? elapsed;
+            GiveUp = giveUp;
         }
 
         /// <summary>结局。</summary>
@@ -196,6 +380,13 @@ namespace Dnf.Net.Session
 
         /// <summary>从驱动开始到观察到清图(或未清图时到驱动收场)的时长(取驱动的时钟)。</summary>
         public TimeSpan ClearDuration { get; }
+
+        /// <summary>
+        /// 驱动级的放弃结果:只有开了 <see cref="OnlineFightOptions.GiveUpOnFailure"/>、结局是三种异常收场之一、且跑器还在跑时驱动请求了放弃才非 null;
+        /// 其余(没开、不触发、跑器已自己收场)为 null,此时的放弃(若有)由会话层收尾去做(<see cref="OnlineGiveUpOnFailure.FinishAsync"/>)。
+        /// 非 null 时本汇总的结局与计数是放弃请求之前那一刻的。
+        /// </summary>
+        public OnlineGiveUpSummary GiveUp { get; }
 
         /// <summary>已发出击杀却还没等到确认或拒绝的怪数(收场时的在途数)。</summary>
         public int Pending => Sent - Confirmed - Refused;
@@ -261,6 +452,8 @@ namespace Dnf.Net.Session
         private readonly TimeSpan _settleWait;
         private readonly TimeSpan _poll;
         private readonly IFightClock _clock;
+        private readonly bool _giveUpOnFailure;
+        private readonly TimeSpan _giveUpWait;
         private int _started;
 
         /// <summary>
@@ -284,6 +477,7 @@ namespace Dnf.Net.Session
             CheckWindow(o.ClearWait, "ClearWait");
             CheckWindow(o.SettleWait, "SettleWait");
             CheckWindow(o.PollInterval, "PollInterval");
+            CheckWindow(o.GiveUpWait, "GiveUpWait");
             _paceMs = o.PaceMs;
             _minClearDuration = o.MinClearDuration.HasValue && o.MinClearDuration.Value > TimeSpan.Zero ? o.MinClearDuration : (TimeSpan?)null;
             _continueOnRefuse = o.ContinueOnRefuse;
@@ -291,6 +485,8 @@ namespace Dnf.Net.Session
             _settleWait = o.SettleWait;
             _poll = o.PollInterval;
             _clock = o.Clock ?? SystemFightClock.Instance;
+            _giveUpOnFailure = o.GiveUpOnFailure;
+            _giveUpWait = o.GiveUpWait;
         }
 
         /// <summary>
@@ -334,10 +530,18 @@ namespace Dnf.Net.Session
                     state.FaultType = e.GetBaseException().GetType().Name;
                 }
 
+                // 放弃游戏(默认关闭,没开时这一段什么都不做):异常收场而跑器还在跑时,让它停下之前先请求它发一次 1/45 并有限地等回城信号。
+                if (_giveUpOnFailure)
+                {
+                    await TryGiveUpAsync(runTask, state, log, linked.Token).ConfigureAwait(false);
+                }
+
                 // 收尾:让跑器停下(它从不抛,取消只当安静结束),再读它的最终计数。
                 linked.Cancel();
                 OnlineDungeonCombatResult result = await FinishRunnerAsync(runTask, state).ConfigureAwait(false);
-                OnlineFightSummary summary = Summarize(state, result);
+                // 放弃命令真的发出去了才用请求前冻结的那一份(没发出去,线上与以前一样,就按以前的判法读最终状态)。
+                bool giveUpSent = state.Frozen != null && state.GiveUp != null && state.GiveUp.Sent;
+                OnlineFightSummary summary = giveUpSent ? Freeze(state, result) : Summarize(state, result);
                 Say(log, OnlineFightLog.End(summary));
                 return summary;
             }
@@ -516,6 +720,121 @@ namespace Dnf.Net.Session
             }
         }
 
+        // ---- 放弃游戏(默认关闭,见 OnlineFightOptions.GiveUpOnFailure) ----
+
+        // 收尾之前的放弃:跑器已经自己收场(或没起来)就不管,留给会话层的收尾(OnlineGiveUpOnFailure.FinishAsync);
+        // 否则先按此刻的状态预判结局,只有三种异常收场才请求跑器放弃;请求被接受(跑器没有恰好收场、此前也没人请求过)之后,
+        // 把请求前那一刻的汇总冻结下来(结局与计数不被放弃期间的迟到帧改写,也不被放弃自己的失败改写),再等跑器给结果。
+        private async Task TryGiveUpAsync(Task<OnlineDungeonCombatResult> runTask, RunState state, Action<string> log, CancellationToken token)
+        {
+            if (runTask == null || runTask.IsCompleted)
+            {
+                return;
+            }
+            OnlineFightSummary now = Summarize(state, null);
+            if (!OnlineGiveUpOnFailure.ShouldGiveUp(now.Outcome) || !_runner.PostGiveUp())
+            {
+                return;
+            }
+            state.Frozen = now;
+            state.GiveUp = await AwaitGiveUpAsync(runTask, now.Outcome.ToString(), log, token).ConfigureAwait(false);
+        }
+
+        // 放弃请求已交给跑器:1/45 由跑器的循环线程发(只发一次,之后只回心跳),驱动在这里只看,不碰会话。
+        // 最多等 _giveUpWait(取驱动的时钟,从请求起算);跑器先收场就按它的收场原因判;取消令牌触发立刻停。
+        private async Task<OnlineGiveUpSummary> AwaitGiveUpAsync(Task<OnlineDungeonCombatResult> runTask, string reason, Action<string> log, CancellationToken token)
+        {
+            OnlineDungeonCombat machine = _runner.Machine;
+            TimeSpan started = _clock.Now;
+            TimeSpan deadline = started + _giveUpWait;
+            bool sentLogged = false;
+            string faultType = null;
+            OnlineGiveUpOutcome outcome;
+            try
+            {
+                while (true)
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (!sentLogged && machine.IsGivingUp)
+                    {
+                        sentLogged = true;
+                        Say(log, OnlineFightLog.GiveUpStep(OnlineFightLog.GiveUpSentStep, reason));
+                    }
+                    if (runTask.IsCompleted)
+                    {
+                        outcome = GiveUpOutcomeOf(runTask, machine.IsGivingUp, out faultType);
+                        break;
+                    }
+                    TimeSpan left = deadline - _clock.Now;
+                    if (left <= TimeSpan.Zero)
+                    {
+                        outcome = OnlineGiveUpOutcome.Timeout;
+                        break;
+                    }
+                    await WaitAsync(runTask, Shorter(_poll, left), token).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                outcome = OnlineGiveUpOutcome.Cancelled;
+            }
+            catch (Exception e)
+            {
+                faultType = e.GetBaseException().GetType().Name;
+                outcome = OnlineGiveUpOutcome.Faulted;
+            }
+
+            bool sent = machine.IsGivingUp;
+            if (sent && !sentLogged)
+            {
+                Say(log, OnlineFightLog.GiveUpStep(OnlineFightLog.GiveUpSentStep, reason));
+            }
+            Say(log, OnlineFightLog.GiveUpStep(OnlineFightLog.GiveUpToken(outcome), reason));
+            return new OnlineGiveUpSummary(reason, outcome, sent, _clock.Now - started, faultType);
+        }
+
+        // 跑器在放弃等待期间自己收场了:按它的收场原因与"1/45 发出了没有"定放弃的结局。
+        // 没发出就收场(超时、连接断、请求没来得及被处理)算 Skipped:什么都没发。
+        private static OnlineGiveUpOutcome GiveUpOutcomeOf(Task<OnlineDungeonCombatResult> runTask, bool sent, out string faultType)
+        {
+            faultType = null;
+            if (runTask.Status != TaskStatus.RanToCompletion)
+            {
+                return OnlineGiveUpOutcome.Faulted;
+            }
+            OnlineDungeonCombatResult result = runTask.Result;
+            faultType = result.FaultType;
+            switch (result.Outcome)
+            {
+                case OnlineDungeonCombatOutcome.GaveUp:
+                    return OnlineGiveUpOutcome.Returned;
+                case OnlineDungeonCombatOutcome.Timeout:
+                    return sent ? OnlineGiveUpOutcome.Timeout : OnlineGiveUpOutcome.Skipped;
+                case OnlineDungeonCombatOutcome.ConnectionClosed:
+                case OnlineDungeonCombatOutcome.FramingFault:
+                    return sent ? OnlineGiveUpOutcome.Closed : OnlineGiveUpOutcome.Skipped;
+                case OnlineDungeonCombatOutcome.SendFailed:
+                    return OnlineGiveUpOutcome.SendFailed;
+                case OnlineDungeonCombatOutcome.Cancelled:
+                    return OnlineGiveUpOutcome.Cancelled;
+                case OnlineDungeonCombatOutcome.Faulted:
+                    return OnlineGiveUpOutcome.Faulted;
+                default:
+                    return OnlineGiveUpOutcome.Skipped;
+            }
+        }
+
+        // 放弃之后的汇总:结局与各计数用请求放弃前冻结的那一份,只有跑器自己的结局与心跳数取最终结果;放弃的结果挂在 GiveUp 上。
+        private static OnlineFightSummary Freeze(RunState state, OnlineDungeonCombatResult result)
+        {
+            OnlineFightSummary f = state.Frozen;
+            return new OnlineFightSummary(f.Outcome, f.Monsters, f.Posted, f.Sent, f.Confirmed, f.Refused, f.Blocked,
+                f.ClearNoticeSeen, f.Settlement, f.ReturnReady, f.Phase,
+                result != null ? result.Outcome : (OnlineDungeonCombatOutcome?)null,
+                f.FaultType, f.FirstRefusedLocal, result != null ? result.HeartbeatsAnswered : 0,
+                f.Elapsed, f.PostTimes, f.ClearDuration, state.GiveUp);
+        }
+
         // 跑器已被让停:等它返回(最多 FinishWait),读它的结果;它没在宽限内返回就当没有结果,按活的状态机读数。
         private async Task<OnlineDungeonCombatResult> FinishRunnerAsync(Task<OnlineDungeonCombatResult> runTask, RunState state)
         {
@@ -592,7 +911,7 @@ namespace Dnf.Net.Session
             TimeSpan clearDuration = state.ClearedAt.HasValue ? state.ClearedAt.Value - state.Started : elapsed;
             return new OnlineFightSummary(outcome, _map.Monsters.Count, state.Posted, sent, confirmed, refused, blocked,
                 phase >= OnlineCombatPhase.Cleared, settlement, phase == OnlineCombatPhase.Settled, phase,
-                runnerOutcome, fault, firstRefused, heartbeats, elapsed, state.PostTimes.ToArray(), clearDuration);
+                runnerOutcome, fault, firstRefused, heartbeats, elapsed, state.PostTimes.ToArray(), clearDuration, state.GiveUp);
         }
 
         // 结局的判法,先后即优先级:
@@ -725,6 +1044,8 @@ namespace Dnf.Net.Session
             public OnlineFightOutcome? Verdict;
             public bool Cancelled;
             public string FaultType;
+            public OnlineFightSummary Frozen;
+            public OnlineGiveUpSummary GiveUp;
         }
     }
 }
