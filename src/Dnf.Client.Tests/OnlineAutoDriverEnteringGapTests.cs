@@ -23,7 +23,7 @@ namespace Dnf.Client.Tests;
 /// </para>
 /// <para>
 /// 用例 3 起用同一套接线补几处只有接上真控制器才走得到的驱动行为:流程离开副本阶段后不留旧局房间自动机、结算选"选择副本"后在选图页重新确认、
-/// 城镇里进副本控制器带着提示时的判法、房间自动机拿到的最短清图时间与整段上限。
+/// 城镇里进副本控制器带着提示时的判法、房间自动机拿到的最短清图时间与整段上限、同一局里一直推进同一个房间自动机。
 /// </para>
 /// </summary>
 public sealed class OnlineAutoDriverEnteringGapTests
@@ -567,5 +567,28 @@ public sealed class OnlineAutoDriverEnteringGapTests
         Assert.Equal(totalLimitMs, bot.TotalLimitMs);
         Assert.Equal(HostedRoomBot.DefaultNoProgressLimitMs, bot.NoProgressLimitMs);
         Assert.False(bot.Stopped);
+    }
+
+    // ------------------------------------------------------------------ 用例 7:同一局里一直是同一个房间自动机
+
+    [Fact]
+    public void The_driver_keeps_one_room_bot_for_the_whole_run_and_feeds_it_every_frame()
+    {
+        // 驱动只在"局换了"时才造新的房间自动机;同一局里每帧都推进同一个——它的时间累计才会一帧一帧往上走,
+        // 最短清图时间的压制与整段上限才有意义(若每帧都换新的,时间归零,最短清图压制永远松不开)。
+        using var rig = new EnteringRig(new OnlineAutoOptions());
+        rig.StartAtDungeonSelect();
+        rig.PumpUntil(() => rig.Driver.ActiveRoomBot != null, "第一局开始,驱动造了房间自动机");
+        HostedRoomBot bot = rig.Driver.ActiveRoomBot;
+        Assert.Equal(20.0, bot.ElapsedMs);                          // 造出来的那一帧就推进了一帧(FrameMs = 20)
+
+        for (int i = 1; i <= 5; i++)
+        {
+            rig.Frame();
+
+            Assert.Same(bot, rig.Driver.ActiveRoomBot);
+            Assert.Equal(20.0 + 20.0 * i, bot.ElapsedMs);           // 每帧恰好多 20 毫秒:被推进的是同一个自动机
+            Assert.False(bot.Stopped);
+        }
     }
 }
