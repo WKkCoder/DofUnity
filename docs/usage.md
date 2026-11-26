@@ -30,7 +30,7 @@ tools/verify-p1.sh
 
 5. 在 Unity 里跑测试(批处理模式,不需要登录):`tools/unity-test.sh`。结果在 `out/unity-EditMode-results.xml`。
    只想快速确认宿主层还能不能编译(几秒、不启动编辑器、不占授权):`tools/typecheck-client.sh`(默认启用 `DisableTransitiveProjectReferences=true` 严格传递引用检查,防止 Client 间接依赖 `Dnf.Game`;加 `--selftest` 同时做 `CS0029` 与严格模式专属 `CS0012` 负对照;退出码 0 无错、1 有错、2 环境问题;不定义 UNITY_EDITOR,编辑器条件编译块不在检查范围;E-413、E-457)。
-   静态校验 `tools/unity-build-town.sh` 的时间放大运行与 262 行通过判据:`python3 tools/check-unity-chain.py`(加 `--selftest` 跑 1 正 4 负对照,E-457)。
+   静态校验 `tools/unity-build-town.sh` 的时间放大运行与 262 行通过判据:`python3 tools/check-unity-chain.py`(加 `--selftest` 跑 1 正 4 负整脚本对照,另加 252 条细粒度对照,E-457、E-471)。
    并发抢核压测单个测试工程(排查偶发失败):`tools/test-stress.sh --project src/Dnf.Net.Tests/Dnf.Net.Tests.csproj --parallel 4 --rounds 10 --timeout 240`(支持 `--filter`、`--exclude-list`、`--selftest`,E-460)。
    加 `UNITY_GRAPHICS=1` 会去掉 `-nographics`,让 GPU 与 CPU 合成器的对照真正运行(需要 GPU);`UNITY_GRAPHICS=1 tools/unity-build-smoke.sh macos` 在 macOS 播放器里再做一遍;`UNITY_TEST_TARGET=Android` 让编辑器按移动端精度编译着色器再做一遍(默认目标是 StandaloneOSX,E-031)。
 
