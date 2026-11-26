@@ -1134,6 +1134,51 @@ def _selftest_segments(rec):
         rec.eq(f"簇11 {name}", _verdict(text), want)
 
 
+def _selftest_multi_call(rec):
+    """簇 12:一行里的多个调用(缺陷 D2)——按调用计数、逐个检查;错误逐个报,行号都是这条逻辑行的第一个物理行。"""
+    one, two = [_msg_sim(1)], [_msg_sim(1), _msg_sim(1)]
+    for op in _OPS:
+        for sep in (f" {op} ", op):
+            shown = "有空格" if sep != op else "紧贴"
+            combos = (
+                ("坏 + 好", f"{_CALL}{sep}{_GOOD}", (one, 2)),
+                ("好 + 坏", f"{_GOOD}{sep}{_CALL}", (one, 2)),
+                ("坏 + 坏:两条错", f"{_CALL}{sep}{_CALL}", (two, 2)),
+                ("好 + 好:两个调用", f"{_GOOD}{sep}{_GOOD}", ([], 2)),
+            )
+            for name, text, want in combos:
+                rec.eq(f"簇12 {op} 连接两个调用({shown}):{name}", _verdict(text), want)
+    three = (
+        ("坏 好 坏", f"{_CALL} ; {_GOOD} ; {_CALL}", (two, 3)),
+        ("好 坏 好", f"{_GOOD} && {_CALL} || {_GOOD}", (one, 3)),
+        ("好 好 好", f"{_GOOD} | {_GOOD} & {_GOOD}", ([], 3)),
+        ("坏 坏 坏:三条错", f"{_CALL} ; {_CALL} | {_CALL}", ([_msg_sim(1)] * 3, 3)),
+    )
+    for name, text, want in three:
+        rec.eq(f"簇12 三个调用:{name}", _verdict(text), want)
+    # 行号:每条错误都带这条逻辑行的第一个物理行;连续行拼成的一条逻辑行也一样
+    rows = ["echo 头", f"{_CALL} ; {_CALL}", "echo 中", f"{_GOOD} ; {_CALL}", _sim_text("5")]
+    rec.eq("簇12 多行文本里每条错误的行号", _verdict(_join_rows(rows)), ([_msg_sim(2), _msg_sim(2), _msg_sim(4)], 5))
+    rows = ["echo 头", '"$app" -dnftimescale 4 \\', '  ; "$app" -dnftimescale 4 \\', "  -batchmode"]
+    rec.eq("簇12 连续行拼成的逻辑行里的两个调用:行号是第一个物理行", _verdict(_join_rows(rows)), ([_msg_sim(2), _msg_sim(2)], 2))
+    rows = [f"{_GOOD} ; {_CALL}", f"{_CALL} ; {_GOOD}"]
+    rec.eq("簇12 两行各有两个调用", _verdict(_join_rows(rows)), ([_msg_sim(1), _msg_sim(2)], 4))
+    # 计数的单位是调用(命令段),不是逻辑行、不是 $app 词、不是 -dnftimescale 词
+    units = (
+        ("同一段里两个 $app 词只算一个调用", '"$app" "$app" -dnftimescale 4 -dnfquitaftersim 5', ([], 1)),
+        ("同一段里 $app 与 ${app} 各一个、缺参数:一个调用一条错", '"$app" "${app}" -dnftimescale 4', (one, 1)),
+        ("同一段里两个 -dnftimescale 只算一个调用", '"$app" -dnftimescale 4 -dnftimescale 5 -dnfquitaftersim 5', ([], 1)),
+        ("同一段里两个 -dnftimescale、缺参数:只报一条", '"$app" -dnftimescale 4 -dnftimescale 5', (one, 1)),
+        ("有 $app 没有 -dnftimescale 的段不计数", f'"$app" -batchmode ; {_GOOD}', ([], 1)),
+        ("有 -dnftimescale 没有 $app 的段不计数", f"echo -dnftimescale 4 ; {_GOOD}", ([], 1)),
+        ("$app 与 -dnftimescale 分在两个段:都不是调用", '"$app" -batchmode ; echo -dnftimescale 4', ([], 0)),
+        ("-dnftimescale 在前、$app 在后的段也是调用", '-dnftimescale 4 "$app"', (one, 1)),
+        ("-dnftimescale 在前、$app 在后、带参数", '-dnftimescale 4 "$app" -dnfquitaftersim 5', ([], 1)),
+    )
+    for name, text, want in units:
+        rec.eq(f"簇12 {name}", _verdict(text), want)
+
+
 def run_selftest() -> int:
     with open(DEFAULT_SCRIPT, encoding="utf-8") as f:
         valid_text = f.read()
@@ -1198,6 +1243,7 @@ def run_selftest() -> int:
     _cluster(rec, "簇9", _selftest_lexer)
     _cluster(rec, "簇10", _selftest_comments)
     _cluster(rec, "簇11", _selftest_segments)
+    _cluster(rec, "簇12", _selftest_multi_call)
     if rec.failures:
         print(f"自测失败(细粒度对照 {rec.checks} 条中有 {len(rec.failures)} 条不符):", file=sys.stderr)
         for name, expected, actual in rec.failures:
