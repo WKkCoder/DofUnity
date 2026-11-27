@@ -294,7 +294,7 @@ WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/test-stress-run.XXXXXX")"
 trap 'rm -rf "$WORK_DIR" "$BUILD_LOG"' EXIT
 
 if ! dotnet build "$PROJECT" -c "$CONFIGURATION" -p:NuGetAudit=false --nologo -v q >"$BUILD_LOG" 2>&1; then
-  echo "构建失败（配置: $CONFIGURATION），以下为过滤路径后的构建错误：" >&2
+  echo "构建失败（配置: ${CONFIGURATION}），以下为过滤路径后的构建错误：" >&2
   sed -E 's#/[^ ]*/#.../#g' "$BUILD_LOG" >&2
   exit 2
 fi
