@@ -30,7 +30,7 @@ tools/verify-p1.sh
 
 5. 在 Unity 里跑测试(批处理模式,不需要登录):`tools/unity-test.sh`。结果在 `out/unity-EditMode-results.xml`。
    只想快速确认宿主层还能不能编译(几秒、不启动编辑器、不占授权):`tools/typecheck-client.sh`(默认启用 `DisableTransitiveProjectReferences=true` 严格传递引用检查,防止 Client 间接依赖 `Dnf.Game`;加 `--selftest` 同时做 `CS0029` 与严格模式专属 `CS0012` 负对照;退出码 0 无错、1 有错、2 环境问题;不定义 UNITY_EDITOR,编辑器条件编译块不在检查范围;E-413、E-457)。
-   静态校验 `tools/unity-build-town.sh` 的时间放大运行与 262 行通过判据:`python3 tools/check-unity-chain.py`(加 `--selftest` 跑 1 正 4 负整脚本对照,另加 252 条细粒度对照,E-457、E-471)。
+   静态校验 `tools/unity-build-town.sh` 的时间放大运行与 262 行通过判据:`python3 tools/check-unity-chain.py`(加 `--selftest` 跑 1 正 4 负整脚本对照,另加 1102 条细粒度对照,E-457、E-471、E-477)。
    并发抢核压测单个测试工程(排查偶发失败):`tools/test-stress.sh --project src/Dnf.Net.Tests/Dnf.Net.Tests.csproj --parallel 4 --rounds 10 --timeout 240`(支持 `--filter`、`--exclude-list`、`--selftest`,E-460)。
    加 `UNITY_GRAPHICS=1` 会去掉 `-nographics`,让 GPU 与 CPU 合成器的对照真正运行(需要 GPU);`UNITY_GRAPHICS=1 tools/unity-build-smoke.sh macos` 在 macOS 播放器里再做一遍;`UNITY_TEST_TARGET=Android` 让编辑器按移动端精度编译着色器再做一遍(默认目标是 StandaloneOSX,E-031)。
 
@@ -100,7 +100,7 @@ dotnet build src/Dnf.NetProbe -c Release
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe offline <首包文件>               # 不联网:把保存下来的频道首包喂给会话层,验证解码与频道信息解析
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe live [--register] [--seconds N]  # 网关健康检查 → 登录(或先注册测试号)→ 取游戏服地址 → 连频道 → 收首包 → 登录 → 收集 N 秒回包
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe orchestrated [仓库根] [--stay N] [--client-version V] [--server-group G]  # 与 Unity 宿主同一条编排:网关登录 → 取游戏服地址 → 连频道 → 游戏登录 → 逐槽选角 → 进城,进城成功后追加打印脱敏物品计数行 PROBE_ITEMS(E-454);--stay N 进城后再挂 N 秒(心跳保活);V 是登录请求里的客户端版本号(0 到 4294967295,缺省 0),G 是服务器组(0 到 17,0 = 由会话按频道目录解)
-src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe fight [仓库根] --dungeon <副本号 0–65535> <模式 0–4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] [--min-clear-seconds S] [--after-settle] [--menu-choice town]  # 无头:进城 → 进副本 → 对起始地图的怪逐只发击杀 → 等清图通知 → 等两段结算;只打脱敏的 PROBE_FIGHT 行,退出码 0 才是收齐;认证失败退出码 5 且绝不重试(E-416)。可选 --min-clear-seconds S(1..3600) 在 N>=2 怪时拉长首末击杀间隔避开通关过快计数;--after-settle [--menu-choice town] 在结算收齐后单次顺序发 1/72..1/75 并等回城信号(退出码 16..23,不带时与 E-416 逐字一致,E-455)
+src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe fight [仓库根] --dungeon <副本号 0–65535> <模式 0–4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] [--min-clear-seconds S] [--after-settle] [--menu-choice town] [--give-up-on-failure] [--frame-log]  # 无头:进城 → 进副本 → 对起始地图的怪逐只发击杀 → 等清图通知 → 等两段结算;只打脱敏的 PROBE_FIGHT 行,退出码 0 才是收齐;认证失败退出码 5 且绝不重试(E-416)。可选 --min-clear-seconds S(1..3600) 在 N>=2 怪时拉长首末击杀间隔避开通关过快计数;--after-settle [--menu-choice town] 在结算收齐后单次顺序发 1/72..1/75 并等回城信号(退出码 16..23,不带时与 E-416 逐字一致,E-455);--give-up-on-failure(默认关闭)在异常收场且会话还活着时,断开前先发一次放弃命令 1/45 并在有上限的时间内(缺省 15 秒)等回城信号,结果行末尾追加 giveUp=<returned、timeout、closed、sendfailed、skipped、cancelled、faulted 或 ->,不改退出码(E-475、E-479);--frame-log(默认关闭,与 --permits-only 互斥,给两次是用法错误)每帧与每个 561 信封各打一行,只含序号、包类、包号、整帧总长与信封结果、没有载荷,前 400 帧封顶(E-479)
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe fight [仓库根] --permits-only  # 进城后只打副本许可表(副本号与档位,只给你自己的终端看、不落库)就退出,不进副本;用来挑单房间副本
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe channel [仓库根] [--channel-port N] [--version V]  # 只读:网关健康检查 → 登录 → 取目录服务地址 → 连选频道目录服务走四步 → 只打组数、频道总数、推荐规则数、有效端口数与各档位计数;每次运行是一次网关登录;这个子命令本身还没有联网跑过,但同一个目录读取已由下面的 `switch --list` 在真服上只读读通一次(E-450)
 src/Dnf.NetProbe/bin/Release/net10.0/dnf-netprobe switch [仓库根] --to-index K [--client-version V] [--server-group G]  # 只读的换频道验证(E-448):一条会话、网关只登录一次 → 读频道目录 → 连第一个频道 → 换到目录里第 K 个候选频道(端口有效且不是第一个频道,按目录顺序从 0 起)→ 断开;不选角、不进城、不发命令包
@@ -286,7 +286,7 @@ tools/publish-github.sh --force-branches   # 允许覆盖远端上被改写过�
 
 `tools/guard/audit_refs.py` 对每个引用的每一个历史文件版本(含后来被删掉的)逐个检查:
 
-1. **提交守卫的全部规则**:路径(`re/`、`out/`、`local.env`、凭据文件)、原版扩展名、单文件 1 MiB、原版容器魔数、反编译器输出特征。
+1. **提交守卫的全部规则**:路径(`re/`、`out/`、`local.env`、凭据文件)、原版扩展名、单文件 1 MiB、原版容器魔数、反编译器输出特征,以及 `.sh` 里 `$变量名` 紧跟非 ASCII 字符(bash 3.2 在 UTF-8 下会把它并进变量名,E-478)。
 2. **`local.secrets.env` 里的取值,以及它们的编码写法**:十六进制字节串(大小写、空格、逗号、`0x`、`\x` 分隔均可)、Base64、
    UTF-16、十进制字节列表、MD5 / SHA 摘要、IP 的数值写法、十六进制密钥的片段 / 反序 / 整数形式。测试向量与十六进制转储正是取值最容易"编码后漏进去"的地方。
 3. **本机绝对路径**(`/Users/名字` 等)、私钥块、常见访问令牌。
