@@ -616,4 +616,34 @@ public class OnlineGiveUpReturnCriterionTests
         Assert.Equal(OnlineCombatEventKind.ReturnedToTown, returned.Kind);
         Assert.Equal(OnlineCombatFrameVerdict.Accepted, returned.Verdict);
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task The_return_event_is_about_no_monster_and_carries_no_block_or_settlement_part_whichever_pair_completes_it(bool classicPair)
+    {
+        // 事件的固定字段(与哪一对成立无关):不属于任何一只怪(本地编号与服务端怪编号都是 -1,文档写明"与某只怪无关时为 -1"),
+        // 没有拦截原因、没有结算段;计数是放弃那一刻的快照(2 只怪、一只也没发过)
+        CombatRig rig = await GivingUpRig();
+        if (classicPair)
+        {
+            rig.Feed(Frame(N23));
+            rig.Feed(Frame(N24));
+        }
+        else
+        {
+            rig.Feed(Frame(N24));
+            rig.Feed(Frame(N2));
+        }
+
+        OnlineCombatEvent returned = rig.Machine.Events.Single(e => e.Kind == OnlineCombatEventKind.ReturnedToTown);
+        Assert.Equal(-1, returned.LocalId);
+        Assert.Equal(-1, returned.ServerId);
+        Assert.Equal(OnlineCombatBlock.None, returned.Block);
+        Assert.Equal(OnlineCombatSettlementPart.None, returned.Part);
+        Assert.Equal(OnlineCombatFrameVerdict.Accepted, returned.Verdict);
+        Assert.Equal(2, returned.Total);
+        Assert.Equal(0, returned.Sent);
+        Assert.Equal(0, returned.Confirmed);
+    }
 }
