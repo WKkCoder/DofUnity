@@ -8,6 +8,9 @@
 #     之后的任何步骤（env.sh、DNF_DIR、构建、播放器、本地凭据文件）一概不碰。
 #   --selftest：对日志校验器（含正例与多种负对照）及 --live 护栏做离线自测，不需要 Unity；
 #     护栏只经 --check-guards 入口、在隔离沙箱副本上验证，自测本身绝不会走到真服运行。
+#     末尾还自带一组"失败路径负对照"：由 --selftest 自己自动运行（不用另外手动跑），把本脚本复制到临时目录、故意改坏几处，
+#     在 LC_ALL=C 与 LC_ALL=en_US.UTF-8 下各跑一遍，要求改坏的自测退出 1 并打出 FAIL 行（防"失败被悄悄吞掉、退出 0"这类缺口，
+#     见下面 st_negative_control 的说明）；本机没有 en_US.UTF-8 时大声提示并跳过 UTF-8 那一半。
 set -euo pipefail
 
 # 先记下脚本自身的绝对路径（下一行就 cd 到仓库根；--selftest 要拿它复制出隔离沙箱）
@@ -39,6 +42,8 @@ usage() {
   --check-guards                须与 --live 同用：只判定 --live 护栏。通过打印 DNF_E2E_GUARDS ok 并退出 0；
                                 不通过退出 2 并打印原因行。绝不走到 env.sh、DNF_DIR、构建、播放器与凭据文件。
   --selftest                    离线自测日志断言器（正例 + 负对照）与 --live 护栏（只经 --check-guards，在隔离沙箱副本上）。
+                                末尾自动再跑一组失败路径负对照（由 --selftest 自己运行，无需另跑）：把本脚本复制到临时目录
+                                故意改坏几处，在 LC_ALL=C 与 en_US.UTF-8 下各跑一遍，要求改坏的自测退出 1 并打出 FAIL 行。
 
 选项:
   --prereg <文件>               --live 必填：非空预注册文件路径。
@@ -56,6 +61,7 @@ usage() {
 环境变量:
   DNF_SKIP_BUILD=1              若 macos-dev 播放器已存在则跳过 tools/unity-build-town.sh macos-dev 构建。
   DNF_DIR                       数据目录（含 Script.pvf）；未设时回退读取 local.env。
+  E2E_SELFTEST_NESTED           内部使用：--selftest 的失败路径负对照给改坏的副本设置它来防止递归；手动运行不要设置。
 EOF
 }
 
@@ -360,6 +366,172 @@ st_parse_case() {
   st_check_file "[护栏 $name] stderr" "$_ST_ERR" ""
   [ -f "$_ST_BOX/trip/env.sh.vars" ] || st_fail "[护栏 $name] 假 env.sh 没有留下解析结果记账"
   st_check_file "[护栏 $name] 解析结果" "$_ST_BOX/trip/env.sh.vars" "$want_vars"
+}
+
+# ---- 失败路径负对照 ----
+# 为什么要有它：--selftest 打印"通过"，不等于它在失败时真的会失败。上一轮发现过一个真缺口：macOS 自带的 bash 3.2 在 UTF-8
+# 语言环境下，会把紧跟在 "$变量名" 后面的全角标点当成变量名的一部分，set -u 之下报 unbound variable，脚本悄悄退出且退出码为 0——
+# --selftest 的失败路径（FAIL: 行 + 退出 1）在 UTF-8 下就这样被整个吞掉，C 语言环境下却一切正常，所以一直没被发现。
+# 谁来运行：--selftest 自己在最后自动运行，不需要、也不应该另外手动跑；它只在隔离的临时目录里动手，不碰仓库文件。
+# 做法：把本脚本复制到临时目录并故意改坏一处（BREAKS 表里的 5 种：三处退出码比较、stdout 期望、stderr 期望），在空环境
+# （只有 HOME 与 PATH，另加 LC_ALL 与递归标记）里用 /bin/bash，分别在 LC_ALL=C 与 LC_ALL=en_US.UTF-8 下跑改坏的副本的 --selftest。
+# 要求：退出码恰为 1；stderr 里第一条以 FAIL: 开头的行逐字符符合预期（包括"退出码应为 N，实际 M"里的数字——正是 UTF-8 下被吞的那一段）；
+# stdout 里没有 ALL PASSED。另有一条没改坏的副本：带着递归标记跑，必须不再递归、照常以 ALL PASSED 收尾。
+# 本机没有 en_US.UTF-8 时：大声说出来并跳过 UTF-8 那一半（stdout 与 stderr 各一行），绝不当作通过。
+# 递归：改坏的副本里也有这段代码，所以外层给它们设了环境变量 E2E_SELFTEST_NESTED；带着它的运行跳过本段并打印说明。
+st_negative_control() {
+  local ctl="$_SELFTEST_TMP/negctl" utf8_ok=0
+  mkdir -p "$ctl"
+  if [ "$(LC_ALL=en_US.UTF-8 locale charmap 2>/dev/null || true)" = "UTF-8" ]; then
+    utf8_ok=1
+  fi
+  echo "[selftest] 失败路径负对照（由本 --selftest 自动运行，不用另外手动跑）："
+  echo "[selftest]   把本脚本复制到临时目录、各故意改坏一处；空环境（只有 HOME 与 PATH，另加 LC_ALL 与递归标记）、/bin/bash 下，"
+  echo "[selftest]   分别用 LC_ALL=C 与 LC_ALL=en_US.UTF-8 跑改坏的副本的 --selftest，要求退出 1 且 stderr 有预期的失败行"
+  python3 - "$SELF_PATH" "$ctl" "$utf8_ok" >"$ctl/result.txt" <<'NEGCTL_PY' || st_fail "负对照的驱动自己出错了（不是改坏的副本没失败）" "驱动的报错见上方 stderr"
+import concurrent.futures
+import os
+import re
+import subprocess
+import sys
+
+self_path, ctl, utf8_ok = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+BASH = "/bin/bash"
+MARK = "# ---- 失败路径负对照 ----"
+text = open(self_path, encoding="utf-8").read()
+head = text[: text.index(MARK)]   # 只在负对照段之前找锚点：本段自己的代码里也写着这些锚点，不能算进去
+
+RC_RE = r"^FAIL: \[{what} [^\]]+\] 退出码应为 (\d+)，实际 \1$"
+# (编号, 说明, 锚点, 锚点在 head 里应出现的次数, 改第几处（0 起）, 改成, 预期的第一条 FAIL 行)
+BREAKS = [
+    ("L1", "校验器用例的退出码比较反过来", '  if [ "$rc" != "$want_rc" ]; then', 1, 0,
+     '  if [ "$rc" = "$want_rc" ]; then', RC_RE.format(what="校验器")),
+    ("G1", "护栏用例的退出码比较反过来", '  if [ "$_ST_RC" != "$want_rc" ]; then', 2, 0,
+     '  if [ "$_ST_RC" = "$want_rc" ]; then', RC_RE.format(what="护栏")),
+    ("H1", "沙箱放行用例的退出码比较反过来", '  if [ "$_ST_RC" != "$want_rc" ]; then', 2, 1,
+     '  if [ "$_ST_RC" = "$want_rc" ]; then', RC_RE.format(what="护栏")),
+    ("O1", "校验器用例的 stdout 期望被污染", '  st_check_file "[校验器 $name] stdout" "$out" "$want_out"', 1, 0,
+     '  st_check_file "[校验器 $name] stdout" "$out" "x${want_out}"', r"^FAIL: \[校验器 [^\]]+\] stdout 与期望不一致$"),
+    ("E1", "校验器用例的 stderr 期望被污染", '  st_check_file "[校验器 $name] stderr" "$err" "$want_err"', 1, 0,
+     '  st_check_file "[校验器 $name] stderr" "$err" "x${want_err}"', r"^FAIL: \[校验器 [^\]]+\] stderr 与期望不一致$"),
+]
+LANGS = ["C"] + (["en_US.UTF-8"] if utf8_ok else [])
+JOBS = [("break", b, lang) for b in BREAKS for lang in LANGS] + [("clean", None, lang) for lang in LANGS]
+
+
+def run(job):
+    kind, b, lang = job
+    bid = b[0] if b else "R1"
+    what = b[1] if b else "没改坏的副本带着递归标记：不再递归、照常通过"
+    label = "%s %s [LC_ALL=%s]" % (bid, what, lang)
+
+    def result(status, detail):
+        return status, bid, lang, label, detail
+
+    body = text
+    if b:
+        anchor, count, which, repl = b[2], b[3], b[4], b[5]
+        n = head.count(anchor)
+        if n != count:
+            return result("BAD", "锚点出现 %d 次、期望 %d 次（脚本被改动过？同步更新本段的锚点）：%s" % (n, count, anchor.strip()))
+        pos = -1
+        for _ in range(which + 1):
+            pos = head.index(anchor, pos + 1)
+        body = head[:pos] + repl + head[pos + len(anchor):] + text[len(head):]
+    folder = os.path.join(ctl, "%s-%s" % (bid, "C" if lang == "C" else "UTF8"))
+    os.makedirs(os.path.join(folder, "tools"))
+    path = os.path.join(folder, "tools", "online-e2e-mac.sh")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(body)
+    os.chmod(path, 0o755)
+    env = {"HOME": ctl, "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"), "LC_ALL": lang, "E2E_SELFTEST_NESTED": "1"}
+    try:
+        p = subprocess.run([BASH, path, "--selftest"], env=env, cwd=folder, capture_output=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return result("BAD", "超过 300 秒没有结束")
+    except OSError as e:
+        return result("BAD", "起不来 %s：%s" % (BASH, e))
+    out = p.stdout.decode("utf-8", "replace")
+    err = p.stderr.decode("utf-8", "replace")
+    problems = []
+    if b:
+        fails = [ln for ln in err.splitlines() if ln.startswith("FAIL: ")]
+        if p.returncode != 1:
+            problems.append("退出码应为 1，实际 %d（改坏的自测失败了却没有以 1 退出）" % p.returncode)
+        if not fails:
+            problems.append("stderr 里没有以 FAIL: 开头的行（失败被吞掉了）")
+        elif not re.match(b[6], fails[0]):
+            problems.append("第一条 FAIL 行与预期不符：[%s]" % fails[0])
+        if "ALL PASSED" in out:
+            problems.append("stdout 里居然出现了自测的收尾通过标记")
+        if problems:
+            tail = (err.strip().splitlines() or ["<空>"])[:2]
+            problems.append("stderr 开头: %s" % " / ".join(tail).replace(path, "<改坏的副本>").replace(ctl, "<临时目录>"))
+            return result("BAD", "；".join(problems))
+        return result("OK", "退出 1，按预期失败：" + fails[0][len("FAIL: "):])
+    lines = out.splitlines()
+    if p.returncode != 0:
+        problems.append("退出码应为 0，实际 %d" % p.returncode)
+    if not lines or lines[-1] != "[selftest] ALL PASSED":
+        problems.append("最后一行不是自测的收尾通过标记")
+    if not any(ln.startswith("[selftest] 负对照: 本次是嵌套运行") for ln in lines):
+        problems.append("没有打印嵌套运行的跳过说明（递归标记没起作用？）")
+    if any(re.match(r"\[selftest\] 负对照 [A-Z][0-9] ", ln) for ln in lines):
+        problems.append("它又跑了一遍负对照（递归没被挡住）")
+    if err.strip():
+        problems.append("stderr 应为空，实际: %s" % err.strip().splitlines()[0].replace(path, "<副本>").replace(ctl, "<临时目录>"))
+    if problems:
+        return result("BAD", "；".join(problems))
+    return result("OK", "退出 0，自测照常收尾，已打印嵌套跳过说明、没有再递归")
+
+
+with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+    for status, bid, lang, label, detail in ex.map(run, JOBS):
+        print("|".join((status, bid, lang, label, detail)))
+if not utf8_ok:
+    print("|".join(("SKIP", "U8", "en_US.UTF-8", "UTF-8 语言环境下的全部负对照",
+                    "本机没有 en_US.UTF-8（LC_ALL=en_US.UTF-8 locale charmap 的结果不是 UTF-8），这一半没有被验证")))
+NEGCTL_PY
+  local kind bid lang label detail bad=0 skipped=0 ok_c=0 ok_u=0 seen_c="" seen_u=""
+  while IFS='|' read -r kind bid lang label detail; do
+    case "$kind" in
+      OK)
+        echo "[selftest] 负对照 ${label}: ${detail}"
+        if [ "$lang" = "C" ]; then
+          ok_c=$((ok_c + 1)); seen_c="${seen_c} ${bid} "
+        else
+          ok_u=$((ok_u + 1)); seen_u="${seen_u} ${bid} "
+        fi
+        ;;
+      SKIP)
+        skipped=$((skipped + 1))
+        echo "[selftest] 警告：负对照 ${label} 被跳过——${detail}"
+        echo "WARNING: 负对照 ${label} 被跳过：${detail}" >&2
+        ;;
+      BAD)
+        bad=$((bad + 1))
+        echo "FAIL: [负对照 ${label}] ${detail}" >&2
+        ;;
+      *)
+        bad=$((bad + 1))
+        echo "FAIL: [负对照] 驱动输出了无法识别的一行: ${kind}|${bid}|${lang}|${label}|${detail}" >&2
+        ;;
+    esac
+  done <"$ctl/result.txt"
+  [ "$bad" = "0" ] || st_fail "失败路径负对照有 ${bad} 项没通过（逐项见上）"
+  # 表被悄悄删掉几行也要能发现：每种改坏与那条没改坏的副本，在每个跑过的语言环境下都必须有一条通过的记录
+  local id
+  for id in L1 G1 H1 O1 E1 R1; do
+    case "$seen_c" in *" ${id} "*) ;; *) st_fail "失败路径负对照缺了 ${id}（LC_ALL=C 下没有通过记录）" ;; esac
+    if [ "$skipped" = "0" ]; then
+      case "$seen_u" in *" ${id} "*) ;; *) st_fail "失败路径负对照缺了 ${id}（LC_ALL=en_US.UTF-8 下没有通过记录）" ;; esac
+    fi
+  done
+  if [ "$skipped" = "0" ]; then
+    echo "[selftest] 失败路径负对照：LC_ALL=C ${ok_c} 项、LC_ALL=en_US.UTF-8 ${ok_u} 项，全部通过"
+  else
+    echo "[selftest] 警告：失败路径负对照只验证了 LC_ALL=C 的 ${ok_c} 项；UTF-8 那一半被跳过，没有验证"
+  fi
 }
 
 run_selftest() {
@@ -783,6 +955,13 @@ PY
     --live --mincleartime 60
   st_box_case "H04 --dry 放行后进入下一步，秒数缺省为 0" 97 "" "MODE=dry MIN_CLEAR_SECONDS=0" --dry
   st_box_case "H05 --dry 显式秒数 7 原样保留" 97 "" "MODE=dry MIN_CLEAR_SECONDS=7" --dry --mincleartime 7
+
+  # ======================= 三、失败路径负对照（自测自己证明"失败时真的会失败"）=======================
+  if [ -n "${E2E_SELFTEST_NESTED:-}" ]; then
+    echo "[selftest] 负对照: 本次是嵌套运行（环境变量 E2E_SELFTEST_NESTED 已设置，由外层 --selftest 启动），不再递归；手动运行时不要设置它"
+  else
+    st_negative_control
+  fi
 
   echo "[selftest] 共 ${_ST_LOG_CASES} 条校验器对照、${_ST_GUARD_CASES} 条护栏对照"
   echo "[selftest] ALL PASSED"
