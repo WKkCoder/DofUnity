@@ -270,6 +270,7 @@ Xcode / Unity Hub、看门狗自己;共享的编译服务器(VBCSCompiler 等,�
 ```sh
 tools/publish-github.sh --dry-run          # 先演练:审计 + 脱敏 + 全部校验,打印发布计划,不推送
 tools/publish-github.sh --ssh              # 走 SSH 发布(需先把公钥登记到 GitHub)
+tools/publish-github.sh --url ssh://git@ssh.github.com:443/WKkCoder/DofUnity.git   # SSH 的 443 入口:`github.com:22` 连不上时用(见「授权」)
 tools/publish-github.sh                    # 走 https(推送时终端里会提示授权)
 tools/publish-github.sh --twice            # 再把重写做一遍并比对全部提交号,验证确定性(排错用)
 tools/publish-github.sh --force-branches   # 允许覆盖远端上被改写过的普通分支(见下)
@@ -334,6 +335,12 @@ python3 -m unittest discover -s tools/guard -p 'test_*.py'
 私钥或令牌;3 个自编译的原生插件库按字节检查过,不含路径与取值;提交者只有一个身份,`Co-authored-by` 只有公开的 Cursor 地址。
 45 个分支里 43 个已完整并入 `main`,发布它们只多出几个指针;其余两个(`int7`、`r14-skillstates`)的独有内容也通过了审计。
 
+2026-11-27 对全部 135 个引用(134 个分支、1 个标签)、752 个提交、4,907 个目录、5,638 个文件版本做了完整审计并发布:
+**唯一的命中**仍是早期 `tools/baseline/tool.sh` 里的账号名(发布副本里已脱敏),脱敏后 135 个引用全部 `PASS`、每个引用的最新树哈希与提交数不变。
+这一次 `main` 从 `0e5f182` 快进到 `42b6aab`,另新建 23 个分支(8 个 `r20-*`、15 个 `t3/*` 任务分支),一次原子推送,推完核对 24 个引用与预期一致。
+发布之后另从 GitHub 匿名拉了一份**独立核对**(不经过发布脚本):135 个引用、752 个提交;`main` 的最新树哈希与本地相同;
+用仓库自己的审计器扫全部引用,零未通过;原版客户端版本值(各种写法)在 5,637 个历史文件版本(约 255 MB)、752 个提交的消息与作者字段、引用名里命中为 0。
+
 ### 授权
 
 推送需要 GitHub 授权,在**终端**里运行脚本,git 会自己提示:
@@ -341,3 +348,14 @@ python3 -m unittest discover -s tools/guard -p 'test_*.py'
 - https:用户名填 GitHub 用户名,密码填**个人访问令牌**([新建](https://github.com/settings/tokens),经典令牌勾 `repo`;
   细粒度令牌给这个仓库的 Contents 读写),macOS 钥匙串会记住;
 - SSH:把 `~/.ssh/id_ed25519.pub` 的内容贴到 [GitHub 的 SSH 密钥页](https://github.com/settings/ssh/new),再运行 `tools/publish-github.sh --ssh`。
+- 本机(macOS,系统代理 + 国内 DNS)的实测:`github.com` 会被本机 DNS 解析成 `127.0.0.1`,所以 `--ssh`(`git@github.com:…`)连的是本机 22 端口、被拒;
+  `ssh.github.com` 解析正常、443 端口可连。这时改用 GitHub 的 443 入口,并让 ssh 拿 `known_hosts` 里已有的 `github.com` 条目校验主机密钥
+  (443 入口给的是同一组主机密钥;不新增条目、不放宽校验):
+
+  ```sh
+  export GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes -o HostKeyAlias=github.com' GIT_TERMINAL_PROMPT=0
+  ssh -T -p 443 -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlias=github.com git@ssh.github.com   # 只读验证,应返回 "Hi <用户名>!"
+  tools/publish-github.sh --url ssh://git@ssh.github.com:443/WKkCoder/DofUnity.git
+  ```
+
+  HTTPS 的只读操作(`git ls-remote`、匿名拉取)走 `~/.gitconfig` 里配好的代理,不受这个解析问题影响。

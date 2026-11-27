@@ -35,3 +35,19 @@
 2. **子任务中途中断,重新派发(新的 `delegate_task`),不要自己接手测试**;每次复核或再检查也都是新的派发。
     - **收到子任务"failed"通知(如外部接口连接失败)后,先别急着重派,先看 `t3_thread_list` 里这个线程的 `pendingBackgroundTasks`。** 失败的线程只要还挂着后台任务,那个任务一结束,T3 就会把线程唤醒:同一线程的 `latestRunId` 序号加一、`status` 回到 `running`,上下文是完整的。触发条件是"后台任务结束",不是"过几分钟自动恢复"。2026-11-26 实测:14:23–14:26 同时失败的三条线里,两条挂着孤儿后台任务,14:49 我按 PID 清掉那些孤儿进程,两个线程在同一秒(14:49:24/25)被唤醒;第三条没有挂后台任务,一个多小时都没恢复。当时我已经把三条都重派了,同一条线出了两个执行者。做法:(1) `pendingBackgroundTasks` 非空:不重派,等那个任务自然结束(看它的日志估时间),线程会带着完整上下文自己接着干;别为了催线程去杀它的后台任务(会丢中间结果,还可能把被改的树留在变异状态)。(2) `pendingBackgroundTasks` 为空、状态仍是 `failed`/`interrupted`:重派;重派前把旧线程检出里未提交的改动存成补丁。(3) 万一已经重复,留提交更靠前、上下文更完整的那个,用 `task_cancel` 取消另一个,取消前确认被取消的那个没占重任务槽、没有在改共享的树。(不要对运行中的任务调 `task_status`。)
 3. **真服验证的排期与执行交给指挥官**,但每一步仍要先在 `re/m72/dg/NOTES.md` 里预注册(假设、登录预算、中止规则)。创建/删除角色每次要用户当场确认,e2e `--live` 由用户自己跑;认证类失败立刻停、不重试、不换姿势,至少等 30 分钟并重新预注册。
+
+## 发布到 GitHub(本机实测路线)
+
+来源:2026-11-09 首次发布(用户登记了 SSH 公钥,此后各次都走 SSH)与 2026-11-27 14:50 的实测。
+
+1. **发布一律走 `tools/publish-github.sh`,不手敲 `git push`**(仓库公开、推上去收不回来;细节见 `docs/usage.md` 的"发布到 GitHub")。
+2. **不要向用户要 GitHub 令牌。** 用户的 SSH 密钥(`~/.ssh/id_ed25519`)自 2026-11-09 起登记在 GitHub 账号 `WKkCoder` 上。2026-11-27 曾因只试了 `github.com:22`(被拒)和没固定主机密钥的 443 入口(被主机密钥校验拦下),就误判 SSH 不可用、改向用户要令牌,多绕了两轮:一张细粒度令牌没勾 Contents 写权限,在推送的第一步 403;而 SSH 其实一直可用。
+3. **本机的坑:`github.com` 被 DNS 解析成 `127.0.0.1`,22 端口直连被拒;`ssh.github.com` 解析正常、443 可连。** 所以 `--ssh`(`git@github.com:…`)在本机走不通。用 443 入口,并让 ssh 拿 `known_hosts` 里已有的 `github.com` 条目校验主机密钥(443 入口给的是同一组主机密钥,不新增条目、不放宽校验):
+   ```sh
+   export GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes -o HostKeyAlias=github.com' GIT_TERMINAL_PROMPT=0
+   ssh -T -p 443 -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlias=github.com git@ssh.github.com   # 只读验证,应返回 "Hi WKkCoder!"
+   tools/publish-github.sh --url ssh://git@ssh.github.com:443/WKkCoder/DofUnity.git
+   ```
+   先 `ssh -T git@github.com` 试一次:哪天解析恢复正常、通了,就用 `--ssh`。HTTPS 的只读操作(`git ls-remote`、匿名拉取)走 `~/.gitconfig` 里配好的代理,不受影响。
+4. **推完独立核对,别只信脚本的"已核对"**:匿名从 GitHub 拉一份到临时裸仓库(`git init --bare` 加 `fetch`),比 `main` 的树哈希、用 `tools/guard/audit_refs.py` 扫全部引用、再跑一遍版本值扫描;临时拷贝用完即删。
+5. **推送被拒先查原因,不要换着花样去要凭据。** 看是解析问题还是授权问题:`dscacheutil -q host -a name github.com`、`scutil --dns`、`ssh -v`、`/etc/hosts`。凭据永远不进命令行参数与日志;用过的一次性令牌文件用完即删。
