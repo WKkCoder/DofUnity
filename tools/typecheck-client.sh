@@ -228,7 +228,7 @@ EOF
   build_check "$SRC_STRICT" -p:DisableTransitiveProjectReferences=false
   extract_errors
   if [ "$BUILD_CODE" -ne 0 ] || [ "$(line_count "$ERRS")" -ne 0 ]; then
-    echo "自测不通过:非严格模式下(DisableTransitiveProjectReferences=false)注入的间接引用应当能编过,实际退出码 $BUILD_CODE。" >&2
+    echo "自测不通过:非严格模式下(DisableTransitiveProjectReferences=false)注入的间接引用应当能编过,实际退出码 ${BUILD_CODE}。" >&2
     head -n 10 "$ERRS" | sed -e "s|$(esc_sed "$TMP/src-strict/")|<临时目录>/|g" -e 's/^/  /' >&2
     exit 1
   fi
