@@ -4,7 +4,8 @@
 运行:python3 -m unittest discover -s tools/guard -p 'test_*.py'
 覆盖:
   1. secretscan  原样规则(长取值子串、短取值按独立单词、过短忽略)、各种编码写法、无关数据不误报、取值不外泄、取值文件的查找顺序
-  2. precommit   守卫对路径、扩展名、体积、魔数、反编译器输出、凭据(含编码写法)的拦截,以及找不到取值文件时的提示
+  2. precommit   守卫对路径、扩展名、体积、魔数、反编译器输出、凭据(含编码写法)的拦截,以及找不到取值文件时的提示;
+                 第 8 条:shell 脚本里 "$变量名" 后面紧跟非 ASCII 字符(正反例、注释行、CRLF、与其他检查互不干扰,已跟踪的 *.sh 必须 0 命中)
   3. audit_refs  逐引用的 PASS / SCRUB / FAIL 判定与归属(一个坏分支不会拖累好分支)、各类问题、允许脱敏的边界
   4. publish     用本地裸仓库演练全流程:审计、脱敏、创建、快进、被改写的分支、dry-run、main 不合格时远端分文不动
 
@@ -263,6 +264,117 @@ class PrecommitTests(unittest.TestCase):
         p = self.stage({"src/a.cs": "class A {}\n"}, secrets=False)
         self.assertEqual(p.returncode, 0)
         self.assertIn("提示", p.stderr.decode())
+
+    # ---- 第 8 条:shell 脚本里 "$变量名" 后面紧跟非 ASCII 字符(bash 3.2 + UTF-8 + set -u 会悄悄退出、退出码 0)----
+
+    @staticmethod
+    def sh(*lines, eol="\n"):
+        """一份合成的 shell 脚本:前两行固定(第 1 行 shebang、第 2 行 set),之后是给定的行。"""
+        return eol.join(("#!/usr/bin/env bash", "set -euo pipefail") + lines) + eol
+
+    def accepted(self, files):
+        p = self.stage(files)
+        self.assertEqual(p.returncode, 0, p.stderr.decode())
+
+    def test_shell_variable_followed_by_non_ascii_is_rejected_with_the_braces_hint(self):
+        # 全角逗号、全角括号、全角句号、汉字、带音标的拉丁字母:紧跟在变量名后面都是同一个问题
+        for ch in ("，", "）", "。", "中", "é"):
+            with self.subTest(ch=ch):
+                err = self.rejected({"tools/a.sh": self.sh('echo "实际 $rc%sx"' % ch)}, "${rc}")
+                self.assertIn("tools/a.sh", err)
+                self.assertIn("第 3 行", err)
+                self.assertIn("共 1 处", err)
+                self.assertIn("退出码为 0", err)
+        # 变量名可以以下划线开头、含大小写字母数字下划线;提示里写的是同一个名字
+        for name in ("rc", "_rc", "Want_Rc2", "A"):
+            with self.subTest(name=name):
+                self.rejected({"tools/n.sh": self.sh('echo "实际 $%s，x"' % name)}, "${%s}" % name)
+
+    def test_shell_variable_forms_that_cannot_trigger_the_problem_pass(self):
+        lines = [
+            'echo "实际 ${rc}，退出"',                           # 花括号写法就是修法
+            'echo "${rc}）${name}。"',
+            'echo "$1，$2）$@。$?，$#，$$，$0，$*，$!，$-。"',     # 位置参数与特殊参数:后面紧跟中文不会被并进名字
+            'echo "$(date)，完成 $((1 + 2))，结果"',               # 命令替换与算术展开
+            'echo "$rc"，完成',                                    # 引号先把名字收住了
+            'echo "$rc,x $rc.y $rc:z $rc-w $rc]v $rc/u $rc=t"',    # 名字后面紧跟的是 ASCII 标点
+            'echo "$rc2x $rc_y"',                                  # 名字后面紧跟 ASCII 字母数字下划线:只是更长的名字
+            'echo "美元符号 $，与 $。"',                           # 孤零零的 $ 后面没有名字
+            'echo "价格 \\$rc，不展开"',                           # 被转义的 $ 是字面量(\$rc，)
+        ]
+        self.accepted({"tools/ok.sh": self.sh(*lines)})
+
+    def test_shell_variable_after_an_escaped_backslash_still_expands_and_is_rejected(self):
+        # \\$rc：前面是一个被转义的反斜杠,后面的 $rc 照常展开,问题照样在
+        self.rejected({"tools/e.sh": self.sh('echo "\\\\$rc，"')}, "${rc}")
+
+    def test_shell_comment_lines_are_not_checked(self):
+        lines = ['# 退出码应为 $want_rc，实际', '    # 缩进的注释 $want_rc）', '\t# 制表符缩进的注释 $want_rc。', 'echo ok']
+        self.accepted({"tools/c.sh": self.sh(*lines)})
+        # 只有整行注释才豁免:#! 之外的普通命令行照查;行里别处出现 # 不能让这一行免检(行尾注释、字符串里的 #)
+        self.rejected({"tools/c2.sh": self.sh('# 说明', 'echo "$want_rc，"')}, "第 4 行")
+        self.rejected({"tools/c3.sh": self.sh('echo "$want_rc，" # 行尾注释不豁免这一行')}, "第 3 行")
+        self.rejected({"tools/c4.sh": self.sh('echo "#$want_rc，"')}, "第 3 行")
+
+    def test_shell_rule_reports_the_first_line_and_the_total_with_lf_and_crlf(self):
+        for eol in ("\n", "\r\n"):
+            with self.subTest(crlf=(eol == "\r\n")):
+                body = self.sh('echo ok', 'echo "$a，"', 'echo "${b}，"', 'echo "$c）" "$d。"', eol=eol)
+                err = self.rejected({"tools/m.sh": body}, "${a}")
+                self.assertIn("第 4 行", err)
+                self.assertIn("共 3 处", err)
+                self.assertNotIn("${b}", err)
+                self.assertNotIn("${c}", err)
+
+    def test_shell_crlf_line_ending_right_after_a_variable_is_fine(self):
+        # CR 是 ASCII,紧跟在变量名后面不是问题;花括号写法在 CRLF 文件里同样放行
+        self.accepted({"tools/crlf.sh": self.sh('echo $a', 'echo "$a"', 'echo "${a}，"', eol="\r\n")})
+
+    def test_shell_rule_only_applies_to_sh_files(self):
+        bad = self.sh('echo "$rc，"')
+        self.accepted({"docs/a.md": bad, "src/a.cs": bad, "tools/a.py": bad, "tools/a.sh.txt": bad})
+        self.rejected({"tools/UPPER.SH": bad}, "第 3 行")                # 扩展名按小写比较,与其他检查一致
+
+    def test_shell_rule_does_not_hide_or_replace_the_other_checks(self):
+        # 同一个文件里既有守卫已有的问题、又有第 8 条的问题:一个文件只报第一个问题,仍是已有的那条
+        both = self.sh('echo "%s"' % decompiler_text().strip(), 'echo "$rc，"')
+        err = self.rejected({"tools/x.sh": both}, "反编译器输出")
+        self.assertNotIn("${rc}", err)
+        # 别的文件的老问题照样报;干净的脚本不被误伤;第 8 条的问题与老问题一起报出来
+        files = {"tools/clean.sh": self.sh('echo "${rc}，"'), "out/x.txt": "x\n", "tools/bad.sh": self.sh('echo "$rc，"')}
+        err = self.rejected(files, "路径属于逆向产物")
+        self.assertIn("tools/bad.sh", err)
+        self.assertIn("${rc}", err)
+        self.assertNotIn("tools/clean.sh", err)
+        # 取值文件里的取值出现在脚本里:仍按凭据报,不是第 8 条
+        err = self.rejected({"tools/s.sh": self.sh('echo "账号 %s，$rc，"' % ACCOUNT)}, "SYN_ACCOUNT")
+        self.assertNotIn("${rc}", err)
+        # 令牌与第 8 条同在一个脚本里:还是只报令牌这一条(一个文件只报第一个问题,第 8 条排在最后)
+        err = self.rejected({"tools/t.sh": self.sh('echo "%s"' % token_text().strip(), 'echo "$rc，"')}, "私钥或访问令牌")
+        self.assertNotIn("${rc}", err)
+        self.assertEqual(err.count("tools/t.sh"), 1)
+
+    def test_shell_scanner_returns_line_variable_and_following_character(self):
+        text = 'a\n# $x，\nb="$name）"\n  echo $v_1。 $w中 ${ok}，\n\\$lit，\n'
+        self.assertEqual(precommit.shell_var_before_non_ascii(text), [(3, "name", "）"), (4, "v_1", "。"), (4, "w", "中")])
+        self.assertEqual(precommit.shell_var_before_non_ascii(""), [])
+        self.assertEqual(precommit.shell_var_before_non_ascii('echo "$a，"\n'), [(1, "a", "，")])   # 第 1 行也查(没有 shebang 的片段)
+        self.assertEqual(precommit.shell_var_before_non_ascii("echo $a\r\necho ${a}，\r\n"), [])
+
+    def test_every_tracked_shell_script_in_this_repository_passes_the_rule(self):
+        # 本仓库里已跟踪的全部 *.sh 必须 0 命中:守卫只查"这次暂存的"文件,老文件里的存量要靠这条钉住
+        root = os.path.dirname(os.path.dirname(HERE))
+        p = subprocess.run(["git", "-C", root, "ls-files", "-z", "*.sh"], capture_output=True)
+        if p.returncode != 0:
+            self.skipTest("不在 git 仓库里,没有跟踪文件可查")
+        names = [n for n in p.stdout.decode("utf-8").split("\0") if n]
+        self.assertTrue(names, "一个跟踪的 *.sh 都没找到,检查本身失效了")
+        for rel in names:
+            path = os.path.join(root, rel)
+            if not os.path.isfile(path):
+                continue
+            with open(path, encoding="utf-8", errors="replace", newline="") as f:
+                self.assertEqual(precommit.shell_var_before_non_ascii(f.read()), [], rel)
 
 
 def build_source(base, name="src"):
