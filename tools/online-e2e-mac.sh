@@ -235,7 +235,7 @@ st_log_case() {
   _ST_LOG_CASES=$((_ST_LOG_CASES + 1))
   echo "[selftest] 校验器 $name"
   if [ "$rc" != "$want_rc" ]; then
-    st_fail "[校验器 $name] 退出码应为 $want_rc，实际 $rc" "stdout: [$(cat "$out")]" "stderr: [$(cat "$err")]"
+    st_fail "[校验器 $name] 退出码应为 ${want_rc}，实际 $rc" "stdout: [$(cat "$out")]" "stderr: [$(cat "$err")]"
   fi
   st_check_file "[校验器 $name] stdout" "$out" "$want_out"
   st_check_file "[校验器 $name] stderr" "$err" "$want_err"
@@ -301,7 +301,7 @@ st_guard_case() {
   _ST_GUARD_CASES=$((_ST_GUARD_CASES + 1))
   echo "[selftest] 护栏 $name"
   if [ "$_ST_RC" != "$want_rc" ]; then
-    st_fail "[护栏 $name] 退出码应为 $want_rc，实际 $_ST_RC" "stdout: [$(cat "$_ST_OUT")]" "stderr: [$(cat "$_ST_ERR")]"
+    st_fail "[护栏 $name] 退出码应为 ${want_rc}，实际 $_ST_RC" "stdout: [$(cat "$_ST_OUT")]" "stderr: [$(cat "$_ST_ERR")]"
   fi
   st_check_file "[护栏 $name] stdout" "$_ST_OUT" "$want_out"
   st_check_file "[护栏 $name] stderr" "$_ST_ERR" "$want_err"
@@ -319,7 +319,7 @@ st_box_case() {
   _ST_GUARD_CASES=$((_ST_GUARD_CASES + 1))
   echo "[selftest] 护栏 $name"
   if [ "$_ST_RC" != "$want_rc" ]; then
-    st_fail "[护栏 $name] 退出码应为 $want_rc，实际 $_ST_RC" "stdout: [$(cat "$_ST_OUT")]" "stderr: [$(cat "$_ST_ERR")]"
+    st_fail "[护栏 $name] 退出码应为 ${want_rc}，实际 $_ST_RC" "stdout: [$(cat "$_ST_OUT")]" "stderr: [$(cat "$_ST_ERR")]"
   fi
   st_check_file "[护栏 $name] stdout" "$_ST_OUT" ""
   st_check_file "[护栏 $name] stderr" "$_ST_ERR" "$want_err"
