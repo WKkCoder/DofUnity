@@ -27,10 +27,17 @@ namespace Dnf.NetProbe;
 /// <c>PROBE_FIGHT stage=permits notices= malformed= count= entries=</c>(副本许可表:副本号升序,<c>副本号:档位</c>,逗号分隔)与最后一行 <c>PROBE_FIGHT result permits=ok</c>;
 /// 不进副本、不排击杀。两行的拼法在 Net 层(<see cref="OnlineFightLog.PermitsReport"/>),探针只管打。副本号与档位只在这个选项下才打,输出只在本机终端看,不落库;
 /// 不带这个选项时输出与行为一字不变。
+///
+/// 默认关闭的选项 <c>--give-up-on-failure</c>(与 <c>--permits-only</c> 互斥,可与 <c>--after-settle</c>、<c>--min-clear-seconds</c>、<c>--stay</c> 同用):
+/// 战斗以被拒即停、没等到清图通知、结算不完整收场,或开了 <c>--after-settle</c> 而菜单阶段以非成功收场,而会话还活着时,
+/// 断开连接之前先发<b>一次</b>放弃游戏命令(1/45),再在有上限的时间内(跑器的 <see cref="OnlineDungeonCombatOptions.GiveUpTimeout"/>,缺省 15 秒)等回城信号并回心跳;
+/// 成功、会话已关、异常、取消(以及进城、认证、进副本阶段的失败)都不放弃。放弃的结果只写进 <c>PROBE_FIGHT stage=giveup step=… reason=…</c> 行
+/// 与结果行末尾的 <c>giveUp=</c> 字段,<b>不改任何退出码</b>;策略、编排与拼行全在 Net 层(<see cref="OnlineGiveUpOnFailure"/>、<see cref="OnlineFightLog.ResultFieldsFor"/>),探针只管调用。
+/// 不带这个选项时输出与行为一字不变。
 /// </summary>
 internal static class FightCommand
 {
-    private const string UsageText = "用法: dnf-netprobe fight [仓库根] --dungeon <副本编号 0-65535> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] [--min-clear-seconds S] [--after-settle [--menu-choice town]]";
+    private const string UsageText = "用法: dnf-netprobe fight [仓库根] --dungeon <副本编号 0-65535> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] [--min-clear-seconds S] [--after-settle [--menu-choice town]] [--give-up-on-failure]";
 
     // 只在 --permits-only 与 --dungeon 冲突时多打这一行(默认路径的用法文字一字不变)。
     private const string PermitsUsageText = "只看许可表: dnf-netprobe fight [仓库根] --permits-only(不要 --dungeon;登录进城后打印一行许可表就退出,不进副本)";
@@ -150,11 +157,12 @@ internal static class FightCommand
                 paceSpan = parsed.MinClearDuration.Value;
             }
             TimeSpan backstop = paceSpan + parsed.ClearWait + parsed.SettleWait + TimeSpan.FromSeconds(60);
-            OnlineDungeonCombatRunner runner = dungeonRunner.UseCombat(new OnlineDungeonCombatOptions
+            var combatOptions = new OnlineDungeonCombatOptions
             {
                 SettlementTimeout = parsed.SettleWait + TimeSpan.FromSeconds(10),
                 OverallTimeout = backstop,
-            });
+            };
+            OnlineDungeonCombatRunner runner = dungeonRunner.UseCombat(combatOptions);
             var driver = new OnlineFightDriver(runner, map, new OnlineFightOptions
             {
                 PaceMs = parsed.PaceMs,
@@ -162,6 +170,8 @@ internal static class FightCommand
                 ContinueOnRefuse = parsed.ContinueOnRefuse,
                 ClearWait = parsed.ClearWait,
                 SettleWait = parsed.SettleWait,
+                GiveUpOnFailure = parsed.GiveUpOnFailure,
+                GiveUpWait = combatOptions.GiveUpTimeout,
             });
             OnlineFightSummary summary = await driver.RunAsync(line => SayNet(clock, line), token);
             Say(clock, "stage=verdict " + OnlineFightLog.VerdictFields(summary));
@@ -178,18 +188,29 @@ internal static class FightCommand
                 menuSummary = await afterSettle.RunAsync(Console.WriteLine, token);
             }
 
+            // ---- 异常收场先放弃再断开(仅开启 --give-up-on-failure,默认关闭;没开时这一段什么都不做):
+            //      是否放弃、怎么放弃(只发一次 1/45、有上限地等回城信号)全在 Net 层的 OnlineGiveUpOnFailure 里,结果只进日志与结果行,不碰退出码
+            OnlineGiveUpSummary giveUp = null;
+            if (parsed.GiveUpOnFailure)
+            {
+                setAt("giveup");
+                var giveUpDriver = new OnlineAfterSettleDriver(town.Session, new OnlineAfterSettleOptions
+                {
+                    GiveUpWaitTimeout = combatOptions.GiveUpTimeout,
+                });
+                giveUp = await OnlineGiveUpOnFailure.FinishAsync(parsed.GiveUpOnFailure, giveUpDriver, summary, menuSummary, line => SayNet(clock, line), token);
+            }
+
             // ---- 挂着看服务端之后还有没有动作
             if (parsed.StaySeconds > 0
                 && summary.Outcome != OnlineFightOutcome.Cancelled
-                && (menuSummary == null || menuSummary.Outcome != OnlineAfterSettleOutcome.Cancelled))
+                && (menuSummary == null || menuSummary.Outcome != OnlineAfterSettleOutcome.Cancelled)
+                && (giveUp == null || giveUp.Outcome != OnlineGiveUpOutcome.Cancelled))
             {
                 await StayAsync(clock, town, parsed.StaySeconds);
             }
 
-            bool hasNewFlags = parsed.AfterSettle || parsed.MinClearSeconds.HasValue;
-            string resultFields = hasNewFlags
-                ? OnlineFightLog.ResultFieldsWithAfterSettle(summary, menuSummary)
-                : OnlineFightLog.ResultFields(summary);
+            string resultFields = OnlineFightLog.ResultFieldsFor(parsed, summary, menuSummary, giveUp);
             Console.WriteLine("PROBE_FIGHT result " + resultFields);
             if (summary.Outcome != OnlineFightOutcome.AllDone)
             {
@@ -303,7 +324,7 @@ internal static class FightCommand
             + " frames=" + (frames.Length == 0 ? "-" : frames.ToString()));
     }
 
-    // 把 Net 层的日志行转成探针的线索行:白名单(只收 stage=dungeon、stage=combat、stage=fight 三类,
+    // 把 Net 层的日志行转成探针的线索行:白名单(只收 stage=dungeon、stage=combat、stage=fight 与放弃步骤 stage=giveup 四类,
     // 进副本的 begin 行带副本编号与模式、是命令行参数的回显,不收)放在 Net 层的 OnlineFightLog.ProbeText 里,有测试守着。
     private static void SayNet(Stopwatch clock, string line)
     {

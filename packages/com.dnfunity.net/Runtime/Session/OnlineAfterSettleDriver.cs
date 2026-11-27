@@ -62,6 +62,9 @@ namespace Dnf.Net.Session
         /// <summary>收帧轮询步长缺省值(50 毫秒)。</summary>
         public static readonly TimeSpan DefaultPollInterval = TimeSpan.FromMilliseconds(50);
 
+        /// <summary>放弃游戏(<see cref="OnlineAfterSettleDriver.GiveUpAsync(OnlineFightOutcome, Action{string}, CancellationToken)"/>)之后等回城信号的缺省上限(15 秒,与 <see cref="OnlineDungeonCombatOptions.GiveUpTimeout"/> 的缺省一致)。</summary>
+        public static readonly TimeSpan DefaultGiveUpWaitTimeout = TimeSpan.FromSeconds(15);
+
         /// <summary>要发的 <c>1/75</c> 菜单命令,缺省 <see cref="EplpCommand.ReturnToTown"/>。</summary>
         public EplpCommand Command { get; set; } = EplpCommand.ReturnToTown;
 
@@ -82,6 +85,9 @@ namespace Dnf.Net.Session
 
         /// <summary>时钟;null 用 <see cref="SystemFightClock.Instance"/>。</summary>
         public IFightClock Clock { get; set; }
+
+        /// <summary>放弃游戏(1/45)发出之后等回城信号的上限,缺省 <see cref="DefaultGiveUpWaitTimeout"/>;只有调用 <c>GiveUpAsync</c> 时才用到。</summary>
+        public TimeSpan GiveUpWaitTimeout { get; set; } = DefaultGiveUpWaitTimeout;
     }
 
     /// <summary>无头结算后菜单驱动的汇总(不含任何载荷内容)。</summary>
@@ -155,6 +161,11 @@ namespace Dnf.Net.Session
     /// 按序发 <c>1/72</c> → <c>1/73</c> → (<c>1/74</c>) → <c>1/75</c> 并等待回城信号(<c>0/2</c> 或 <c>0/23 + 0/24</c>)。
     /// 每条命令只发一次、绝不自动重发;收到心跳包自动回 <see cref="OnlineHeartbeat.ReplyPayload"/>;
     /// 正确处理 <c>561</c> 信封(跳过附带内层副本,避免重复计数);无关帧只计数、不解析也不打印载荷。
+    /// <para>
+    /// 另有默认不用的会话层放弃(<see cref="GiveUpAsync(OnlineFightOutcome, Action{string}, CancellationToken)"/>,探针 <c>--give-up-on-failure</c>):
+    /// 异常收场而会话还活着时,断开前直接发一次放弃游戏命令(<c>1/45</c>)并有限地等回城信号(<c>0/23 + 0/24</c> 或 <c>0/2</c>),复用同一套收帧、心跳、561 信封与压缩内层的实现;
+    /// 一个驱动只能放弃一次,与 <see cref="RunAsync"/> 各有各的一次性开关,互不影响。
+    /// </para>
     /// </summary>
     public sealed class OnlineAfterSettleDriver
     {
@@ -166,7 +177,9 @@ namespace Dnf.Net.Session
         private readonly TimeSpan _returnTimeout;
         private readonly TimeSpan _poll;
         private readonly IFightClock _clock;
+        private readonly TimeSpan _giveUpTimeout;
         private int _started;
+        private int _giveUpStarted;
 
         /// <summary>在真会话上创建,默认使用 <see cref="OnlineDungeonRunner.UnwrapEnvelope"/> 解包 561 信封。</summary>
         public OnlineAfterSettleDriver(GameClientSession session, OnlineAfterSettleOptions options = null)
@@ -201,12 +214,51 @@ namespace Dnf.Net.Session
             CheckWindow(o.TownReturnWaitTimeout, "TownReturnWaitTimeout");
             CheckWindow(o.ReturnWaitTimeout, "ReturnWaitTimeout");
             CheckWindow(o.PollInterval, "PollInterval");
+            CheckWindow(o.GiveUpWaitTimeout, "GiveUpWaitTimeout");
             _command = o.Command;
             _advanceTimeout = o.AdvanceReplyTimeout;
             _eplpTimeout = o.EplpReplyTimeout;
             _returnTimeout = o.Command == EplpCommand.ReturnToTown ? o.TownReturnWaitTimeout : o.ReturnWaitTimeout;
             _poll = o.PollInterval;
             _clock = o.Clock ?? SystemFightClock.Instance;
+            _giveUpTimeout = o.GiveUpWaitTimeout;
+        }
+
+        /// <summary>
+        /// 战斗驱动以 <paramref name="reason"/> 收场之后的会话层放弃:<paramref name="reason"/> 不是触发放弃的结局
+        /// (<see cref="OnlineGiveUpOnFailure.ShouldGiveUp(OnlineFightOutcome)"/>)时什么都不发、不碰会话、不占一次性开关,返回 null;
+        /// 否则直接发一次放弃游戏命令(类 1、包号 45)并等回城信号(<c>0/23 + 0/24</c> 或 <c>0/2</c>),最多等 <see cref="OnlineAfterSettleOptions.GiveUpWaitTimeout"/>,
+        /// 等待期间回心跳。只发一次、绝不重发;会话已关或切帧出错就什么都不发(<see cref="OnlineGiveUpOutcome.Skipped"/>)。
+        /// 日志行是 <see cref="OnlineFightLog.GiveUpStep"/> 拼的脱敏行,reason 只是结局的枚举名。取消令牌触发立刻停,结局记 <see cref="OnlineGiveUpOutcome.Cancelled"/>,不抛。
+        /// </summary>
+        /// <exception cref="InvalidOperationException">这个驱动已经放弃过一次(只有真的触发了放弃才占用一次性开关)。</exception>
+        public Task<OnlineGiveUpSummary> GiveUpAsync(OnlineFightOutcome reason, Action<string> log = null, CancellationToken cancellationToken = default)
+        {
+            return OnlineGiveUpOnFailure.ShouldGiveUp(reason)
+                ? GiveUpCoreAsync(reason.ToString(), log, cancellationToken)
+                : Task.FromResult<OnlineGiveUpSummary>(null);
+        }
+
+        /// <summary>
+        /// 结算后菜单以 <paramref name="reason"/> 收场之后的会话层放弃:行为同 <see cref="GiveUpAsync(OnlineFightOutcome, Action{string}, CancellationToken)"/>,
+        /// 触发的结局见 <see cref="OnlineGiveUpOnFailure.ShouldGiveUp(OnlineAfterSettleOutcome)"/>(成功回城、会话已关、异常、取消都不触发,返回 null)。
+        /// </summary>
+        /// <exception cref="InvalidOperationException">这个驱动已经放弃过一次。</exception>
+        public Task<OnlineGiveUpSummary> GiveUpAsync(OnlineAfterSettleOutcome reason, Action<string> log = null, CancellationToken cancellationToken = default)
+        {
+            return OnlineGiveUpOnFailure.ShouldGiveUp(reason)
+                ? GiveUpCoreAsync(reason.ToString(), log, cancellationToken)
+                : Task.FromResult<OnlineGiveUpSummary>(null);
+        }
+
+        private Task<OnlineGiveUpSummary> GiveUpCoreAsync(string reason, Action<string> log, CancellationToken cancellationToken)
+        {
+            if (Interlocked.Exchange(ref _giveUpStarted, 1) != 0)
+            {
+                throw new InvalidOperationException("一个结算后菜单驱动只能放弃一次");
+            }
+            var attempt = new Attempt(this, log, cancellationToken);
+            return attempt.RunGiveUpAsync(reason);
         }
 
         /// <summary>执行一次结算后菜单推进与回城等待;每个步骤向 <paramref name="log"/> 输出一条脱敏日志行。</summary>
@@ -321,6 +373,81 @@ namespace Dnf.Net.Session
                 // 5. 等待回城信号(0/2 或 0/23 + 0/24)
                 OnlineAfterSettleOutcome finalOutcome = await RunStepReturnAsync().ConfigureAwait(false);
                 return Summarize(finalOutcome);
+            }
+
+            // 放弃游戏:会话不可用就什么都不发;否则只发一次 1/45(空载荷),之后只等回城信号(0/2 或 0/23 + 0/24)并回心跳,从不重发。
+            // 收帧、心跳、561 信封与压缩内层、取消与断线的处理全部复用上面各步骤同一套(WaitLoopAsync / DispatchAsync / OpenEnvelopeAsync / TryConsumeReturnSignal)。
+            public async Task<OnlineGiveUpSummary> RunGiveUpAsync(string reason)
+            {
+                bool sent = false;
+                OnlineGiveUpOutcome outcome;
+                try
+                {
+                    if (!TryPreSendCheck(out _, out _))
+                    {
+                        outcome = OnlineGiveUpOutcome.Skipped;
+                    }
+                    else
+                    {
+                        FrameStatus status = await _session.SendAsync(PacketClass.Cmd, SessionLifecyclePayloads.GiveUpGamePacketId,
+                            SessionLifecyclePayloads.BuildGiveUpGame(), _cancel).ConfigureAwait(false);
+                        if (status != FrameStatus.Ok)
+                        {
+                            outcome = OnlineGiveUpOutcome.SendFailed;
+                        }
+                        else
+                        {
+                            sent = true;
+                            _trackReturnSignals = true;
+                            Say(OnlineFightLog.GiveUpStep(OnlineFightLog.GiveUpSentStep, reason));
+
+                            OnlineAfterSettleOutcome? stop = await WaitLoopAsync(
+                                _owner._giveUpTimeout,
+                                OnlineAfterSettleOutcome.ReturnTimeout,
+                                () => HasReturnSignal,
+                                (cls, id, payload) =>
+                                {
+                                    TryConsumeReturnSignal(cls, id);
+                                    return null;
+                                }).ConfigureAwait(false);
+                            outcome = GiveUpOutcomeOf(stop);
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (_cancel.IsCancellationRequested)
+                {
+                    outcome = OnlineGiveUpOutcome.Cancelled;
+                }
+                catch (Exception e) when (IsClosedException(e))
+                {
+                    outcome = sent ? OnlineGiveUpOutcome.Closed : OnlineGiveUpOutcome.SendFailed;
+                }
+                catch (Exception e)
+                {
+                    _faultType = e.GetBaseException().GetType().Name;
+                    outcome = OnlineGiveUpOutcome.Faulted;
+                }
+
+                Say(OnlineFightLog.GiveUpStep(OnlineFightLog.GiveUpToken(outcome), reason));
+                return new OnlineGiveUpSummary(reason, outcome, sent, _owner._clock.Now - _startedAt, _faultType);
+            }
+
+            // 等回城信号的收场:没有收场原因就是收齐了信号;超时、连接断、心跳回包发不出去各对应一个放弃结局。
+            private static OnlineGiveUpOutcome GiveUpOutcomeOf(OnlineAfterSettleOutcome? stop)
+            {
+                if (!stop.HasValue)
+                {
+                    return OnlineGiveUpOutcome.Returned;
+                }
+                switch (stop.Value)
+                {
+                    case OnlineAfterSettleOutcome.ReturnTimeout:
+                        return OnlineGiveUpOutcome.Timeout;
+                    case OnlineAfterSettleOutcome.SessionClosed:
+                        return OnlineGiveUpOutcome.Closed;
+                    default:
+                        return OnlineGiveUpOutcome.Faulted;
+                }
             }
 
             private async Task<OnlineAfterSettleOutcome?> RunStep72Async()

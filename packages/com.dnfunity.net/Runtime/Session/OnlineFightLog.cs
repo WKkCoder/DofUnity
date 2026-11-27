@@ -90,6 +90,83 @@ namespace Dnf.Net.Session
         }
 
         /// <summary>
+        /// 开启 <c>--give-up-on-failure</c> 时的汇总字段(在 <see cref="ResultFields"/> 之后追加 <c>giveUp=&lt;令牌|-&gt;</c>,令牌见 <see cref="GiveUpToken"/>,没走放弃写 <c>-</c>)。
+        /// 只有命令行开启了该选项才使用,不带时仍用 <see cref="ResultFields"/>,字段与顺序一字不变。
+        /// </summary>
+        public static string ResultFieldsWithGiveUp(OnlineFightSummary r, OnlineGiveUpSummary giveUp)
+        {
+            return ResultFields(r) + GiveUpField(giveUp);
+        }
+
+        /// <summary>
+        /// 同时开启了结算后选项(<c>--after-settle</c> 或 <c>--min-clear-seconds</c>)与 <c>--give-up-on-failure</c> 时的汇总字段:
+        /// <see cref="ResultFieldsWithAfterSettle(OnlineFightSummary, OnlineAfterSettleSummary)"/> 之后追加 <c>giveUp=&lt;令牌|-&gt;</c>。
+        /// </summary>
+        public static string ResultFieldsWithGiveUp(OnlineFightSummary r, OnlineAfterSettleSummary afterSettle, OnlineGiveUpSummary giveUp)
+        {
+            return ResultFieldsWithAfterSettle(r, afterSettle) + GiveUpField(giveUp);
+        }
+
+        /// <summary>
+        /// 探针最终那行 <c>PROBE_FIGHT result …</c> 的字段按命令行选择(纯函数,选择放在 Net 层是为了让它有测试守着):
+        /// 没开 <c>--give-up-on-failure</c> 时与以前逐字相同(开了结算后选项用 <see cref="ResultFieldsWithAfterSettle(OnlineFightSummary, OnlineAfterSettleSummary)"/>,否则用 <see cref="ResultFields"/>),
+        /// 开了就在那之后追加 <c>giveUp=</c>(<see cref="ResultFieldsWithGiveUp(OnlineFightSummary, OnlineGiveUpSummary)"/>)。
+        /// </summary>
+        public static string ResultFieldsFor(OnlineFightArguments parsed, OnlineFightSummary r, OnlineAfterSettleSummary afterSettle, OnlineGiveUpSummary giveUp)
+        {
+            bool hasNewFlags = parsed.AfterSettle || parsed.MinClearSeconds.HasValue;
+            if (parsed.GiveUpOnFailure)
+            {
+                return hasNewFlags ? ResultFieldsWithGiveUp(r, afterSettle, giveUp) : ResultFieldsWithGiveUp(r, giveUp);
+            }
+            return hasNewFlags ? ResultFieldsWithAfterSettle(r, afterSettle) : ResultFields(r);
+        }
+
+        /// <summary>放弃步骤行的统一前缀(放行进探针的转行白名单,见 <see cref="ProbeText"/>)。</summary>
+        public const string GiveUpPrefix = "DNF_NET stage=giveup";
+
+        /// <summary>放弃命令(1/45)已发出的步骤名;其余步骤名是 <see cref="GiveUpToken"/> 给的结局令牌。</summary>
+        public const string GiveUpSentStep = "sent";
+
+        /// <summary>
+        /// 放弃步骤的脱敏日志行:<c>DNF_NET stage=giveup step=&lt;sent|returned|timeout|closed|sendfailed|skipped|cancelled|faulted&gt; reason=&lt;触发放弃的结局枚举名&gt;</c>。
+        /// 只有步骤名与枚举名,没有载荷、异常消息或任何编号。
+        /// </summary>
+        public static string GiveUpStep(string step, string reason)
+        {
+            return GiveUpPrefix + " step=" + step + " reason=" + reason;
+        }
+
+        /// <summary>
+        /// 放弃结局的小写令牌(日志行的 <c>step=</c> 与结果行的 <c>giveUp=</c> 共用):returned、timeout、closed、sendfailed、skipped、cancelled、faulted。
+        /// </summary>
+        public static string GiveUpToken(OnlineGiveUpOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case OnlineGiveUpOutcome.Returned:
+                    return "returned";
+                case OnlineGiveUpOutcome.Timeout:
+                    return "timeout";
+                case OnlineGiveUpOutcome.Closed:
+                    return "closed";
+                case OnlineGiveUpOutcome.SendFailed:
+                    return "sendfailed";
+                case OnlineGiveUpOutcome.Skipped:
+                    return "skipped";
+                case OnlineGiveUpOutcome.Cancelled:
+                    return "cancelled";
+                default:
+                    return "faulted";
+            }
+        }
+
+        private static string GiveUpField(OnlineGiveUpSummary giveUp)
+        {
+            return " giveUp=" + (giveUp != null ? GiveUpToken(giveUp.Outcome) : "-");
+        }
+
+        /// <summary>
         /// 结算后菜单每步的脱敏输出行:<c>PROBE_FIGHT stage=settle-menu step=&lt;72|73|74|75|return&gt; sent=&lt;0|1&gt; reply=&lt;ok|skipped|timeout|failed|malformed|closed&gt; elapsedMs=&lt;n&gt; ignored=&lt;m&gt;</c>。
         /// </summary>
         public static string AfterSettleStep(string step, bool sent, string reply, long elapsedMs, int ignored)
@@ -116,7 +193,7 @@ namespace Dnf.Net.Session
         }
 
         /// <summary>
-        /// 探针转行的白名单(纯函数):Net 层的日志行只放行 <c>stage=dungeon</c>、<c>stage=combat</c>、<c>stage=fight</c> 三类,
+        /// 探针转行的白名单(纯函数):Net 层的日志行只放行 <c>stage=dungeon</c>、<c>stage=combat</c>、<c>stage=fight</c> 与放弃步骤 <c>stage=giveup</c>(<see cref="GiveUpStep"/>)四类,
         /// 返回去掉 <c>DNF_NET </c> 前缀的 <c>stage=…</c> 文本(探针再加 <c>PROBE_FIGHT </c> 前缀与时间);其余一律返回 null,探针不打。
         /// 进副本的 <c>begin</c> 行回显命令行里的副本编号与模式,同样不放行。白名单放在这里而不是探针里,是为了让它有测试守着。
         /// </summary>
@@ -130,7 +207,8 @@ namespace Dnf.Net.Session
             string body = netLine.Substring(head.Length);
             bool allowed = body.StartsWith("dungeon ", StringComparison.Ordinal)
                 || body.StartsWith("combat ", StringComparison.Ordinal)
-                || body.StartsWith("fight ", StringComparison.Ordinal);
+                || body.StartsWith("fight ", StringComparison.Ordinal)
+                || body.StartsWith("giveup ", StringComparison.Ordinal);
             if (!allowed || body.StartsWith("dungeon begin ", StringComparison.Ordinal))
             {
                 return null;
