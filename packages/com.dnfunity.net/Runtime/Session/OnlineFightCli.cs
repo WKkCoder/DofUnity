@@ -32,7 +32,7 @@ namespace Dnf.Net.Session
         UnknownArgument,
 
         /// <summary>
-        /// <c>--permits-only</c>(只看副本许可表、不进副本)与 <c>--dungeon</c>(进这个副本)、结算后选项或 <c>--give-up-on-failure</c> 同时出现:二选一,不分先后。
+        /// <c>--permits-only</c>(只看副本许可表、不进副本)与 <c>--dungeon</c>(进这个副本)、结算后选项、<c>--give-up-on-failure</c> 或 <c>--frame-log</c> 同时出现:二选一,不分先后。
         /// 和别的问题一样只给问题名,不回显用户输入。
         /// </summary>
         Conflict,
@@ -49,7 +49,7 @@ namespace Dnf.Net.Session
         /// <summary>给了 <c>--menu-choice</c> 却没有同时给 <c>--after-settle</c>。</summary>
         MenuChoiceWithoutAfterSettle,
 
-        /// <summary>新增选项(<c>--after-settle</c>、<c>--min-clear-seconds</c>、<c>--menu-choice</c>、<c>--give-up-on-failure</c>)重复出现。</summary>
+        /// <summary>新增选项(<c>--after-settle</c>、<c>--min-clear-seconds</c>、<c>--menu-choice</c>、<c>--give-up-on-failure</c>、<c>--frame-log</c>)重复出现。</summary>
         DuplicateOption,
     }
 
@@ -63,6 +63,11 @@ namespace Dnf.Net.Session
     /// <para>
     /// 默认关闭的选项 <c>--give-up-on-failure</c>(见 <see cref="GiveUpOnFailure"/>):异常收场而会话还活着时,断开前先发一次放弃游戏命令并有限地等回城信号;
     /// 与 <c>--permits-only</c> 互斥(<see cref="OnlineFightArgumentProblem.Conflict"/>),可与 <c>--after-settle</c>、<c>--min-clear-seconds</c>、<c>--stay</c> 同用,重复出现判 <see cref="OnlineFightArgumentProblem.DuplicateOption"/>。
+    /// </para>
+    /// <para>
+    /// 默认关闭的诊断选项 <c>--frame-log</c>(见 <see cref="FrameLog"/>):战斗跑器每收到一帧、每拆一个 561 信封多打一行(只有帧序号、包类、包号与帧总长,没有载荷),给真服取证用;
+    /// 与 <c>--permits-only</c> 互斥(<see cref="OnlineFightArgumentProblem.Conflict"/>),可与其余选项同用,重复出现判 <see cref="OnlineFightArgumentProblem.DuplicateOption"/>。
+    /// 纯观测,不改任何裁决、计数与退出码;不带它时输出一字不变。
     /// </para>
     /// </summary>
     public sealed class OnlineFightArguments
@@ -129,6 +134,13 @@ namespace Dnf.Net.Session
         public bool GiveUpOnFailure { get; private set; }
 
         /// <summary>
+        /// 战斗跑器的逐帧日志(<c>--frame-log</c>):每收到一帧多打一行 <c>frame n=… &lt;类&gt;/&lt;包号&gt;(&lt;帧总长&gt;)</c>,每个 561 信封再多打一行 <c>envelope n=…</c>;
+        /// 只有帧序号、包类、包号与帧总长,没有载荷内容(见 <see cref="OnlineDungeonCombatOptions.FrameLog"/>)。缺省 false:默认的 <c>fight</c> 输出一字不变。
+        /// 纯观测,不改任何裁决、计数、结局与退出码。
+        /// </summary>
+        public bool FrameLog { get; private set; }
+
+        /// <summary>
         /// 解析 <c>fight</c> 之后的那些参数。仓库根只能出现在第一个位置(不以 <c>--</c> 开头的那个);旧选项重复以最后一次为准,新增选项重复判错。
         /// </summary>
         public static bool TryParse(IReadOnlyList<string> args, out OnlineFightArguments parsed, out OnlineFightArgumentProblem problem)
@@ -140,6 +152,7 @@ namespace Dnf.Net.Session
             bool seenMinClearSeconds = false;
             bool seenMenuChoice = false;
             bool seenGiveUpOnFailure = false;
+            bool seenFrameLog = false;
             int count = args == null ? 0 : args.Count;
             for (int i = 0; i < count; i++)
             {
@@ -285,6 +298,15 @@ namespace Dnf.Net.Session
                         seenGiveUpOnFailure = true;
                         result.GiveUpOnFailure = true;
                         break;
+                    case "--frame-log":
+                        if (seenFrameLog)
+                        {
+                            problem = OnlineFightArgumentProblem.DuplicateOption;
+                            return false;
+                        }
+                        seenFrameLog = true;
+                        result.FrameLog = true;
+                        break;
                     default:
                         problem = OnlineFightArgumentProblem.UnknownArgument;
                         return false;
@@ -292,7 +314,7 @@ namespace Dnf.Net.Session
             }
 
             // 只看许可表与进副本/结算后选项二选一:每个参数都读得通之后才判(不分先后);只看许可表时不要求 --dungeon,否则一如既往必须给
-            if (result.PermitsOnly && (haveDungeon || result.AfterSettle || result.MinClearSeconds.HasValue || seenMenuChoice || result.GiveUpOnFailure))
+            if (result.PermitsOnly && (haveDungeon || result.AfterSettle || result.MinClearSeconds.HasValue || seenMenuChoice || result.GiveUpOnFailure || result.FrameLog))
             {
                 problem = OnlineFightArgumentProblem.Conflict;
                 return false;

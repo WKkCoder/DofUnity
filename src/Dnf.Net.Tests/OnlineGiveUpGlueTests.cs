@@ -67,7 +67,7 @@ public class OnlineGiveUpGlueTests
         Match m = Regex.Match(source, "private const string UsageText = \"(?<text>[^\"]*)\";");
         Assert.True(m.Success, "找不到 UsageText");
 
-        Assert.Equal(OldUsageText + " [--give-up-on-failure]", m.Groups["text"].Value);
+        Assert.Equal(OldUsageText + " [--give-up-on-failure] [--frame-log]", m.Groups["text"].Value);
         // 冲突时多打的那一行许可表用法文字没动
         Assert.Contains("private const string PermitsUsageText = \"只看许可表: dnf-netprobe fight [仓库根] --permits-only(不要 --dungeon;登录进城后打印一行许可表就退出,不进副本)\";", source);
     }

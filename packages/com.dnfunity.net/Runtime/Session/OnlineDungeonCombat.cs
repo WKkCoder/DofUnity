@@ -232,10 +232,14 @@ namespace Dnf.Net.Session
         /// <summary>装载完成通知到了并被接受:这个房间的装载握手完成。</summary>
         RoomLoaded,
 
-        /// <summary>放弃回城命令(类 1、包号 45)已发出,等待 0/23 与 0/24 到达。</summary>
+        /// <summary>放弃回城命令(类 1、包号 45)已发出,等待回城判据成立(见 <see cref="ReturnedToTown"/>)。</summary>
         GiveUpSent,
 
-        /// <summary>放弃回城后收到 0/23 与 0/24 两个包号(能解析出的区域快照附在事件与结果上,读不下来时快照为 null)。</summary>
+        /// <summary>
+        /// 放弃回城命令发出之后,回城判据成立:(0/23 且 0/24)或(0/24 且 0/2),与到达顺序无关、重复帧只算一次;达成的那一刻恰好一条。
+        /// 能解析出的区域快照附在事件与结果上,读不下来时快照为 null:没见到 0/23(真服实测放弃之后不推它)时 <see cref="OnlineCombatEvent.UserArea"/> 就是 null,
+        /// <see cref="OnlineCombatEvent.AreaUsers"/> 只有 0/24 解析得下来才有。
+        /// </summary>
         ReturnedToTown,
     }
 
@@ -347,10 +351,13 @@ namespace Dnf.Net.Session
         /// </summary>
         public SettlementNoticeB SettlementReward { get; }
 
-        /// <summary>放弃回城后从 0/23 解析出的只读区域快照(仅 <see cref="OnlineCombatEventKind.ReturnedToTown"/> 且载荷可解析时非 null)。</summary>
+        /// <summary>
+        /// 放弃回城后从 0/23 解析出的只读区域快照(仅 <see cref="OnlineCombatEventKind.ReturnedToTown"/> 且载荷可解析时非 null)。
+        /// 回城判据也可以靠 0/24 加 0/2 成立(真服放弃之后实测不推 0/23),那时没见到 0/23,这个属性就是 null。
+        /// </summary>
         public UserAreaNotice UserArea { get; }
 
-        /// <summary>放弃回城后从 0/24 解析出的只读区域用户快照(仅 <see cref="OnlineCombatEventKind.ReturnedToTown"/> 且载荷可解析时非 null)。</summary>
+        /// <summary>放弃回城后从 0/24 解析出的只读区域用户快照(仅 <see cref="OnlineCombatEventKind.ReturnedToTown"/> 且 0/24 的载荷可解析时非 null;真服实测的 0/24 载荷很可能解析不出,此时为 null,不影响回城判定)。</summary>
         public AreaUsersNotice AreaUsers { get; }
     }
 
@@ -486,10 +493,18 @@ namespace Dnf.Net.Session
         public TimeSpan RoomHandshakeTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
         /// <summary>
-        /// 发出放弃回城命令(1/45)后等 0/23 与 0/24 两个回城包号的上限;缺省 15 秒(服务端 1/45 成功无回包,非副本/城镇期望状态时静默不回)。
+        /// 发出放弃回城命令(1/45)后等回城判据成立((0/23 且 0/24)或(0/24 且 0/2),见 <see cref="OnlineCombatEventKind.ReturnedToTown"/>)的上限;缺省 15 秒(服务端 1/45 成功无回包,非副本/城镇期望状态时静默不回)。
         /// 超过就以 <see cref="OnlineDungeonCombatOutcome.Timeout"/> 收尾。
         /// </summary>
         public TimeSpan GiveUpTimeout { get; set; } = TimeSpan.FromSeconds(15);
+
+        /// <summary>
+        /// 逐帧日志:缺省 false(关)。打开后跑器每收到一帧写一行(包类、包号、整帧总长,以及这一帧是不是被判为"紧跟信封的内层副本"而跳过),
+        /// 每个 561 信封再写一行(拆开了、或没拆开及其原因),用来在真服上对账"服务端到底推了哪些帧"。
+        /// 只写类、包号与长度,<b>绝不写载荷内容</b>;最多写前 <see cref="OnlineDungeonCombatRunner.MaxFrameLogFrames"/> 帧,之后的帧只计数,收场前补一行总数。
+        /// 纯观测:不改任何裁决、计数、结局;关着的时候输出与没有这个选项时逐字节一样。只有跑器读它(直接驱动状态机的调用方没有"帧"可记)。
+        /// </summary>
+        public bool FrameLog { get; set; }
 
         /// <summary>跑器每产出一条事件就在它的循环线程上回调一次;null 不回调。抛出的异常被吞掉。</summary>
         public Action<OnlineCombatEvent> OnEvent { get; set; }
@@ -585,6 +600,12 @@ namespace Dnf.Net.Session
         /// <summary>装载完成通知的包号(类 0,30 = 0x1e;载荷一个 i32,状态机不读)。状态机只在等它的时候才认。</summary>
         public const int RoomLoadedNoticeId = 30;
 
+        /// <summary>
+        /// 用户信息通知的包号(类 0,2;<see cref="UserInfoParser.PacketId"/>)。放弃回城命令发出之后,真服实测会推它(连同 0/24,不推 0/23):
+        /// 状态机只在放弃之后把它记成"见到过"(与 0/24 凑成回城判据的一半,不读载荷),它的裁决始终是透传、计数口径不变。
+        /// </summary>
+        public const int GiveUpUserInfoNoticeId = UserInfoParser.PacketId;
+
         /// <summary>击杀失败回包的包号(类 1,与击杀命令同号 42 = 0x2a;载荷 {u8 0, u8 错误码, u16 怪编号})。</summary>
         public const int KillReplyPacketId = 0x2a;
 
@@ -620,6 +641,7 @@ namespace Dnf.Net.Session
         private bool _givingUp;
         private bool _seenUserArea;
         private bool _seenAreaUsers;
+        private bool _seenUserInfo;
         private bool _returnedToTown;
         private volatile UserAreaNotice _userArea;
         private volatile AreaUsersNotice _areaUsers;
@@ -743,13 +765,16 @@ namespace Dnf.Net.Session
         /// <summary>是否已发出放弃回城命令(类 1、包号 45)。</summary>
         public bool IsGivingUp => _givingUp;
 
-        /// <summary>放弃回城发出后是否已收齐 0/23 与 0/24 两个回城通知。</summary>
+        /// <summary>
+        /// 放弃回城发出后回城判据是否已成立:(0/23 且 0/24)或(0/24 且 0/2)(真服实测的形状是后者),与到达顺序无关,重复帧只算一次;
+        /// 放弃之前到的 0/23、0/24、0/2 一概不算。
+        /// </summary>
         public bool ReturnedToTown => _returnedToTown;
 
-        /// <summary>放弃回城后从 0/23 解析出的只读区域快照(未放弃、没到或载荷读不下来时为 null)。</summary>
+        /// <summary>放弃回城后从 0/23 解析出的只读区域快照(未放弃、没见到 0/23(真服放弃之后实测不推它)、载荷读不下来或回城已成立之后才到时为 null)。</summary>
         public UserAreaNotice UserArea => _userArea;
 
-        /// <summary>放弃回城后从 0/24 解析出的只读区域用户快照(未放弃、没到或载荷读不下来时为 null)。</summary>
+        /// <summary>放弃回城后从 0/24 解析出的只读区域用户快照(未放弃、没到或载荷读不下来(真服实测的 0/24 载荷很可能解析不出)时为 null,不影响回城判定)。</summary>
         public AreaUsersNotice AreaUsers => _areaUsers;
 
         /// <summary>透传的帧按(类、包号)分的计数,按类、包号升序。</summary>
@@ -1037,7 +1062,7 @@ namespace Dnf.Net.Session
 
         /// <summary>
         /// 发放弃回城命令(类 1、包号 45,0 字节空载荷)。已经请求放弃时在本地拦下不重复发(<see cref="OnlineCombatBlock.GivingUp"/>)。
-        /// 发出成功之后进入放弃等待状态:此后击杀、换房、装载完成与结算一律被拦下,等待 0/23 与 0/24 到齐。
+        /// 发出成功之后进入放弃等待状态:此后击杀、换房、装载完成与结算一律被拦下,等待回城判据成立((0/23 且 0/24)或(0/24 且 0/2),见 <see cref="ReturnedToTown"/>)。
         /// </summary>
         public async Task<OnlineCombatSendResult> RequestGiveUpAsync(CancellationToken cancellationToken = default)
         {
@@ -1109,6 +1134,13 @@ namespace Dnf.Net.Session
                         if (_givingUp)
                         {
                             return OnGiveUpTownNotice(false, body);
+                        }
+                        break;
+                    case GiveUpUserInfoNoticeId:
+                        // 放弃之后的 0/2 只记"见到过"并 break:裁决仍是透传(照下面的老口径计入透传计数),放弃之前的 0/2 什么也不记。
+                        if (_givingUp)
+                        {
+                            NoteGiveUpUserInfo();
                         }
                         break;
                 }
@@ -1240,7 +1272,10 @@ namespace Dnf.Net.Session
             return OnlineCombatFrameVerdict.Accepted;
         }
 
-        // 放弃命令发出后等 0/23 与 0/24:只认包号(先后不限),载荷读得下来则挂在事件与结果上,读不下来为 null 且不计 Malformed
+        // 放弃命令发出后的回城判据:(0/23 且 0/24)或(0/24 且 0/2),只认包号、先后不限、重复帧只算一次。
+        // 真服实测放弃之后推 0/9、0/24、0/3、0/36、0/2、不推 0/23,所以光等 0/23 与 0/24 会一直等到超时;0/24 加 0/2 是实测的形状。
+        // 0/23 与 0/24 的载荷读得下来则挂在事件与结果上,读不下来为 null 且不计 Malformed(判据只看"见到过",不依赖解析成败);
+        // 0/2 不读载荷,它的裁决始终是透传。
         private OnlineCombatFrameVerdict OnGiveUpTownNotice(bool isUserArea, byte[] body)
         {
             if (_returnedToTown)
@@ -1272,13 +1307,33 @@ namespace Dnf.Net.Session
                 }
             }
 
-            if (_seenUserArea && _seenAreaUsers)
-            {
-                _returnedToTown = true;
-                Raise(OnlineCombatEventKind.ReturnedToTown, -1, OnlineCombatBlock.None, OnlineCombatFrameVerdict.Accepted, OnlineCombatSettlementPart.None,
-                    userArea: _userArea, areaUsers: _areaUsers);
-            }
+            TryCompleteReturnToTown();
             return OnlineCombatFrameVerdict.Accepted;
+        }
+
+        // 放弃之后的 0/2:只记"见到过"(幂等,重复帧只算一次),不读载荷、不改裁决(调用方 break 出去照旧计入透传)。
+        private void NoteGiveUpUserInfo()
+        {
+            _seenUserInfo = true;
+            TryCompleteReturnToTown();
+        }
+
+        // 回城判据成立的那一刻发一次 ReturnedToTown(已成立之后无论再来什么帧都不重发)。
+        private void TryCompleteReturnToTown()
+        {
+            if (_returnedToTown)
+            {
+                return;
+            }
+            bool readPair = _seenUserArea && _seenAreaUsers;           // 读码推出的一对:0/23 与 0/24
+            bool observedPair = _seenAreaUsers && _seenUserInfo;       // 真服实测的一对:0/24 与 0/2
+            if (!readPair && !observedPair)
+            {
+                return;
+            }
+            _returnedToTown = true;
+            Raise(OnlineCombatEventKind.ReturnedToTown, -1, OnlineCombatBlock.None, OnlineCombatFrameVerdict.Accepted, OnlineCombatSettlementPart.None,
+                userArea: _userArea, areaUsers: _areaUsers);
         }
 
         private OnlineCombatFrameVerdict OnSettlementNotice(OnlineCombatSettlementPart part, byte[] body)

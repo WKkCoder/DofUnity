@@ -34,7 +34,11 @@ namespace Dnf.Net.Session
         /// <summary>收发时抛了异常(类型名在 <see cref="OnlineDungeonCombatResult.FaultType"/>,不带消息)。</summary>
         Faulted,
 
-        /// <summary>已发放弃回城命令(1/45)并在超时前收齐 0/23 与 0/24 回城通知。</summary>
+        /// <summary>
+        /// 已发放弃回城命令(1/45)并在超时前等到回城判据成立:(0/23 且 0/24)或(0/24 且 0/2),与到达顺序无关
+        /// (真服实测放弃之后推的是 0/9、0/24、0/3、0/36、0/2,不推 0/23;判据详见 <see cref="OnlineCombatEventKind.ReturnedToTown"/>)。
+        /// 只靠 0/24 加 0/2 成立时没见到 0/23,<see cref="OnlineDungeonCombatResult.UserArea"/> 为 null。
+        /// </summary>
         GaveUp,
     }
 
@@ -155,10 +159,13 @@ namespace Dnf.Net.Session
         /// <summary>最近一次解析成功的通关奖励记录(还没收到或解析失败时为 null)。与对应事件上的对象为同一只读实例。</summary>
         public SettlementNoticeB SettlementReward { get; }
 
-        /// <summary>放弃回城后从 0/23 解析出的只读区域快照(未放弃、没到或载荷读不下来时为 null)。与对应事件上的对象为同一只读实例。</summary>
+        /// <summary>
+        /// 放弃回城后从 0/23 解析出的只读区域快照(未放弃、没到或载荷读不下来时为 null)。与对应事件上的对象为同一只读实例。
+        /// 真服放弃之后实测不推 0/23(回城靠 0/24 加 0/2 成立),此时它为 null——宿主按"没有区域落位信息"处理。
+        /// </summary>
         public UserAreaNotice UserArea { get; }
 
-        /// <summary>放弃回城后从 0/24 解析出的只读区域用户快照(未放弃、没到或载荷读不下来时为 null)。与对应事件上的对象为同一只读实例。</summary>
+        /// <summary>放弃回城后从 0/24 解析出的只读区域用户快照(未放弃、没到或载荷读不下来时为 null;读不下来不影响回城判定)。与对应事件上的对象为同一只读实例。</summary>
         public AreaUsersNotice AreaUsers { get; }
 
         /// <summary>是否走到了可以回城。</summary>
@@ -197,6 +204,12 @@ namespace Dnf.Net.Session
     {
         /// <summary>一次最多打多少行事件日志(再多的只记一行"还有 N 条")。</summary>
         public const int MaxEventLines = 128;
+
+        /// <summary>
+        /// 逐帧日志(<see cref="OnlineDungeonCombatOptions.FrameLog"/>)最多写前多少帧:这些帧各写一行,其中的 561 信封各再多写一行(所以帧行、信封行各至多这么多行);
+        /// 之后的帧不写行、只计数,收场前补一行 <c>frame omitted=N</c>。
+        /// </summary>
+        public const int MaxFrameLogFrames = 400;
 
         private readonly IOnlineDungeonSession _session;
         private readonly Func<byte[], byte[]> _unwrap;
@@ -330,7 +343,7 @@ namespace Dnf.Net.Session
 
         /// <summary>
         /// 请求放弃本次联网副本并回城(线程安全,立刻返回)。循环线程在下一圈丢弃已排队未发的击杀与换房并只发一次 1/45,
-        /// 之后继续回心跳并等待 0/23 与 0/24 到达后以 <see cref="OnlineDungeonCombatOutcome.GaveUp"/> 收尾。
+        /// 之后继续回心跳并等待回城判据成立((0/23 且 0/24)或(0/24 且 0/2),与到达顺序无关,见 <see cref="OnlineCombatEventKind.ReturnedToTown"/>)后以 <see cref="OnlineDungeonCombatOutcome.GaveUp"/> 收尾。
         /// 战斗已结束或此前已经请求过放弃时返回 false(之后 <see cref="PostKill(int)"/> 与 <see cref="PostMoveRoom(OnlineMoveRoomRequest)"/> 也返回 false)。
         /// </summary>
         public bool PostGiveUp()
@@ -381,9 +394,12 @@ namespace Dnf.Net.Session
             private readonly CancellationToken _cancel;
             private readonly Stopwatch _watch = Stopwatch.StartNew();
 
+            private readonly bool _frameLog;
+
             private int _flushed;
             private int _eventLines;
             private int _omittedLines;
+            private int _frameLogOmitted;
             private TimeSpan _settlementSentAt;
             private TimeSpan _moveSentAt;
             private TimeSpan _loadSentAt;
@@ -400,6 +416,7 @@ namespace Dnf.Net.Session
                 _owner = owner;
                 _session = owner._session;
                 _options = owner._options;
+                _frameLog = _options.FrameLog;
                 _log = log;
                 _cancel = cancel;
                 _combat = new OnlineDungeonCombat(map, new SendPort(_session), _options);
@@ -432,6 +449,10 @@ namespace Dnf.Net.Session
                 if (_omittedLines > 0)
                 {
                     Say(OnlineCombatLog.EventsOmitted(_omittedLines));
+                }
+                if (_frameLogOmitted > 0)
+                {
+                    Say(OnlineCombatLog.FramesOmitted(_frameLogOmitted));
                 }
                 var result = new OnlineDungeonCombatResult(outcome, _combat, _heartbeats, _envelopesOpened, _envelopesUnopened,
                     _innerCopiesSkipped, _framesSeen, fault);
@@ -628,7 +649,9 @@ namespace Dnf.Net.Session
                     _framesSeen++;
                     InnerCopy copy = _copy;
                     _copy = null;
-                    if (copy != null && copy.Matches(frame))
+                    bool isInnerCopy = copy != null && copy.Matches(frame);
+                    LogFrame(frame, isInnerCopy);
+                    if (isInnerCopy)
                     {
                         _innerCopiesSkipped++;
                         continue;
@@ -678,6 +701,7 @@ namespace Dnf.Net.Session
                 if (_owner._unwrap == null)
                 {
                     _envelopesUnopened++;
+                    LogEnvelopeUnopened(OnlineCombatLog.ReasonNoUnwrap);
                     return null;
                 }
 
@@ -689,11 +713,13 @@ namespace Dnf.Net.Session
                 catch (Exception)
                 {
                     _envelopesUnopened++;
+                    LogEnvelopeUnopened(OnlineCombatLog.ReasonUnwrapThrew);
                     return null;
                 }
                 if (inner == null)
                 {
                     _envelopesUnopened++;
+                    LogEnvelopeUnopened(OnlineCombatLog.ReasonUnwrapNull);
                     return null;
                 }
 
@@ -703,6 +729,7 @@ namespace Dnf.Net.Session
                     || header.TotalLength > (uint)inner.Length)
                 {
                     _envelopesUnopened++;
+                    LogEnvelopeUnopened(OnlineCombatLog.ReasonInnerHeaderBad);
                     return null;
                 }
                 var innerPayload = new byte[(int)header.TotalLength - headerLength];
@@ -710,10 +737,12 @@ namespace Dnf.Net.Session
                 if (ServerFrameDecoder.IsCompressedId(header.PacketId))
                 {
                     _envelopesUnopened++;
+                    LogEnvelopeUnopenedCompressed(header);
                     return null;
                 }
 
                 _envelopesOpened++;
+                LogEnvelopeOpened(header);
                 _copy = new InnerCopy(header.Class, header.PacketId, innerPayload);
                 if (header.Class == PacketClass.Noti && header.PacketId == OnlineDungeonEntry.ServerEnvelopePacketId)
                 {
@@ -721,6 +750,48 @@ namespace Dnf.Net.Session
                     return null;
                 }
                 return await DispatchAsync(header.Class, header.PacketId, innerPayload).ConfigureAwait(false);
+            }
+
+            // 逐帧日志(--frame-log)的一帧:前 MaxFrameLogFrames 帧各写一行,之后的只计数;只含类、包号、整帧总长与是否被判为内层副本,没有载荷
+            private void LogFrame(DecodedFrame frame, bool innerCopySkipped)
+            {
+                if (!_frameLog)
+                {
+                    return;
+                }
+                if (_framesSeen > MaxFrameLogFrames)
+                {
+                    _frameLogOmitted++;
+                    return;
+                }
+                Say(OnlineCombatLog.Frame(_framesSeen, frame.Header.Class, frame.Header.PacketId, frame.Header.TotalLength, innerCopySkipped));
+            }
+
+            // 逐帧日志的信封行:跟着它所在那一帧走(那一帧在上限之内才写);关着的时候这几个方法什么也不做、也不拼字符串
+            private bool EnvelopeLogging => _frameLog && _framesSeen <= MaxFrameLogFrames;
+
+            private void LogEnvelopeOpened(PacketHeader inner)
+            {
+                if (EnvelopeLogging)
+                {
+                    Say(OnlineCombatLog.EnvelopeOpened(_framesSeen, inner.Class, inner.PacketId, inner.TotalLength));
+                }
+            }
+
+            private void LogEnvelopeUnopened(string reason)
+            {
+                if (EnvelopeLogging)
+                {
+                    Say(OnlineCombatLog.EnvelopeUnopened(_framesSeen, reason));
+                }
+            }
+
+            private void LogEnvelopeUnopenedCompressed(PacketHeader inner)
+            {
+                if (EnvelopeLogging)
+                {
+                    Say(OnlineCombatLog.EnvelopeUnopenedCompressed(_framesSeen, inner.Class, inner.PacketId, inner.TotalLength));
+                }
             }
 
             // 把状态机新产出的事件打成日志行并回调宿主
@@ -971,6 +1042,53 @@ namespace Dnf.Net.Session
             return Prefix + " events omitted=" + Number(count);
         }
 
+        // ---- 逐帧日志(--frame-log):只含帧序号、包类、包号、整帧总长与信封的结果,没有载荷内容 ----
+
+        /// <summary>信封没拆开的原因(逐帧日志里 <c>reason=</c> 的取值):没有解包委托。</summary>
+        internal const string ReasonNoUnwrap = "noUnwrap";
+
+        /// <summary>解包委托抛了异常。</summary>
+        internal const string ReasonUnwrapThrew = "unwrapThrew";
+
+        /// <summary>解包委托返回 null。</summary>
+        internal const string ReasonUnwrapNull = "unwrapNull";
+
+        /// <summary>解出来的内层帧头读不出或总长越界。</summary>
+        internal const string ReasonInnerHeaderBad = "innerHeaderBad";
+
+        /// <summary>内层是压缩帧,不拆。</summary>
+        internal const string ReasonInnerCompressed = "innerCompressed";
+
+        /// <summary>逐帧日志的一帧:<c>frame n=&lt;第几帧,从 1 起&gt; &lt;类名大写&gt;/&lt;包号&gt;(&lt;整帧总长&gt;)</c>,被判为信封内层副本而跳过的再带 <c> innerCopySkipped</c>。</summary>
+        internal static string Frame(int n, PacketClass cls, int id, uint total, bool innerCopySkipped)
+        {
+            return Prefix + " frame n=" + Number(n) + " " + FrameName(cls, id) + "(" + Number(total) + ")" + (innerCopySkipped ? " innerCopySkipped" : string.Empty);
+        }
+
+        /// <summary>信封拆开了:<c>envelope n=&lt;对应帧序号&gt; opened inner=&lt;类名大写&gt;/&lt;包号&gt;(&lt;内层总长&gt;)</c>。</summary>
+        internal static string EnvelopeOpened(int n, PacketClass cls, int id, uint total)
+        {
+            return Prefix + " envelope n=" + Number(n) + " opened inner=" + FrameName(cls, id) + "(" + Number(total) + ")";
+        }
+
+        /// <summary>信封没拆开:<c>envelope n=&lt;对应帧序号&gt; unopened reason=&lt;原因&gt;</c>。</summary>
+        internal static string EnvelopeUnopened(int n, string reason)
+        {
+            return Prefix + " envelope n=" + Number(n) + " unopened reason=" + reason;
+        }
+
+        /// <summary>内层是压缩帧所以没拆:原因之后多带 <c> inner=&lt;类名大写&gt;/&lt;包号&gt;(&lt;内层总长&gt;)</c>。</summary>
+        internal static string EnvelopeUnopenedCompressed(int n, PacketClass cls, int id, uint total)
+        {
+            return EnvelopeUnopened(n, ReasonInnerCompressed) + " inner=" + FrameName(cls, id) + "(" + Number(total) + ")";
+        }
+
+        /// <summary>逐帧日志超过上限而没写行的帧数:<c>frame omitted=N</c>(收场前补一行)。</summary>
+        internal static string FramesOmitted(int count)
+        {
+            return Prefix + " frame omitted=" + Number(count);
+        }
+
         /// <summary>
         /// 战斗结束的一行:走到可回城是 <c>done</c>,其余结局是 <c>ended</c>;带结局、终了阶段、状态机各计数、跑器各计数与透传包号。
         /// 走过换房或装载握手的战斗,在 <c>frames=</c> 之后多一段 <c>room=</c>(结束时所在房间)、<c>moves=</c>(发出数/被拒数)、<c>loadReports=</c>(装载完成命令数)、
@@ -1050,6 +1168,11 @@ namespace Dnf.Net.Session
         }
 
         private static string Number(int value)
+        {
+            return value.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static string Number(uint value)
         {
             return value.ToString(CultureInfo.InvariantCulture);
         }

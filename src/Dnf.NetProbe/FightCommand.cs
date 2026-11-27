@@ -34,10 +34,16 @@ namespace Dnf.NetProbe;
 /// 成功、会话已关、异常、取消(以及进城、认证、进副本阶段的失败)都不放弃。放弃的结果只写进 <c>PROBE_FIGHT stage=giveup step=… reason=…</c> 行
 /// 与结果行末尾的 <c>giveUp=</c> 字段,<b>不改任何退出码</b>;策略、编排与拼行全在 Net 层(<see cref="OnlineGiveUpOnFailure"/>、<see cref="OnlineFightLog.ResultFieldsFor"/>),探针只管调用。
 /// 不带这个选项时输出与行为一字不变。
+///
+/// 默认关闭的选项 <c>--frame-log</c>(与 <c>--permits-only</c> 互斥,可与其余选项同用;同一选项给两次是用法错误):
+/// 战斗跑器每收到一帧多打一行 <c>PROBE_FIGHT stage=combat frame n=… 类/包号(整帧总长)</c>(被判为信封内层副本而跳过的带 <c>innerCopySkipped</c>),
+/// 每个 561 信封再多打一行 <c>stage=combat envelope n=… opened|unopened …</c>(没拆开的带原因),用来在真服上对账"服务端到底推了哪些帧"。
+/// 只含包类、包号、整帧总长与帧序号,<b>不含载荷内容</b>;最多写前 <see cref="OnlineDungeonCombatRunner.MaxFrameLogFrames"/> 帧,之后的只计数,收场前补一行 <c>frame omitted=N</c>。
+/// 纯观测,不改任何裁决、计数、结局与退出码;不带这个选项时输出与行为一字不变。行的拼法在 Net 层(<see cref="OnlineCombatLog"/>),探针只管把选项交给战斗选项。
 /// </summary>
 internal static class FightCommand
 {
-    private const string UsageText = "用法: dnf-netprobe fight [仓库根] --dungeon <副本编号 0-65535> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] [--min-clear-seconds S] [--after-settle [--menu-choice town]] [--give-up-on-failure]";
+    private const string UsageText = "用法: dnf-netprobe fight [仓库根] --dungeon <副本编号 0-65535> <模式 0-4> [--pace-ms N] [--clear-wait S] [--settle-wait S] [--continue-on-refuse] [--stay S] [--min-clear-seconds S] [--after-settle [--menu-choice town]] [--give-up-on-failure] [--frame-log]";
 
     // 只在 --permits-only 与 --dungeon 冲突时多打这一行(默认路径的用法文字一字不变)。
     private const string PermitsUsageText = "只看许可表: dnf-netprobe fight [仓库根] --permits-only(不要 --dungeon;登录进城后打印一行许可表就退出,不进副本)";
@@ -161,6 +167,7 @@ internal static class FightCommand
             {
                 SettlementTimeout = parsed.SettleWait + TimeSpan.FromSeconds(10),
                 OverallTimeout = backstop,
+                FrameLog = parsed.FrameLog,
             };
             OnlineDungeonCombatRunner runner = dungeonRunner.UseCombat(combatOptions);
             var driver = new OnlineFightDriver(runner, map, new OnlineFightOptions
