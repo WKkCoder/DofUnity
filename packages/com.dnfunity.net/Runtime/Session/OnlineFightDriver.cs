@@ -129,7 +129,10 @@ namespace Dnf.Net.Session
     /// <summary>放弃游戏(类 1、包号 45)之后的结局,只描述走到哪一步停下,不含任何载荷内容。</summary>
     public enum OnlineGiveUpOutcome
     {
-        /// <summary>等到了回城信号:跑器路径是 <c>0/23</c> 加 <c>0/24</c>;会话层路径还认 <c>0/2</c> 单帧。</summary>
+        /// <summary>
+        /// 等到了回城信号:跑器路径是(<c>0/23</c> 加 <c>0/24</c>)或(<c>0/24</c> 加 <c>0/2</c>),与到达顺序无关(真服放弃之后实测的形状是后者,见 <see cref="OnlineDungeonCombatOutcome.GaveUp"/>);
+        /// 会话层路径(<see cref="OnlineAfterSettleDriver"/>)的规则不变,还认 <c>0/2</c> 单帧。
+        /// </summary>
         Returned = 0,
 
         /// <summary>命令发出后等满上限仍没有回城信号。</summary>

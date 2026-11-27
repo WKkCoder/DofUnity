@@ -34,7 +34,11 @@ namespace Dnf.Net.Session
         /// <summary>收发时抛了异常(类型名在 <see cref="OnlineDungeonCombatResult.FaultType"/>,不带消息)。</summary>
         Faulted,
 
-        /// <summary>已发放弃回城命令(1/45)并在超时前收齐 0/23 与 0/24 回城通知。</summary>
+        /// <summary>
+        /// 已发放弃回城命令(1/45)并在超时前等到回城判据成立:(0/23 且 0/24)或(0/24 且 0/2),与到达顺序无关
+        /// (真服实测放弃之后推的是 0/9、0/24、0/3、0/36、0/2,不推 0/23;判据详见 <see cref="OnlineCombatEventKind.ReturnedToTown"/>)。
+        /// 只靠 0/24 加 0/2 成立时没见到 0/23,<see cref="OnlineDungeonCombatResult.UserArea"/> 为 null。
+        /// </summary>
         GaveUp,
     }
 
@@ -155,10 +159,13 @@ namespace Dnf.Net.Session
         /// <summary>最近一次解析成功的通关奖励记录(还没收到或解析失败时为 null)。与对应事件上的对象为同一只读实例。</summary>
         public SettlementNoticeB SettlementReward { get; }
 
-        /// <summary>放弃回城后从 0/23 解析出的只读区域快照(未放弃、没到或载荷读不下来时为 null)。与对应事件上的对象为同一只读实例。</summary>
+        /// <summary>
+        /// 放弃回城后从 0/23 解析出的只读区域快照(未放弃、没到或载荷读不下来时为 null)。与对应事件上的对象为同一只读实例。
+        /// 真服放弃之后实测不推 0/23(回城靠 0/24 加 0/2 成立),此时它为 null——宿主按"没有区域落位信息"处理。
+        /// </summary>
         public UserAreaNotice UserArea { get; }
 
-        /// <summary>放弃回城后从 0/24 解析出的只读区域用户快照(未放弃、没到或载荷读不下来时为 null)。与对应事件上的对象为同一只读实例。</summary>
+        /// <summary>放弃回城后从 0/24 解析出的只读区域用户快照(未放弃、没到或载荷读不下来时为 null;读不下来不影响回城判定)。与对应事件上的对象为同一只读实例。</summary>
         public AreaUsersNotice AreaUsers { get; }
 
         /// <summary>是否走到了可以回城。</summary>
@@ -330,7 +337,7 @@ namespace Dnf.Net.Session
 
         /// <summary>
         /// 请求放弃本次联网副本并回城(线程安全,立刻返回)。循环线程在下一圈丢弃已排队未发的击杀与换房并只发一次 1/45,
-        /// 之后继续回心跳并等待 0/23 与 0/24 到达后以 <see cref="OnlineDungeonCombatOutcome.GaveUp"/> 收尾。
+        /// 之后继续回心跳并等待回城判据成立((0/23 且 0/24)或(0/24 且 0/2),与到达顺序无关,见 <see cref="OnlineCombatEventKind.ReturnedToTown"/>)后以 <see cref="OnlineDungeonCombatOutcome.GaveUp"/> 收尾。
         /// 战斗已结束或此前已经请求过放弃时返回 false(之后 <see cref="PostKill(int)"/> 与 <see cref="PostMoveRoom(OnlineMoveRoomRequest)"/> 也返回 false)。
         /// </summary>
         public bool PostGiveUp()
