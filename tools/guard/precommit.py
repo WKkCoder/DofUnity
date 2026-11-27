@@ -10,6 +10,10 @@
   6. 凭据:local.secrets.env 本身,或任何被暂存的文本里出现了该文件里的取值(账号、口令、服务器地址等),
      包括它们的常见编码写法(十六进制、Base64、UTF-16、摘要……,规则见 secretscan.py)
   7. 本机绝对路径(/Users/名字、/home/名字、C:\\Users\\名字),以及私钥块与常见访问令牌
+  8. shell 脚本(*.sh)的非注释行里,"$变量名" 后面紧跟非 ASCII 字符(全角逗号、全角括号、汉字……)。
+     macOS 自带的 bash 3.2 在 UTF-8 语言环境下会把这个多字节字符当成变量名的一部分,展开的是一个不存在的变量;
+     配合 set -u 就是 unbound variable,脚本悄悄退出,退出码还是 0(C 语言环境没有这个问题)。请写成 ${变量名}。
+     整行注释不查;前面有奇数个反斜杠的 \\$ 是字面量的美元符,也不算。
 
 取值文件的位置:环境变量 DNF_SECRETS_FILE;否则当前工作区根目录;再否则主工作区(各 worktree 里没有这个被忽略的文件)。
 找不到取值文件时只提示、不拦截,因为没有取值可比对。
@@ -44,6 +48,25 @@ DECOMPILER_RE = re.compile(
     r"\b(?:%s|%s|%s)[0-9a-fA-F]{6,8}\b|\bund" "efined[1248]?\\b(?=\\s+[A-Za-z_*])|\\b[uicp]{1,2}Var\\d+\\b"
     % (_FUN, _DAT, _LAB)
 )
+
+
+# 第 8 条:"$变量名" 后面紧跟非 ASCII 字符。第一组吃掉 $ 前面连着的反斜杠(奇数个 = 这个 $ 被转义成字面量)。
+SHELL_VAR_BEFORE_NON_ASCII_RE = re.compile(r"(\\*)\$([A-Za-z_][A-Za-z0-9_]*)(?=[^\x00-\x7f])")
+
+
+def shell_var_before_non_ascii(text):
+    """shell 脚本文本里,非注释行中 "$变量名" 后面紧跟非 ASCII 字符的位置:[(行号, 变量名, 紧跟的字符), ...]。
+
+    只按 \\n 分行(CRLF 行尾的 \\r 是 ASCII,不影响判断);首个非空白字符(空格、制表符)是 # 的整行是注释,不查。
+    $1、$@、$?、$$ 这类特殊参数不是 "$变量名"(名字必须以字母或下划线开头),后面紧跟什么都不会被当成名字的一部分,不算。"""
+    hits = []
+    for no, line in enumerate(text.split("\n"), 1):
+        if line.lstrip(" \t").startswith("#"):
+            continue
+        for m in SHELL_VAR_BEFORE_NON_ASCII_RE.finditer(line):
+            if len(m.group(1)) % 2 == 0:
+                hits.append((no, m.group(2), line[m.end():m.end() + 1]))
+    return hits
 
 
 def git(*args):
@@ -98,6 +121,14 @@ def main():
         if m:
             line = text.count("\n", 0, m.start()) + 1
             problems.append((n, "第 %d 行像私钥或访问令牌;请删掉,并且该令牌应当视为已泄露、立即作废" % line))
+            continue
+        if low.endswith(".sh"):
+            hits = shell_var_before_non_ascii(text)
+            if hits:
+                no, name, ch = hits[0]
+                problems.append((n, "第 %d 行的 $%s 后面紧跟非 ASCII 字符 %r(共 %d 处):macOS 自带的 bash 3.2 在 UTF-8 语言环境下会把它当成变量名的一部分,"
+                                    "set -u 之下报 unbound variable、脚本悄悄退出且退出码为 0。请写成 ${%s}"
+                                 % (no, name, ch, len(hits), name)))
     if problems:
         print("提交被守卫拒绝:", file=sys.stderr)
         for n, why in problems:
