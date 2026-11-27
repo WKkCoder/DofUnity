@@ -498,6 +498,14 @@ namespace Dnf.Net.Session
         /// </summary>
         public TimeSpan GiveUpTimeout { get; set; } = TimeSpan.FromSeconds(15);
 
+        /// <summary>
+        /// 逐帧日志:缺省 false(关)。打开后跑器每收到一帧写一行(包类、包号、整帧总长,以及这一帧是不是被判为"紧跟信封的内层副本"而跳过),
+        /// 每个 561 信封再写一行(拆开了、或没拆开及其原因),用来在真服上对账"服务端到底推了哪些帧"。
+        /// 只写类、包号与长度,<b>绝不写载荷内容</b>;最多写前 <see cref="OnlineDungeonCombatRunner.MaxFrameLogFrames"/> 帧,之后的帧只计数,收场前补一行总数。
+        /// 纯观测:不改任何裁决、计数、结局;关着的时候输出与没有这个选项时逐字节一样。只有跑器读它(直接驱动状态机的调用方没有"帧"可记)。
+        /// </summary>
+        public bool FrameLog { get; set; }
+
         /// <summary>跑器每产出一条事件就在它的循环线程上回调一次;null 不回调。抛出的异常被吞掉。</summary>
         public Action<OnlineCombatEvent> OnEvent { get; set; }
     }
