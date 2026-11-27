@@ -358,4 +358,5 @@ python3 -m unittest discover -s tools/guard -p 'test_*.py'
   tools/publish-github.sh --url ssh://git@ssh.github.com:443/WKkCoder/DofUnity.git
   ```
 
+  直连 443 收不到 SSH 横幅时,再在 `GIT_SSH_COMMAND` 里加 `-o 'ProxyCommand=nc -X connect -x 127.0.0.1:7890 %h %p'`,经本机代理的 HTTP CONNECT 转(必须是 `-X connect`,SOCKS5 方式不通)。
   HTTPS 的只读操作(`git ls-remote`、匿名拉取)走 `~/.gitconfig` 里配好的代理,不受这个解析问题影响。

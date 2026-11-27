@@ -41,7 +41,7 @@
 来源:2026-11-09 首次发布(用户登记了 SSH 公钥,此后各次都走 SSH)与 2026-11-27 14:50 的实测。
 
 1. **发布一律走 `tools/publish-github.sh`,不手敲 `git push`**(仓库公开、推上去收不回来;细节见 `docs/usage.md` 的"发布到 GitHub")。
-2. **不要向用户要 GitHub 令牌。** 用户的 SSH 密钥(`~/.ssh/id_ed25519`)自 2026-11-09 起登记在 GitHub 账号 `WKkCoder` 上。2026-11-27 曾因只试了 `github.com:22`(被拒)和没固定主机密钥的 443 入口(被主机密钥校验拦下),就误判 SSH 不可用、改向用户要令牌,多绕了两轮:一张细粒度令牌没勾 Contents 写权限,在推送的第一步 403;而 SSH 其实一直可用。
+2. **不要向用户要 GitHub 令牌。** 用户的 SSH 密钥(`~/.ssh/id_ed25519`)自 2026-11-09 起登记在 GitHub 账号 `WKkCoder` 上。2026-11-27 曾因只试了 `github.com:22`(被拒)和没固定主机密钥的 443 入口(被主机密钥校验拦下),就误判 SSH 不可用、改向用户要令牌,多绕了两轮:一张细粒度令牌没勾 Contents 写权限,在推送的第一步 403;而 SSH 其实一直可用:同样的问题 2026-11-12 的会话就遇到并解决过,历史会话的转写里有记录。遇到凭据或连接问题,先翻历史会话和查根因。
 3. **本机的坑:`github.com` 被 DNS 解析成 `127.0.0.1`,22 端口直连被拒;`ssh.github.com` 解析正常、443 可连。** 所以 `--ssh`(`git@github.com:…`)在本机走不通。用 443 入口,并让 ssh 拿 `known_hosts` 里已有的 `github.com` 条目校验主机密钥(443 入口给的是同一组主机密钥,不新增条目、不放宽校验):
    ```sh
    export GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes -o HostKeyAlias=github.com' GIT_TERMINAL_PROMPT=0
@@ -49,5 +49,6 @@
    tools/publish-github.sh --url ssh://git@ssh.github.com:443/WKkCoder/DofUnity.git
    ```
    先 `ssh -T git@github.com` 试一次:哪天解析恢复正常、通了,就用 `--ssh`。HTTPS 的只读操作(`git ls-remote`、匿名拉取)走 `~/.gitconfig` 里配好的代理,不受影响。
+   **备选:直连 443 收不到 SSH 横幅时**(2026-11-12 的会话遇到过),在 `GIT_SSH_COMMAND` 里再加 `-o 'ProxyCommand=nc -X connect -x 127.0.0.1:7890 %h %p'`,经本机代理的 HTTP CONNECT 转(必须是 `-X connect`,SOCKS5 方式不通)。2026-11-27 实测直连与经代理两条路都返回 `Hi WKkCoder!`。
 4. **推完独立核对,别只信脚本的"已核对"**:匿名从 GitHub 拉一份到临时裸仓库(`git init --bare` 加 `fetch`),比 `main` 的树哈希、用 `tools/guard/audit_refs.py` 扫全部引用、再跑一遍版本值扫描;临时拷贝用完即删。
 5. **推送被拒先查原因,不要换着花样去要凭据。** 看是解析问题还是授权问题:`dscacheutil -q host -a name github.com`、`scutil --dns`、`ssh -v`、`/etc/hosts`。凭据永远不进命令行参数与日志;用过的一次性令牌文件用完即删。
