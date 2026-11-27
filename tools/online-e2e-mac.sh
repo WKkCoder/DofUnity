@@ -266,6 +266,7 @@ st_make_box() {
   for step in env.sh unity-build-town.sh; do
     cat >"$_ST_BOX/tools/$step" <<EOF
 printf 'MODE=%s MIN_CLEAR_SECONDS=%s\n' "\${MODE:-}" "\${MIN_CLEAR_SECONDS:-}" >"$_ST_BOX/trip/$step"
+printf 'SETTLE_SPEC=%s CHAR_SLOT=%s DUNGEON_ID=%s DUNGEON_MODE=%s MAX_SECONDS=%s NET_ROOT_LIVE=%s FAKE_ROOMS=%s FAKE_MONSTERS=%s EXTRA_NO_DAMAGE=%s\n' "\${SETTLE_SPEC:-}" "\${CHAR_SLOT:-}" "\${DUNGEON_ID:-}" "\${DUNGEON_MODE:-}" "\${MAX_SECONDS:-}" "\${NET_ROOT_LIVE:-}" "\${FAKE_ROOMS:-}" "\${FAKE_MONSTERS:-}" "\${EXTRA_NO_DAMAGE:-}" >"$_ST_BOX/trip/$step.vars"
 exit 97
 EOF
   done
@@ -283,19 +284,31 @@ st_box_run() {
 
 # 护栏用例：st_guard_case <名称> <期望类别> <参数…>（参数自己带 --live --check-guards）
 #   ok 通过（退出 0、stdout 恰为固定一行、stderr 空）/ prereg、mincl 两种护栏拒绝（退出恰为 2、stderr 恰为固定原因行）/
-#   needlive、noarg_prereg、noarg_mincl 用法错误（退出 2、stderr 恰为固定一行）。任何类别都不许触发沙箱里的后续步骤。
+#   needlive、noarg_<选项> 用法错误（退出 2、stderr 恰为固定一行；noarg_ 系列是各选项缺值时脚本现有的提示）/
+#   unknown=<原样参数> 未知参数（退出 2、stderr 首行恰为"未知参数: <原样参数>"，其后整段照印 --help 的用法文本）/
+#   help 帮助（退出 0、stdout 恰为用法文本、stderr 空；用法文本取自开头那次 --help，并已钉死标题行）。
+#   任何类别都不许触发沙箱里的后续步骤。
 st_guard_case() {
   local name="$1" kind="$2"
   shift 2
   local want_rc want_out="" want_err=""
   case "$kind" in
-    ok)           want_rc=0; want_out="DNF_E2E_GUARDS ok" ;;
-    prereg)       want_rc=2; want_err="--live 拒绝启动：必须提供存在的非空 --prereg 预注册文件" ;;
-    mincl)        want_rc=2; want_err="--live 拒绝启动：必须显式提供 --mincleartime >= 60（防 E-414 通关过快反作弊计数）" ;;
-    needlive)     want_rc=2; want_err="--check-guards 必须与 --live 同用" ;;
-    noarg_prereg) want_rc=2; want_err="缺少 --prereg 参数" ;;
-    noarg_mincl)  want_rc=2; want_err="缺少 --mincleartime 参数" ;;
-    *) st_fail "[护栏 $name] 用例表里的期望类别未知: $kind" ;;
+    ok)             want_rc=0; want_out="DNF_E2E_GUARDS ok" ;;
+    prereg)         want_rc=2; want_err="--live 拒绝启动：必须提供存在的非空 --prereg 预注册文件" ;;
+    mincl)          want_rc=2; want_err="--live 拒绝启动：必须显式提供 --mincleartime >= 60（防 E-414 通关过快反作弊计数）" ;;
+    needlive)       want_rc=2; want_err="--check-guards 必须与 --live 同用" ;;
+    noarg_prereg)   want_rc=2; want_err="缺少 --prereg 参数" ;;
+    noarg_mincl)    want_rc=2; want_err="缺少 --mincleartime 参数" ;;
+    noarg_settle)   want_rc=2; want_err="缺少 --settle 参数" ;;
+    noarg_char)     want_rc=2; want_err="缺少 --char 参数" ;;
+    noarg_dungeon)  want_rc=2; want_err="缺少 --dungeon <编号> <模式> 参数" ;;
+    noarg_maxsec)   want_rc=2; want_err="缺少 --max-seconds 参数" ;;
+    noarg_netroot)  want_rc=2; want_err="缺少 --netroot 参数" ;;
+    noarg_rooms)    want_rc=2; want_err="缺少 --rooms 参数" ;;
+    noarg_monsters) want_rc=2; want_err="缺少 --monsters 参数" ;;
+    unknown=*)      want_rc=2; want_err="未知参数: ${kind#unknown=}"$'\n'"${_ST_USAGE}" ;;
+    help)           want_rc=0; want_out="${_ST_USAGE}" ;;
+    *) st_fail "[护栏 $name] 用例表里的期望类别未知: ${kind}" ;;
   esac
   st_box_run "$@"
   _ST_GUARD_CASES=$((_ST_GUARD_CASES + 1))
@@ -330,6 +343,23 @@ st_box_case() {
   elif [ -n "$(ls -A "$_ST_BOX/trip")" ]; then
     st_fail "[护栏 $name] 被拒绝的运行却走到了后续步骤" "触发记录: $(ls "$_ST_BOX/trip")"
   fi
+}
+
+# 解析结果对照：--dry 走到沙箱里的假 env.sh，它把脚本解析出的各个变量记到 trip/env.sh.vars 再以 97 退出
+#   st_parse_case <名称> <期望记账，整行> <参数…>（退出恰为 97、stdout 与 stderr 都空、记账逐字相等）
+st_parse_case() {
+  local name="$1" want_vars="$2"
+  shift 2
+  st_box_run "$@"
+  _ST_GUARD_CASES=$((_ST_GUARD_CASES + 1))
+  echo "[selftest] 护栏 $name"
+  if [ "$_ST_RC" != "97" ]; then
+    st_fail "[护栏 $name] 退出码应为 97（走到假 env.sh），实际 ${_ST_RC}" "stdout: [$(cat "$_ST_OUT")]" "stderr: [$(cat "$_ST_ERR")]"
+  fi
+  st_check_file "[护栏 $name] stdout" "$_ST_OUT" ""
+  st_check_file "[护栏 $name] stderr" "$_ST_ERR" ""
+  [ -f "$_ST_BOX/trip/env.sh.vars" ] || st_fail "[护栏 $name] 假 env.sh 没有留下解析结果记账"
+  st_check_file "[护栏 $name] 解析结果" "$_ST_BOX/trip/env.sh.vars" "$want_vars"
 }
 
 run_selftest() {
@@ -620,6 +650,17 @@ PY
   mkdir "$pre_dir"
   printf '\n' >"$pre_one"
 
+  # 用法文本：取自沙箱副本的 --help（stdout）。后面 help、unknown= 两类用例都拿它当期望，所以先把它钉住：
+  # 退出 0、stderr 为空、标题行逐字不变、不止一行——免得"两边都是空"也算过。
+  st_box_run --help
+  _ST_USAGE="$(cat "$_ST_OUT")"
+  if [ "$_ST_RC" != "0" ] || [ -s "$_ST_ERR" ] \
+    || [ "$(head -n 1 "$_ST_OUT")" != "用法: tools/online-e2e-mac.sh [--dry | --live | --selftest] [选项]" ] \
+    || [ "$(wc -l <"$_ST_OUT" | tr -d ' ')" -lt 10 ]; then
+    st_fail "[用法文本] --help 应退出 0、stderr 为空、stdout 标题行逐字不变且不止一行" \
+      "退出码: ${_ST_RC}" "stdout 首行: [$(head -n 1 "$_ST_OUT")]" "stderr: [$(cat "$_ST_ERR")]"
+  fi
+
   # ---- --mincleartime 的每个边界各自一条（预注册文件合格）----
   st_guard_case "G01 秒数 59 拒绝" mincl --live --check-guards --prereg "$pre_ok" --mincleartime 59
   st_guard_case "G02 秒数 60 放行" ok --live --check-guards --prereg "$pre_ok" --mincleartime 60
@@ -661,6 +702,75 @@ PY
   st_guard_case "G34 --live 之后又写 --dry（最后一个模式生效）拒绝" needlive --live --dry --check-guards --prereg "$pre_ok" --mincleartime 60
   st_guard_case "G35 --prereg 缺值" noarg_prereg --live --check-guards --prereg
   st_guard_case "G36 --mincleartime 缺值" noarg_mincl --live --check-guards --prereg "$pre_ok" --mincleartime
+
+  # ---- 其余选项的参数解析：解析循环先于护栏判定，缺值与未知参数在护栏之前就退出 2 ----
+  # q 是一组合格的 --live 护栏参数；每条用例在它后面接要测的选项，"解析不过"与"护栏不过"一眼分得开：
+  # 解析不过 → 退出 2 且 stderr 是解析阶段的固定提示；解析过了 → 走到护栏、打印固定一行（ok）。
+  local q=(--live --check-guards --prereg "$pre_ok" --mincleartime 60)
+
+  # 缺值：每个带参数的选项各一条，选项写在最后、后面一个词都没有（--dungeon 要三个词：完全缺值、只给编号各一条）
+  st_guard_case "Q01 --settle 缺值" noarg_settle "${q[@]}" --settle
+  st_guard_case "Q02 --char 缺值" noarg_char "${q[@]}" --char
+  st_guard_case "Q03 --dungeon 缺值" noarg_dungeon "${q[@]}" --dungeon
+  st_guard_case "Q04 --dungeon 只给编号、缺模式" noarg_dungeon "${q[@]}" --dungeon 3
+  st_guard_case "Q05 --max-seconds 缺值" noarg_maxsec "${q[@]}" --max-seconds
+  st_guard_case "Q06 --netroot 缺值" noarg_netroot "${q[@]}" --netroot
+  st_guard_case "Q07 --rooms 缺值" noarg_rooms "${q[@]}" --rooms
+  st_guard_case "Q08 --monsters 缺值" noarg_monsters "${q[@]}" --monsters
+
+  # 值恰好是最后一个（--dungeon 是最后三个）词：不能因为"后面没东西了"就判缺值，也不能多吃或少吃
+  st_guard_case "Q11 --settle 带值放在最后：放行" ok "${q[@]}" --settle retry,select,town
+  st_guard_case "Q12 --char 带值放在最后：放行" ok "${q[@]}" --char 2
+  st_guard_case "Q13 --dungeon 带编号与模式放在最后（三个词恰好用完）：放行" ok "${q[@]}" --dungeon 3 2
+  st_guard_case "Q14 --max-seconds 带值放在最后：放行" ok "${q[@]}" --max-seconds 90
+  st_guard_case "Q15 --netroot 带值放在最后：放行" ok "${q[@]}" --netroot "$tmp/netroot"
+  st_guard_case "Q16 --rooms 带值放在最后：放行" ok "${q[@]}" --rooms 2
+  st_guard_case "Q17 --monsters 带值放在最后：放行" ok "${q[@]}" --monsters 3
+  # 每个选项后面都还有别的选项：各吃几个词、吃完正好接上下一个选项（--damage 不带值）
+  st_guard_case "Q18 七个带值选项连写、--damage 收尾：放行" ok "${q[@]}" --settle retry,select,town --char 1 --dungeon 3 2 --max-seconds 90 --netroot "$tmp/netroot" --rooms 2 --monsters 3 --damage
+  st_guard_case "Q19 --damage 夹在中间、也放在最后：放行" ok "${q[@]}" --damage --rooms 2 --damage
+
+  # 未知参数：退出 2、stdout 空；stderr 首行恰为"未知参数: <原样>"，其后整段是用法文本
+  st_guard_case "Q20 未知参数 --bogus 放在合格参数之后" unknown=--bogus "${q[@]}" --bogus
+  st_guard_case "Q21 未知参数放在最前面" unknown=bogus bogus "${q[@]}"
+  st_guard_case "Q22 --选项=值 的写法不被接受，原样回显" unknown=--mincleartime=60 --live --check-guards --prereg "$pre_ok" --mincleartime=60
+  st_guard_case "Q23 未知参数含空格与汉字，原样回显" "unknown=带 空格 的参数" "${q[@]}" "带 空格 的参数"
+  st_guard_case "Q24 空字符串参数也是未知参数" unknown= "${q[@]}" ""
+  st_guard_case "Q25 --dry 之后多出一个位置参数" unknown=extra --dry extra
+
+  # 帮助：-h / --help 把用法文本打到 stdout 并退出 0（不是 stderr）；写在别的选项之后也是先帮助、不走护栏
+  st_guard_case "Q30 -h 打印用法并退出 0" help -h
+  st_guard_case "Q31 --help 打印用法并退出 0" help --help
+  st_guard_case "Q32 --help 写在合格参数之后：照样是帮助，不走护栏" help "${q[@]}" --help
+
+  # 解析结果落到正确的变量：--dry 走到假 env.sh，它把各变量原样记下来；每个选项用互不相同的合成值，串错变量就对不上
+  st_parse_case "V01 不带任何选项：全是缺省值" \
+    "SETTLE_SPEC=retry,town CHAR_SLOT=0 DUNGEON_ID= DUNGEON_MODE=0 MAX_SECONDS=120 NET_ROOT_LIVE= FAKE_ROOMS=1 FAKE_MONSTERS=2 EXTRA_NO_DAMAGE=1" --dry
+  st_parse_case "V02 --settle 只改 SETTLE_SPEC" \
+    "SETTLE_SPEC=select,retry CHAR_SLOT=0 DUNGEON_ID= DUNGEON_MODE=0 MAX_SECONDS=120 NET_ROOT_LIVE= FAKE_ROOMS=1 FAKE_MONSTERS=2 EXTRA_NO_DAMAGE=1" --dry --settle select,retry
+  st_parse_case "V03 --char 只改 CHAR_SLOT" \
+    "SETTLE_SPEC=retry,town CHAR_SLOT=3 DUNGEON_ID= DUNGEON_MODE=0 MAX_SECONDS=120 NET_ROOT_LIVE= FAKE_ROOMS=1 FAKE_MONSTERS=2 EXTRA_NO_DAMAGE=1" --dry --char 3
+  st_parse_case "V04 --dungeon 编号进 DUNGEON_ID、模式进 DUNGEON_MODE" \
+    "SETTLE_SPEC=retry,town CHAR_SLOT=0 DUNGEON_ID=4 DUNGEON_MODE=1 MAX_SECONDS=120 NET_ROOT_LIVE= FAKE_ROOMS=1 FAKE_MONSTERS=2 EXTRA_NO_DAMAGE=1" --dry --dungeon 4 1
+  st_parse_case "V05 --max-seconds 只改 MAX_SECONDS" \
+    "SETTLE_SPEC=retry,town CHAR_SLOT=0 DUNGEON_ID= DUNGEON_MODE=0 MAX_SECONDS=77 NET_ROOT_LIVE= FAKE_ROOMS=1 FAKE_MONSTERS=2 EXTRA_NO_DAMAGE=1" --dry --max-seconds 77
+  st_parse_case "V06 --netroot 只改 NET_ROOT_LIVE" \
+    "SETTLE_SPEC=retry,town CHAR_SLOT=0 DUNGEON_ID= DUNGEON_MODE=0 MAX_SECONDS=120 NET_ROOT_LIVE=/synthetic/netroot FAKE_ROOMS=1 FAKE_MONSTERS=2 EXTRA_NO_DAMAGE=1" --dry --netroot /synthetic/netroot
+  st_parse_case "V07 --rooms 只改 FAKE_ROOMS" \
+    "SETTLE_SPEC=retry,town CHAR_SLOT=0 DUNGEON_ID= DUNGEON_MODE=0 MAX_SECONDS=120 NET_ROOT_LIVE= FAKE_ROOMS=5 FAKE_MONSTERS=2 EXTRA_NO_DAMAGE=1" --dry --rooms 5
+  st_parse_case "V08 --monsters 只改 FAKE_MONSTERS" \
+    "SETTLE_SPEC=retry,town CHAR_SLOT=0 DUNGEON_ID= DUNGEON_MODE=0 MAX_SECONDS=120 NET_ROOT_LIVE= FAKE_ROOMS=1 FAKE_MONSTERS=9 EXTRA_NO_DAMAGE=1" --dry --monsters 9
+  st_parse_case "V09 --damage 只把 EXTRA_NO_DAMAGE 置 0" \
+    "SETTLE_SPEC=retry,town CHAR_SLOT=0 DUNGEON_ID= DUNGEON_MODE=0 MAX_SECONDS=120 NET_ROOT_LIVE= FAKE_ROOMS=1 FAKE_MONSTERS=2 EXTRA_NO_DAMAGE=0" --dry --damage
+  st_parse_case "V10 全部选项连写（与缺省顺序相反）：各归各的变量、互不吞词" \
+    "SETTLE_SPEC=town CHAR_SLOT=5 DUNGEON_ID=2 DUNGEON_MODE=3 MAX_SECONDS=33 NET_ROOT_LIVE=/synthetic/nr2 FAKE_ROOMS=6 FAKE_MONSTERS=11 EXTRA_NO_DAMAGE=0" \
+    --dry --damage --monsters 11 --rooms 6 --netroot /synthetic/nr2 --max-seconds 33 --dungeon 2 3 --char 5 --settle town
+  st_parse_case "V11 同一选项写两遍：后面的覆盖前面的" \
+    "SETTLE_SPEC=town CHAR_SLOT=0 DUNGEON_ID=2 DUNGEON_MODE=2 MAX_SECONDS=120 NET_ROOT_LIVE= FAKE_ROOMS=7 FAKE_MONSTERS=2 EXTRA_NO_DAMAGE=1" \
+    --dry --rooms 2 --dungeon 1 1 --settle select --rooms 7 --dungeon 2 2 --settle town
+  st_parse_case "V12 值里的空格与汉字原样保留（不拆词、不裁边）" \
+    "SETTLE_SPEC=retry, town CHAR_SLOT=0 DUNGEON_ID= DUNGEON_MODE=0 MAX_SECONDS=120 NET_ROOT_LIVE=/synthetic/带 空格 目录 FAKE_ROOMS=1 FAKE_MONSTERS=2 EXTRA_NO_DAMAGE=1" \
+    --dry --settle "retry, town" --netroot "/synthetic/带 空格 目录"
 
   # ---- 沙箱放行对照：不带 --check-guards 时，护栏照样挡；放行后确实进入下一步（沙箱里的假 env.sh，退出 97）----
   st_box_case "H01 --live 合格（不带 --check-guards）放行后进入下一步，MODE 与秒数原样带过去" 97 "" "MODE=live MIN_CLEAR_SECONDS=60" \
